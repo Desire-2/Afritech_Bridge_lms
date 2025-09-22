@@ -72,12 +72,10 @@ npm install next@15.1.4 --force --legacy-peer-deps
 echo "Forcefully installing cmdk@1.1.1..."
 npm install cmdk@1.1.1 --force --legacy-peer-deps
 
-# Verify installation of critical dependencies
-echo "Verifying tailwindcss installation..."
-if ! npm list tailwindcss > /dev/null 2>&1; then
-  echo "Installing missing tailwindcss..."
-  npm install --save-dev tailwindcss postcss autoprefixer --legacy-peer-deps
-fi
+# Install critical dependencies directly (don't rely on detection)
+echo "Installing tailwindcss and related packages..."
+npm install --save-dev tailwindcss@3.4.1 postcss@8 autoprefixer --legacy-peer-deps --force
+npm install tailwindcss-animate --legacy-peer-deps --force
 
 echo "Verifying cmdk version..."
 CMDK_VERSION=$(npm list cmdk | grep cmdk | cut -d@ -f2)
