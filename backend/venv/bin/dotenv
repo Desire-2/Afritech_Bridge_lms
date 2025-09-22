@@ -1,0 +1,7 @@
+#!/home/desire/My_Project/AB/afritech_bridge_website/afritec_bridge_lms/backend/venv/bin/python3
+import sys
+from dotenv.__main__ import cli
+if __name__ == '__main__':
+    if sys.argv[0].endswith('.exe'):
+        sys.argv[0] = sys.argv[0][:-4]
+    sys.exit(cli())
