@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: afritec-bridge-lms-backend
+    env: python
+    buildCommand: ./backend/build.sh
+    startCommand: cd backend && gunicorn main:app --config gunicorn_config.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+    healthCheckPath: /api/health
+    autoDeploy: true
+
+  - type: web
+    name: afritec-bridge-lms-frontend
+    env: node
+    buildCommand: cd frontend && npm install --no-audit --prefer-offline && npm run build
+    startCommand: cd frontend && npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.x
+    autoDeploy: true
