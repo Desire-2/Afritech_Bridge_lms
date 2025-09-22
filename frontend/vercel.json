@@ -2,7 +2,7 @@
   "version": 2,
   "buildCommand": "bash ./vercel-build.sh",
   "devCommand": "npm run dev",
-  "installCommand": "echo 'Installation handled by vercel-build.sh'",
+  "installCommand": "npm install --no-audit --prefer-offline",
   "framework": "nextjs",
   "outputDirectory": ".next",
   "headers": [

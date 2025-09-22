@@ -65,7 +65,10 @@ rm -rf .next
 echo "Installing dependencies with legacy peer deps..."
 npm install --legacy-peer-deps --prefer-offline
 
-# Force install cmdk at the correct version
+# Force install Next.js and cmdk at the correct versions
+echo "Forcefully installing next@15.1.4..."
+npm install next@15.1.4 --force --legacy-peer-deps
+
 echo "Forcefully installing cmdk@1.1.1..."
 npm install cmdk@1.1.1 --force --legacy-peer-deps
 
