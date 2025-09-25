@@ -12,6 +12,7 @@ import logging
 from src.models.user_models import db, User, Role
 from src.models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission
 from src.models.opportunity_models import Opportunity # Import Opportunity model
+from src.utils.email_utils import mail # Import the mail instance
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp
@@ -34,12 +35,17 @@ app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'sta
 if os.environ.get('FLASK_ENV') == 'production':
     # In production, only allow specific origins
     allowed_origins = os.environ.get('ALLOWED_ORIGINS', 'https://yourfrontenddomain.com').split(',')
-    CORS(app, resources={r"/*": {"origins": allowed_origins}})
+    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
     logger.info(f"CORS configured for production with origins: {allowed_origins}")
 else:
-    # In development, allow all origins
-    CORS(app, resources={r"/*": {"origins": "*"}})
-    logger.info("CORS configured for development (all origins allowed)")
+    # In development, allow all origins with full configuration
+    CORS(app, 
+         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173"], 
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+         expose_headers=["Content-Type", "Authorization"],
+         supports_credentials=True)
+    logger.info("CORS configured for development with specific settings")
 
 # Load environment variables
 load_dotenv()
@@ -77,6 +83,18 @@ if not app.config['JWT_SECRET_KEY']:
     app.config['JWT_SECRET_KEY'] = 'another_super_secret_jwt_key' if env != 'production' else None
     if env == 'production' and not app.config['JWT_SECRET_KEY']:
         raise ValueError("JWT_SECRET_KEY must be set in production environment")
+        
+# Email configuration
+app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True').lower() in ('true', 'yes', '1')
+app.config['MAIL_USE_SSL'] = os.getenv('MAIL_USE_SSL', 'False').lower() in ('true', 'yes', '1')
+app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'noreply@afritecbridge.online')
+
+if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
+    logger.warning("Email credentials not set! Email functionality will not work properly.")
 
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1)))
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30)))
@@ -87,6 +105,7 @@ app.config["JWT_BLOCKLIST_TOKEN_CHECKS"] = ["access", "refresh"]
 # Initialize extensions
 db.init_app(app)
 jwt = JWTManager(app)
+mail.init_app(app)
 
 @jwt.user_identity_loader
 def user_identity_loader(user_id):

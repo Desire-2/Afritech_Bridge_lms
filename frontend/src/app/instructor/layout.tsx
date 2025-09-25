@@ -1,47 +1,39 @@
 "use client";
 
-import React, { useContext, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React from 'react';
 import InstructorSidebar from '@/components/instructor/InstructorSidebar';
-import { AuthContext } from '@/contexts/AuthContext';
+import { InstructorGuard } from '@/components/guards/instructor-guard';
 
 export default function InstructorLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const authContext = useContext(AuthContext);
-  const router = useRouter();
-
-  useEffect(() => {
-    if (authContext?.loading) return; // Wait for auth state to load
-
-    if (!authContext?.isAuthenticated) {
-      router.push('/auth/login?message=Please login to access the instructor panel.');
-      return;
-    }
-    // Assuming user object has a 'role' property
-    if (authContext.user?.role !== 'instructor' && authContext.user?.role !== 'admin') { // Admins might also access instructor panel
-      router.push('/dashboard?message=You are not authorized to access the instructor panel.'); // Redirect to a general dashboard or home
-    }
-  }, [authContext, router]);
-
-  if (authContext?.loading || !authContext?.isAuthenticated || (authContext.user?.role !== 'instructor' && authContext.user?.role !== 'admin')) {
-    // Show a loading state or a minimal layout while checking auth/redirecting
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-100">
-        <p className="text-lg text-gray-600">Loading instructor panel...</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex min-h-screen bg-gray-100">
-      <InstructorSidebar />
-      <main className="flex-1 p-6 md:p-10">
-        {children}
-      </main>
-    </div>
+    <InstructorGuard>
+      <div className="flex min-h-screen bg-slate-100 dark:bg-slate-950">
+        <InstructorSidebar />
+        <div className="flex-1 flex flex-col">
+          <header className="bg-white dark:bg-slate-900 shadow-sm border-b border-slate-200 dark:border-slate-800">
+            <div className="mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between h-16">
+                <div className="flex items-center">
+                  <h1 className="text-xl font-semibold text-slate-900 dark:text-white">
+                    Instructor Dashboard
+                  </h1>
+                </div>
+                <div className="flex items-center">
+                  {/* Could add notification bell, profile dropdown, etc. here */}
+                </div>
+              </div>
+            </div>
+          </header>
+          <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-slate-50 dark:bg-slate-900">
+            {children}
+          </main>
+        </div>
+      </div>
+    </InstructorGuard>
   );
 }
 

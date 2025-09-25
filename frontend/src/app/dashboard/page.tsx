@@ -2,6 +2,7 @@
 import { useAuth } from '@/contexts/AuthContext';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { ClientOnly, useIsClient } from '@/lib/hydration-helper';
 import { BookOpen, Clock, Trophy, ChevronRight } from 'lucide-react';
 
 interface EnrolledCourseSummary {
@@ -13,7 +14,8 @@ interface EnrolledCourseSummary {
 }
 
 const StudentDashboardOverviewPage = () => {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
+  const isClient = useIsClient();
   const [dashboardData, setDashboardData] = useState<{
     enrolledCourses: EnrolledCourseSummary[];
     stats: {
@@ -196,4 +198,21 @@ const StudentDashboardOverviewPage = () => {
   );
 };
 
-export default StudentDashboardOverviewPage;
+// Wrap the component with ClientOnly to prevent hydration issues
+export default function DashboardPage() {
+  const isClient = useIsClient();
+  
+  if (!isClient) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <p className="text-lg text-gray-600">Loading dashboard content...</p>
+      </div>
+    );
+  }
+  
+  return (
+    <ClientOnly>
+      <StudentDashboardOverviewPage />
+    </ClientOnly>
+  );
+}

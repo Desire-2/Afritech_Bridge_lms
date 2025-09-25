@@ -1,18 +1,34 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
+import { useIsClient } from '@/lib/hydration-helper';
 
-// Simplified version without AuthContext for production build
 export default function LoginForm() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const { isAuthenticated, login, isLoading } = useAuth();
+  const isClient = useIsClient();
+  
   const registrationSuccess = searchParams.get('registered') === 'true';
+  const resetSuccess = searchParams.get('reset') === 'success';
+  const message = searchParams.get('message');
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  // If already authenticated, redirect to dashboard
+  useEffect(() => {
+    // Only redirect after client-side hydration is complete
+    if (isClient && isAuthenticated && !isLoading) {
+      console.log("Already authenticated, redirecting to dashboard");
+      router.push('/dashboard');
+    }
+  }, [isClient, isAuthenticated, isLoading, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -20,17 +36,11 @@ export default function LoginForm() {
     setIsSubmitting(true);
     
     try {
-      // Placeholder for login functionality
-      console.log("Login attempt with:", identifier);
-      
-      // Simulate login delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Redirect to dashboard would happen here in the real implementation
-      window.location.href = '/dashboard';
+      // Use the login function from AuthContext
+      await login(identifier, password);
+      // Don't redirect here - AuthContext will handle it
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred during login.');
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -64,6 +74,15 @@ export default function LoginForm() {
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
             </svg>
             Account created successfully! Please log in.
+          </div>
+        )}
+        
+        {resetSuccess && (
+          <div className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-100 px-4 py-3 rounded-lg mb-6 flex items-center gap-2">
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+            </svg>
+            Password reset successful! You can now log in with your new password.
           </div>
         )}
 

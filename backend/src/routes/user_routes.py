@@ -1,10 +1,11 @@
 # User and Authentication Routes for Afritec Bridge LMS
 
 import os
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
-from datetime import timedelta
+from datetime import timedelta, datetime
+from ..utils.email_utils import send_password_reset_email
 
 # Assuming db and User, Role models are correctly set up and accessible.
 # This might require adjustments based on the actual Flask app structure from create_flask_app
@@ -137,4 +138,96 @@ def update_me():
 def token_in_blocklist_loader(jwt_header, jwt_payload):
     jti = jwt_payload['jti']
     return jti in BLOCKLIST
+
+# Password reset routes
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """Request a password reset link"""
+    data = request.get_json()
+    email = data.get('email')
+    
+    if not email:
+        return jsonify({'message': 'Email is required'}), 400
+    
+    # Validate email format
+    import re
+    email_pattern = re.compile(r'^[\w\.-]+@[\w\.-]+\.\w+$')
+    if not email_pattern.match(email):
+        return jsonify({'message': 'Please enter a valid email address'}), 400
+        
+    # Check if user exists
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        # Now we'll be explicit about the user not existing
+        current_app.logger.info(f"Password reset requested for non-existent email: {email}")
+        return jsonify({
+            'message': 'No account found with this email address',
+            'status': 'user_not_found'  # Clear status for frontend to handle
+        }), 404  # Using 404 status code for not found
+        
+    # Generate a reset token
+    token = user.generate_reset_token()
+    db.session.commit()
+    
+    # Create the reset URL
+    frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+    reset_url = f"{frontend_url}/auth/reset-password?token={token}&email={email}"
+    
+    # Send the reset email
+    email_sent = send_password_reset_email(user, reset_url)
+    
+    # Log the outcome for debugging
+    if email_sent:
+        current_app.logger.info(f"Password reset email sent to: {email}")
+        return jsonify({
+            'message': 'Password reset instructions have been sent to your email address',
+            'status': 'email_sent'  # This is a hint for the frontend, but still ambiguous
+        }), 200
+    else:
+        current_app.logger.error(f"Failed to send password reset email to: {email}")
+        return jsonify({
+            'message': 'Failed to send password reset email. Please try again later.',
+            'status': 'email_error'  # This is a hint for the frontend, but still ambiguous
+        }), 500
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """Reset the password using the token"""
+    data = request.get_json()
+    email = data.get('email')
+    token = data.get('token')
+    new_password = data.get('password')
+    
+    if not email or not token or not new_password:
+        return jsonify({'message': 'Email, token, and new password are required'}), 400
+        
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({'message': 'Invalid or expired reset token'}), 400
+        
+    if not user.verify_reset_token(token):
+        return jsonify({'message': 'Invalid or expired reset token'}), 400
+    
+    # Reset the password
+    user.set_password(new_password)
+    user.clear_reset_token()  # Clear the token so it can't be used again
+    db.session.commit()
+    
+    return jsonify({'message': 'Password has been reset successfully'}), 200
+
+@auth_bp.route('/validate-reset-token', methods=['POST'])
+def validate_reset_token():
+    """Validate a password reset token"""
+    data = request.get_json()
+    email = data.get('email')
+    token = data.get('token')
+    
+    if not email or not token:
+        return jsonify({'message': 'Email and token are required'}), 400
+        
+    user = User.query.filter_by(email=email).first()
+    if not user or not user.verify_reset_token(token):
+        return jsonify({'message': 'Invalid or expired reset token'}), 400
+    
+    return jsonify({'message': 'Token is valid'}), 200
 

@@ -2,7 +2,8 @@
 
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
+import secrets
 
 # It's assumed that 'db' is initialized in main.py and passed around or imported.
 # For now, we'll define a placeholder db instance. If your main app structure differs,
@@ -39,6 +40,10 @@ class User(db.Model):
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Password reset fields
+    reset_token = db.Column(db.String(100), nullable=True)
+    reset_token_expires_at = db.Column(db.DateTime, nullable=True)
 
     # Relationships (placeholders, to be expanded with other models)
     # enrollments = db.relationship('Enrollment', backref='student', lazy='dynamic')
@@ -50,6 +55,26 @@ class User(db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+        
+    def generate_reset_token(self):
+        """Generate a secure token for password reset"""
+        self.reset_token = secrets.token_urlsafe(32)
+        # Token expires in 1 hour
+        self.reset_token_expires_at = datetime.utcnow() + timedelta(hours=1)
+        return self.reset_token
+        
+    def verify_reset_token(self, token):
+        """Verify if the reset token is valid and not expired"""
+        if self.reset_token != token:
+            return False
+        if not self.reset_token_expires_at or datetime.utcnow() > self.reset_token_expires_at:
+            return False
+        return True
+        
+    def clear_reset_token(self):
+        """Clear the reset token after it's been used"""
+        self.reset_token = None
+        self.reset_token_expires_at = None
 
     def __repr__(self):
         return f'<User {self.username}>'
