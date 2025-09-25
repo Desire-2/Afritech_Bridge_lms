@@ -1,6 +1,6 @@
 'use client';
 
-import { AdminGuard } from '@/components/guards/admin-guard';
+import { AdminGuard } from '@/components/guards/AdminGuard';
 import AdminSidebar from '@/components/admin/AdminSidebar';
 
 export default function AdminLayout({

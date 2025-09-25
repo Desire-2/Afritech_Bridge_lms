@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { AdminGuard } from '@/components/guards/admin-guard';
+import { AdminGuard } from '@/components/guards/AdminGuard';
 
 export default function AdminCoursesPage() {
   return (

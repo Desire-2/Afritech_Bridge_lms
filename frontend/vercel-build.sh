@@ -61,6 +61,33 @@ echo "Cleaning node_modules..."
 rm -rf node_modules
 rm -rf .next
 
+# Ensure we have a proper tailwind config
+echo "Ensuring tailwind config is present..."
+cat > tailwind.config.js << EOF
+/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: ["class"],
+  content: [
+    './src/**/*.{js,jsx,ts,tsx}',
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [require("tailwindcss-animate")],
+}
+EOF
+
+# Ensure postcss config is present
+echo "Ensuring postcss config is present..."
+cat > postcss.config.js << EOF
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+EOF
+
 # Install all dependencies with legacy peer deps
 echo "Installing dependencies with legacy peer deps..."
 npm install --legacy-peer-deps --prefer-offline
@@ -77,9 +104,34 @@ echo "Installing tailwindcss and related packages..."
 npm install --save-dev tailwindcss@3.4.1 postcss@8 autoprefixer --legacy-peer-deps --force
 npm install tailwindcss-animate --legacy-peer-deps --force
 
+# Ensure the packages are installed at the project level (not hoisted)
+mkdir -p ./node_modules/tailwindcss
+cp -r $(npm root -g)/tailwindcss/* ./node_modules/tailwindcss/ || true
+mkdir -p ./node_modules/autoprefixer
+cp -r $(npm root -g)/autoprefixer/* ./node_modules/autoprefixer/ || true
+
 echo "Verifying cmdk version..."
 CMDK_VERSION=$(npm list cmdk | grep cmdk | cut -d@ -f2)
 echo "Installed cmdk version: $CMDK_VERSION"
+
+# Fix file naming issues
+echo "Checking for component file case sensitivity issues..."
+# Make sure directory structure exists
+mkdir -p ./src/components/guards
+mkdir -p ./src/components/admin
+
+# Verify case sensitivity of important files
+if [ -f "./src/components/guards/admin-guard.tsx" ]; then
+  # Create a copy with explicit export to ensure it's properly picked up
+  cp ./src/components/guards/admin-guard.tsx ./src/components/guards/AdminGuard.tsx
+  echo "Created AdminGuard.tsx from admin-guard.tsx"
+fi
+
+if [ -f "./src/components/admin/AdminSidebar.tsx" ]; then
+  # Create a backup copy to ensure it's available
+  cp ./src/components/admin/AdminSidebar.tsx ./src/components/admin/AdminSidebar.bak.tsx
+  echo "Backed up AdminSidebar.tsx"
+fi
 
 # Run the Next.js build
 echo "Starting Next.js build process..."
