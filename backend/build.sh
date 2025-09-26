@@ -33,7 +33,7 @@ if [ -n "$RENDER" ]; then
   # On Render, we can use pip directly as they manage the Python environment
   echo "Running in Render environment, using system Python..."
   # Install Python dependencies
-  $PIP_CMD install -r requirements.txt
+  $PIP_CMD install --no-build-isolation -r requirements.txt
 else
   # For local development, create and use a virtual environment
   echo "Setting up virtual environment..."
