@@ -40,7 +40,7 @@ if os.environ.get('FLASK_ENV') == 'production':
 else:
     # In development, allow all origins with full configuration
     CORS(app, 
-         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173"], 
+         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://192.168.116.116:3000"], 
          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
          allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
          expose_headers=["Content-Type", "Authorization"],
