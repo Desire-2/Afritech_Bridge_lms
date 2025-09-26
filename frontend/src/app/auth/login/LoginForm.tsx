@@ -18,6 +18,7 @@ export default function LoginForm() {
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -113,14 +114,14 @@ export default function LoginForm() {
             />
           </div>
 
-          <div>
+          <div className="relative">
             <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">
               Password
             </label>
             <input
               id="password"
               name="password"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               autoComplete="current-password"
               required
               value={password}
@@ -128,6 +129,25 @@ export default function LoginForm() {
               className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 text-white placeholder-slate-400 transition-all"
               placeholder="••••••••"
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((s) => !s)}
+              aria-pressed={showPassword}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              className="absolute right-3 top-[calc(50%+0.25rem)] transform -translate-y-1/2 text-slate-300 hover:text-sky-400"
+            >
+              {showPassword ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-5.523 0-10-5.373-10-7s4.477-7 10-7c1.21 0 2.37.214 3.447.605M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3l18 18"></path>
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7zm0 12a5 5 0 110-10 5 5 0 010 10z" />
+                  <circle cx="12" cy="12" r="2.5" />
+                </svg>
+              )}
+            </button>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

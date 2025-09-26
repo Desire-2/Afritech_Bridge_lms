@@ -3,23 +3,44 @@ import React, { useState, FormEvent, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react';
 
-const Input = ({ error, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { error?: string }) => (
-  <div className="relative">
-    <input
-      {...props}
-      className={`w-full px-4 py-3 bg-white/5 border ${
-        error ? 'border-red-500' : 'border-white/10'
-      } rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 text-white placeholder-slate-400 transition-all`}
-    />
-    {error && (
-      <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-        <AlertCircle className="h-5 w-5 text-red-500" aria-hidden="true" />
-      </div>
-    )}
-  </div>
-);
+const Input = ({ error, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { error?: string }) => {
+  const [show, setShow] = useState(false);
+  const isPassword = props.type === 'password' || String(props.name).toLowerCase().includes('password');
+  const inputType = isPassword ? (show ? 'text' : 'password') : props.type;
+
+  return (
+    <div className="relative">
+      <input
+        {...props}
+        type={inputType}
+        className={`w-full px-4 py-3 bg-white/5 border ${
+          error ? 'border-red-500' : 'border-white/10'
+        } rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 text-white placeholder-slate-400 transition-all`}
+      />
+
+      {/* Show/hide toggle placed to the right; if there's an error icon it will appear further right */}
+      {isPassword && (
+        <button
+          type="button"
+          onClick={() => setShow((s) => !s)}
+          aria-pressed={show}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          className="absolute inset-y-0 right-10 pr-3 flex items-center text-slate-300 hover:text-sky-400"
+        >
+          {show ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+        </button>
+      )}
+
+      {error && (
+        <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+          <AlertCircle className="h-5 w-5 text-red-500" aria-hidden="true" />
+        </div>
+      )}
+    </div>
+  );
+};
 
 const PasswordStrength = ({ password }: { password: string }) => {
   const getStrength = () => {
@@ -159,7 +180,7 @@ export default function RegisterForm() {
     setServerError('');
     
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/auth/register`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001'}/api/v1/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
