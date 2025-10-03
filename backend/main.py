@@ -41,24 +41,31 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 
 # Configure CORS for development and production
-if os.environ.get('FLASK_ENV') == 'production':
-    # In production, only allow specific origins
+env = os.environ.get('FLASK_ENV', 'development')
+is_production = env == 'production' or os.environ.get('RENDER') is not None
+
+if is_production:
+    # In production, allow specific origins
     allowed_origins_str = os.environ.get('ALLOWED_ORIGINS', 'https://study.afritechbridge.online')
     allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
     
+    # Add common variations of the frontend domain
+    if 'https://study.afritechbridge.online' not in allowed_origins:
+        allowed_origins.append('https://study.afritechbridge.online')
+    
     CORS(app, 
          resources={r"/*": {"origins": allowed_origins}}, 
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
          expose_headers=["Content-Type", "Authorization"],
          supports_credentials=True)
     logger.info(f"CORS configured for production with origins: {allowed_origins}")
 else:
     # In development, allow all origins with full configuration
     CORS(app, 
-         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3005", "http://localhost:5173", "http://192.168.133.116:3000", "http://192.168.133.116:3001", "http://192.168.133.116:3002", "http://192.168.133.116:3005"], 
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3005", "http://localhost:5173", "http://192.168.133.116:3000", "http://192.168.133.116:3001", "http://192.168.133.116:3002", "http://192.168.133.116:3003", "http://192.168.133.116:3005"], 
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
          expose_headers=["Content-Type", "Authorization"],
          supports_credentials=True)
     logger.info("CORS configured for development with specific settings")
@@ -87,13 +94,8 @@ if database_url:
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     logger.info("Using PostgreSQL database from DATABASE_URL")
 elif env == 'production':
-    # In production, warn but allow fallback to SQLite for initial deployment
-    logger.warning("DATABASE_URL not set in production. Using SQLite fallback.")
-    logger.warning("For production use, please set up PostgreSQL and configure DATABASE_URL")
-    db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
-    logger.info(f"Using SQLite fallback at {app.config['SQLALCHEMY_DATABASE_URI']}")
+    # In production, require a database URL
+    raise ValueError("DATABASE_URL must be set in production environment")
 else:
     # Use SQLite for development and testing
     db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
@@ -134,6 +136,41 @@ db.init_app(app)
 jwt = JWTManager(app)
 mail.init_app(app)
 
+# Additional CORS handling for preflight requests
+@app.before_request
+def handle_preflight():
+    from flask import request, make_response
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin")
+        response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS,PATCH")
+        response.headers.add('Access-Control-Allow-Credentials', "true")
+        return response
+
+@app.after_request
+def after_request(response):
+    from flask import request
+    origin = request.headers.get('Origin')
+    
+    # Allow requests from the frontend domain
+    allowed_origins = ['https://study.afritechbridge.online']
+    if not is_production:
+        allowed_origins.extend([
+            'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 
+            'http://localhost:3003', 'http://localhost:3005', 'http://localhost:5173',
+            'http://192.168.133.116:3000', 'http://192.168.133.116:3001', 
+            'http://192.168.133.116:3002', 'http://192.168.133.116:3003'
+        ])
+    
+    if origin in allowed_origins:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+    
+    response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin")
+    response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS,PATCH")
+    response.headers.add('Access-Control-Allow-Credentials', "true")
+    return response
+
 @jwt.user_identity_loader
 def user_identity_loader(user_id):
     return user_id
@@ -159,6 +196,33 @@ app.register_blueprint(submission_bp)
 app.register_blueprint(announcement_bp)
 app.register_blueprint(opportunity_bp) # Register opportunity blueprint
 app.register_blueprint(student_bp) # Register student blueprint
+
+# Health check endpoint
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'environment': env,
+        'cors_enabled': True,
+        'timestamp': os.environ.get('RENDER_GIT_COMMIT', 'development')
+    }), 200
+
+# Root route that serves the frontend
+@app.route('/')
+def index():
+    """Serve the main frontend page"""
+    return send_from_directory(app.static_folder, 'index.html')
+
+# Catch-all route for SPA routing (must be last)
+@app.route('/<path:path>')
+def serve_static(path):
+    """Serve static files and handle SPA routing"""
+    try:
+        return send_from_directory(app.static_folder, path)
+    except FileNotFoundError:
+        # If file not found, serve index.html for SPA routing
+        return send_from_directory(app.static_folder, 'index.html')
 
 def init_database():
     """Initialize database tables and default roles"""
@@ -192,24 +256,6 @@ def init_db_route():
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
         return jsonify({"error": str(e)}), 500
-
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve(path):
-    static_folder_path = app.static_folder
-    if static_folder_path is None:
-        return jsonify({"error": "Static folder not configured"}), 404
-
-    if path != "" and os.path.exists(os.path.join(static_folder_path, path)):
-        return send_from_directory(static_folder_path, path)
-    else:
-        index_path = os.path.join(static_folder_path, 'index.html')
-        if os.path.exists(index_path):
-            return send_from_directory(static_folder_path, 'index.html')
-        else:
-            if path == "":
-                return jsonify({"message": "Welcome to Afritec Bridge LMS API"}), 200
-            return jsonify({"error": "File not found"}), 404
 
 if __name__ == '__main__':
     # In development, run with debug mode
