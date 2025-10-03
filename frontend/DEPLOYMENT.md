@@ -182,7 +182,7 @@ Configure in `next.config.ts` for enhanced security.
 - Monitor application performance
 - Configure auto-scaling if needed
 - Optimize bundle size and loading times
-- Vercel will use `vercel-build.sh` for building the project.
+- Vercel will use `npm run build` for building the project.
 - Output directory is `.next` (configured in `vercel.json`).
 
 ## 5. Deployment Steps

@@ -1,24 +1,20 @@
 # Build Scripts for AfriTec Bridge LMS Frontend
 
-This directory contains several build scripts to help manage dependency issues and ensure successful builds, particularly when deploying to environments like Vercel.
+This directory contains build scripts to help manage the Next.js application build process.
 
 ## Available Scripts
 
-### 1. vercel-build.sh (Recommended for Production)
+### 1. npm run build (Recommended for Production)
 
-This is the most comprehensive build script, designed specifically for Vercel deployments. It:
+The standard Next.js build command that:
 
-- Creates proper `.npmrc` configuration
-- Updates `package.json` to enforce correct dependency versions
-- Cleans existing installations
-- Installs dependencies with all necessary flags
-- Verifies critical dependencies
-- Builds the Next.js application
+- Uses the prebuild script to configure `.npmrc`
+- Installs dependencies with legacy peer deps support
+- Builds the Next.js application optimized for production
 
 ```bash
 # To run manually
-chmod +x vercel-build.sh
-./vercel-build.sh
+npm run build
 ```
 
 ### 2. fix-all-and-build.sh
@@ -67,7 +63,7 @@ The build scripts verify that TailwindCSS is properly installed.
 
 ## Vercel Deployment
 
-The project is configured to use `vercel-build.sh` for Vercel deployments via the `vercel.json` configuration.
+The project is configured to use `npm run build` for Vercel deployments via the `vercel.json` configuration.
 
 ## Local Development
 
@@ -77,4 +73,4 @@ For local development, you can use the standard Next.js commands:
 npm run dev
 ```
 
-If you encounter dependency issues locally, you can run `./vercel-build.sh` to reset your environment.
+If you encounter dependency issues locally, you can run `npm run build` to reset your environment.
