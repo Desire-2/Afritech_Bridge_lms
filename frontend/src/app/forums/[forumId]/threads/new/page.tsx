@@ -176,7 +176,7 @@ const CreateNewThreadPage = () => {
               </div>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Supports markdown formatting. Use # for headers, **bold**, and > for quotes
+              Supports markdown formatting. Use # for headers, **bold**, and &gt; for quotes
             </p>
           </div>
 
