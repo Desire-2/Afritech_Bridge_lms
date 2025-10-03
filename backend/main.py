@@ -43,8 +43,15 @@ app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'sta
 # Configure CORS for development and production
 if os.environ.get('FLASK_ENV') == 'production':
     # In production, only allow specific origins
-    allowed_origins = os.environ.get('ALLOWED_ORIGINS', 'https://yourfrontenddomain.com').split(',')
-    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
+    allowed_origins_str = os.environ.get('ALLOWED_ORIGINS', 'https://study.afritechbridge.online')
+    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
+    
+    CORS(app, 
+         resources={r"/*": {"origins": allowed_origins}}, 
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+         expose_headers=["Content-Type", "Authorization"],
+         supports_credentials=True)
     logger.info(f"CORS configured for production with origins: {allowed_origins}")
 else:
     # In development, allow all origins with full configuration

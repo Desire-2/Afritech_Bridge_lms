@@ -185,6 +185,36 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ## Troubleshooting
 
+### CORS Errors
+
+If you're getting CORS errors like "No 'Access-Control-Allow-Origin' header":
+
+1. **Set ALLOWED_ORIGINS environment variable:**
+   ```bash
+   # For production on Render
+   ALLOWED_ORIGINS=https://study.afritechbridge.online
+   
+   # For multiple domains
+   ALLOWED_ORIGINS=https://study.afritechbridge.online,https://app.afritechbridge.online
+   ```
+
+2. **Ensure FLASK_ENV is set to production:**
+   ```bash
+   FLASK_ENV=production
+   ```
+
+3. **Test CORS configuration:**
+   ```bash
+   python test_cors.py https://your-backend-url.com https://your-frontend-domain.com
+   ```
+
+4. **Check Render environment variables:**
+   - Go to Render Dashboard → Your Service → Environment
+   - Verify ALLOWED_ORIGINS and FLASK_ENV are set correctly
+   - Restart the service after changes
+
+For detailed CORS troubleshooting, see [CORS_FIX_GUIDE.md](CORS_FIX_GUIDE.md)
+
 ### Database Connection Issues
 
 If you're experiencing database connection issues:
