@@ -131,7 +131,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       setIsAuthenticated(false);
       setIsLoading(false);
-      throw ApiErrorHandler.handleError(error);
+      // Don't double-process the error - AuthService already handled it
+      throw error;
     }
   };
 

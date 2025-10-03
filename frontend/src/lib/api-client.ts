@@ -34,6 +34,11 @@ apiClient.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    // Don't redirect for login requests - let them handle their own errors
+    if (originalRequest.url?.includes('/auth/login')) {
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
 
@@ -72,7 +77,8 @@ apiClient.interceptors.response.use(
     }
 
     // If no refresh token or refresh failed, redirect to login for 401 errors
-    if (error.response?.status === 401) {
+    // But not for login requests (already handled above)
+    if (error.response?.status === 401 && !originalRequest.url?.includes('/auth/login')) {
       console.warn('Unauthorized access, redirecting to login...');
       localStorage.removeItem('token');
       localStorage.removeItem('refreshToken');

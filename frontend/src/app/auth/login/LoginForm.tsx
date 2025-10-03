@@ -1,15 +1,16 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-import { useIsClient } from '@/lib/hydration-helper';
+import { useIsClient, ClientOnly } from '@/lib/hydration-helper';
+import { ApiErrorHandler } from '@/lib/error-handler';
 
 export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { isAuthenticated, login, isLoading } = useAuth();
+  const { isAuthenticated, login, isLoading, user } = useAuth();
   const isClient = useIsClient();
   
   const registrationSuccess = searchParams.get('registered') === 'true';
@@ -21,34 +22,139 @@ export default function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  
+  // Validation states
+  const [identifierTouched, setIdentifierTouched] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<{
+    identifier?: string;
+    password?: string;
+  }>({});
+
+  // Validation functions with proper client-side checks
+  const validateIdentifier = (value: string): string | undefined => {
+    if (!value.trim()) {
+      return 'Email or username is required';
+    }
+    
+    // If it contains @, validate as email format
+    if (value.includes('@')) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(value)) {
+        return 'Please enter a valid email address';
+      }
+    }
+    // For usernames, just check it's not empty (already checked above)
+    
+    return undefined;
+  };
+
+  const validatePassword = (value: string): string | undefined => {
+    if (!value) {
+      return 'Password is required';
+    }
+    if (value.length < 3) {
+      return 'Password must be at least 3 characters long';
+    }
+    return undefined;
+  };
+
+  // Real-time validation with immediate feedback
+  useEffect(() => {
+    if (identifierTouched) {
+      const identifierError = validateIdentifier(identifier);
+      setValidationErrors(prev => ({ 
+        ...prev, 
+        identifier: identifierError 
+      }));
+      
+      // Only clear validation errors, not authentication errors
+      // Authentication errors should persist until next login attempt
+    }
+  }, [identifier, identifierTouched]);
+
+  useEffect(() => {
+    if (passwordTouched) {
+      const passwordError = validatePassword(password);
+      setValidationErrors(prev => ({ 
+        ...prev, 
+        password: passwordError 
+      }));
+      
+      // Only clear validation errors, not authentication errors
+      // Authentication errors should persist until next login attempt
+    }
+  }, [password, passwordTouched]);
   
   // If already authenticated, redirect to dashboard
   useEffect(() => {
-    // Only redirect after client-side hydration is complete
-    if (isClient && isAuthenticated && !isLoading) {
-      console.log("Already authenticated, redirecting to dashboard");
+    // Only redirect after client-side hydration is complete and we're actually authenticated
+    if (isClient && isAuthenticated && !isLoading && user) {
       router.push('/dashboard');
     }
-  }, [isClient, isAuthenticated, isLoading, router]);
+  }, [isClient, isAuthenticated, isLoading, router, user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setIsSubmitting(true);
-    
+
+    // Mark fields as touched for validation
+    setIdentifierTouched(true);
+    setPasswordTouched(true);
+
+    // Validate all fields before sending request
+    const identifierError = validateIdentifier(identifier);
+    const passwordError = validatePassword(password);
+
+    // If there are validation errors, show them immediately and don't send request
+    if (identifierError || passwordError) {
+      setValidationErrors({
+        identifier: identifierError,
+        password: passwordError,
+      });
+      
+      // Set a general error message for immediate feedback
+      const errorMessages = [];
+      if (identifierError) errorMessages.push(identifierError);
+      if (passwordError) errorMessages.push(passwordError);
+      setError(errorMessages.join('. '));
+      
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Clear validation errors and existing error if everything passes
+    setValidationErrors({});
+    setError(''); // Only clear error after validation passes
+
     try {
-      // Use the login function from AuthContext
       await login(identifier, password);
-      // Don't redirect here - AuthContext will handle it
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred during login.');
+    } catch (err: any) {
+      // Error will be set by the AuthContext login function
+      console.error('Login submission error:', err);
+    } finally {
       setIsSubmitting(false);
     }
   };
 
+
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
-      <div className="bg-white/5 backdrop-blur-sm p-8 rounded-2xl shadow-xl w-full max-w-md border border-white/10">
+    <ClientOnly fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="bg-white/5 backdrop-blur-sm p-8 rounded-2xl shadow-xl w-full max-w-md border border-white/10">
+          <div className="animate-pulse space-y-6">
+            <div className="h-8 bg-white/10 rounded"></div>
+            <div className="h-12 bg-white/10 rounded"></div>
+            <div className="h-12 bg-white/10 rounded"></div>
+            <div className="h-12 bg-white/10 rounded"></div>
+          </div>
+        </div>
+      </div>
+    }>
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="bg-white/5 backdrop-blur-sm p-8 rounded-2xl shadow-xl w-full max-w-md border border-white/10">
         {/* Company Logo */}
         <div className="flex items-center justify-center gap-3 mb-8">
           <svg 
@@ -87,19 +193,61 @@ export default function LoginForm() {
           </div>
         )}
 
+        {/* Enhanced Error Display */}
         {error && (
-          <div className="bg-red-500/20 border border-red-500/30 text-red-100 px-4 py-3 rounded-lg mb-6 flex items-center gap-2">
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
-            </svg>
-            {error}
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+            <div className="flex items-start gap-3">
+              <svg 
+                className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" 
+                fill="none" 
+                stroke="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  strokeWidth="2" 
+                  d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <div className="flex-1">
+                <p className="text-red-300 text-sm font-medium">
+                  {error}
+                </p>
+                {/* Additional help text for authentication errors */}
+                {error.includes('No account found') && (
+                  <p className="text-red-400/70 text-xs mt-1">
+                    Need an account?{' '}
+                    <Link 
+                      href="/auth/register" 
+                      className="text-red-300 hover:text-red-200 underline"
+                    >
+                      Sign up here
+                    </Link>
+                  </p>
+                )}
+                {error.includes('Incorrect password') && (
+                  <p className="text-red-400/70 text-xs mt-1">
+                    <Link 
+                      href="/auth/forgot-password" 
+                      className="text-red-300 hover:text-red-200 underline"
+                    >
+                      Forgot your password?
+                    </Link>
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
-        <form className="space-y-6" onSubmit={handleSubmit}>
+          <form className="space-y-6" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
               Email or Username
+              <span className="text-xs text-slate-400 font-normal ml-2">
+                (Enter your registered email or username)
+              </span>
             </label>
             <input
               id="email"
@@ -109,14 +257,30 @@ export default function LoginForm() {
               required
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 text-white placeholder-slate-400 transition-all"
+              onBlur={() => setIdentifierTouched(true)}
+              className={`w-full px-4 py-3 bg-white/5 border rounded-lg focus:ring-2 text-white placeholder-slate-400 transition-all ${
+                validationErrors.identifier
+                  ? 'border-red-500/50 focus:ring-red-500 focus:border-red-500'
+                  : 'border-white/10 focus:ring-sky-500 focus:border-sky-500'
+              }`}
               placeholder="Enter your email or username"
             />
+            {validationErrors.identifier && (
+              <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                </svg>
+                {validationErrors.identifier}
+              </p>
+            )}
           </div>
 
           <div className="relative">
             <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">
               Password
+              <span className="text-xs text-slate-400 font-normal ml-2">
+                (Minimum 3 characters)
+              </span>
             </label>
             <input
               id="password"
@@ -126,7 +290,12 @@ export default function LoginForm() {
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 text-white placeholder-slate-400 transition-all"
+              onBlur={() => setPasswordTouched(true)}
+              className={`w-full px-4 py-3 bg-white/5 border rounded-lg focus:ring-2 text-white placeholder-slate-400 transition-all pr-12 ${
+                validationErrors.password
+                  ? 'border-red-500/50 focus:ring-red-500 focus:border-red-500'
+                  : 'border-white/10 focus:ring-sky-500 focus:border-sky-500'
+              }`}
               placeholder="••••••••"
             />
             <button
@@ -148,6 +317,14 @@ export default function LoginForm() {
                 </svg>
               )}
             </button>
+            {validationErrors.password && (
+              <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
+                </svg>
+                {validationErrors.password}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -234,5 +411,6 @@ export default function LoginForm() {
         </div>
       </div>
     </div>
+    </ClientOnly>
   );
 }

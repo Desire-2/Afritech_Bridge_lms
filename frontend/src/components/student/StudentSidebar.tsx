@@ -4,11 +4,11 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Bookmark } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Bookmark, LogOut } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const iconSize = 20;
 
   const navItems = [
@@ -17,11 +17,10 @@ const StudentSidebar = () => {
     { href: '/myprogress', label: 'My Progress', icon: <GraduationCap size={iconSize} /> },
     { href: '/courses', label: 'Browse Courses', icon: <Bookmark size={iconSize} /> },
     { href: '/opportunities', label: 'Opportunities', icon: <Briefcase size={iconSize} /> },
+    { href: '/forums' , label: 'Forums', icon: <UserCircle size={iconSize} />},
     { href: '/dashboard/profile', label: 'My Profile', icon: <UserCircle size={iconSize} /> },
     { href: '/dashboard/settings', label: 'Settings', icon: <UserCircle size={iconSize} /> },
     { href: '/dashboard/help', label: 'Help & Support', icon: <UserCircle size={iconSize} /> },
-    { href: '/dashboard/logout', label: 'Logout', icon: <UserCircle size={iconSize} /> },
-    {href: '/forums' , label: 'Forums', icon: <UserCircle size={iconSize} />},
   ];
 
   return (
@@ -75,8 +74,19 @@ const StudentSidebar = () => {
         </ul>
       </nav>
 
+      {/* Logout Section */}
+      <div className="mt-auto pt-4">
+        <button
+          onClick={logout}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors hover:bg-red-500/10 hover:text-red-400 text-gray-300 border border-gray-700 hover:border-red-400/30"
+        >
+          <LogOut size={iconSize} className="text-gray-400" />
+          Sign Out
+        </button>
+      </div>
+
       {/* Footer/Copyright */}
-      <div className="mt-auto pt-6 border-t border-gray-800">
+      <div className="mt-4 pt-6 border-t border-gray-800">
         <p className="text-xs text-gray-500 text-center">
           © {new Date().getFullYear()} Afritec Bridge LMS
         </p>

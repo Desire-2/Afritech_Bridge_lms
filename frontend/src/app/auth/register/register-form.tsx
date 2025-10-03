@@ -396,6 +396,19 @@ export default function RegisterForm() {
             </>
           )}
 
+          {/* Login Link */}
+          <div className="mt-6 text-center">
+            <p className="text-slate-300">
+              Already have an account?{' '}
+              <Link 
+                href="/auth/login" 
+                className="text-sky-400 hover:text-sky-300 font-medium transition-colors"
+              >
+                Login here
+              </Link>
+            </p>
+          </div>
+
           <p className="mt-4 text-center text-xs text-slate-400">
             By registering, you agree to our{' '}
             <Link href="/terms" className="text-sky-400 hover:text-sky-300 underline">

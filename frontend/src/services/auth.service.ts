@@ -1,5 +1,6 @@
 import apiClient from '@/lib/api-client';
 import { ApiErrorHandler } from '@/lib/error-handler';
+import { AxiosError } from 'axios';
 import {
   LoginRequest,
   RegisterRequest,
@@ -17,7 +18,8 @@ export class AuthService {
       const response = await apiClient.post(`${this.BASE_PATH}/login`, credentials);
       return response.data;
     } catch (error) {
-      throw ApiErrorHandler.handleError(error);
+      const processedError = ApiErrorHandler.handleError(error);
+      throw processedError;
     }
   }
 

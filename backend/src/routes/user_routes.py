@@ -98,22 +98,80 @@ def login():
     identifier = data.get('identifier') # Can be username or email
     password = data.get('password')
 
-    if not identifier or not password:
-        return jsonify({'message': 'Username/email and password are required'}), 400
+    # Input validation with specific error messages
+    if not identifier and not password:
+        return jsonify({
+            'message': 'Email/username and password are required',
+            'error_type': 'validation_error',
+            'details': {
+                'identifier_missing': True,
+                'password_missing': True
+            }
+        }), 400
+    elif not identifier:
+        return jsonify({
+            'message': 'Email or username is required',
+            'error_type': 'validation_error',
+            'details': {
+                'identifier_missing': True,
+                'password_missing': False
+            }
+        }), 400
+    elif not password:
+        return jsonify({
+            'message': 'Password is required',
+            'error_type': 'validation_error',
+            'details': {
+                'identifier_missing': False,
+                'password_missing': True
+            }
+        }), 400
 
+    # Validate identifier format (basic email check)
+    identifier = identifier.strip()
+    if '@' in identifier:
+        # If it contains @, treat as email and do basic validation
+        if not identifier.count('@') == 1 or not identifier.split('@')[1]:
+            return jsonify({
+                'message': 'Please enter a valid email address',
+                'error_type': 'validation_error',
+                'details': {
+                    'invalid_email_format': True
+                }
+            }), 400
+
+    # Look for user by identifier
     user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
 
-    if user and user.check_password(password):
-        access_token = create_access_token(identity=str(user.id), fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
-        refresh_token = create_refresh_token(identity=str(user.id), expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
+    if not user:
         return jsonify({
-            'message': 'Login successful',
-            'access_token': access_token,
-            'refresh_token': refresh_token,
-            'user': user.to_dict()
-        }), 200
-    else:
-        return jsonify({'message': 'Invalid credentials'}), 401
+            'message': 'No account found with this email or username',
+            'error_type': 'authentication_error',
+            'details': {
+                'user_not_found': True,
+                'invalid_password': False
+            }
+        }), 401
+    
+    if not user.check_password(password):
+        return jsonify({
+            'message': 'Incorrect password. Please try again.',
+            'error_type': 'authentication_error',
+            'details': {
+                'user_not_found': False,
+                'invalid_password': True
+            }
+        }), 401
+
+    # Successful login
+    access_token = create_access_token(identity=str(user.id), fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
+    refresh_token = create_refresh_token(identity=str(user.id), expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
+    return jsonify({
+        'message': 'Login successful',
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+        'user': user.to_dict()
+    }), 200
 
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)

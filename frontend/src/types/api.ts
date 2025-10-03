@@ -269,7 +269,22 @@ export interface PaginatedResponse<T> {
 export interface ApiError {
   message: string;
   status?: number;
-  details?: any;
+  error_type?: 'validation_error' | 'authentication_error' | 'authorization_error' | 'server_error';
+  details?: {
+    // Validation errors
+    identifier_missing?: boolean;
+    password_missing?: boolean;
+    invalid_email_format?: boolean;
+    username_taken?: boolean;
+    email_taken?: boolean;
+    
+    // Authentication errors
+    user_not_found?: boolean;
+    invalid_password?: boolean;
+    
+    // Generic details
+    [key: string]: any;
+  };
 }
 
 // Quiz Progress Types (from backend)
