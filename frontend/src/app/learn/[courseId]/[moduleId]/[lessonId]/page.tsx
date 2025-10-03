@@ -2,16 +2,10 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { CourseService } from '@/services/course.service';
+import { Lesson } from '@/types/api';
 
-interface LessonDetail {
-  id: number;
-  title: string;
-  content_type: "text" | "video" | "quiz";
-  content: string; // For text content or video URL
-  // Add quiz_id or other relevant fields if it's a quiz
-  // Add completion status for the current user
-  is_completed_by_user?: boolean;
-}
+// Remove local interface as we're using the one from types
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
 
@@ -30,7 +24,7 @@ const LessonPage: React.FC = () => {
   const lessonId = params?.lessonId as string;
   const { token } = useAuth();
 
-  const [lesson, setLesson] = useState<LessonDetail | null>(null);
+  const [lesson, setLesson] = useState<Lesson | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -48,15 +42,7 @@ const LessonPage: React.FC = () => {
       setError(null);
       setCompletionMessage(null);
       try {
-        // Adjust API endpoint as per your backend structure
-        const response = await fetch(`${API_URL}/courses/${courseId}/modules/${moduleId}/lessons/${lessonId}`, {
-          headers: token ? { "Authorization": `Bearer ${token}` } : {},
-        });
-        if (!response.ok) {
-          if (response.status === 404) throw new Error("Lesson not found.");
-          throw new Error("Failed to fetch lesson details.");
-        }
-        const data: LessonDetail = await response.json();
+        const data = await CourseService.getLesson(Number(lessonId));
         setLesson(data);
       } catch (err: any) {
         setError(err.message || "An unexpected error occurred.");

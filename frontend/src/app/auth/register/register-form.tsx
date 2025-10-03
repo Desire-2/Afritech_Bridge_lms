@@ -4,6 +4,21 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { CheckCircle, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react';
+import { 
+  registerSchema, 
+  handleFormSubmission, 
+  getFieldError, 
+  hasFieldError 
+} from '@/lib/form-validation';
+import { 
+  Form, 
+  FormField, 
+  SubmitButton, 
+  ErrorAlert, 
+  SuccessAlert 
+} from '@/components/ui/form-components';
+import { useFormSubmission } from '@/hooks/use-api';
+import { AuthService } from '@/services/auth.service';
 
 const Input = ({ error, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { error?: string }) => {
   const [show, setShow] = useState(false);
@@ -180,25 +195,13 @@ export default function RegisterForm() {
     setServerError('');
     
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001'}/api/v1/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username: formData.username,
-          email: formData.email,
-          password: formData.password,
-          first_name: formData.firstName,
-          last_name: formData.lastName,
-        }),
+      await AuthService.register({
+        username: formData.username,
+        email: formData.email,
+        password: formData.password,
+        first_name: formData.firstName,
+        last_name: formData.lastName,
       });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        throw new Error((data as any).message || 'Registration failed');
-      }
       
       // Registration successful, redirect to login
       router.push('/auth/login?registered=true');

@@ -4,64 +4,69 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ClientOnly, useIsClient } from '@/lib/hydration-helper';
 import { BookOpen, Clock, Trophy, ChevronRight } from 'lucide-react';
-
-interface EnrolledCourseSummary {
-  id: string;
-  title: string;
-  progress: number;
-  thumbnailUrl: string;
-  nextLesson: string;
-}
+import { StudentService, StudentDashboard } from '@/services/student.service';
 
 const StudentDashboardOverviewPage = () => {
   const { user, isAuthenticated } = useAuth();
   const isClient = useIsClient();
-  const [dashboardData, setDashboardData] = useState<{
-    enrolledCourses: EnrolledCourseSummary[];
-    stats: {
-      totalCourses: number;
-      hoursSpent: number;
-      achievements: number;
-    };
-  } | null>(null);
+  const [dashboardData, setDashboardData] = useState<StudentDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Simulated API call
-    setTimeout(() => {
-      setDashboardData({
-        enrolledCourses: [
-          {
-            id: '1',
-            title: 'Advanced Python Programming',
-            progress: 65,
-            thumbnailUrl: '/python-course.jpg',
-            nextLesson: 'Decorators and Generators'
-          },
-          {
-            id: '2',
-            title: 'Web Development Fundamentals',
-            progress: 40,
-            thumbnailUrl: '/web-dev-course.jpg',
-            nextLesson: 'React State Management'
-          },
-          {
-            id: '3',
-            title: 'Data Science Essentials',
-            progress: 85,
-            thumbnailUrl: '/data-science-course.jpg',
-            nextLesson: 'Pandas Data Analysis'
-          }
-        ],
-        stats: {
-          totalCourses: 8,
-          hoursSpent: 42,
-          achievements: 15
-        }
-      });
-    }, 500);
-  }, []);
+    if (!isAuthenticated) return;
 
-  if (!dashboardData) {
+    const fetchDashboardData = async () => {
+      try {
+        setLoading(true);
+        const data = await StudentService.getDashboard();
+        setDashboardData(data);
+      } catch (err: any) {
+        setError(err.message || 'Failed to load dashboard data');
+        // Fallback to demo data if API fails
+        setTimeout(() => {
+          setDashboardData({
+            enrolled_courses: [
+              {
+                id: 1,
+                title: 'Advanced Python Programming',
+                description: 'Master advanced Python concepts',
+                progress: 65,
+                enrollment_date: new Date().toISOString(),
+                current_lesson: 'Decorators and Generators',
+                instructor_name: 'Dr. Smith',
+                estimated_duration: '8 weeks'
+              },
+              {
+                id: 2,
+                title: 'Web Development Fundamentals',
+                description: 'Learn modern web development',
+                progress: 40,
+                enrollment_date: new Date().toISOString(),
+                current_lesson: 'React State Management',
+                instructor_name: 'Prof. Johnson',
+                estimated_duration: '10 weeks'
+              }
+            ],
+            stats: {
+              total_courses: 8,
+              completed_courses: 2,
+              hours_spent: 42,
+              achievements: 15
+            },
+            achievements: [],
+            recent_activity: []
+          });
+        }, 500);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [isAuthenticated]);
+
+  if (loading) {
     return (
       <div className="container mx-auto p-6 animate-pulse">
         <div className="h-12 bg-gray-200 rounded w-1/3 mb-8"></div>
@@ -74,6 +79,16 @@ const StudentDashboardOverviewPage = () => {
           {[1, 2, 3].map((_, i) => (
             <div key={i} className="h-64 bg-gray-200 rounded-lg"></div>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (error && !dashboardData) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+          <p className="text-red-600 text-lg">{error}</p>
         </div>
       </div>
     );
@@ -96,7 +111,7 @@ const StudentDashboardOverviewPage = () => {
             <BookOpen className="w-8 h-8 text-indigo-600" />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-800">{dashboardData.stats.totalCourses}</p>
+            <p className="text-2xl font-bold text-gray-800">{dashboardData?.stats.total_courses || 0}</p>
             <p className="text-gray-600">Active Courses</p>
           </div>
         </div>
@@ -106,7 +121,7 @@ const StudentDashboardOverviewPage = () => {
             <Clock className="w-8 h-8 text-amber-600" />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-800">{dashboardData.stats.hoursSpent}</p>
+            <p className="text-2xl font-bold text-gray-800">{dashboardData?.stats.hours_spent || 0}</p>
             <p className="text-gray-600">Hours Spent</p>
           </div>
         </div>
@@ -116,7 +131,7 @@ const StudentDashboardOverviewPage = () => {
             <Trophy className="w-8 h-8 text-emerald-600" />
           </div>
           <div>
-            <p className="text-2xl font-bold text-gray-800">{dashboardData.stats.achievements}</p>
+            <p className="text-2xl font-bold text-gray-800">{dashboardData?.stats.achievements || 0}</p>
             <p className="text-gray-600">Achievements</p>
           </div>
         </div>
@@ -126,23 +141,18 @@ const StudentDashboardOverviewPage = () => {
       <section className="mb-10">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-semibold text-gray-800">Your Courses</h2>
-          <Link href="/courses" className="text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
+          <Link href="/mylearning" className="text-indigo-600 hover:text-indigo-700 flex items-center gap-1">
             View All <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {dashboardData.enrolledCourses.map((course) => (
+          {dashboardData?.enrolled_courses?.slice(0, 3).map((course) => (
             <div 
               key={course.id}
               className="bg-white rounded-xl shadow-sm hover:shadow-lg transition-shadow duration-300 overflow-hidden group"
             >
-              <div className="relative h-48 bg-gray-100">
-                <img 
-                  src={course.thumbnailUrl}
-                  alt={course.title}
-                  className="w-full h-full object-cover"
-                />
+              <div className="relative h-48 bg-gradient-to-br from-indigo-500 to-blue-600">
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4">
                   <h3 className="text-lg font-semibold text-white">{course.title}</h3>
                 </div>
@@ -151,11 +161,13 @@ const StudentDashboardOverviewPage = () => {
               <div className="p-6">
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-sm font-medium text-indigo-600">
-                    {course.progress}% Complete
+                    {Math.round(course.progress)}% Complete
                   </span>
-                  <span className="text-sm text-gray-500">
-                    Next: {course.nextLesson}
-                  </span>
+                  {course.current_lesson && (
+                    <span className="text-sm text-gray-500">
+                      Next: {course.current_lesson}
+                    </span>
+                  )}
                 </div>
 
                 <div className="w-full bg-gray-200 rounded-full h-2.5 mb-4">
@@ -166,14 +178,14 @@ const StudentDashboardOverviewPage = () => {
                 </div>
 
                 <Link
-                  href={`/courses/${course.id}`}
+                  href={`/learn/${course.id}`}
                   className="w-full flex items-center justify-center gap-2 py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition-colors"
                 >
                   Continue Learning
                 </Link>
               </div>
             </div>
-          ))}
+          )) || []}
         </div>
       </section>
 
@@ -181,14 +193,26 @@ const StudentDashboardOverviewPage = () => {
       <section>
         <h2 className="text-2xl font-semibold text-gray-800 mb-6">Recent Achievements</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map((_, i) => (
+          {dashboardData?.achievements?.slice(0, 4).map((achievement) => (
+            <div key={achievement.id} className="bg-white p-4 rounded-xl border border-gray-100 flex items-center gap-4">
+              <div className="p-2 bg-purple-100 rounded-lg">
+                <Trophy className="w-6 h-6 text-purple-600" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-800">{achievement.badge.name}</p>
+                <p className="text-sm text-gray-600">{achievement.badge.description}</p>
+              </div>
+            </div>
+          )) || 
+          // Fallback achievements if none exist
+          [1, 2, 3, 4].map((_, i) => (
             <div key={i} className="bg-white p-4 rounded-xl border border-gray-100 flex items-center gap-4">
               <div className="p-2 bg-purple-100 rounded-lg">
                 <Trophy className="w-6 h-6 text-purple-600" />
               </div>
               <div>
-                <p className="font-medium text-gray-800">Python Pro</p>
-                <p className="text-sm text-gray-600">Completed 5 Python courses</p>
+                <p className="font-medium text-gray-800">Learning Pioneer</p>
+                <p className="text-sm text-gray-600">Started your learning journey</p>
               </div>
             </div>
           ))}

@@ -3,6 +3,7 @@ import React, { useState, useEffect, FormEvent } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import ProtectedLayout from "@/app/dashboard/layout"; // Assuming layout is in app/dashboard
 import Link from "next/link";
+import { AuthService } from '@/services/auth.service';
 
 // Basic UI components (replace with your actual UI library, e.g., shadcn/ui)
 const Card = ({ children, title }: { children: React.ReactNode; title?: string }) => (
@@ -98,22 +99,10 @@ const UserProfilePage: React.FC = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/users/me`, { // Assuming /users/me is also for updates
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(profileData),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setProfileData(data); // Update with response from server
-        setIsEditing(false);
-        await fetchUserProfile(); // Refresh user in AuthContext
-      } else {
-        throw new Error(data.message || "Failed to update profile.");
-      }
+      const updatedProfile = await AuthService.updateProfile(profileData);
+      setProfileData(updatedProfile);
+      setIsEditing(false);
+      await fetchUserProfile(); // Refresh user in AuthContext
     } catch (err: any) {
       setError(err.message);
     } finally {

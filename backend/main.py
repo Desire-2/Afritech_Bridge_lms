@@ -10,13 +10,18 @@ from datetime import timedelta
 import logging
 
 from src.models.user_models import db, User, Role
-from src.models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission
+from src.models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
 from src.models.opportunity_models import Opportunity # Import Opportunity model
+from src.models.student_models import (
+    LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
+    Assignment, AssignmentSubmission, StudentBookmark, StudentForum, ForumPost
+) # Import student models
 from src.utils.email_utils import mail # Import the mail instance
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
-from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp
+from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
 from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
+from src.routes.student_routes import student_bp # Import student blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -40,7 +45,7 @@ if os.environ.get('FLASK_ENV') == 'production':
 else:
     # In development, allow all origins with full configuration
     CORS(app, 
-         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:5173", "http://192.168.116.116:3000"], 
+         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3005", "http://localhost:5173", "http://192.168.133.116:3000", "http://192.168.133.116:3001", "http://192.168.133.116:3002", "http://192.168.133.116:3005"], 
          methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
          allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
          expose_headers=["Content-Type", "Authorization"],
@@ -129,7 +134,9 @@ app.register_blueprint(lesson_bp)
 app.register_blueprint(enrollment_bp)
 app.register_blueprint(quiz_bp)
 app.register_blueprint(submission_bp)
+app.register_blueprint(announcement_bp)
 app.register_blueprint(opportunity_bp) # Register opportunity blueprint
+app.register_blueprint(student_bp) # Register student blueprint
 
 with app.app_context():
     db.create_all()

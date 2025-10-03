@@ -2,18 +2,8 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import ProtectedLayout from "@/app/dashboard/layout"; // Assuming layout is in app/dashboard
-// Define the shape of a course object
-interface Course {
-  id: number;
-  title: string;
-  description: string;
-  instructor_id: number; // Or an instructor object if you join in backend
-  // Add other course properties like cover_image_url, category, etc.
-  instructor_name?: string; // Example if you fetch instructor details separately or join
-}
-
-// API base URL - should be in an environment variable
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+import { CourseService } from '@/services/course.service';
+import { Course } from '@/types/api';
 
 // Basic UI components (replace with your actual UI library, e.g., shadcn/ui)
 const CourseCard: React.FC<{ course: Course }> = ({ course }) => (
@@ -50,12 +40,8 @@ const CoursesPage: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${API_URL}/courses`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch courses');
-        }
-        const data = await response.json();
-        setCourses(data.courses || data); // Adjust based on your API response structure
+        const coursesData = await CourseService.getAllCourses();
+        setCourses(coursesData);
       } catch (err: any) {
         setError(err.message || 'An unexpected error occurred.');
       } finally {

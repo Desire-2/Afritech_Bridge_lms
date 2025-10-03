@@ -2,20 +2,8 @@
 import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation"; // For accessing route parameters
 import Link from "next/link";
-
-// Define the shape of an opportunity object (can be more detailed)
-interface Opportunity {
-  id: number;
-  title: string;
-  description: string;
-  long_description?: string; // Assuming a more detailed description field
-  company_name?: string;
-  location?: string;
-  opportunity_type?: string; // e.g., Job, Internship, Scholarship
-  application_deadline?: string;
-  application_link?: string;
-  // Add other relevant fields like date_posted, requirements, etc.
-}
+import { OpportunityService } from '@/services/opportunity.service';
+import { Opportunity } from '@/types/api';
 
 // API base URL - should be in an environment variable
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
@@ -50,16 +38,8 @@ const OpportunityDetailPage: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${API_URL}/opportunities/${opportunityId}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error("Opportunity not found.");
-          } else {
-            throw new Error("Failed to fetch opportunity details.");
-          }
-        }
-        const data = await response.json();
-        setOpportunity(data); // Assuming API returns the opportunity object directly
+        const opportunityData = await OpportunityService.getOpportunity(Number(opportunityId));
+        setOpportunity(opportunityData);
       } catch (err: any) {
         setError(err.message || "An unexpected error occurred.");
       } finally {
@@ -106,8 +86,8 @@ const OpportunityDetailPage: React.FC = () => {
             <div className="px-4 py-5 sm:px-6">
               <h1 className="text-3xl font-bold text-gray-900">{opportunity.title}</h1>
               <p className="mt-2 text-sm text-gray-500">
-                {opportunity.company_name && (
-                  <span className="font-medium">{opportunity.company_name}</span>
+                {opportunity.organization && (
+                  <span className="font-medium">{opportunity.organization}</span>
                 )}
                 {opportunity.location && (
                   <span className="ml-2">({opportunity.location})</span>
@@ -122,7 +102,7 @@ const OpportunityDetailPage: React.FC = () => {
             <div className="border-t border-gray-200 px-4 py-5 sm:p-6">
               <h2 className="text-xl font-semibold text-gray-800 mb-3">Opportunity Details</h2>
               <div className="prose max-w-none text-gray-700 whitespace-pre-wrap mb-6">
-                {opportunity.long_description || opportunity.description}
+                {opportunity.description}
               </div>
 
               {opportunity.application_deadline && (
@@ -131,16 +111,16 @@ const OpportunityDetailPage: React.FC = () => {
                 </p>
               )}
 
-              {opportunity.application_link && (
+              {opportunity.application_url && (
                 <div className="mt-6">
-                  <Button 
-                    href={opportunity.application_link} 
+                  <a 
+                    href={opportunity.application_url} 
                     target="_blank" 
                     rel="noopener noreferrer"
-                    variant="primary"
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                   >
                     Apply Now
-                  </Button>
+                  </a>
                 </div>
               )}
 

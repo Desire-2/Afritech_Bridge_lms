@@ -78,8 +78,8 @@ def login():
     user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
 
     if user and user.check_password(password):
-        access_token = create_access_token(identity=user.id, fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
-        refresh_token = create_refresh_token(identity=user.id, expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
+        access_token = create_access_token(identity=str(user.id), fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
+        refresh_token = create_refresh_token(identity=str(user.id), expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
         return jsonify({
             'message': 'Login successful',
             'access_token': access_token,

@@ -25,7 +25,7 @@ class Course(db.Model):
     def __repr__(self):
         return f'<Course {self.title}>'
 
-    def to_dict(self, include_modules=False):
+    def to_dict(self, include_modules=False, include_announcements=False):
         data = {
             'id': self.id,
             'title': self.title,
@@ -41,6 +41,8 @@ class Course(db.Model):
         }
         if include_modules:
             data['modules'] = [module.to_dict() for module in self.modules]
+        if include_announcements:
+            data['announcements'] = [ann.to_dict() for ann in self.announcements.order_by(Announcement.created_at.desc())]
         return data
 
 class Module(db.Model):
@@ -232,5 +234,33 @@ class Submission(db.Model):
             'student_username': self.student.username if self.student else None,
             'quiz_title': self.quiz.title if self.quiz else None,
             'lesson_title': self.lesson.title if self.lesson else None
+        }
+
+class Announcement(db.Model):
+    __tablename__ = 'announcements'
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
+    instructor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    course = db.relationship('Course', backref=db.backref('announcements', lazy='dynamic', cascade="all, delete-orphan"))
+    instructor = db.relationship('User', backref=db.backref('announcements', lazy='dynamic'))
+
+    def __repr__(self):
+        return f'<Announcement {self.title}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'course_id': self.course_id,
+            'instructor_id': self.instructor_id,
+            'title': self.title,
+            'content': self.content,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+            'instructor_name': f"{self.instructor.first_name} {self.instructor.last_name}" if self.instructor else None
         }
 

@@ -5,7 +5,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role # For role checking
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
 
 # Helper for role checking (decorator)
 from functools import wraps
@@ -30,6 +30,7 @@ lesson_bp = Blueprint("lesson_bp", __name__, url_prefix="/api/v1/lessons")
 enrollment_bp = Blueprint("enrollment_bp", __name__, url_prefix="/api/v1/enrollments")
 quiz_bp = Blueprint("quiz_bp", __name__, url_prefix="/api/v1/quizzes")
 submission_bp = Blueprint("submission_bp", __name__, url_prefix="/api/v1/submissions")
+announcement_bp = Blueprint("announcement_bp", __name__, url_prefix="/api/v1/announcements")
 
 # --- Course Routes ---
 @course_bp.route("", methods=["POST"])
@@ -165,6 +166,37 @@ def unpublish_course(course_id):
     course.is_published = False
     db.session.commit()
     return jsonify({"message": "Course unpublished", "course": course.to_dict()}), 200
+
+@course_bp.route("/<int:course_id>/instructor-details", methods=["GET"])
+@role_required(["admin", "instructor"])
+def get_course_instructor_details(course_id):
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to view details for this course"}), 403
+
+    # Get enrolled students with progress
+    enrollments = Enrollment.query.filter_by(course_id=course_id).all()
+    enrolled_students = []
+    for enrollment in enrollments:
+        student_data = {
+            'id': enrollment.student.id,
+            'name': f"{enrollment.student.first_name} {enrollment.student.last_name}",
+            'username': enrollment.student.username,
+            'progress': enrollment.progress * 100,  # Convert to percentage
+            'enrollment_date': enrollment.enrollment_date.isoformat(),
+            'completed_at': enrollment.completed_at.isoformat() if enrollment.completed_at else None
+        }
+        enrolled_students.append(student_data)
+
+    # Get course data with modules and announcements
+    course_data = course.to_dict(include_modules=True, include_announcements=True)
+    course_data['enrolled_students'] = enrolled_students
+    course_data['enrollment_count'] = len(enrolled_students)
+
+    return jsonify(course_data), 200
 
 # --- Module Routes (nested under courses for creation) ---
 @course_bp.route("/<int:course_id>/modules", methods=["POST"])
@@ -352,3 +384,86 @@ def update_lesson(lesson_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Could not update lesson", "error": str(e)}), 500
+
+# --- Announcement Routes ---
+@course_bp.route("/<int:course_id>/announcements", methods=["POST"])
+@role_required(["admin", "instructor"])
+def create_announcement_for_course(course_id):
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to create announcements for this course"}), 403
+
+    data = request.get_json()
+    try:
+        new_announcement = Announcement(
+            course_id=course_id,
+            instructor_id=current_user_id,
+            title=data["title"],
+            content=data["content"]
+        )
+        db.session.add(new_announcement)
+        db.session.commit()
+        return jsonify(new_announcement.to_dict()), 201
+    except KeyError as e:
+        return jsonify({"message": f"Missing field: {e}"}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not create announcement", "error": str(e)}), 500
+
+@course_bp.route("/<int:course_id>/announcements", methods=["GET"])
+def get_announcements_for_course(course_id):
+    course = Course.query.get_or_404(course_id)
+    if not course.is_published:
+        try:
+            current_user_id = get_jwt_identity()
+            user = User.query.get(current_user_id)
+            if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
+                return jsonify({"message": "Course not found or not published"}), 404
+        except Exception:
+             return jsonify({"message": "Course not found or not published"}), 404
+
+    announcements = Announcement.query.filter_by(course_id=course_id).order_by(Announcement.created_at.desc()).all()
+    return jsonify([ann.to_dict() for ann in announcements]), 200
+
+@announcement_bp.route("/<int:announcement_id>", methods=["PUT"])
+@role_required(["admin", "instructor"])
+def update_announcement(announcement_id):
+    announcement = Announcement.query.get_or_404(announcement_id)
+    course = Course.query.get_or_404(announcement.course_id)
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to update this announcement"}), 403
+
+    data = request.get_json()
+    try:
+        announcement.title = data.get("title", announcement.title)
+        announcement.content = data.get("content", announcement.content)
+        db.session.commit()
+        return jsonify(announcement.to_dict()), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not update announcement", "error": str(e)}), 500
+
+@announcement_bp.route("/<int:announcement_id>", methods=["DELETE"])
+@role_required(["admin", "instructor"])
+def delete_announcement(announcement_id):
+    announcement = Announcement.query.get_or_404(announcement_id)
+    course = Course.query.get_or_404(announcement.course_id)
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to delete this announcement"}), 403
+
+    try:
+        db.session.delete(announcement)
+        db.session.commit()
+        return jsonify({"message": "Announcement deleted successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not delete announcement", "error": str(e)}), 500

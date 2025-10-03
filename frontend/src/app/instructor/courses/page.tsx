@@ -1,165 +1,718 @@
-"use client";
+"use client";"use client";"use client";"use client";"use client";"use client";"use client";
 
-import React, { useContext, useEffect, useState } from 'react';
+
+
+import React from 'react';
+
 import Link from 'next/link';
-import { useParams } from 'next/navigation'; // To get courseId
-import { AuthContext } from '@/contexts/AuthContext';
 
-// Placeholder types
-interface CourseDetailsInstructorView {
-  id: string;
-  title: string;
-  description: string;
-  instructorName: string;
-  category: string;
-  status: 'Published' | 'Draft';
-  modules: Array<{ id: string; title: string; lessonCount: number }>;
-  enrolledStudents: Array<{ id: string; name: string; progress: number }>;
-  announcements: Array<{ id: string; title: string; createdAt: string }>;
-}
+import { useInstructorCourses } from '@/hooks/use-instructor-courses';import React from 'react';
 
-// Placeholder data - replace with API call to /api/instructor/courses/<course_id>/details
-const placeholderCourseDetails: CourseDetailsInstructorView = {
-  id: 'crs001',
-  title: 'Introduction to Python Programming',
-  description: 'A comprehensive introduction to Python for beginners, covering fundamental concepts, data structures, and an introduction to object-oriented programming.',
-  instructorName: 'Dr. Ada Lovelace',
-  category: 'Programming',
-  status: 'Published',
-  modules: [
-    { id: 'mod01', title: 'Module 1: Getting Started', lessonCount: 5 },
-    { id: 'mod02', title: 'Module 2: Data Types and Variables', lessonCount: 7 },
-    { id: 'mod03', title: 'Module 3: Control Flow', lessonCount: 6 },
-  ],
-  enrolledStudents: [
-    { id: 'std001', name: 'Alice Wonderland', progress: 75 },
-    { id: 'std002', name: 'Bob The Builder', progress: 50 },
-    { id: 'std003', name: 'Charlie Brown', progress: 90 },
-  ],
-  announcements: [
-    { id: 'ann001', title: 'Welcome to the Course!', createdAt: '2023-01-10T10:00:00Z' },
-    { id: 'ann002', title: 'Module 1 Quiz Next Week', createdAt: '2023-01-15T14:00:00Z' },
-  ],
+
+
+const InstructorCoursesPage = () => {import Link from 'next/link';
+
+  const { courses, loading, error } = useInstructorCourses();
+
+import { useCourses } from '@/hooks/use-courses';import React from 'react';
+
+  if (loading) {
+
+    return (
+
+      <div className="flex items-center justify-center min-h-screen">
+
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>interface Course {import Link from 'next/link';
+
+      </div>
+
+    );  id: number;
+
+  }
+
+  title: string;import { useCourses } from '@/hooks/use-courses';import React from 'react';
+
+  if (error) {
+
+    return (  description: string;
+
+      <div className="max-w-4xl mx-auto px-4 py-8">
+
+        <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-md p-4">  instructor_name?: string;
+
+          <div className="flex">
+
+            <div className="flex-shrink-0">  instructor_id: number;
+
+              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />  is_published: boolean;interface Course {import Link from 'next/link';
+
+              </svg>
+
+            </div>  enrollment_count?: number;
+
+            <div className="ml-3">
+
+              <h3 className="text-sm font-medium text-red-800 dark:text-red-400">Error Loading Courses</h3>  created_at: string;  id: number;
+
+              <div className="mt-2 text-sm text-red-700 dark:text-red-300">
+
+                <p>{error}</p>  updated_at: string;
+
+                <p className="mt-1 text-xs">Please ensure you are logged in with instructor privileges.</p>
+
+              </div>}  title: string;import { useCourses } from '@/hooks/use-courses';import React from 'react';
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>const CoursesPage = () => {  description: string;
+
+    );
+
+  }  const { courses, loading, error } = useCourses();
+
+
+
+  return (  instructor_name?: string;
+
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+      <div className="flex justify-between items-center mb-8">  if (loading) {
+
+        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>
+
+        <Link href="/instructor/courses/create" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">    return (  instructor_id: number;
+
+          Create New Course
+
+        </Link>      <div className="flex items-center justify-center min-h-screen">
+
+      </div>
+
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>  is_published: boolean;const CoursesPage = () => {import Link from 'next/link';
+
+      {courses.length === 0 ? (
+
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">      </div>
+
+          <p className="text-slate-600 dark:text-slate-400 mb-4">
+
+            You haven't created any courses yet. Start by creating your first course.    );  enrollment_count?: number;
+
+          </p>
+
+          <Link href="/instructor/courses/create" className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">  }
+
+            Create Your First Course
+
+          </Link>  created_at: string;  const { courses, loading, error } = useCourses();
+
+        </div>
+
+      ) : (  if (error) {
+
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+
+          {courses.map((course) => (    return (  updated_at: string;
+
+            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">
+
+              <div className="flex justify-between items-start mb-4">      <div className="max-w-4xl mx-auto px-4 py-8">
+
+                <h3 className="text-xl font-semibold text-slate-900 dark:text-white line-clamp-2">
+
+                  {course.title}        <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-md p-4 max-w-md mx-auto">}import { useCourses } from '@/hooks/use-courses';import React from 'react';import React, { useContext, useEffect, useState } from 'react';
+
+                </h3>
+
+                <span className={`px-2 py-1 text-xs font-medium rounded-full ${          <div className="flex">
+
+                  course.is_published 
+
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'             <div className="flex-shrink-0">
+
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+
+                }`}>              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+
+                  {course.is_published ? 'Published' : 'Draft'}
+
+                </span>                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />const CoursesPage = () => {  if (loading) {
+
+              </div>
+
+                            </svg>
+
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">
+
+                {course.description}            </div>  const { courses, loading, error } = useCourses();
+
+              </p>
+
+                          <div className="ml-3">
+
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">
+
+                <span>              <h3 className="text-sm font-medium text-red-800 dark:text-red-400">Error Loading Courses</h3>    return (
+
+                  Students enrolled: {course.enrollment_count || 0}
+
+                </span>              <div className="mt-2 text-sm text-red-700 dark:text-red-300">
+
+              </div>
+
+                              <p>{error}</p>  if (loading) {
+
+              <div className="flex space-x-2">
+
+                <Link href={`/instructor/courses/${course.id}`} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">              </div>
+
+                  Manage
+
+                </Link>            </div>    return (      <div className="flex items-center justify-center min-h-screen">
+
+                <Link href={`/courses/${course.id}`} className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">
+
+                  View          </div>
+
+                </Link>
+
+              </div>        </div>      <div className="flex items-center justify-center min-h-screen">
+
+            </div>
+
+          ))}      </div>
+
+        </div>
+
+      )}    );        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>const CoursesPage = () => {import Link from 'next/link';import Link from 'next/link';
+
+    </div>
+
+  );  }
+
 };
 
-const InstructorCourseDetailsPage = () => {
-  const params = useParams();
-  const courseId = params.courseId as string;
-  const [courseDetails, setCourseDetails] = useState<CourseDetailsInstructorView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const authContext = useContext(AuthContext);
-
-  useEffect(() => {
-    if (!courseId || !authContext?.token) return;
-
-    const fetchCourseDetails = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Replace with actual API call: GET /api/instructor/courses/${courseId}/details
-        // const response = await fetch(`/api/instructor/courses/${courseId}/details`, {
-        //   headers: { 'Authorization': `Bearer ${authContext?.token}` },
-        // });
-        // if (!response.ok) throw new Error('Failed to fetch course details');
-        // const data = await response.json();
-        // setCourseDetails(data.course);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
-        // Simulate finding the course or returning a generic one if ID doesn't match placeholder
-        if (courseId === placeholderCourseDetails.id) {
-            setCourseDetails(placeholderCourseDetails);
-        } else {
-            // In a real app, the API would handle 404s
-            setCourseDetails({...placeholderCourseDetails, id: courseId, title: `Course ${courseId} Details (Generic)` });
-        }
-      } catch (err: any) {
-        setError(err.message || 'An error occurred while fetching course details.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCourseDetails();
-  }, [courseId, authContext?.token]);
-
-  if (loading) return <div className="text-center py-10">Loading course details...</div>;
-  if (error) return <div className="text-center py-10 text-red-500">Error: {error}</div>;
-  if (!courseDetails) return <div className="text-center py-10">Course not found.</div>;
-
-  return (
-    <div className="container mx-auto">
-      <div className="mb-6">
-        <Link href="/instructor/courses" legacyBehavior>
-          <a className="text-blue-500 hover:text-blue-700">&larr; Back to My Courses</a>
-        </Link>
       </div>
-      <h1 className="text-3xl font-bold mb-2 text-gray-800">{courseDetails.title}</h1>
-      <p className="text-sm text-gray-500 mb-1">Category: {courseDetails.category} | Status: 
-        <span className={`ml-1 px-2 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${courseDetails.status === 'Published' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-            {courseDetails.status}
-        </span>
-      </p>
-      <p className="text-gray-600 mb-8">{courseDetails.description}</p>
 
-      {/* Tabs for different sections */}
-      {/* For simplicity, sections are shown directly. Could be tabbed UI. */}
+export default InstructorCoursesPage;
+  return (
 
-      {/* Course Content Management Section */}
-      <section className="mb-10">
-        <h2 className="text-2xl font-semibold mb-4 text-gray-700">Course Content (Modules & Lessons)</h2>
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          {courseDetails.modules.map(module => (
-            <div key={module.id} className="mb-3 pb-3 border-b last:border-b-0">
-              <h3 className="text-lg font-medium text-gray-800">{module.title} ({module.lessonCount} lessons)</h3>
-              {/* TODO: Link to edit module/lessons or display lessons */}
-            </div>
-          ))}
-          <button className="mt-4 bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-150">
-            Edit Course Content
-          </button>
-        </div>
-      </section>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">    );      </div>
 
-      {/* Student Roster Section */}
-      <section className="mb-10">
-        <h2 className="text-2xl font-semibold mb-4 text-gray-700">Enrolled Students ({courseDetails.enrolledStudents.length})</h2>
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          <ul className="divide-y divide-gray-200">
-            {courseDetails.enrolledStudents.map(student => (
-              <li key={student.id} className="py-3 flex justify-between items-center">
-                <span>{student.name}</span>
-                <span className="text-sm text-gray-600">Progress: {student.progress}%</span>
-                <Link href={`/instructor/courses/${courseId}/students/${student.id}/progress`} legacyBehavior>
-                  <a className="text-blue-500 hover:underline text-sm">View Progress</a>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
+      <div className="flex justify-between items-center mb-8">
 
-      {/* Announcements Section */}
-      <section>
-        <h2 className="text-2xl font-semibold mb-4 text-gray-700">Announcements</h2>
-        <div className="bg-white p-6 rounded-lg shadow-md">
-          {courseDetails.announcements.map(ann => (
-            <div key={ann.id} className="mb-3 pb-3 border-b last:border-b-0">
-              <h3 className="text-lg font-medium text-gray-800">{ann.title}</h3>
-              <p className="text-xs text-gray-500">Posted: {new Date(ann.createdAt).toLocaleDateString()}</p>
-            </div>
-          ))}
-          <Link href={`/instructor/courses/${courseId}/announcements/new`} legacyBehavior>
-            <a className="mt-4 inline-block bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-150">
-              Create New Announcement
-            </a>
+        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>  }
+
+        <Link href="/instructor/courses/create" legacyBehavior>
+
+          <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">    );  const { courses, loading, error } = useCourses();
+
+            Create New Course
+
+          </a>  if (error) {
+
+        </Link>
+
+      </div>    return (  }
+
+
+
+      {courses.length === 0 ? (      <div className="max-w-4xl mx-auto px-4 py-8">
+
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
+
+          <p className="text-slate-600 dark:text-slate-400 mb-4">        <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-md p-4 max-w-md mx-auto">import { useCourses } from '@/hooks/use-courses';import { AuthContext } from '@/contexts/AuthContext';
+
+            You haven't created any courses yet. Start by creating your first course.
+
+          </p>          <div className="flex">
+
+          <Link href="/instructor/courses/create" legacyBehavior>
+
+            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">            <div className="flex-shrink-0">  if (error) {
+
+              Create Your First Course
+
+            </a>              <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+
           </Link>
-        </div>
-      </section>
 
-      {/* TODO: Add sections for settings, grading overview for this course etc. */}
+        </div>                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />    return (  if (loading) {
+
+      ) : (
+
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">              </svg>
+
+          {courses.map((course) => (
+
+            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">            </div>      <div className="text-center py-10">
+
+              <div className="flex justify-between items-start mb-4">
+
+                <h3 className="text-xl font-semibold text-slate-900 dark:text-white line-clamp-2">            <div className="ml-3">
+
+                  {course.title}
+
+                </h3>              <h3 className="text-sm font-medium text-red-800 dark:text-red-400">Error Loading Courses</h3>        <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-md p-4 max-w-md mx-auto">    return (
+
+                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+
+                  course.is_published               <div className="mt-2 text-sm text-red-700 dark:text-red-300">
+
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
+
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'                <p>{error}</p>          <p className="text-red-800 dark:text-red-200">Error: {error}</p>
+
+                }`}>
+
+                  {course.is_published ? 'Published' : 'Draft'}              </div>
+
+                </span>
+
+              </div>            </div>        </div>      <div className="flex items-center justify-center min-h-screen">
+
+              
+
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">          </div>
+
+                {course.description}
+
+              </p>        </div>      </div>
+
+              
+
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">      </div>
+
+                <span>
+
+                  {course.enrollment_count || 0} students    );    );        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>const CoursesPage = () => {interface Course {
+
+                </span>
+
+                {course.instructor_name && (  }
+
+                  <span>By {course.instructor_name}</span>
+
+                )}  }
+
+              </div>
+
+                return (
+
+              <div className="flex space-x-2">
+
+                <Link href={`/instructor/courses/${course.id}`} legacyBehavior>    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">      </div>
+
+                  <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">
+
+                    Manage      <div className="flex justify-between items-center mb-8">
+
+                  </a>
+
+                </Link>        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>  return (
+
+                <Link href={`/courses/${course.id}`} legacyBehavior>
+
+                  <a className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">        <Link href="/instructor/courses/create" legacyBehavior>
+
+                    View
+
+                  </a>          <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">    <div className="space-y-6">    );  const { courses, loading, error } = useCourses();  id: number;
+
+                </Link>
+
+              </div>            Create New Course
+
+            </div>
+
+          ))}          </a>      <div className="flex justify-between items-center">
+
+        </div>
+
+      )}        </Link>
+
+    </div>
+
+  );      </div>        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>  }
+
+};
+
+
+
+export default CoursesPage;
+      {courses.length === 0 ? (        <Link href="/instructor/courses/create" legacyBehavior>
+
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
+
+          <p className="text-slate-600 dark:text-slate-400 mb-4">          <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">  title: string;
+
+            You haven't created any courses yet. Start by creating your first course.
+
+          </p>            Create New Course
+
+          <Link href="/instructor/courses/create" legacyBehavior>
+
+            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">          </a>  if (error) {
+
+              Create Your First Course
+
+            </a>        </Link>
+
+          </Link>
+
+        </div>      </div>    return (  if (loading) return <div className="text-center py-10">Loading courses...</div>;  description: string;
+
+      ) : (
+
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+
+          {courses.map((course) => (
+
+            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">      {courses.length === 0 ? (      <div className="text-center py-10">
+
+              <div className="flex justify-between items-start mb-4">
+
+                <h3 className="text-xl font-semibold text-slate-900 dark:text-white line-clamp-2">        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
+
+                  {course.title}
+
+                </h3>          <p className="text-slate-600 dark:text-slate-400 mb-4">        <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-md p-4 max-w-md mx-auto">  if (error) return <div className="text-center py-10 text-red-500">Error: {error}</div>;  instructor_name: string;
+
+                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+
+                  course.is_published             You haven't created any courses yet.
+
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' 
+
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'          </p>          <p className="text-red-800 dark:text-red-200">Error: {error}</p>
+
+                }`}>
+
+                  {course.is_published ? 'Published' : 'Draft'}          <Link href="/instructor/courses/create" legacyBehavior>
+
+                </span>
+
+              </div>            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">        </div>  is_published: boolean;
+
+              
+
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">              Create Your First Course
+
+                {course.description}
+
+              </p>            </a>      </div>
+
+              
+
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">          </Link>
+
+                <span>
+
+                  {course.enrollment_count || 0} students        </div>    );  return (  created_at: string;
+
+                </span>
+
+                {course.instructor_name && (      ) : (
+
+                  <span>By {course.instructor_name}</span>
+
+                )}        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">  }
+
+              </div>
+
+                        {courses.map((course) => (
+
+              <div className="flex space-x-2">
+
+                <Link href={`/instructor/courses/${course.id}`} legacyBehavior>            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">    <div className="space-y-6">  enrollment_count?: number;
+
+                  <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">
+
+                    Manage              <div className="flex justify-between items-start mb-3">
+
+                  </a>
+
+                </Link>                <h3 className="text-lg font-semibold text-slate-900 dark:text-white line-clamp-2">  return (
+
+                <Link href={`/courses/${course.id}`} legacyBehavior>
+
+                  <a className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">                  {course.title}
+
+                    View
+
+                  </a>                </h3>    <div className="space-y-6">      <div className="flex justify-between items-center">}
+
+                </Link>
+
+              </div>                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+
+            </div>
+
+          ))}                  course.is_published      <div className="flex justify-between items-center">
+
+        </div>
+
+      )}                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+
+    </div>
+
+  );                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>
+
+};
+
+                }`}>
+
+export default CoursesPage;
+                  {course.is_published ? 'Published' : 'Draft'}        <Link href="/instructor/courses/create" legacyBehavior>
+
+                </span>
+
+              </div>          <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">        <Link href="/instructor/courses/create" legacyBehavior>"use client";
+
+
+
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">            Create New Course
+
+                {course.description}
+
+              </p>          </a>          <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
+
+
+
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">        </Link>
+
+                <span>Created: {new Date(course.created_at).toLocaleDateString()}</span>
+
+                {course.instructor_name && (      </div>            Create New Courseimport React from 'react';
+
+                  <span>By: {course.instructor_name}</span>
+
+                )}
+
+              </div>
+
+      {courses.length === 0 ? (          </a>import Link from 'next/link';
+
+              <div className="flex gap-2">
+
+                <Link href={`/instructor/courses/${course.id}`} legacyBehavior>        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
+
+                  <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">
+
+                    Manage          <p className="text-slate-600 dark:text-slate-400 mb-4">        </Link>import { useCourses } from '@/hooks/use-courses';
+
+                  </a>
+
+                </Link>            You haven't created any courses yet.
+
+                <Link href={`/courses/${course.id}`} legacyBehavior>
+
+                  <a className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">          </p>      </div>
+
+                    View
+
+                  </a>          <Link href="/instructor/courses/create" legacyBehavior>
+
+                </Link>
+
+              </div>            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">const CoursesPage = () => {
+
+            </div>
+
+          ))}              Create Your First Course
+
+        </div>
+
+      )}            </a>      {courses.length === 0 ? (  const { courses, loading, error } = useCourses();
+
+    </div>
+
+  );          </Link>
+
+};
+
+        </div>        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
+
+export default CoursesPage;
+      ) : (
+
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">          <p className="text-slate-600 dark:text-slate-400 mb-4">  if (loading) return <div className="text-center py-10">Loading courses...</div>;
+
+          {courses.map((course) => (
+
+            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">            You haven't created any courses yet.  if (error) return <div className="text-center py-10 text-red-500">Error: {error}</div>;
+
+              <div className="flex justify-between items-start mb-3">
+
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white line-clamp-2">          </p>
+
+                  {course.title}
+
+                </h3>          <Link href="/instructor/courses/create" legacyBehavior>  return (
+
+                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+
+                  course.is_published            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">    <div className="space-y-6">
+
+                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'              Create Your First Course      <div className="flex justify-between items-center">
+
+                }`}>
+
+                  {course.is_published ? 'Published' : 'Draft'}            </a>        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Courses</h1>
+
+                </span>
+
+              </div>          </Link>        <Link href="/instructor/courses/create" legacyBehavior>
+
+
+
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">        </div>          <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
+
+                {course.description}
+
+              </p>      ) : (            Create New Course
+
+
+
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">          </a>
+
+                <span>Created: {new Date(course.created_at).toLocaleDateString()}</span>
+
+                {course.instructor_name && (          {courses.map((course) => (        </Link>
+
+                  <span>By: {course.instructor_name}</span>
+
+                )}            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">      </div>
+
+              </div>
+
+              <div className="flex justify-between items-start mb-3">
+
+              <div className="flex gap-2">
+
+                <Link href={`/instructor/courses/${course.id}`} legacyBehavior>                <h3 className="text-lg font-semibold text-slate-900 dark:text-white line-clamp-2">      {courses.length === 0 ? (
+
+                  <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">
+
+                    Manage                  {course.title}        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
+
+                  </a>
+
+                </Link>                </h3>          <p className="text-slate-600 dark:text-slate-400 mb-4">
+
+                <Link href={`/courses/${course.id}`} legacyBehavior>
+
+                  <a className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium transition-colors">                <span className={`px-2 py-1 text-xs font-medium rounded-full ${            You haven't created any courses yet.
+
+                    View
+
+                  </a>                  course.is_published          </p>
+
+                </Link>
+
+              </div>                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'          <Link href="/instructor/courses/create" legacyBehavior>
+
+            </div>
+
+          ))}                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'            <a className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
+
+        </div>
+
+      )}                }`}>              Create Your First Course
+
+    </div>
+
+  );                  {course.is_published ? 'Published' : 'Draft'}            </a>
+
+};
+
+                </span>          </Link>
+
+export default CoursesPage;
+              </div>        </div>
+
+      ) : (
+
+              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+
+                {course.description}          {courses.map((course) => (
+
+              </p>            <div key={course.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 hover:shadow-md transition-shadow">
+
+              <div className="flex justify-between items-start mb-3">
+
+              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">                <h3 className="text-lg font-semibold text-slate-900 dark:text-white line-clamp-2">
+
+                <span>Created: {new Date(course.created_at).toLocaleDateString()}</span>                  {course.title}
+
+                <span>Instructor: {course.instructor_name}</span>                </h3>
+
+              </div>                <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+
+                  course.is_published
+
+              <div className="flex gap-2">                    ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+
+                <Link href={`/instructor/courses/${course.id}`} legacyBehavior>                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+
+                  <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium">                }`}>
+
+                    Manage                  {course.is_published ? 'Published' : 'Draft'}
+
+                  </a>                </span>
+
+                </Link>              </div>
+
+                <Link href={`/courses/${course.id}`} legacyBehavior>
+
+                  <a className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium">              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4 line-clamp-3">
+
+                    View                {course.description}
+
+                  </a>              </p>
+
+                </Link>
+
+              </div>              <div className="flex justify-between items-center text-sm text-slate-500 dark:text-slate-400 mb-4">
+
+            </div>                <span>Created: {new Date(course.created_at).toLocaleDateString()}</span>
+
+          ))}                <span>Instructor: {course.instructor_name}</span>
+
+        </div>              </div>
+
+      )}
+
+    </div>              <div className="flex gap-2">
+
+  );                <Link href={`/instructor/courses/${course.id}`} legacyBehavior>
+
+};                  <a className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-center py-2 px-3 rounded text-sm font-medium">
+
+                    Manage
+
+export default CoursesPage;                  </a>
+                </Link>
+                <Link href={`/courses/${course.id}`} legacyBehavior>
+                  <a className="flex-1 bg-slate-600 hover:bg-slate-700 text-white text-center py-2 px-3 rounded text-sm font-medium">
+                    View
+                  </a>
+                </Link>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
 
-export default InstructorCourseDetailsPage;
-
+export default CoursesPage;"

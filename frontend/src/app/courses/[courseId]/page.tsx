@@ -3,31 +3,10 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "next/navigation"; // For accessing route parameters
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext"; // To get user and token for enrollment
+import { CourseService } from "@/services/course.service";
+import { Course, Module, Lesson } from "@/types/api";
 
-// Define the shape of a course object (can be more detailed)
-interface Course {
-  id: number;
-  title: string;
-  description: string;
-  long_description?: string; // Assuming a more detailed description field
-  instructor_id: number;
-  instructor_name?: string; // Example
-  modules?: Module[]; // If modules are part of course detail
-  // Add other course properties like cover_image_url, category, learning_objectives, etc.
-}
-
-interface Module {
-  id: number;
-  title: string;
-  description?: string;
-  lessons?: Lesson[];
-}
-
-interface Lesson {
-  id: number;
-  title: string;
-  content_type?: string; // e.g., text, video, quiz
-}
+// Remove local interfaces as they're now imported
 
 // API base URL - should be in an environment variable
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api/v1";
@@ -65,16 +44,8 @@ const CourseDetailPage: React.FC = () => {
       setIsLoading(true);
       setError(null);
       try {
-        const response = await fetch(`${API_URL}/courses/${courseId}`);
-        if (!response.ok) {
-          if (response.status === 404) {
-            throw new Error("Course not found.");
-          } else {
-            throw new Error("Failed to fetch course details.");
-          }
-        }
-        const data = await response.json();
-        setCourse(data); // Assuming API returns the course object directly
+        const courseData = await CourseService.getCourse(Number(courseId));
+        setCourse(courseData);
       } catch (err: any) {
         setError(err.message || "An unexpected error occurred.");
       } finally {
@@ -93,23 +64,11 @@ const CourseDetailPage: React.FC = () => {
     setIsEnrolling(true);
     setEnrollmentMessage(null);
     try {
-      const response = await fetch(`${API_URL}/enrollments`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({ course_id: course.id }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setEnrollmentMessage("Successfully enrolled! You can now access the course content.");
-        // Optionally, update UI to reflect enrollment status (e.g., disable enroll button)
-      } else {
-        throw new Error(data.message || "Enrollment failed. You might already be enrolled or an error occurred.");
-      }
+      await CourseService.enrollInCourse(course.id);
+      setEnrollmentMessage("Successfully enrolled! You can now access the course content.");
+      // Optionally, update UI to reflect enrollment status (e.g., disable enroll button)
     } catch (err: any) {
-      setEnrollmentMessage(err.message);
+      setEnrollmentMessage(err.message || "Enrollment failed. You might already be enrolled or an error occurred.");
     } finally {
       setIsEnrolling(false);
     }
@@ -159,7 +118,7 @@ const CourseDetailPage: React.FC = () => {
             <div className="border-t border-gray-200 px-4 py-5 sm:p-6">
               <h2 className="text-xl font-semibold text-gray-800 mb-3">Course Description</h2>
               <p className="text-gray-700 whitespace-pre-wrap">
-                {course.long_description || course.description}
+                {course.description}
               </p>
 
               {/* Display Modules and Lessons if available */}

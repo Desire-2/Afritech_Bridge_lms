@@ -3,15 +3,9 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { useRouter } from 'next/navigation';
 import { useHydrationFix } from '@/lib/hydration-fix';
 import { jwtDecode } from 'jwt-decode';
-
-interface User {
-  id: number;
-  username: string;
-  email: string;
-  first_name?: string;
-  last_name?: string;
-  role: string;
-}
+import { AuthService } from '@/services/auth.service';
+import { ApiErrorHandler } from '@/lib/error-handler';
+import { User, LoginRequest, RegisterRequest, AuthResponse } from '@/types/api';
 
 interface TokenPayload {
   exp: number;
@@ -29,15 +23,15 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (identifier: string, password: string) => Promise<void>;
-  register: (userData: any) => Promise<void>;
+  register: (userData: RegisterRequest) => Promise<void>;
   logout: () => void;
   fetchUserProfile: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
+  updateProfile: (userData: Partial<User>) => Promise<void>;
+  changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -57,14 +51,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     const initializeAuth = async () => {
-      const storedToken = localStorage.getItem('accessToken');
+      const storedToken = localStorage.getItem('token');
       if (storedToken) {
         setToken(storedToken);
         try {
-          await fetchUserProfile(storedToken);
+          await fetchUserProfile();
           setIsAuthenticated(true);
         } catch (error) {
-          localStorage.removeItem('accessToken');
+          localStorage.removeItem('token');
           localStorage.removeItem('refreshToken');
           setToken(null);
           setUser(null);
@@ -76,9 +70,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     initializeAuth();
   }, []);
 
-  const fetchUserProfile = async (currentToken?: string) => {
-    const activeToken = currentToken || token;
-    if (!activeToken) {
+  const fetchUserProfile = async () => {
+    if (!token) {
       setIsAuthenticated(false);
       setIsLoading(false);
       return;
@@ -86,18 +79,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/users/me`, {
-        headers: { 'Authorization': `Bearer ${activeToken}` },
-      });
-      
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-        setIsAuthenticated(true);
-      } else {
-        throw new Error('Failed to fetch profile');
-      }
+      const userData = await AuthService.getCurrentUser();
+      setUser(userData);
+      setIsAuthenticated(true);
     } catch (error) {
+      console.error('Failed to fetch user profile:', error);
       logout();
       throw error;
     } finally {
@@ -125,65 +111,48 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = async (identifier: string, password: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier, password }),
-      });
+      const authData = await AuthService.login({ identifier, password });
       
-      const data = await response.json() as {
-        message?: string;
-        access_token: string;
-        refresh_token: string;
-        user: User;
-      };
-      
-      if (!response.ok) throw new Error(data.message || 'Login failed');
-
-      // First set the state and local storage
-      localStorage.setItem('accessToken', data.access_token);
-      localStorage.setItem('refreshToken', data.refresh_token);
-      setToken(data.access_token);
-      setUser(data.user);
+      // Store tokens and set state
+      localStorage.setItem('token', authData.access_token);
+      localStorage.setItem('refreshToken', authData.refresh_token);
+      setToken(authData.access_token);
+      setUser(authData.user);
       setIsAuthenticated(true);
       
       // Determine dashboard route based on user role
-      const dashboardRoute = getDashboardByRole(data.user.role);
+      const dashboardRoute = getDashboardByRole(authData.user.role);
       
       // Give the state a moment to properly update before redirecting
       setTimeout(() => {
-        setIsLoading(false); // Ensure loading is false before navigation
+        setIsLoading(false);
         router.push(dashboardRoute);
       }, 300);
-      
-      return; // Early return so we don't hit the finally block yet
     } catch (error) {
       setIsAuthenticated(false);
       setIsLoading(false);
-      throw error;
+      throw ApiErrorHandler.handleError(error);
     }
   };
 
-  const register = async (userData: any) => {
+  const register = async (userData: RegisterRequest) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userData),
-      });
-      
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.message || 'Registration failed');
-      
+      await AuthService.register(userData);
       router.push('/auth/login?registered=true');
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
     } finally {
       setIsLoading(false);
     }
   };
 
   const logout = () => {
-    localStorage.removeItem('accessToken');
+    // Call logout endpoint (fire and forget)
+    AuthService.logout().catch(console.error);
+    
+    // Clear local state
+    localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');
     setToken(null);
     setUser(null);
@@ -196,32 +165,32 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
    * @returns Whether the refresh was successful
    */
   const refreshToken = async (): Promise<boolean> => {
-    const storedRefreshToken = localStorage.getItem('refreshToken');
-    
-    if (!storedRefreshToken) {
-      return false;
-    }
-    
     try {
-      const response = await fetch(`${API_URL}/auth/refresh`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${storedRefreshToken}`
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to refresh token');
-      }
-      
-      const data = await response.json() as { access_token: string };
-      localStorage.setItem('accessToken', data.access_token);
-      setToken(data.access_token);
+      const response = await AuthService.refreshToken();
+      localStorage.setItem('token', response.access_token);
+      setToken(response.access_token);
       return true;
     } catch (error) {
       console.error('Token refresh failed:', error);
+      logout();
       return false;
+    }
+  };
+
+  const updateProfile = async (userData: Partial<User>) => {
+    try {
+      const updatedUser = await AuthService.updateProfile(userData);
+      setUser(updatedUser);
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  };
+
+  const changePassword = async (oldPassword: string, newPassword: string) => {
+    try {
+      await AuthService.changePassword(oldPassword, newPassword);
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
     }
   };
 
@@ -235,7 +204,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       register, 
       logout,
       refreshToken,
-      fetchUserProfile: () => fetchUserProfile() 
+      fetchUserProfile,
+      updateProfile,
+      changePassword
     }}>
       {children}
     </AuthContext.Provider>
