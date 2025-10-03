@@ -68,15 +68,21 @@ if not app.config['SECRET_KEY']:
         raise ValueError("SECRET_KEY must be set in production environment")
 
 # Database configuration
-if env == 'production':
-    # Use PostgreSQL in production (required for Render)
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-    if not app.config['SQLALCHEMY_DATABASE_URI']:
-        raise ValueError("DATABASE_URL must be set in production environment")
-    logger.info("Using PostgreSQL database in production")
+database_url = os.getenv('DATABASE_URL')
+if database_url:
+    # Fix postgres:// to postgresql:// for SQLAlchemy compatibility
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+    logger.info("Using PostgreSQL database from DATABASE_URL")
+elif env == 'production':
+    # In production, require a database URL
+    raise ValueError("DATABASE_URL must be set in production environment")
 else:
     # Use SQLite for development and testing
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite:///instance/afritec_lms_db.db")
+    db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
     logger.info(f"Using SQLite database at {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -138,15 +144,38 @@ app.register_blueprint(announcement_bp)
 app.register_blueprint(opportunity_bp) # Register opportunity blueprint
 app.register_blueprint(student_bp) # Register student blueprint
 
-with app.app_context():
-    db.create_all()
-    if not Role.query.filter_by(name='student').first():
-        db.session.add(Role(name='student'))
-    if not Role.query.filter_by(name='instructor').first():
-        db.session.add(Role(name='instructor'))
-    if not Role.query.filter_by(name='admin').first():
-        db.session.add(Role(name='admin'))
-    db.session.commit()
+def init_database():
+    """Initialize database tables and default roles"""
+    try:
+        with app.app_context():
+            db.create_all()
+            if not Role.query.filter_by(name='student').first():
+                db.session.add(Role(name='student'))
+            if not Role.query.filter_by(name='instructor').first():
+                db.session.add(Role(name='instructor'))
+            if not Role.query.filter_by(name='admin').first():
+                db.session.add(Role(name='admin'))
+            db.session.commit()
+            logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        # In production, we'll initialize the database separately
+        if env != 'production':
+            raise
+
+# Only initialize database when running directly (not during import)
+if __name__ == '__main__':
+    init_database()
+
+@app.route('/init-db', methods=['POST'])
+def init_db_route():
+    """Initialize database for production deployment"""
+    try:
+        init_database()
+        return jsonify({"message": "Database initialized successfully"}), 200
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
