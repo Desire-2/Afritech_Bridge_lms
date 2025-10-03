@@ -87,8 +87,13 @@ if database_url:
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     logger.info("Using PostgreSQL database from DATABASE_URL")
 elif env == 'production':
-    # In production, require a database URL
-    raise ValueError("DATABASE_URL must be set in production environment")
+    # In production, warn but allow fallback to SQLite for initial deployment
+    logger.warning("DATABASE_URL not set in production. Using SQLite fallback.")
+    logger.warning("For production use, please set up PostgreSQL and configure DATABASE_URL")
+    db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
+    logger.info(f"Using SQLite fallback at {app.config['SQLALCHEMY_DATABASE_URI']}")
 else:
     # Use SQLite for development and testing
     db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
