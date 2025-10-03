@@ -129,17 +129,59 @@ python main.py
 
 ## Environment Variables
 
-The following environment variables can be configured:
+The following environment variables can be configured in your `.env` file:
 
+### Core Application Settings
 - `FLASK_ENV`: Set to 'development' or 'production'
-- `SECRET_KEY`: Secret key for Flask
-- `JWT_SECRET_KEY`: Secret key for JWT token generation
+- `SECRET_KEY`: Secret key for Flask (generate with: `python -c "import secrets; print(secrets.token_hex(32))"`)
+- `PORT`: Port to run the application on (set by Render in production)
+
+### Database Configuration
 - `DATABASE_URL`: PostgreSQL connection string (required for production)
 - `SQLALCHEMY_DATABASE_URI`: Database URI (defaults to SQLite in development)
-- `PORT`: Port to run the application on (set by Render in production)
+
+### JWT Authentication
+- `JWT_SECRET_KEY`: Secret key for JWT token generation (generate with: `python -c "import secrets; print(secrets.token_hex(32))"`)
 - `JWT_ACCESS_TOKEN_EXPIRES_HOURS`: Access token expiry in hours (default: 1)
 - `JWT_REFRESH_TOKEN_EXPIRES_DAYS`: Refresh token expiry in days (default: 30)
+
+### Email Configuration (SMTP)
+- `MAIL_SERVER`: SMTP server (default: smtp.gmail.com)
+- `MAIL_PORT`: SMTP port (default: 587)
+- `MAIL_USE_TLS`: Use TLS encryption (default: True)
+- `MAIL_USE_SSL`: Use SSL encryption (default: False)
+- `MAIL_USERNAME`: SMTP username (your email)
+- `MAIL_PASSWORD`: SMTP password (use App Password for Gmail)
+- `MAIL_DEFAULT_SENDER`: Default sender email (default: noreply@afritecbridge.online)
+
+### CORS Configuration
 - `ALLOWED_ORIGINS`: Comma-separated list of allowed CORS origins
+
+### Setting Up Your .env File
+
+1. Copy the example file:
+```bash
+cp .env.example .env
+```
+
+2. Edit the `.env` file with your specific configuration:
+```bash
+nano .env  # or use your preferred editor
+```
+
+3. Generate secure keys:
+```bash
+# For SECRET_KEY
+python -c "import secrets; print(secrets.token_hex(32))"
+
+# For JWT_SECRET_KEY  
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+4. Configure email settings (for Gmail):
+   - Enable 2-factor authentication on your Google account
+   - Generate an App Password: https://myaccount.google.com/apppasswords
+   - Use the App Password as your `MAIL_PASSWORD`
 
 ## Troubleshooting
 

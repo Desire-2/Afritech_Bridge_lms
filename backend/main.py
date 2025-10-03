@@ -4,6 +4,10 @@ import sys
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, send_from_directory, jsonify
 from flask_jwt_extended import JWTManager
 from datetime import timedelta

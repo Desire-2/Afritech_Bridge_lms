@@ -1,0 +1,55 @@
+# Root .gitignore for Afritec Bridge LMS
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Backend specific
+backend/__pycache__/
+backend/*.pyc
+backend/venv/
+backend/venv-new/
+backend/instance/*.db
+backend/instance/*.sqlite
+backend/instance/*.sqlite3
+
+# Node modules (frontend)
+node_modules/
+
+# Production builds
+build/
+dist/
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Cache
+.cache/
+.mypy_cache/
