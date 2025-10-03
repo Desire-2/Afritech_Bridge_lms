@@ -1,7 +1,9 @@
 # Gunicorn configuration file for Afritec Bridge LMS backend
+import os
 
 # Server socket
-bind = "0.0.0.0:$PORT"  # Render will supply the PORT environment variable
+port = os.environ.get('PORT', '5000')
+bind = f"0.0.0.0:{port}"  # Render will supply the PORT environment variable
 workers = 4  # For a small to medium application
 worker_class = "sync"
 worker_connections = 1000
