@@ -36,8 +36,34 @@ def register():
     if not username or not email or not password:
         return jsonify({'message': 'Username, email, and password are required'}), 400
 
-    if User.query.filter_by(username=username).first() or User.query.filter_by(email=email).first():
-        return jsonify({'message': 'User already exists'}), 409
+    # Check for existing username and email separately for better error messages
+    existing_user_by_username = User.query.filter_by(username=username).first()
+    existing_user_by_email = User.query.filter_by(email=email).first()
+    
+    if existing_user_by_username and existing_user_by_email:
+        return jsonify({
+            'message': 'Both username and email are already registered',
+            'details': {
+                'username_taken': True,
+                'email_taken': True
+            }
+        }), 409
+    elif existing_user_by_username:
+        return jsonify({
+            'message': 'Username is already taken',
+            'details': {
+                'username_taken': True,
+                'email_taken': False
+            }
+        }), 409
+    elif existing_user_by_email:
+        return jsonify({
+            'message': 'Email is already registered',
+            'details': {
+                'username_taken': False,
+                'email_taken': True
+            }
+        }), 409
 
     # Default role to 'student' if not specified or if role system is more complex
     student_role = Role.query.filter_by(name='student').first()
@@ -173,22 +199,25 @@ def forgot_password():
     frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
     reset_url = f"{frontend_url}/auth/reset-password?token={token}&email={email}"
     
-    # Send the reset email
-    email_sent = send_password_reset_email(user, reset_url)
+    # Send the reset email (with timeout protection)
+    try:
+        email_sent = send_password_reset_email(user, reset_url)
+    except Exception as e:
+        current_app.logger.error(f"Exception during password reset email for {email}: {str(e)}")
+        email_sent = False
     
-    # Log the outcome for debugging
+    # Always return success for security (don't reveal if user exists)
+    # But log the actual outcome for debugging
     if email_sent:
         current_app.logger.info(f"Password reset email sent to: {email}")
-        return jsonify({
-            'message': 'Password reset instructions have been sent to your email address',
-            'status': 'email_sent'  # This is a hint for the frontend, but still ambiguous
-        }), 200
     else:
         current_app.logger.error(f"Failed to send password reset email to: {email}")
-        return jsonify({
-            'message': 'Failed to send password reset email. Please try again later.',
-            'status': 'email_error'  # This is a hint for the frontend, but still ambiguous
-        }), 500
+    
+    # Always return the same response for security
+    return jsonify({
+        'message': 'If an account with this email exists, password reset instructions have been sent',
+        'status': 'processed'
+    }), 200
 
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():

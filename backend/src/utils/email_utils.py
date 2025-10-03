@@ -18,6 +18,11 @@ def send_email(to, subject, template):
         template: HTML content of the email
     """
     try:
+        # Check if email configuration is available
+        if not current_app.config.get('MAIL_USERNAME') or not current_app.config.get('MAIL_PASSWORD'):
+            logger.warning("Email configuration not complete, skipping email send")
+            return False
+            
         sender = current_app.config['MAIL_DEFAULT_SENDER']
         msg = Message(
             subject,
@@ -25,11 +30,21 @@ def send_email(to, subject, template):
             recipients=[to]
         )
         msg.html = template
-        mail.send(msg)
-        logger.info(f"Email sent to {to} with subject '{subject}'")
-        return True
+        
+        # Set a shorter timeout for email sending to prevent worker timeouts
+        import socket
+        original_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(30)  # 30 second timeout for email
+        
+        try:
+            mail.send(msg)
+            logger.info(f"Email sent to {to} with subject '{subject}'")
+            return True
+        finally:
+            socket.setdefaulttimeout(original_timeout)
+            
     except Exception as e:
-        logger.error(f"Failed to send email: {str(e)}")
+        logger.error(f"Failed to send email to {to}: {str(e)}")
         return False
         
 def send_password_reset_email(user, reset_url):

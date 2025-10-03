@@ -20,13 +20,15 @@ if 'PORT' in os.environ:
 else:
     print("⚠️ No PORT environment variable found, using default 5000")
 
-workers = 4  # For a small to medium application
-worker_class = "sync"
-worker_connections = 1000
-timeout = 60
-keepalive = 2
-
-# Process naming
+workers = 2  # Reduced for memory efficiency on Render's free tier
+worker_class = "sync" 
+worker_connections = 500  # Reduced to prevent memory issues
+timeout = 120  # Increased timeout for slower operations like email sending
+keepalive = 5  # Increased keepalive
+max_requests = 1000  # Restart workers after 1000 requests to prevent memory leaks
+max_requests_jitter = 100  # Add some randomness to worker restarts
+worker_tmp_dir = "/dev/shm"  # Use memory for temporary files (faster on Render)
+preload_app = True  # Preload the application for better memory efficiency# Process naming
 proc_name = "afritec_bridge_lms"
 
 # Server mechanics
