@@ -19,7 +19,6 @@ from src.utils.email_utils import mail # Import the mail instance
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
-from src.routes.student_routes import student_bp # Import student blueprint
 from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
 from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
 from src.routes.course_creation_routes import course_creation_bp # Import course creation blueprint
@@ -72,9 +71,22 @@ if not app.config['SECRET_KEY']:
 # Database configuration
 if env == 'production':
     # Use PostgreSQL in production (required for Render)
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-    if not app.config['SQLALCHEMY_DATABASE_URI']:
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url:
         raise ValueError("DATABASE_URL must be set in production environment")
+    
+    # Fix for SQLAlchemy 2.0+ - ensure proper dialect specification
+    original_url = database_url
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql+psycopg2://', 1)
+        logger.info(f"Transformed database URL from postgres:// to postgresql+psycopg2://")
+    elif database_url.startswith('postgresql://') and '+psycopg2' not in database_url:
+        database_url = database_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+        logger.info(f"Transformed database URL from postgresql:// to postgresql+psycopg2://")
+    else:
+        logger.info("Database URL already has correct format for SQLAlchemy 2.0+")
+    
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     logger.info("Using PostgreSQL database in production")
 else:
     # Use SQLite for development and testing
@@ -137,7 +149,6 @@ app.register_blueprint(enrollment_bp)
 app.register_blueprint(quiz_bp)
 app.register_blueprint(submission_bp)
 app.register_blueprint(announcement_bp)
-app.register_blueprint(student_bp) # Register student blueprint
 app.register_blueprint(opportunity_bp) # Register opportunity blueprint
 app.register_blueprint(instructor_bp) # Register instructor blueprint
 app.register_blueprint(course_creation_bp) # Register course creation blueprint
