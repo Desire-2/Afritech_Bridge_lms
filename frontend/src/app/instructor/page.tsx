@@ -8,7 +8,7 @@ export default function InstructorIndexPage() {
 
   useEffect(() => {
     // Redirect to the instructor dashboard with correct case
-    router.push('/instructor/Dashboard');
+    router.push('/instructor/dashboard');
   }, [router]);
 
   return (

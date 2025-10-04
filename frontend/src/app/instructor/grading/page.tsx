@@ -1,151 +1,252 @@
 "use client";
 
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AuthContext } from '@/contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { useSearchParams } from 'next/navigation';
+import CourseCreationService from '@/services/course-creation.service';
+import { Course, Assignment, Quiz, Project } from '@/types/api';
 
-// Placeholder types
 interface GradingItem {
-  id: string; // Could be quiz_attempt_id or assignment_submission_id
-  studentName: string;
-  courseTitle: string;
-  itemName: string; // e.g., "Module 1 Quiz" or "Assignment 2: Essay"
-  submittedAt: string;
-  status: 'Pending Grading' | 'Graded';
-  courseId: string;
-  studentId: string;
+  id: number;
+  type: 'assignment' | 'quiz' | 'project';
+  title: string;
+  course_title: string;
+  course_id: number;
+  due_date?: string;
+  submissions_count?: number;
+  graded_count?: number;
 }
 
-// Placeholder data - replace with API call to /api/instructor/grading/pending
-const placeholderGradingItems: GradingItem[] = [
-  {
-    id: 'q_att_001',
-    studentName: 'Alice Wonderland',
-    courseTitle: 'Introduction to Python Programming',
-    itemName: 'Module 2 Quiz',
-    submittedAt: '2023-02-05T14:30:00Z',
-    status: 'Pending Grading',
-    courseId: 'crs001',
-    studentId: 'std001',
-  },
-  {
-    id: 'q_att_002',
-    studentName: 'Bob The Builder',
-    courseTitle: 'Web Development Fundamentals',
-    itemName: 'HTML & CSS Basics Quiz',
-    submittedAt: '2023-02-10T10:15:00Z',
-    status: 'Pending Grading',
-    courseId: 'crs002',
-    studentId: 'std002',
-  },
-  {
-    id: 'as_sub_001',
-    studentName: 'Charlie Brown',
-    courseTitle: 'Introduction to Python Programming',
-    itemName: 'Assignment 1: Python Functions',
-    submittedAt: '2023-02-12T18:00:00Z',
-    status: 'Pending Grading',
-    courseId: 'crs001',
-    studentId: 'std003',
-  },
-];
-
 const GradingPage = () => {
+  const { token } = useAuth();
+  const searchParams = useSearchParams();
+  const assignmentId = searchParams?.get('assignment');
+  const [courses, setCourses] = useState<Course[]>([]);
   const [gradingItems, setGradingItems] = useState<GradingItem[]>([]);
+  const [selectedCourse, setSelectedCourse] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const authContext = useContext(AuthContext);
 
   useEffect(() => {
-    const fetchGradingItems = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        // Replace with actual API call: GET /api/instructor/grading/pending
-        // const response = await fetch('/api/instructor/grading/pending', {
-        //   headers: { 'Authorization': `Bearer ${authContext?.token}` },
-        // });
-        // if (!response.ok) throw new Error('Failed to fetch items pending grading');
-        // const data = await response.json();
-        // setGradingItems(data.items);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
-        setGradingItems(placeholderGradingItems.filter(item => item.status === 'Pending Grading'));
-      } catch (err: any) {
-        setError(err.message || 'An error occurred while fetching grading items.');
-      } finally {
-        setLoading(false);
+    fetchGradingData();
+  }, [token]);
+
+  const fetchGradingData = async () => {
+    if (!token) return;
+    
+    setLoading(true);
+    setError(null);
+    try {
+      // Fetch instructor courses
+      const response = await fetch('/api/v1/instructor/courses', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (response.ok) {
+        const coursesData: Course[] = await response.json();
+        setCourses(coursesData);
+        
+        // Fetch assessments for all courses
+        const allGradingItems: GradingItem[] = [];
+        
+        for (const course of coursesData) {
+          try {
+            const assessments = await CourseCreationService.getAssessmentsOverview(course.id);
+            
+            // Add assignments to grading items
+            assessments.assignments?.forEach((assignment: Assignment) => {
+              if (assignment.is_published) {
+                allGradingItems.push({
+                  id: assignment.id,
+                  type: 'assignment',
+                  title: assignment.title,
+                  course_title: course.title,
+                  course_id: course.id,
+                  due_date: assignment.due_date,
+                  submissions_count: 0, // TODO: Get from submissions API
+                  graded_count: 0, // TODO: Get from submissions API
+                });
+              }
+            });
+            
+            // Add quizzes to grading items
+            assessments.quizzes?.forEach((quiz: Quiz) => {
+              if (quiz.is_published) {
+                allGradingItems.push({
+                  id: quiz.id,
+                  type: 'quiz',
+                  title: quiz.title,
+                  course_title: course.title,
+                  course_id: course.id,
+                  submissions_count: 0, // TODO: Get from quiz attempts API
+                  graded_count: 0, // TODO: Get from quiz attempts API
+                });
+              }
+            });
+            
+            // Add projects to grading items
+            assessments.projects?.forEach((project: Project) => {
+              if (project.is_published) {
+                allGradingItems.push({
+                  id: project.id,
+                  type: 'project',
+                  title: project.title,
+                  course_title: course.title,
+                  course_id: course.id,
+                  due_date: project.due_date,
+                  submissions_count: 0, // TODO: Get from submissions API
+                  graded_count: 0, // TODO: Get from submissions API
+                });
+              }
+            });
+          } catch (err) {
+            console.error(`Failed to fetch assessments for course ${course.id}:`, err);
+          }
+        }
+        
+        setGradingItems(allGradingItems);
       }
-    };
-
-    if (authContext?.token) {
-      fetchGradingItems();
+    } catch (err: any) {
+      setError(err.message || 'Failed to load grading data');
+    } finally {
+      setLoading(false);
     }
-  }, [authContext?.token]);
-
-  const handleGradeItem = (item: GradingItem) => {
-    console.log(`Grade item ${item.id} for ${item.studentName}`);
-    // Navigate to a specific grading page for this item, e.g.,
-    // router.push(`/instructor/grading/item/${item.id}`);
-    // Or open a grading modal
-    alert(`Placeholder: Navigate to grade item ID: ${item.id}`);
   };
 
-  if (loading) return <div className="text-center py-10">Loading items pending grading...</div>;
-  if (error) return <div className="text-center py-10 text-red-500">Error: {error}</div>;
+  const filteredGradingItems = gradingItems.filter(item => {
+    if (selectedCourse === 'all') return true;
+    return item.course_id === parseInt(selectedCourse);
+  });
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+        <span className="ml-3 text-slate-600 dark:text-slate-300">Loading grading items...</span>
+      </div>
+    );
+  }
 
   return (
-    <div className="container mx-auto">
-      <h1 className="text-3xl font-bold mb-8 text-gray-800">Grading Center</h1>
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Grading Center</h1>
+      </div>
 
-      {gradingItems.length === 0 && !loading && (
-        <div className="bg-white p-6 rounded-lg shadow-md text-center">
-          <p className="text-gray-600">No items currently pending grading. Well done!</p>
+      {error && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-lg">
+          <p className="text-red-600 dark:text-red-400">{error}</p>
         </div>
       )}
 
-      {gradingItems.length > 0 && (
-        <div className="bg-white shadow-md rounded-lg overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Course</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item Name</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Submitted At</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {gradingItems.map((item) => (
-                <tr key={item.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    <Link href={`/instructor/courses/${item.courseId}/students/${item.studentId}/progress`} legacyBehavior>
-                      <a className="text-blue-600 hover:underline">{item.studentName}</a>
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                     <Link href={`/instructor/courses/${item.courseId}`} legacyBehavior>
-                        <a className="text-blue-600 hover:underline">{item.courseTitle}</a>
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.itemName}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.submittedAt).toLocaleString()}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <button 
-                      onClick={() => handleGradeItem(item)} 
-                      className="text-indigo-600 hover:text-indigo-900"
+      {/* Course Filter */}
+      {courses.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Filter by Course</h2>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setSelectedCourse('all')}
+              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                selectedCourse === 'all'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
+              }`}
+            >
+              All Courses
+            </button>
+            {courses.map((course) => (
+              <button
+                key={course.id}
+                onClick={() => setSelectedCourse(course.id.toString())}
+                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                  selectedCourse === course.id.toString()
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
+                }`}
+              >
+                {course.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Grading Items */}
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
+        <div className="p-6 border-b border-slate-200 dark:border-slate-700">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+            Items to Grade ({filteredGradingItems.length})
+          </h2>
+        </div>
+        
+        {filteredGradingItems.length === 0 ? (
+          <div className="p-6 text-center">
+            <p className="text-slate-600 dark:text-slate-400 mb-4">
+              No grading items found. {selectedCourse === 'all' ? 'Create some assessments first.' : 'This course has no published assessments.'}
+            </p>
+            <Link
+              href="/instructor/courses"
+              className="text-blue-600 hover:text-blue-700 font-medium"
+            >
+              Go to Courses →
+            </Link>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-200 dark:divide-slate-700">
+            {filteredGradingItems.map((item) => (
+              <div key={`${item.type}-${item.id}`} className="p-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3 mb-2">
+                      <h3 className="text-lg font-medium text-slate-900 dark:text-white">
+                        {item.title}
+                      </h3>
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        item.type === 'assignment' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
+                        item.type === 'quiz' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
+                        'bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400'
+                      }`}>
+                        {item.type.charAt(0).toUpperCase() + item.type.slice(1)}
+                      </span>
+                    </div>
+                    <p className="text-slate-600 dark:text-slate-400 mb-3">
+                      Course: {item.course_title}
+                    </p>
+                    <div className="flex items-center space-x-4 text-sm text-slate-500 dark:text-slate-400">
+                      {item.due_date && (
+                        <span>Due: {new Date(item.due_date).toLocaleDateString()}</span>
+                      )}
+                      <span>Submissions: {item.submissions_count || 0}</span>
+                      <span>Graded: {item.graded_count || 0}</span>
+                    </div>
+                  </div>
+                  <div className="flex space-x-2 ml-4">
+                    <Link
+                      href={`/instructor/courses/${item.course_id}?tab=assessments&${item.type}=${item.id}`}
+                      className="text-blue-600 hover:text-blue-700 font-medium text-sm"
                     >
-                      Grade Now
+                      Edit
+                    </Link>
+                    <button
+                      className="text-green-600 hover:text-green-700 font-medium text-sm"
+                      onClick={() => {
+                        // TODO: Implement grading interface
+                        alert('Grading interface coming soon!');
+                      }}
+                    >
+                      Grade Submissions
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {/* TODO: Add pagination if list is long */}
-      {/* TODO: Implement actual grading modal/page navigation */}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

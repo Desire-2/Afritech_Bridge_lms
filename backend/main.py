@@ -4,28 +4,26 @@ import sys
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
-
 from flask import Flask, send_from_directory, jsonify
 from flask_jwt_extended import JWTManager
 from datetime import timedelta
 import logging
 
 from src.models.user_models import db, User, Role
-from src.models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
+from src.models.course_models import (
+    Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement,
+    Assignment, AssignmentSubmission, Project, ProjectSubmission
+)
 from src.models.opportunity_models import Opportunity # Import Opportunity model
-from src.models.student_models import (
-    LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
-    Assignment, AssignmentSubmission, StudentBookmark, StudentForum, ForumPost
-) # Import student models
 from src.utils.email_utils import mail # Import the mail instance
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
-from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
 from src.routes.student_routes import student_bp # Import student blueprint
+from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
+from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
+from src.routes.course_creation_routes import course_creation_bp # Import course creation blueprint
+from src.routes.assessment_routes import assessment_bp # Import assessment blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -41,31 +39,17 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 
 # Configure CORS for development and production
-env = os.environ.get('FLASK_ENV', 'development')
-is_production = env == 'production' or os.environ.get('RENDER') is not None
-
-if is_production:
-    # In production, allow specific origins
-    allowed_origins_str = os.environ.get('ALLOWED_ORIGINS', 'https://study.afritechbridge.online')
-    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
-    
-    # Add common variations of the frontend domain
-    if 'https://study.afritechbridge.online' not in allowed_origins:
-        allowed_origins.append('https://study.afritechbridge.online')
-    
-    CORS(app, 
-         resources={r"/*": {"origins": allowed_origins}}, 
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-         allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-         expose_headers=["Content-Type", "Authorization"],
-         supports_credentials=True)
+if os.environ.get('FLASK_ENV') == 'production':
+    # In production, only allow specific origins
+    allowed_origins = os.environ.get('ALLOWED_ORIGINS', 'https://yourfrontenddomain.com').split(',')
+    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
     logger.info(f"CORS configured for production with origins: {allowed_origins}")
 else:
     # In development, allow all origins with full configuration
     CORS(app, 
-         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:3005", "http://localhost:5173", "http://192.168.133.116:3000", "http://192.168.133.116:3001", "http://192.168.133.116:3002", "http://192.168.133.116:3003", "http://192.168.133.116:3005"], 
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-         allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3005", "http://localhost:5173", "http://192.168.133.116:3000", "http://192.168.133.116:3001", "http://192.168.133.116:3002", "http://192.168.133.116:3005"], 
+         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
          expose_headers=["Content-Type", "Authorization"],
          supports_credentials=True)
     logger.info("CORS configured for development with specific settings")
@@ -86,21 +70,15 @@ if not app.config['SECRET_KEY']:
         raise ValueError("SECRET_KEY must be set in production environment")
 
 # Database configuration
-database_url = os.getenv('DATABASE_URL')
-if database_url:
-    # Fix postgres:// to postgresql:// for SQLAlchemy compatibility
-    if database_url.startswith('postgres://'):
-        database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-    logger.info("Using PostgreSQL database from DATABASE_URL")
-elif env == 'production':
-    # In production, require a database URL
-    raise ValueError("DATABASE_URL must be set in production environment")
+if env == 'production':
+    # Use PostgreSQL in production (required for Render)
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+    if not app.config['SQLALCHEMY_DATABASE_URI']:
+        raise ValueError("DATABASE_URL must be set in production environment")
+    logger.info("Using PostgreSQL database in production")
 else:
     # Use SQLite for development and testing
-    db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{db_path}"
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite:///instance/afritec_lms_db.db")
     logger.info(f"Using SQLite database at {app.config['SQLALCHEMY_DATABASE_URI']}")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -136,41 +114,6 @@ db.init_app(app)
 jwt = JWTManager(app)
 mail.init_app(app)
 
-# Additional CORS handling for preflight requests
-@app.before_request
-def handle_preflight():
-    from flask import request, make_response
-    if request.method == "OPTIONS":
-        response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin")
-        response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS,PATCH")
-        response.headers.add('Access-Control-Allow-Credentials', "true")
-        return response
-
-@app.after_request
-def after_request(response):
-    from flask import request
-    origin = request.headers.get('Origin')
-    
-    # Allow requests from the frontend domain
-    allowed_origins = ['https://study.afritechbridge.online']
-    if not is_production:
-        allowed_origins.extend([
-            'http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 
-            'http://localhost:3003', 'http://localhost:3005', 'http://localhost:5173',
-            'http://192.168.133.116:3000', 'http://192.168.133.116:3001', 
-            'http://192.168.133.116:3002', 'http://192.168.133.116:3003'
-        ])
-    
-    if origin in allowed_origins:
-        response.headers.add('Access-Control-Allow-Origin', origin)
-    
-    response.headers.add('Access-Control-Allow-Headers', "Content-Type,Authorization,X-Requested-With,Accept,Origin")
-    response.headers.add('Access-Control-Allow-Methods', "GET,PUT,POST,DELETE,OPTIONS,PATCH")
-    response.headers.add('Access-Control-Allow-Credentials', "true")
-    return response
-
 @jwt.user_identity_loader
 def user_identity_loader(user_id):
     return user_id
@@ -194,68 +137,39 @@ app.register_blueprint(enrollment_bp)
 app.register_blueprint(quiz_bp)
 app.register_blueprint(submission_bp)
 app.register_blueprint(announcement_bp)
-app.register_blueprint(opportunity_bp) # Register opportunity blueprint
 app.register_blueprint(student_bp) # Register student blueprint
+app.register_blueprint(opportunity_bp) # Register opportunity blueprint
+app.register_blueprint(instructor_bp) # Register instructor blueprint
+app.register_blueprint(course_creation_bp) # Register course creation blueprint
+app.register_blueprint(assessment_bp) # Register assessment blueprint
 
-# Health check endpoint
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'environment': env,
-        'cors_enabled': True,
-        'timestamp': os.environ.get('RENDER_GIT_COMMIT', 'development')
-    }), 200
+with app.app_context():
+    db.create_all()
+    if not Role.query.filter_by(name='student').first():
+        db.session.add(Role(name='student'))
+    if not Role.query.filter_by(name='instructor').first():
+        db.session.add(Role(name='instructor'))
+    if not Role.query.filter_by(name='admin').first():
+        db.session.add(Role(name='admin'))
+    db.session.commit()
 
-# Root route that serves the frontend
-@app.route('/')
-def index():
-    """Serve the main frontend page"""
-    return send_from_directory(app.static_folder, 'index.html')
-
-# Catch-all route for SPA routing (must be last)
+@app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-def serve_static(path):
-    """Serve static files and handle SPA routing"""
-    try:
-        return send_from_directory(app.static_folder, path)
-    except FileNotFoundError:
-        # If file not found, serve index.html for SPA routing
-        return send_from_directory(app.static_folder, 'index.html')
+def serve(path):
+    static_folder_path = app.static_folder
+    if static_folder_path is None:
+        return jsonify({"error": "Static folder not configured"}), 404
 
-def init_database():
-    """Initialize database tables and default roles"""
-    try:
-        with app.app_context():
-            db.create_all()
-            if not Role.query.filter_by(name='student').first():
-                db.session.add(Role(name='student'))
-            if not Role.query.filter_by(name='instructor').first():
-                db.session.add(Role(name='instructor'))
-            if not Role.query.filter_by(name='admin').first():
-                db.session.add(Role(name='admin'))
-            db.session.commit()
-            logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
-        # In production, we'll initialize the database separately
-        if env != 'production':
-            raise
-
-# Only initialize database when running directly (not during import)
-if __name__ == '__main__':
-    init_database()
-
-@app.route('/init-db', methods=['POST'])
-def init_db_route():
-    """Initialize database for production deployment"""
-    try:
-        init_database()
-        return jsonify({"message": "Database initialized successfully"}), 200
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        return jsonify({"error": str(e)}), 500
+    if path != "" and os.path.exists(os.path.join(static_folder_path, path)):
+        return send_from_directory(static_folder_path, path)
+    else:
+        index_path = os.path.join(static_folder_path, 'index.html')
+        if os.path.exists(index_path):
+            return send_from_directory(static_folder_path, 'index.html')
+        else:
+            if path == "":
+                return jsonify({"message": "Welcome to Afritec Bridge LMS API"}), 200
+            return jsonify({"error": "File not found"}), 404
 
 if __name__ == '__main__':
     # In development, run with debug mode

@@ -22,7 +22,7 @@ export default function InstructorNotFound() {
         </p>
         <div className="mt-8 flex gap-4">
           <Link 
-            href="/instructor/Dashboard" 
+            href="/instructor/dashboard" 
             className="px-6 py-3 text-base font-medium text-white transition-colors bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 rounded-lg shadow-lg"
           >
             Return to Instructor Dashboard

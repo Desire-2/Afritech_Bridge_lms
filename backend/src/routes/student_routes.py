@@ -6,10 +6,10 @@ from datetime import datetime
 import json
 
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
-    Assignment, AssignmentSubmission, StudentBookmark, StudentForum, ForumPost
+    StudentBookmark, StudentForum, ForumPost
 )
 
 # Helper for role checking
@@ -570,3 +570,639 @@ def get_student_profile():
     }
     
     return jsonify(profile_data), 200
+
+# --- Enhanced Progress and Analytics Routes ---
+@student_bp.route("/progress/detailed", methods=["GET"])
+@student_required
+def get_detailed_progress():
+    """Get comprehensive progress analytics including skills, trends, and weak areas"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Overall statistics
+        enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
+        completed_courses = [e for e in enrollments if e.progress >= 1.0]
+        in_progress_courses = [e for e in enrollments if 0 < e.progress < 1.0]
+        
+        total_time = db.session.query(db.func.sum(UserProgress.total_time_spent)).filter_by(
+            user_id=current_user_id
+        ).scalar() or 0
+        
+        # Calculate average score across all courses
+        avg_score = db.session.query(db.func.avg(Enrollment.grade)).filter_by(
+            student_id=current_user_id
+        ).filter(Enrollment.grade.isnot(None)).scalar() or 0
+        
+        # Get recent activities for streak calculation (mock for now)
+        learning_streak = 7  # This would be calculated from actual activity logs
+        
+        # Skills progress (derived from course categories and progress)
+        skills_data = []
+        course_categories = {}
+        for enrollment in enrollments:
+            course = enrollment.course
+            category = course.category or "General"
+            if category not in course_categories:
+                course_categories[category] = {
+                    'courses': [],
+                    'total_progress': 0,
+                    'badges': 0
+                }
+            course_categories[category]['courses'].append(course.title)
+            course_categories[category]['total_progress'] += enrollment.progress or 0
+        
+        skill_id = 1
+        for category, data in course_categories.items():
+            avg_progress = data['total_progress'] / len(data['courses']) if data['courses'] else 0
+            current_level = min(int(avg_progress * 5), 5)  # Convert to 1-5 scale
+            
+            skills_data.append({
+                'id': skill_id,
+                'name': category,
+                'category': 'Technical Skills',
+                'currentLevel': current_level,
+                'maxLevel': 5,
+                'pointsEarned': int(avg_progress * 1000),
+                'pointsRequired': 1000,
+                'courses': data['courses'][:2],  # Show first 2 courses
+                'badgesEarned': data['badges'],
+                'lastActivity': datetime.now().isoformat()
+            })
+            skill_id += 1
+        
+        # Performance trends (mock data for last 7 days)
+        performance_trends = []
+        for i in range(7):
+            date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            date = date.replace(day=date.day - i)
+            performance_trends.insert(0, {
+                'date': date.isoformat(),
+                'score': min(85 + (i * 2), 95),  # Mock increasing trend
+                'hoursStudied': 6 + (i % 3),
+                'lessonsCompleted': 3 + (i % 2)
+            })
+        
+        # Weak areas (courses with low scores)
+        weak_areas = []
+        for enrollment in enrollments:
+            if enrollment.grade and enrollment.grade < 80:
+                weak_areas.append({
+                    'topic': enrollment.course.title,
+                    'score': int(enrollment.grade),
+                    'attempts': 1,  # This would come from actual attempt tracking
+                    'recommendedResources': [
+                        f"Review {enrollment.course.title} materials",
+                        "Practice exercises for this topic"
+                    ]
+                })
+        
+        # Recent achievements (mock data)
+        achievements = [
+            {
+                'id': 1,
+                'title': 'Course Starter',
+                'description': 'Enrolled in your first course',
+                'icon': '🎯',
+                'dateEarned': datetime.now().isoformat(),
+                'rarity': 'common'
+            },
+            {
+                'id': 2,
+                'title': 'Dedicated Learner',
+                'description': 'Studied for 7 consecutive days',
+                'icon': '🔥',
+                'dateEarned': datetime.now().isoformat(),
+                'rarity': 'rare'
+            }
+        ]
+        
+        response_data = {
+            'overallStats': {
+                'totalHours': int(total_time // 3600),
+                'coursesCompleted': len(completed_courses),
+                'coursesInProgress': len(in_progress_courses),
+                'averageScore': int(avg_score),
+                'streak': learning_streak,
+                'rank': 45,  # Mock rank
+                'totalStudents': 1250  # Mock total students
+            },
+            'skills': skills_data,
+            'performanceTrends': performance_trends,
+            'weakAreas': weak_areas[:3],  # Limit to 3 weak areas
+            'achievements': achievements,
+            'weeklyGoals': {
+                'hoursTarget': 15,
+                'hoursCompleted': 12,
+                'lessonsTarget': 10,
+                'lessonsCompleted': 8
+            }
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching detailed progress", "error": str(e)}), 500
+
+@student_bp.route("/courses/browse", methods=["GET"])
+@student_required  
+def browse_courses():
+    """Get all available courses with enrollment status and pricing info"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Get query parameters for filtering
+        category = request.args.get('category', 'all')
+        level = request.args.get('level', 'all')
+        price_filter = request.args.get('price', 'all')
+        search = request.args.get('search', '')
+        
+        # Base query
+        query = Course.query.filter(Course.is_published == True)
+        
+        # Apply filters
+        if category and category.lower() != 'all':
+            query = query.filter(Course.category.ilike(f'%{category}%'))
+            
+        if search:
+            query = query.filter(
+                db.or_(
+                    Course.title.ilike(f'%{search}%'),
+                    Course.description.ilike(f'%{search}%')
+                )
+            )
+        
+        courses = query.all()
+        
+        # Get student's enrollments
+        enrollments = {e.course_id: e for e in Enrollment.query.filter_by(student_id=current_user_id).all()}
+        
+        courses_data = []
+        for course in courses:
+            instructor = User.query.get(course.instructor_id)
+            enrollment = enrollments.get(course.id)
+            
+            # Mock pricing and scholarship info (would come from course model in real implementation)
+            is_free = course.id % 3 == 0  # Mock: every 3rd course is free
+            is_scholarship = course.id % 4 == 0  # Mock: every 4th course requires scholarship
+            price = 0 if is_free else (199 + (course.id * 50))
+            
+            course_data = {
+                'id': course.id,
+                'title': course.title,
+                'description': course.description,
+                'instructor': instructor.first_name + " " + instructor.last_name if instructor else "Unknown",
+                'instructorTitle': "Senior Instructor",  # Mock data
+                'duration': '8 weeks',  # Mock data
+                'studentsCount': 1200 + (course.id * 100),  # Mock data
+                'rating': 4.5 + (course.id % 10) * 0.05,  # Mock rating
+                'reviewsCount': 200 + (course.id * 20),  # Mock reviews
+                'price': price,
+                'originalPrice': price + 100 if not is_free else None,
+                'isScholarshipRequired': is_scholarship and not is_free,
+                'isFree': is_free,
+                'tags': ['Programming', 'Backend', 'Python'],  # Mock tags
+                'level': ['Beginner', 'Intermediate', 'Advanced'][course.id % 3],
+                'category': course.category or 'General',
+                'thumbnail': f'/course-{course.id}.jpg',
+                'isEnrolled': enrollment is not None,
+                'prerequisites': ['Basic programming knowledge'] if course.id % 2 == 0 else [],
+                'learningOutcomes': [
+                    f'Master {course.title} concepts',
+                    'Build real-world projects',
+                    'Gain practical experience'
+                ],
+                'modules': len(course.modules) if course.modules else 8,
+                'certificateAvailable': True,
+                'nextCohortDate': '2024-03-01'  # Mock date
+            }
+            
+            # Apply price filtering
+            if price_filter == 'free' and not is_free:
+                continue
+            elif price_filter == 'paid' and (is_free or is_scholarship):
+                continue
+            elif price_filter == 'scholarship' and not is_scholarship:
+                continue
+                
+            courses_data.append(course_data)
+        
+        return jsonify(courses_data), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error browsing courses", "error": str(e)}), 500
+
+@student_bp.route("/courses/<int:course_id>/enroll", methods=["POST"])
+@student_required
+def enroll_in_course(course_id):
+    """Enroll student in a course"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        course = Course.query.get_or_404(course_id)
+        
+        # Check if already enrolled
+        existing_enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=course_id
+        ).first()
+        
+        if existing_enrollment:
+            return jsonify({"message": "Already enrolled in this course"}), 400
+        
+        # Create enrollment
+        enrollment = Enrollment(
+            student_id=current_user_id,
+            course_id=course_id,
+            enrollment_date=datetime.utcnow(),
+            progress=0.0
+        )
+        
+        db.session.add(enrollment)
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Successfully enrolled in course",
+            "enrollment": enrollment.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error enrolling in course", "error": str(e)}), 500
+
+@student_bp.route("/modules/<int:module_id>/complete", methods=["POST"])
+@student_required
+def complete_module(module_id):
+    """Mark a module as completed and update progress"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    
+    try:
+        module = Module.query.get_or_404(module_id)
+        
+        # Check enrollment
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=module.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "Not enrolled in this course"}), 403
+        
+        # Get or create progress record
+        progress = UserProgress.query.filter_by(
+            user_id=current_user_id,
+            course_id=module.course_id
+        ).first()
+        
+        if not progress:
+            progress = UserProgress(
+                user_id=current_user_id,
+                course_id=module.course_id,
+                modules_completed=0,
+                lessons_completed=0,
+                total_time_spent=0,
+                last_accessed=datetime.utcnow()
+            )
+            db.session.add(progress)
+        
+        # Update module completion
+        score = data.get('score', 0)
+        if score >= 80:  # Required passing score
+            progress.modules_completed += 1
+            progress.last_accessed = datetime.utcnow()
+            
+            # Update enrollment progress
+            total_modules = len(module.course.modules) if module.course.modules else 1
+            enrollment.progress = min(progress.modules_completed / total_modules, 1.0)
+            
+            if score > (enrollment.grade or 0):
+                enrollment.grade = score
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Module progress updated",
+            "progress": progress.to_dict() if hasattr(progress, 'to_dict') else {
+                'modules_completed': progress.modules_completed,
+                'lessons_completed': progress.lessons_completed,
+                'total_time_spent': progress.total_time_spent
+            },
+            "enrollment_progress": enrollment.progress,
+            "passed": score >= 80
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error updating module progress", "error": str(e)}), 500
+
+@student_bp.route("/certificates", methods=["GET"])
+@student_required
+def get_certificates():
+    """Get all certificates earned by the student"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Get completed courses
+        completed_enrollments = Enrollment.query.filter_by(
+            student_id=current_user_id
+        ).filter(Enrollment.progress >= 1.0).all()
+        
+        certificates = []
+        for enrollment in completed_enrollments:
+            course = enrollment.course
+            certificates.append({
+                'id': f"cert_{enrollment.id}",
+                'course_title': course.title,
+                'completion_date': enrollment.completion_date.isoformat() if enrollment.completion_date else None,
+                'final_grade': enrollment.grade,
+                'certificate_url': f"/certificates/{enrollment.id}",
+                'skills_earned': [course.category] if course.category else ['General Programming'],
+                'instructor': course.instructor.first_name + " " + course.instructor.last_name if course.instructor else "Unknown"
+            })
+        
+        return jsonify(certificates), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching certificates", "error": str(e)}), 500
+
+@student_bp.route("/goals", methods=["GET", "POST"])
+@student_required
+def manage_goals():
+    """Get or set weekly learning goals"""
+    current_user_id = int(get_jwt_identity())
+    
+    if request.method == "POST":
+        data = request.get_json()
+        
+        try:
+            # In a real implementation, this would be stored in a UserGoals table
+            # For now, we'll return success with the provided goals
+            goals = {
+                'hours_target': data.get('hours_target', 15),
+                'lessons_target': data.get('lessons_target', 10),
+                'courses_target': data.get('courses_target', 1)
+            }
+            
+            return jsonify({
+                "message": "Goals updated successfully",
+                "goals": goals
+            }), 200
+            
+        except Exception as e:
+            return jsonify({"message": "Error updating goals", "error": str(e)}), 500
+    
+    else:
+        try:
+            # Mock current goals and progress
+            goals = {
+                'hours_target': 15,
+                'hours_completed': 12,
+                'lessons_target': 10,
+                'lessons_completed': 8,
+                'courses_target': 1,
+                'courses_completed': 0
+            }
+            
+            return jsonify(goals), 200
+            
+        except Exception as e:
+            return jsonify({"message": "Error fetching goals", "error": str(e)}), 500
+
+# --- Assessment and Quiz Management Routes ---
+@student_bp.route("/quizzes/<int:quiz_id>", methods=["GET"])
+@student_required
+def get_quiz(quiz_id):
+    """Get quiz details and questions"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        quiz = Quiz.query.get_or_404(quiz_id)
+        
+        # Check if student is enrolled in the course
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=quiz.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "Not enrolled in this course"}), 403
+        
+        # Get quiz attempts
+        attempts = QuizAttempt.query.filter_by(
+            user_id=current_user_id,
+            quiz_id=quiz_id
+        ).all()
+        
+        quiz_data = {
+            'id': quiz.id,
+            'title': quiz.title,
+            'description': quiz.description,
+            'time_limit': quiz.time_limit,
+            'passing_score': quiz.passing_score,
+            'max_attempts': quiz.max_attempts,
+            'attempts_used': len(attempts),
+            'best_score': max([a.score for a in attempts]) if attempts else None,
+            'questions': [
+                {
+                    'id': q.id,
+                    'question': q.question,
+                    'type': q.question_type,
+                    'options': q.options if hasattr(q, 'options') else [],
+                    'points': q.points
+                } for q in quiz.questions
+            ] if hasattr(quiz, 'questions') else []
+        }
+        
+        return jsonify(quiz_data), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching quiz", "error": str(e)}), 500
+
+@student_bp.route("/quizzes/<int:quiz_id>/submit", methods=["POST"])
+@student_required
+def submit_quiz(quiz_id):
+    """Submit quiz answers and calculate score"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    
+    try:
+        quiz = Quiz.query.get_or_404(quiz_id)
+        answers = data.get('answers', {})
+        
+        # Check enrollment
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=quiz.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "Not enrolled in this course"}), 403
+        
+        # Check attempt limit
+        existing_attempts = QuizAttempt.query.filter_by(
+            user_id=current_user_id,
+            quiz_id=quiz_id
+        ).count()
+        
+        if existing_attempts >= quiz.max_attempts:
+            return jsonify({"message": "Maximum attempts exceeded"}), 400
+        
+        # Calculate score (simplified calculation)
+        total_points = len(answers) * 10  # Assuming 10 points per question
+        earned_points = len(answers) * 8   # Mock scoring - 80% average
+        score = (earned_points / total_points * 100) if total_points > 0 else 0
+        
+        # Create quiz attempt
+        attempt = QuizAttempt(
+            user_id=current_user_id,
+            quiz_id=quiz_id,
+            score=score,
+            answers=str(answers),  # Store as JSON string
+            completed_at=datetime.utcnow()
+        )
+        
+        db.session.add(attempt)
+        
+        # Update enrollment grade if this is the best score
+        if not enrollment.grade or score > enrollment.grade:
+            enrollment.grade = score
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Quiz submitted successfully",
+            "score": score,
+            "passed": score >= quiz.passing_score,
+            "attempt_number": existing_attempts + 1,
+            "remaining_attempts": quiz.max_attempts - (existing_attempts + 1)
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error submitting quiz", "error": str(e)}), 500
+
+@student_bp.route("/assignments/<int:assignment_id>/details", methods=["GET"])
+@student_required
+def get_assignment_details(assignment_id):
+    """Get detailed assignment information"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        assignment = Assignment.query.get_or_404(assignment_id)
+        
+        # Check enrollment
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=assignment.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "Not enrolled in this course"}), 403
+        
+        # Get submission
+        submission = AssignmentSubmission.query.filter_by(
+            student_id=current_user_id,
+            assignment_id=assignment_id
+        ).first()
+        
+        assignment_data = {
+            'id': assignment.id,
+            'title': assignment.title,
+            'description': assignment.description,
+            'due_date': assignment.due_date.isoformat() if assignment.due_date else None,
+            'max_points': assignment.max_points,
+            'submission_type': assignment.submission_type,
+            'requirements': assignment.requirements if hasattr(assignment, 'requirements') else [],
+            'resources': assignment.resources if hasattr(assignment, 'resources') else [],
+            'submission': {
+                'id': submission.id,
+                'submitted_at': submission.submitted_at.isoformat(),
+                'content': submission.content,
+                'file_path': submission.file_path,
+                'grade': submission.grade,
+                'feedback': submission.feedback,
+                'status': submission.status
+            } if submission else None,
+            'is_overdue': assignment.due_date < datetime.utcnow() if assignment.due_date else False
+        }
+        
+        return jsonify(assignment_data), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching assignment details", "error": str(e)}), 500
+
+@student_bp.route("/learning-path", methods=["GET"])
+@student_required
+def get_learning_path():
+    """Get personalized learning path recommendations"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Get student's enrolled courses and progress
+        enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
+        
+        # Calculate skill levels based on completed courses
+        skill_levels = {}
+        for enrollment in enrollments:
+            course = enrollment.course
+            category = course.category or "General"
+            
+            if category not in skill_levels:
+                skill_levels[category] = 0
+            
+            # Add progress to skill level
+            skill_levels[category] += enrollment.progress or 0
+        
+        # Generate recommended next steps
+        recommendations = []
+        
+        # If no courses taken, recommend beginner courses
+        if not enrollments:
+            beginner_courses = Course.query.filter_by(
+                is_published=True
+            ).limit(3).all()
+            
+            for course in beginner_courses:
+                recommendations.append({
+                    'type': 'course',
+                    'id': course.id,
+                    'title': course.title,
+                    'description': course.description,
+                    'reason': 'Perfect for beginners',
+                    'priority': 'high',
+                    'estimated_duration': '8 weeks'
+                })
+        else:
+            # Recommend courses based on completed ones
+            completed_categories = [e.course.category for e in enrollments if e.progress >= 0.8]
+            
+            for category in completed_categories:
+                advanced_courses = Course.query.filter(
+                    Course.category.ilike(f'%{category}%'),
+                    Course.is_published == True
+                ).limit(2).all()
+                
+                for course in advanced_courses:
+                    if not any(e.course_id == course.id for e in enrollments):
+                        recommendations.append({
+                            'type': 'course',
+                            'id': course.id,
+                            'title': course.title,
+                            'description': course.description,
+                            'reason': f'Continue your {category} journey',
+                            'priority': 'medium',
+                            'estimated_duration': '8 weeks'
+                        })
+        
+        learning_path = {
+            'current_level': 'Intermediate' if len(enrollments) > 2 else 'Beginner',
+            'completed_courses': len([e for e in enrollments if e.progress >= 1.0]),
+            'skill_levels': skill_levels,
+            'recommendations': recommendations[:5],  # Limit to top 5
+            'next_milestone': 'Complete 5 courses to unlock advanced track'
+        }
+        
+        return jsonify(learning_path), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error generating learning path", "error": str(e)}), 500

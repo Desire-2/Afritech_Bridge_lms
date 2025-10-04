@@ -11,9 +11,9 @@ export default function InstructorLayout({
 }) {
   return (
     <InstructorGuard>
-      <div className="flex min-h-screen bg-slate-100 dark:bg-slate-950">
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-950">
         <InstructorSidebar />
-        <div className="flex-1 flex flex-col">
+        <div className="ml-72 flex flex-col min-h-screen">
           <header className="bg-white dark:bg-slate-900 shadow-sm border-b border-slate-200 dark:border-slate-800">
             <div className="mx-auto px-4 sm:px-6 lg:px-8">
               <div className="flex justify-between h-16">

@@ -3,68 +3,59 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-
-// Placeholder types - define based on your actual models
-interface TaughtCourseSummary {
-  id: string;
-  title: string;
-  studentCount: number;
-  pendingSubmissions: number;
-}
-
-interface InstructorDashboardData {
-  taughtCourses: TaughtCourseSummary[];
-  pendingGradingItems: number;
-  unreadMessages: number; // Example, if messaging is implemented
-  recentAnnouncements: Array<{ id: string; title: string; courseTitle: string; date: string }>;
-}
-
-// Placeholder data - replace with API calls
-const placeholderDashboardData: InstructorDashboardData = {
-  taughtCourses: [
-    { id: 'crs001', title: 'Introduction to Python Programming', studentCount: 150, pendingSubmissions: 5 },
-    { id: 'crs002', title: 'Web Development Fundamentals', studentCount: 220, pendingSubmissions: 12 },
-    { id: 'crs003', title: 'Data Structures & Algorithms', studentCount: 85, pendingSubmissions: 8 },
-  ],
-  pendingGradingItems: 25, // Sum of pendingSubmissions from courses
-  unreadMessages: 5,
-  recentAnnouncements: [
-    { id: 'ann001', title: 'Midterm Exam Schedule Updated', courseTitle: 'Python Programming', date: '2025-09-22' },
-    { id: 'ann002', title: 'Project Submission Deadline Extended', courseTitle: 'Web Development', date: '2025-09-20' },
-    { id: 'ann003', title: 'New Learning Resources Available', courseTitle: 'Data Structures', date: '2025-09-18' },
-  ],
-};
+import InstructorService, { InstructorDashboardData } from '@/services/instructor.service';
+import { CourseService } from '@/services/course.service';
+import { Course } from '@/types/api';
 
 const InstructorDashboardPage = () => {
   const [dashboardData, setDashboardData] = useState<InstructorDashboardData | null>(null);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { token, user } = useAuth();
 
   useEffect(() => {
     const fetchDashboardData = async () => {
+      if (!token) return;
+      
       setLoading(true);
       setError(null);
       try {
-        // Replace with actual API call: GET /api/instructor/dashboard
-        // const response = await fetch('/api/instructor/dashboard', {
-        //   headers: { 'Authorization': `Bearer ${token}` },
-        // });
-        // if (!response.ok) throw new Error('Failed to fetch instructor dashboard data');
-        // const data = await response.json();
-        // setDashboardData(data);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate delay
-        setDashboardData(placeholderDashboardData);
+        // Fetch dashboard data and courses in parallel
+        const [dashboardResponse, coursesResponse] = await Promise.all([
+          InstructorService.getDashboardData(),
+          InstructorService.getMyCourses()
+        ]);
+        
+        setDashboardData(dashboardResponse);
+        setCourses(coursesResponse);
       } catch (err: any) {
+        console.error('Dashboard fetch error:', err);
         setError(err.message || 'An error occurred while fetching dashboard data.');
+        
+        // Fallback: try to fetch just courses if dashboard fails
+        try {
+          const coursesResponse = await InstructorService.getMyCourses();
+          setCourses(coursesResponse);
+          // Create minimal dashboard data
+          setDashboardData({
+            taughtCourses: coursesResponse,
+            totalStudents: 0,
+            pendingGradingItems: 0,
+            recentEnrollments: [],
+            recentAnnouncements: []
+          });
+          setError(null);
+        } catch (fallbackErr: any) {
+          console.error('Courses fetch error:', fallbackErr);
+          setError('Unable to load instructor data. Please try again.');
+        }
       } finally {
         setLoading(false);
       }
     };
 
-    if (token) { // Fetch data only if token is available
-      fetchDashboardData();
-    }
+    fetchDashboardData();
   }, [token]);
 
   if (loading) return (
@@ -106,7 +97,7 @@ const InstructorDashboardPage = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Courses Taught</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData.taughtCourses.length}</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{courses.length}</p>
             </div>
             <div className="rounded-full bg-sky-100 dark:bg-sky-900/30 p-3">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-sky-600 dark:text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -122,34 +113,34 @@ const InstructorDashboardPage = () => {
         <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Pending Grading</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData.pendingGradingItems}</p>
+              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Total Students</h3>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData?.totalStudents || 0}</p>
             </div>
-            <div className="rounded-full bg-amber-100 dark:bg-amber-900/30 p-3">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            <div className="rounded-full bg-emerald-100 dark:bg-emerald-900/30 p-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             </div>
           </div>
           <div className="mt-4">
-            <Link href="/instructor/grading" className="text-sm text-sky-600 dark:text-sky-400 hover:underline">View grading queue →</Link>
+            <Link href="/instructor/students" className="text-sm text-sky-600 dark:text-sky-400 hover:underline">View all students →</Link>
           </div>
         </div>
         
         <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Unread Messages</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData.unreadMessages}</p>
+              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Pending Grading</h3>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData?.pendingGradingItems || 0}</p>
             </div>
-            <div className="rounded-full bg-emerald-100 dark:bg-emerald-900/30 p-3">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            <div className="rounded-full bg-amber-100 dark:bg-amber-900/30 p-3">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 0 012 2" />
               </svg>
             </div>
           </div>
           <div className="mt-4">
-            <Link href="/instructor/messages" className="text-sm text-sky-600 dark:text-sky-400 hover:underline">View messages →</Link>
+            <Link href="/instructor/grading" className="text-sm text-sky-600 dark:text-sky-400 hover:underline">View grading queue →</Link>
           </div>
         </div>
       </div>
@@ -165,9 +156,9 @@ const InstructorDashboardPage = () => {
               </Link>
             </div>
             
-            {dashboardData.taughtCourses.length > 0 ? (
+            {courses.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-700">
-                {dashboardData.taughtCourses.map(course => (
+                {courses.map(course => (
                   <div key={course.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
                     <div className="flex justify-between items-start">
                       <div>
@@ -177,19 +168,21 @@ const InstructorDashboardPage = () => {
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
                             </svg>
-                            {course.studentCount} Students
+                            Published: {course.is_published ? 'Yes' : 'No'}
                           </span>
-                          <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                            </svg>
-                            {course.pendingSubmissions} Pending
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            Created: {new Date(course.created_at).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
-                      <Link href={`/instructor/courses/${course.id}`} className="text-xs bg-slate-100 dark:bg-slate-700 px-2.5 py-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
-                        Manage
-                      </Link>
+                      <div className="flex gap-2">
+                        <Link href={`/instructor/courses/${course.id}`} className="text-xs bg-slate-100 dark:bg-slate-700 px-2.5 py-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                          Manage
+                        </Link>
+                        <Link href={`/instructor/courses/${course.id}/analytics`} className="text-xs bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors">
+                          Analytics
+                        </Link>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -231,15 +224,15 @@ const InstructorDashboardPage = () => {
               </Link>
             </div>
             
-            {dashboardData.recentAnnouncements.length > 0 ? (
+            {dashboardData?.recentAnnouncements.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-700">
                 {dashboardData.recentAnnouncements.map(announcement => (
                   <div key={announcement.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60">
                     <h3 className="font-medium text-slate-800 dark:text-slate-200 text-sm">{announcement.title}</h3>
                     <div className="flex gap-2 mt-1.5 items-center text-xs">
-                      <span className="text-slate-500 dark:text-slate-400">{announcement.courseTitle}</span>
+                      <span className="text-slate-500 dark:text-slate-400">{announcement.course_title}</span>
                       <span className="h-1 w-1 rounded-full bg-slate-300 dark:bg-slate-600"></span>
-                      <span className="text-slate-500 dark:text-slate-400">{new Date(announcement.date).toLocaleDateString()}</span>
+                      <span className="text-slate-500 dark:text-slate-400">{new Date(announcement.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
                 ))}
