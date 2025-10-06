@@ -20,290 +20,575 @@ import { StudentService, EnrolledCourse } from '@/services/student.service';impo
 
 interface ProgressData {interface ProgressData {
 
-  overallStats: {  overallStats: {
+  overallStats: {
 
-    totalHours: number;    totalHours: number;
+    totalHours: number;  overallStats: {  overallStats: {
 
-    coursesCompleted: number;    coursesCompleted: number;
+    coursesCompleted: number;
 
-    averageScore: number;    averageScore: number;
+    averageScore: number;    totalHours: number;    totalHours: number;
 
-    currentStreak: number;    currentStreak: number;
+    currentStreak: number;
 
-  };  };
+  };    coursesCompleted: number;    coursesCompleted: number;
 
-  courseProgress: Array<{  courseProgress: Array<{
+  courseProgress: Array<{
 
-    id: number;    id: number;
+    id: number;    averageScore: number;    averageScore: number;
 
-    title: string;    title: string;
+    title: string;
+
+    progress: number;    currentStreak: number;    currentStreak: number;
+
+    totalLessons: number;
+
+    completedLessons: number;  };  };
+
+  }>;
+
+  skillProgress: Array<{  courseProgress: Array<{  courseProgress: Array<{
+
+    skill: string;
+
+    level: number;    id: number;    id: number;
+
+    progress: number;
+
+  }>;    title: string;    title: string;
+
+}
 
     progress: number;    progress: number;
 
-    totalLessons: number;    totalLessons: number;
+export default function MyProgressPage() {
 
-    completedLessons: number;    completedLessons: number;
+  const [courses, setCourses] = useState<EnrolledCourse[]>([]);    totalLessons: number;    totalLessons: number;
 
-  }>;  }>;
+  const [loading, setLoading] = useState(true);
 
-  skillProgress: Array<{  skillProgress: Array<{
+  const [error, setError] = useState<string | null>(null);    completedLessons: number;    completedLessons: number;
 
-    skill: string;    skill: string;
+  const [stats, setStats] = useState({
 
-    level: number;    level: number;
+    totalCourses: 0,  }>;  }>;
 
-    progress: number;    progress: number;
+    activeCourses: 0,
 
-  }>;  }>;
+    completedCourses: 0,  skillProgress: Array<{  skillProgress: Array<{
 
-}}
+    totalLessons: 0,
+
+    completedLessons: 0,    skill: string;    skill: string;
+
+    totalHours: 0,
+
+    averageScore: 0,    level: number;    level: number;
+
+    achievements: 0
+
+  });    progress: number;    progress: number;
 
 
 
-const MyProgressPage = () => {const MyProgressPage = () => {
+  useEffect(() => {  }>;  }>;
+
+    const fetchData = async () => {
+
+      try {}}
+
+        setLoading(true);
+
+        const [coursesData, dashboardData] = await Promise.all([
+
+          StudentService.getCourses(),
+
+          StudentService.getDashboard()const MyProgressPage = () => {const MyProgressPage = () => {
+
+        ]);
 
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);  const [courses, setCourses] = useState<EnrolledCourse[]>([]);
 
-  const [loading, setLoading] = useState(true);  const [loading, setLoading] = useState(true);
+        setCourses(coursesData);
 
-  const [error, setError] = useState<string | null>(null);  const [error, setError] = useState<string | null>(null);
+        setStats(prev => ({  const [loading, setLoading] = useState(true);  const [loading, setLoading] = useState(true);
 
-  const [stats, setStats] = useState({  const [stats, setStats] = useState({
+          ...prev,
 
-    total_courses: 0,    total_courses: 0,
+          ...dashboardData  const [error, setError] = useState<string | null>(null);  const [error, setError] = useState<string | null>(null);
 
-    completed_courses: 0,    completed_courses: 0,
+        }));
 
-    hours_spent: 0,    hours_spent: 0,
+      } catch (err: any) {  const [stats, setStats] = useState({  const [stats, setStats] = useState({
 
-    achievements: 0    achievements: 0
+        console.error('Error fetching progress data:', err);
+
+        setError(err.message || 'Failed to load progress data');    total_courses: 0,    total_courses: 0,
+
+      } finally {
+
+        setLoading(false);    completed_courses: 0,    completed_courses: 0,
+
+      }
+
+    };    hours_spent: 0,    hours_spent: 0,
+
+
+
+    fetchData();    achievements: 0    achievements: 0
+
+  }, []);
 
   });  });
 
+  if (loading) {
 
+    return (
 
-  useEffect(() => {  useEffect(() => {
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
 
-    const fetchData = async () => {    const fetchData = async () => {
+        <div className="text-center">  useEffect(() => {  useEffect(() => {
 
-      try {      try {
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
 
-        setLoading(true);        setLoading(true);
+          <p className="text-gray-600">Loading your progress...</p>    const fetchData = async () => {    const fetchData = async () => {
 
-        const [coursesData, dashboardData] = await Promise.all([        const [coursesData, dashboardData] = await Promise.all([
+        </div>
 
-          StudentService.getMyLearning(),          StudentService.getMyLearning(),
+      </div>      try {      try {
 
-          StudentService.getDashboard()          StudentService.getDashboard()
+    );
 
-        ]);        ]);
-
-
-
-        setCourses(coursesData.courses || []);        setCourses(coursesData.courses || []);
-
-        setStats(dashboardData.stats || stats);        setStats(dashboardData.stats || stats);
-
-      } catch (err: any) {      } catch (err: any) {
-
-        console.error('Error fetching progress data:', err);        console.error('Error fetching progress data:', err);
-
-        setError('Failed to load progress data');        setError('Failed to load progress data');
-
-      } finally {      } finally {
-
-        setLoading(false);        setLoading(false);
-
-      }      }
-
-    };    };
+  }        setLoading(true);        setLoading(true);
 
 
 
-    fetchData();    fetchData();
+  if (error) {        const [coursesData, dashboardData] = await Promise.all([        const [coursesData, dashboardData] = await Promise.all([
 
-  }, []);  }, []);
+    return (
+
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">          StudentService.getMyLearning(),          StudentService.getMyLearning(),
+
+        <div className="text-center">
+
+          <div className="text-red-600 mb-4">          StudentService.getDashboard()          StudentService.getDashboard()
+
+            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />        ]);        ]);
+
+            </svg>
+
+          </div>
+
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Unable to Load Progress</h2>
+
+          <p className="text-gray-600 mb-4">{error}</p>        setCourses(coursesData.courses || []);        setCourses(coursesData.courses || []);
+
+          <button 
+
+            onClick={() => window.location.reload()}         setStats(dashboardData.stats || stats);        setStats(dashboardData.stats || stats);
+
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+
+          >      } catch (err: any) {      } catch (err: any) {
+
+            Try Again
+
+          </button>        console.error('Error fetching progress data:', err);        console.error('Error fetching progress data:', err);
+
+        </div>
+
+      </div>        setError('Failed to load progress data');        setError('Failed to load progress data');
+
+    );
+
+  }      } finally {      } finally {
 
 
 
-  const calculateOverallProgress = () => {  const calculateOverallProgress = () => {
+  return (        setLoading(false);        setLoading(false);
 
-    if (courses.length === 0) return 0;    if (courses.length === 0) return 0;
+    <div className="min-h-screen bg-gray-50">
 
-    const totalProgress = courses.reduce((sum, course) => sum + course.progress, 0);    const totalProgress = courses.reduce((sum, course) => sum + course.progress, 0);
+      <div className="container mx-auto px-4 py-8">      }      }
 
-    return Math.round(totalProgress / courses.length);    return Math.round(totalProgress / courses.length);
+        <div className="mb-8">
+
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">My Progress</h1>    };    };
+
+          <p className="text-gray-600">Track your learning journey and achievements</p>
+
+        </div>
+
+
+
+        {/* Stats Overview */}    fetchData();    fetchData();
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+
+          <Card>  }, []);  }, []);
+
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+
+              <CardTitle className="text-sm font-medium">Total Courses</CardTitle>
+
+              <BookOpen className="h-4 w-4 text-muted-foreground" />
+
+            </CardHeader>  const calculateOverallProgress = () => {  const calculateOverallProgress = () => {
+
+            <CardContent>
+
+              <div className="text-2xl font-bold">{stats.totalCourses}</div>    if (courses.length === 0) return 0;    if (courses.length === 0) return 0;
+
+              <p className="text-xs text-muted-foreground">
+
+                {stats.activeCourses} active, {stats.completedCourses} completed    const totalProgress = courses.reduce((sum, course) => sum + course.progress, 0);    const totalProgress = courses.reduce((sum, course) => sum + course.progress, 0);
+
+              </p>
+
+            </CardContent>    return Math.round(totalProgress / courses.length);    return Math.round(totalProgress / courses.length);
+
+          </Card>
 
   };  };
 
+          <Card>
+
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+
+              <CardTitle className="text-sm font-medium">Study Hours</CardTitle>
+
+              <Clock className="h-4 w-4 text-muted-foreground" />  if (loading) {  if (loading) {
+
+            </CardHeader>
+
+            <CardContent>    return (    return (
+
+              <div className="text-2xl font-bold">{stats.totalHours}</div>
+
+              <p className="text-xs text-muted-foreground">      <div className="container mx-auto px-4 py-8">      <div className="container mx-auto px-4 py-8">
+
+                Total learning time
+
+              </p>        <div className="flex items-center justify-center min-h-[400px]">        <div className="flex items-center justify-center min-h-[400px]">
+
+            </CardContent>
+
+          </Card>          <div className="text-center">          <div className="text-center">
 
 
-  if (loading) {  if (loading) {
 
-    return (    return (
+          <Card>            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
 
-      <div className="container mx-auto px-4 py-8">      <div className="container mx-auto px-4 py-8">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
 
-        <div className="flex items-center justify-center min-h-[400px]">        <div className="flex items-center justify-center min-h-[400px]">
+              <CardTitle className="text-sm font-medium">Average Score</CardTitle>            <p className="text-muted-foreground">Loading your progress...</p>            <p className="text-muted-foreground">Loading your progress...</p>
 
-          <div className="text-center">          <div className="text-center">
+              <Target className="h-4 w-4 text-muted-foreground" />
 
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            </CardHeader>          </div>          </div>
 
-            <p className="text-muted-foreground">Loading your progress...</p>            <p className="text-muted-foreground">Loading your progress...</p>
+            <CardContent>
 
-          </div>          </div>
+              <div className="text-2xl font-bold">{stats.averageScore}%</div>        </div>        </div>
 
-        </div>        </div>
+              <p className="text-xs text-muted-foreground">
 
-      </div>      </div>
+                Across all assessments      </div>      </div>
 
-    );    );
+              </p>
+
+            </CardContent>    );    );
+
+          </Card>
 
   }  }
 
+          <Card>
 
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
 
-  if (error) {  if (error) {
+              <CardTitle className="text-sm font-medium">Achievements</CardTitle>
 
-    return (    return (
+              <Trophy className="h-4 w-4 text-muted-foreground" />  if (error) {  if (error) {
 
-      <div className="container mx-auto px-4 py-8">      <div className="container mx-auto px-4 py-8">
+            </CardHeader>
 
-        <div className="text-center">        <div className="text-center">
+            <CardContent>    return (    return (
 
-          <h1 className="text-2xl font-bold mb-4 text-red-600">Error</h1>          <h1 className="text-2xl font-bold mb-4 text-red-600">Error</h1>
+              <div className="text-2xl font-bold">{stats.achievements}</div>
+
+              <p className="text-xs text-muted-foreground">      <div className="container mx-auto px-4 py-8">      <div className="container mx-auto px-4 py-8">
+
+                Badges earned
+
+              </p>        <div className="text-center">        <div className="text-center">
+
+            </CardContent>
+
+          </Card>          <h1 className="text-2xl font-bold mb-4 text-red-600">Error</h1>          <h1 className="text-2xl font-bold mb-4 text-red-600">Error</h1>
+
+        </div>
 
           <p className="text-muted-foreground">{error}</p>          <p className="text-muted-foreground">{error}</p>
 
-        </div>        </div>
+        {/* Course Progress */}
 
-      </div>      </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">        </div>        </div>
 
-    );    );
+          <Card>
 
-  }  }
+            <CardHeader>      </div>      </div>
 
+              <CardTitle className="flex items-center gap-2">
 
+                <BarChart3 className="h-5 w-5" />    );    );
 
-  return (  return (
+                Course Progress
 
-    <div className="container mx-auto px-4 py-8">    <div className="container mx-auto px-4 py-8">
+              </CardTitle>  }  }
 
-      {/* Header */}      {/* Header */}
+            </CardHeader>
 
-      <div className="mb-8">      <div className="mb-8">
+            <CardContent>
 
-        <h1 className="text-3xl font-bold mb-2">My Progress</h1>        <h1 className="text-3xl font-bold mb-2">My Progress</h1>
+              <div className="space-y-4">
 
-        <p className="text-muted-foreground">        <p className="text-muted-foreground">
+                {courses.length === 0 ? (  return (  return (
 
-          Track your learning journey and achievements          Track your learning journey and achievements
+                  <p className="text-gray-500 text-center py-4">No courses enrolled yet</p>
 
-        </p>        </p>
+                ) : (    <div className="container mx-auto px-4 py-8">    <div className="container mx-auto px-4 py-8">
 
-      </div>      </div>
+                  courses.map((course) => (
 
+                    <div key={course.id} className="space-y-2">      {/* Header */}      {/* Header */}
 
+                      <div className="flex justify-between items-center">
 
-      {/* Stats Overview */}      {/* Stats Overview */}
+                        <h4 className="font-medium text-gray-900">{course.title}</h4>      <div className="mb-8">      <div className="mb-8">
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <Badge variant={course.progress >= 100 ? "default" : "secondary"}>
 
-        <Card>        <Card>
+                          {course.progress}%        <h1 className="text-3xl font-bold mb-2">My Progress</h1>        <h1 className="text-3xl font-bold mb-2">My Progress</h1>
 
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        </Badge>
 
-            <CardTitle className="text-sm font-medium">Total Courses</CardTitle>            <CardTitle className="text-sm font-medium">Total Courses</CardTitle>
+                      </div>        <p className="text-muted-foreground">        <p className="text-muted-foreground">
 
-            <BookOpen className="h-4 w-4 text-muted-foreground" />            <BookOpen className="h-4 w-4 text-muted-foreground" />
+                      <Progress value={course.progress} className="h-2" />
 
-          </CardHeader>          </CardHeader>
+                      <p className="text-sm text-gray-600">          Track your learning journey and achievements          Track your learning journey and achievements
 
-          <CardContent>          <CardContent>
+                        {course.completed_lessons} of {course.total_lessons} lessons completed
 
-            <div className="text-2xl font-bold">{stats.total_courses}</div>            <div className="text-2xl font-bold">{stats.total_courses}</div>
+                      </p>        </p>        </p>
 
-            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+                    </div>
 
-              Enrolled courses              Enrolled courses
+                  ))      </div>      </div>
 
-            </p>            </p>
+                )}
 
-          </CardContent>          </CardContent>
+              </div>
 
-        </Card>        </Card>
+            </CardContent>
 
-
-
-        <Card>        <Card>
-
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-
-            <CardTitle className="text-sm font-medium">Completed</CardTitle>            <CardTitle className="text-sm font-medium">Completed</CardTitle>
-
-            <Award className="h-4 w-4 text-muted-foreground" />            <Award className="h-4 w-4 text-muted-foreground" />
-
-          </CardHeader>          </CardHeader>
-
-          <CardContent>          <CardContent>
-
-            <div className="text-2xl font-bold">{stats.completed_courses}</div>            <div className="text-2xl font-bold">{stats.completed_courses}</div>
-
-            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
-
-              Courses finished              Courses finished
-
-            </p>            </p>
-
-          </CardContent>          </CardContent>
-
-        </Card>        </Card>
+          </Card>      {/* Stats Overview */}      {/* Stats Overview */}
 
 
 
-        <Card>        <Card>
+          <Card>      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
 
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardHeader>
 
-            <CardTitle className="text-sm font-medium">Study Hours</CardTitle>            <CardTitle className="text-sm font-medium">Study Hours</CardTitle>
+              <CardTitle className="flex items-center gap-2">        <Card>        <Card>
 
-            <Clock className="h-4 w-4 text-muted-foreground" />            <Clock className="h-4 w-4 text-muted-foreground" />
+                <TrendingUp className="h-5 w-5" />
 
-          </CardHeader>          </CardHeader>
+                Recent Activity          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
 
-          <CardContent>          <CardContent>
+              </CardTitle>
 
-            <div className="text-2xl font-bold">{stats.hours_spent}</div>            <div className="text-2xl font-bold">{stats.hours_spent}</div>
+            </CardHeader>            <CardTitle className="text-sm font-medium">Total Courses</CardTitle>            <CardTitle className="text-sm font-medium">Total Courses</CardTitle>
 
-            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+            <CardContent>
+
+              <div className="space-y-4">            <BookOpen className="h-4 w-4 text-muted-foreground" />            <BookOpen className="h-4 w-4 text-muted-foreground" />
+
+                <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg">
+
+                  <Award className="h-5 w-5 text-green-600" />          </CardHeader>          </CardHeader>
+
+                  <div className="flex-1">
+
+                    <p className="font-medium text-green-900">Quiz Completed</p>          <CardContent>          <CardContent>
+
+                    <p className="text-sm text-green-700">JavaScript Basics - Score: 85%</p>
+
+                  </div>            <div className="text-2xl font-bold">{stats.total_courses}</div>            <div className="text-2xl font-bold">{stats.total_courses}</div>
+
+                  <span className="text-xs text-green-600">2 hours ago</span>
+
+                </div>            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+
+
+
+                <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg">              Enrolled courses              Enrolled courses
+
+                  <BookOpen className="h-5 w-5 text-blue-600" />
+
+                  <div className="flex-1">            </p>            </p>
+
+                    <p className="font-medium text-blue-900">Lesson Completed</p>
+
+                    <p className="text-sm text-blue-700">React Components</p>          </CardContent>          </CardContent>
+
+                  </div>
+
+                  <span className="text-xs text-blue-600">1 day ago</span>        </Card>        </Card>
+
+                </div>
+
+
+
+                <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-lg">
+
+                  <Trophy className="h-5 w-5 text-purple-600" />        <Card>        <Card>
+
+                  <div className="flex-1">
+
+                    <p className="font-medium text-purple-900">Achievement Unlocked</p>          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+
+                    <p className="text-sm text-purple-700">First Assignment Submission</p>
+
+                  </div>            <CardTitle className="text-sm font-medium">Completed</CardTitle>            <CardTitle className="text-sm font-medium">Completed</CardTitle>
+
+                  <span className="text-xs text-purple-600">3 days ago</span>
+
+                </div>            <Award className="h-4 w-4 text-muted-foreground" />            <Award className="h-4 w-4 text-muted-foreground" />
+
+              </div>
+
+            </CardContent>          </CardHeader>          </CardHeader>
+
+          </Card>
+
+        </div>          <CardContent>          <CardContent>
+
+
+
+        {/* Learning Goals */}            <div className="text-2xl font-bold">{stats.completed_courses}</div>            <div className="text-2xl font-bold">{stats.completed_courses}</div>
+
+        <Card>
+
+          <CardHeader>            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+
+            <CardTitle className="flex items-center gap-2">
+
+              <Target className="h-5 w-5" />              Courses finished              Courses finished
+
+              Learning Goals
+
+            </CardTitle>            </p>            </p>
+
+          </CardHeader>
+
+          <CardContent>          </CardContent>          </CardContent>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+              <div className="text-center p-4 border border-gray-200 rounded-lg">        </Card>        </Card>
+
+                <div className="text-2xl font-bold text-blue-600 mb-2">5</div>
+
+                <p className="text-gray-600">Courses to Complete</p>
+
+                <Progress value={60} className="h-2 mt-2" />
+
+              </div>        <Card>        <Card>
+
+
+
+              <div className="text-center p-4 border border-gray-200 rounded-lg">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+
+                <div className="text-2xl font-bold text-green-600 mb-2">10</div>
+
+                <p className="text-gray-600">Certificates to Earn</p>            <CardTitle className="text-sm font-medium">Study Hours</CardTitle>            <CardTitle className="text-sm font-medium">Study Hours</CardTitle>
+
+                <Progress value={30} className="h-2 mt-2" />
+
+              </div>            <Clock className="h-4 w-4 text-muted-foreground" />            <Clock className="h-4 w-4 text-muted-foreground" />
+
+
+
+              <div className="text-center p-4 border border-gray-200 rounded-lg">          </CardHeader>          </CardHeader>
+
+                <div className="text-2xl font-bold text-purple-600 mb-2">100</div>
+
+                <p className="text-gray-600">Study Hours Goal</p>          <CardContent>          <CardContent>
+
+                <Progress value={stats.totalHours} className="h-2 mt-2" />
+
+              </div>            <div className="text-2xl font-bold">{stats.hours_spent}</div>            <div className="text-2xl font-bold">{stats.hours_spent}</div>
+
+            </div>
+
+          </CardContent>            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+
+        </Card>
 
               Hours invested              Hours invested
 
-            </p>            </p>
+        {/* Quick Actions */}
 
-          </CardContent>          </CardContent>
+        <div className="mt-8 flex flex-wrap gap-4">            </p>            </p>
 
-        </Card>        </Card>
+          <Link 
 
+            href="/student/learning"           </CardContent>          </CardContent>
 
+            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
 
-        <Card>        <Card>
+          >        </Card>        </Card>
 
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            Continue Learning
 
-            <CardTitle className="text-sm font-medium">Achievements</CardTitle>            <CardTitle className="text-sm font-medium">Achievements</CardTitle>
+          </Link>
 
-            <Trophy className="h-4 w-4 text-muted-foreground" />            <Trophy className="h-4 w-4 text-muted-foreground" />
+          <Link 
 
-          </CardHeader>          </CardHeader>
+            href="/student/courses"         <Card>        <Card>
 
-          <CardContent>          <CardContent>
+            className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
 
-            <div className="text-2xl font-bold">{stats.achievements}</div>            <div className="text-2xl font-bold">{stats.achievements}</div>
+          >          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
 
-            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+            Browse Courses
 
+          </Link>            <CardTitle className="text-sm font-medium">Achievements</CardTitle>            <CardTitle className="text-sm font-medium">Achievements</CardTitle>
+
+          <Link 
+
+            href="/student/achievements"             <Trophy className="h-4 w-4 text-muted-foreground" />            <Trophy className="h-4 w-4 text-muted-foreground" />
+
+            className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+
+          >          </CardHeader>          </CardHeader>
+
+            View Achievements
+
+          </Link>          <CardContent>          <CardContent>
+
+        </div>
+
+      </div>            <div className="text-2xl font-bold">{stats.achievements}</div>            <div className="text-2xl font-bold">{stats.achievements}</div>
+
+    </div>
+
+  );            <p className="text-xs text-muted-foreground">            <p className="text-xs text-muted-foreground">
+
+}
               Badges earned              Badges earned
 
             </p>            </p>

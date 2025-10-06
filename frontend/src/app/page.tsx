@@ -70,7 +70,7 @@ export default function HomePage() {
 
             <div className="flex flex-col sm:flex-row justify-center gap-6 animate-fade-in-up">
               <Link 
-                href="/courses"
+                href="/student/courses"
                 className="px-8 py-4 bg-sky-500 hover:bg-sky-600 text-white font-semibold rounded-xl shadow-lg 
                          transition-all duration-300 hover:shadow-2xl hover:shadow-sky-500/20 text-lg
                          flex items-center justify-center gap-2"
