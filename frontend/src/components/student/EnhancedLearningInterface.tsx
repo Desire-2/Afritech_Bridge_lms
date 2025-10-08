@@ -249,7 +249,7 @@ const EnhancedLearningInterface: React.FC<EnhancedLearningInterfaceProps> = ({ c
           </div>
           <p className="text-muted-foreground">Course content not available</p>
           <Button asChild>
-            <Link href="/student/learning">Back to My Learning</Link>
+            <Link href="/student/learn">Back to My Learning</Link>
           </Button>
         </div>
       </div>
@@ -315,7 +315,7 @@ const EnhancedLearningInterface: React.FC<EnhancedLearningInterfaceProps> = ({ c
                 </Button>
               )}
               
-              <Link href="/student/learning">
+              <Link href="/student/learn">
                 <Button variant="ghost" size="sm" className="hidden md:flex">
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Back to My Learning

@@ -42,7 +42,16 @@ export class AuthService {
 
   static async refreshToken(): Promise<{ access_token: string }> {
     try {
-      const response = await apiClient.post(`${this.BASE_PATH}/refresh`);
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (!refreshToken) {
+        throw new Error('No refresh token available');
+      }
+      
+      const response = await apiClient.post(`${this.BASE_PATH}/refresh`, {}, {
+        headers: {
+          Authorization: `Bearer ${refreshToken}`,
+        },
+      });
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

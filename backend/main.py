@@ -23,6 +23,9 @@ from src.routes.opportunity_routes import opportunity_bp # Import opportunity bl
 from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
 from src.routes.course_creation_routes import course_creation_bp # Import course creation blueprint
 from src.routes.assessment_routes import assessment_bp # Import assessment blueprint
+from src.routes.dashboard_routes import dashboard_bp # Import dashboard blueprint
+from src.routes.student_routes import student_bp # Import student blueprint
+from src.routes.learning_routes import learning_bp # Import learning blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -41,16 +44,30 @@ app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'sta
 if os.environ.get('FLASK_ENV') == 'production':
     # In production, only allow specific origins
     allowed_origins = os.environ.get('ALLOWED_ORIGINS', 'https://yourfrontenddomain.com').split(',')
-    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
+    CORS(app, 
+         resources={r"/*": {
+             "origins": allowed_origins,
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+             "expose_headers": ["Content-Type", "Authorization"],
+             "supports_credentials": True,
+             "max_age": 3600
+         }})
     logger.info(f"CORS configured for production with origins: {allowed_origins}")
 else:
     # In development, allow all origins with full configuration
     CORS(app, 
-         origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3005", "http://localhost:5173", "http://192.168.133.116:3000", "http://192.168.133.116:3001", "http://192.168.133.116:3002", "http://192.168.133.116:3005"], 
-         methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-         expose_headers=["Content-Type", "Authorization"],
-         supports_credentials=True)
+         resources={r"/*": {
+             "origins": ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", 
+                        "http://localhost:3005", "http://localhost:5173", 
+                        "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
+                        "http://192.168.116.116:3002", "http://192.168.116.116:3005"],
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+             "expose_headers": ["Content-Type", "Authorization"],
+             "supports_credentials": True,
+             "max_age": 3600
+         }})
     logger.info("CORS configured for development with specific settings")
 
 # Load environment variables
@@ -90,8 +107,24 @@ if env == 'production':
     logger.info("Using PostgreSQL database in production")
 else:
     # Use SQLite for development and testing
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite:///instance/afritec_lms_db.db")
+    # Ensure we use an absolute path for the SQLite database
+    db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
+    db_uri = f"sqlite:///{db_path}"
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("SQLALCHEMY_DATABASE_URI", db_uri)
     logger.info(f"Using SQLite database at {app.config['SQLALCHEMY_DATABASE_URI']}")
+    logger.info(f"Database file path: {db_path}")
+    
+    # Ensure the instance directory exists
+    instance_dir = os.path.dirname(db_path)
+    if not os.path.exists(instance_dir):
+        os.makedirs(instance_dir)
+        logger.info(f"Created instance directory: {instance_dir}")
+    
+    # Check if database file exists
+    if os.path.exists(db_path):
+        logger.info(f"Database file exists and is accessible: {os.access(db_path, os.R_OK | os.W_OK)}")
+    else:
+        logger.info("Database file does not exist, will be created")
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -153,6 +186,9 @@ app.register_blueprint(opportunity_bp) # Register opportunity blueprint
 app.register_blueprint(instructor_bp) # Register instructor blueprint
 app.register_blueprint(course_creation_bp) # Register course creation blueprint
 app.register_blueprint(assessment_bp) # Register assessment blueprint
+app.register_blueprint(dashboard_bp) # Register dashboard blueprint
+app.register_blueprint(student_bp) # Register student blueprint
+app.register_blueprint(learning_bp) # Register learning blueprint
 
 with app.app_context():
     db.create_all()

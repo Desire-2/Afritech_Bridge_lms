@@ -22,7 +22,7 @@ interface AuthContextType {
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  login: (identifier: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<AuthResponse>;
   register: (userData: RegisterRequest) => Promise<void>;
   logout: () => void;
   fetchUserProfile: () => Promise<void>;
@@ -39,6 +39,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
   const router = useRouter();
   
   // Apply hydration fix
@@ -49,26 +50,110 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setHydrated(true);
   }, []);
 
+  // Setup automatic token refresh and event listeners
+  useEffect(() => {
+    if (!hydrated) return;
+
+    // Listen for token refresh events from API client
+    const handleTokenExpired = () => {
+      console.log('Token expired, attempting refresh...');
+      refreshToken();
+    };
+
+    const handleRefreshFailed = () => {
+      console.log('Token refresh failed, logging out...');
+      logout();
+    };
+
+    window.addEventListener('auth:token-expired', handleTokenExpired);
+    window.addEventListener('auth:refresh-failed', handleRefreshFailed);
+
+    return () => {
+      window.removeEventListener('auth:token-expired', handleTokenExpired);
+      window.removeEventListener('auth:refresh-failed', handleRefreshFailed);
+    };
+  }, [hydrated]);
+
+  // Setup automatic token refresh based on expiration
+  useEffect(() => {
+    if (!token || !isAuthenticated) {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        setRefreshInterval(null);
+      }
+      return;
+    }
+
+    try {
+      const decoded: TokenPayload = jwtDecode(token);
+      const currentTime = Math.floor(Date.now() / 1000);
+      const expiresIn = decoded.exp - currentTime;
+      
+      // Refresh token 5 minutes before it expires, but not less than 30 seconds
+      const refreshTime = Math.max(30, (expiresIn - 300) * 1000);
+      
+      if (refreshTime > 0) {
+        const interval = setTimeout(() => {
+          console.log('Auto-refreshing token before expiration...');
+          refreshToken();
+        }, refreshTime);
+        
+        setRefreshInterval(interval);
+        
+        return () => {
+          clearTimeout(interval);
+        };
+      } else {
+        // Token is already expired or expires very soon, refresh immediately
+        console.log('Token expired or expiring soon, refreshing immediately...');
+        refreshToken();
+      }
+    } catch (error) {
+      console.error('Error decoding token:', error);
+      logout();
+    }
+  }, [token, isAuthenticated]);
+
   useEffect(() => {
     const initializeAuth = async () => {
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
         setToken(storedToken);
         try {
-          await fetchUserProfile();
-          setIsAuthenticated(true);
-        } catch (error) {
-          localStorage.removeItem('token');
-          localStorage.removeItem('refreshToken');
-          setToken(null);
-          setUser(null);
-          setIsAuthenticated(false);
+          // Set a timeout for the authentication check
+          const authPromise = fetchUserProfile();
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Authentication timeout')), 10000)
+          );
+          
+          await Promise.race([authPromise, timeoutPromise]);
+          // Don't set isAuthenticated here - fetchUserProfile already does it
+        } catch (error: any) {
+          console.error('Auth initialization failed:', error);
+          // Only clear tokens if it's an authentication error (401), not timeout or network errors
+          if (error.response?.status === 401 || error.message?.includes('401')) {
+            console.log('Token invalid, clearing auth data');
+            localStorage.removeItem('token');
+            localStorage.removeItem('refreshToken');
+            setToken(null);
+            setUser(null);
+            setIsAuthenticated(false);
+          } else {
+            // For timeouts or network errors, keep the token but mark as not authenticated
+            // The user can try again
+            console.log('Temporary error, keeping token for retry');
+            setIsAuthenticated(false);
+          }
         }
       }
       setIsLoading(false);
     };
-    initializeAuth();
-  }, []);
+    
+    // Only initialize after hydration
+    if (hydrated) {
+      initializeAuth();
+    }
+  }, [hydrated]);
 
   const fetchUserProfile = async () => {
     if (!token) {
@@ -79,12 +164,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      const userData = await AuthService.getCurrentUser();
-      setUser(userData);
+      // Add timeout to user data fetch
+      const userPromise = AuthService.getCurrentUser();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Profile fetch timeout')), 8000)
+      );
+      
+      const userData = await Promise.race([userPromise, timeoutPromise]);
+      setUser(userData as User);
       setIsAuthenticated(true);
     } catch (error) {
       console.error('Failed to fetch user profile:', error);
-      logout();
+      // Re-throw the error so initializeAuth can handle it appropriately
+      setIsAuthenticated(false);
+      setUser(null);
       throw error;
     } finally {
       setIsLoading(false);
@@ -101,10 +194,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       case 'admin':
         return '/admin/dashboard';
       case 'instructor':
-        return '/instructor/Dashboard'; // Updated to match the actual folder name with capital D
+        return '/instructor/dashboard';
       case 'student':
       default:
-        return '/dashboard';
+        return '/student/dashboard';
     }
   };
 
@@ -120,14 +213,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(authData.user);
       setIsAuthenticated(true);
       
-      // Determine dashboard route based on user role
-      const dashboardRoute = getDashboardByRole(authData.user.role);
+      // Log successful login
+      console.log(`AuthContext: User ${authData.user.role} logged in successfully`);
       
-      // Give the state a moment to properly update before redirecting
+      // Give the state a moment to properly update
       setTimeout(() => {
         setIsLoading(false);
-        router.push(dashboardRoute);
-      }, 300);
+      }, 100);
+      
+      // Return the user data so LoginForm can redirect immediately
+      return authData;
     } catch (error) {
       setIsAuthenticated(false);
       setIsLoading(false);
@@ -149,16 +244,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = () => {
-    // Call logout endpoint (fire and forget)
+    console.log('AuthContext: Performing logout');
+    
+    // Clear refresh interval
+    if (refreshInterval) {
+      clearInterval(refreshInterval);
+      setRefreshInterval(null);
+    }
+    
+    // Immediately clear local state to prevent loops
+    setIsLoading(false);
+    setIsAuthenticated(false);
+    setUser(null);
+    setToken(null);
+    
+    // Clear storage
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
+    } catch (error) {
+      console.error('Error clearing localStorage:', error);
+    }
+    
+    // Call logout endpoint (fire and forget - don't wait for it)
     AuthService.logout().catch(console.error);
     
-    // Clear local state
-    localStorage.removeItem('token');
-    localStorage.removeItem('refreshToken');
-    setToken(null);
-    setUser(null);
-    setIsAuthenticated(false);
-    router.push('/auth/login');
+    // Force navigation to login page
+    setTimeout(() => {
+      window.location.href = '/auth/login';
+    }, 100);
   };
 
   /**
@@ -167,13 +281,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
    */
   const refreshToken = async (): Promise<boolean> => {
     try {
+      const refreshTokenValue = localStorage.getItem('refreshToken');
+      if (!refreshTokenValue) {
+        console.warn('No refresh token available');
+        logout();
+        return false;
+      }
+
+      console.log('Refreshing access token...');
       const response = await AuthService.refreshToken();
+      
+      // Update localStorage and state
       localStorage.setItem('token', response.access_token);
       setToken(response.access_token);
+      
+      console.log('Token refreshed successfully');
       return true;
     } catch (error) {
       console.error('Token refresh failed:', error);
-      logout();
+      // Only logout if we're currently authenticated (avoid loops)
+      if (isAuthenticated) {
+        logout();
+      }
       return false;
     }
   };

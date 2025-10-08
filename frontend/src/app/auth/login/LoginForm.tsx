@@ -6,22 +6,26 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsClient, ClientOnly } from '@/lib/hydration-helper';
 import { ApiErrorHandler } from '@/lib/error-handler';
+import { RolePermissions } from '@/lib/permissions';
 
 export default function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { isAuthenticated, login, isLoading, user } = useAuth();
+  const { isAuthenticated, login, isLoading, user, logout } = useAuth();
   const isClient = useIsClient();
   
   const registrationSuccess = searchParams.get('registered') === 'true';
   const resetSuccess = searchParams.get('reset') === 'success';
   const message = searchParams.get('message');
+  const forceLogin = searchParams.get('force') === 'true'; // Allow force login
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [authCheckTimeout, setAuthCheckTimeout] = useState<number>(0);
+  const [initialAuthCheckComplete, setInitialAuthCheckComplete] = useState(false);
 
   
   // Validation states
@@ -31,6 +35,21 @@ export default function LoginForm() {
     identifier?: string;
     password?: string;
   }>({});
+
+  // Check initial authentication state on mount
+  useEffect(() => {
+    if (isClient && !isLoading && !initialAuthCheckComplete) {
+      setInitialAuthCheckComplete(true);
+      
+      // If user is authenticated but on login page, they might want to login as different user
+      if (isAuthenticated && user) {
+        console.log('LoginForm: User already authenticated. Show option to continue or logout.');
+        // Don't redirect immediately - let them choose
+      } else {
+        console.log('LoginForm: User not authenticated, showing login form');
+      }
+    }
+  }, [isClient, isLoading, isAuthenticated, user, initialAuthCheckComplete]);
 
   // Validation functions with proper client-side checks
   const validateIdentifier = (value: string): string | undefined => {
@@ -87,16 +106,40 @@ export default function LoginForm() {
     }
   }, [password, passwordTouched]);
   
-  // If already authenticated, redirect to dashboard
+  // If already authenticated, redirect to appropriate dashboard
   useEffect(() => {
-    // Only redirect after client-side hydration is complete and we're actually authenticated
-    if (isClient && isAuthenticated && !isLoading && user) {
-      router.push('/dashboard');
+    // Start auth check timeout
+    if (isLoading && authCheckTimeout === 0) {
+      setAuthCheckTimeout(Date.now());
     }
-  }, [isClient, isAuthenticated, isLoading, router, user]);
+
+    // Check for excessive auth loading time
+    if (isLoading && authCheckTimeout > 0) {
+      const elapsed = Date.now() - authCheckTimeout;
+      if (elapsed > 12000) { // 12 seconds timeout
+        console.warn('LoginForm: Auth check timeout, forcing logout');
+        logout();
+        setError('Authentication check timed out. Please try again.');
+        setAuthCheckTimeout(0);
+        return;
+      }
+    }
+
+    // Reset timeout when loading completes
+    if (!isLoading && authCheckTimeout > 0) {
+      setAuthCheckTimeout(0);
+    }
+
+    // GuestGuard will handle the redirect, so we don't need to do it here
+    // Just log the state
+    if (isClient && isAuthenticated && !isLoading && user) {
+      console.log(`LoginForm: User authenticated as ${user.role}, GuestGuard will handle redirect`);
+    }
+  }, [isClient, isAuthenticated, isLoading, user, logout, authCheckTimeout]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     setIsSubmitting(true);
 
     // Mark fields as touched for validation
@@ -129,10 +172,45 @@ export default function LoginForm() {
     setError(''); // Only clear error after validation passes
 
     try {
-      await login(identifier, password);
+      console.log('LoginForm: Submitting login request');
+      
+      // Add timeout to login request
+      const loginPromise = login(identifier, password);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Login request timed out')), 15000)
+      );
+      
+      const authData = await Promise.race([loginPromise, timeoutPromise]) as any;
+      
+      console.log('LoginForm: Login successful, redirecting to dashboard');
+      
+      // Get the dashboard route based on user role from returned data
+      if (authData && authData.user) {
+        const dashboardRoute = RolePermissions.getDashboardRoute(authData.user.role);
+        console.log(`LoginForm: Redirecting ${authData.user.role} to ${dashboardRoute}`);
+        
+        // Use router.push for client-side navigation to preserve React state
+        // Add a small delay to ensure state has updated
+        setTimeout(() => {
+          router.push(dashboardRoute);
+        }, 200);
+      } else {
+        // Fallback - redirect to student dashboard (default)
+        console.log('LoginForm: No user data, redirecting to default dashboard');
+        setTimeout(() => {
+          router.push('/student/dashboard');
+        }, 200);
+      }
+      
     } catch (err: any) {
-      // Error will be set by the AuthContext login function
       console.error('Login submission error:', err);
+      
+      if (err.message === 'Login request timed out') {
+        setError('Login request timed out. Please check your connection and try again.');
+      } else {
+        // Error will be set by the AuthContext login function for other errors
+        setError(err.message || 'Login failed. Please try again.');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -366,6 +444,32 @@ export default function LoginForm() {
             ) : 'Sign In'}
           </button>
         </form>
+
+        {/* Timeout warning for stuck authentication */}
+        {authCheckTimeout > 0 && (Date.now() - authCheckTimeout) > 8000 && (
+          <div className="mt-4 p-4 bg-yellow-900/50 border border-yellow-700 rounded-lg">
+            <div className="flex items-center gap-2 text-yellow-300 text-sm mb-2">
+              <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              Authentication is taking longer than expected
+            </div>
+            <p className="text-slate-300 text-sm mb-3">
+              If you're stuck on this page, try refreshing or clearing your browser cache.
+            </p>
+            <button
+              onClick={() => {
+                localStorage.removeItem('token');
+                localStorage.removeItem('refreshToken');
+                setAuthCheckTimeout(0);
+                window.location.href = '/auth/login';
+              }}
+              className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md transition-colors"
+            >
+              Force Logout & Retry
+            </button>
+          </div>
+        )}
 
         <div className="mt-8">
           <div className="relative">

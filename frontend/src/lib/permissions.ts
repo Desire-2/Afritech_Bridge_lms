@@ -62,3 +62,31 @@ export function canAccessRoute(userRole: UserRole, route: string): boolean {
   }
   return true; // Public routes
 }
+
+// Get dashboard route based on user role
+export function getDashboardRoute(userRole: UserRole | string): string {
+  // Normalize to lowercase string for comparison
+  const role = typeof userRole === 'string' ? userRole.toLowerCase() : userRole;
+  
+  switch (role) {
+    case UserRole.ADMIN:
+    case 'admin':
+      return '/admin/dashboard';
+    case UserRole.INSTRUCTOR:
+    case 'instructor':
+      return '/instructor/dashboard';
+    case UserRole.STUDENT:
+    case 'student':
+      return '/student/dashboard';
+    default:
+      return '/student/dashboard';
+  }
+}
+
+// RolePermissions utility class for easier access
+export const RolePermissions = {
+  hasPermission,
+  canAccessRoute,
+  getDashboardRoute,
+  rolePermissions
+};

@@ -2,8 +2,9 @@ import axios from 'axios';
 
 // Create axios instance with default configuration
 const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://192.168.133.116:5001/api/v1',
-  timeout: 10000,
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1',
+  timeout: 15000, // Increased timeout to 15 seconds for slower connections
+  withCredentials: true, // Enable sending cookies and credentials with CORS requests
   headers: {
     'Content-Type': 'application/json',
   },
@@ -34,8 +35,22 @@ apiClient.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // Don't redirect for login requests - let them handle their own errors
-    if (originalRequest.url?.includes('/auth/login')) {
+    // Log errors for debugging
+    if (error.response) {
+      console.log('API Error:', {
+        status: error.response.status,
+        url: originalRequest.url,
+        data: error.response.data
+      });
+    } else if (error.request) {
+      console.error('Network Error: No response received', {
+        url: originalRequest.url,
+        baseURL: originalRequest.baseURL
+      });
+    }
+
+    // Don't redirect for login/auth requests - let them handle their own errors
+    if (originalRequest.url?.includes('/auth/')) {
       return Promise.reject(error);
     }
 
@@ -47,44 +62,40 @@ apiClient.interceptors.response.use(
         const refreshToken = localStorage.getItem('refreshToken');
         if (refreshToken) {
           const response = await axios.post(
-            `${process.env.NEXT_PUBLIC_API_URL || 'http://192.168.133.116:5001/api/v1'}/auth/refresh`,
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1'}/auth/refresh`,
             {},
             {
               headers: {
                 Authorization: `Bearer ${refreshToken}`,
               },
+              timeout: 5000, // 5 second timeout for refresh requests
+              withCredentials: true, // Include credentials for refresh
             }
           );
 
           const { access_token } = response.data;
           localStorage.setItem('token', access_token);
 
+          // Update the axios instance authorization header for future requests
+          apiClient.defaults.headers.Authorization = `Bearer ${access_token}`;
+
           // Retry the original request
           originalRequest.headers.Authorization = `Bearer ${access_token}`;
           return apiClient(originalRequest);
+        } else {
+          // No refresh token available, emit custom event for auth context to handle
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('auth:token-expired'));
+          }
+          return Promise.reject(error);
         }
       } catch (refreshError) {
-        // Refresh failed, clear tokens and redirect to login
-        console.warn('Token refresh failed, redirecting to login...');
-        localStorage.removeItem('token');
-        localStorage.removeItem('refreshToken');
-        localStorage.removeItem('user');
+        // Refresh failed, emit custom event for auth context to handle logout
+        console.warn('Token refresh failed');
         if (typeof window !== 'undefined') {
-          window.location.href = '/auth/login?expired=true';
+          window.dispatchEvent(new CustomEvent('auth:refresh-failed'));
         }
         return Promise.reject(refreshError);
-      }
-    }
-
-    // If no refresh token or refresh failed, redirect to login for 401 errors
-    // But not for login requests (already handled above)
-    if (error.response?.status === 401 && !originalRequest.url?.includes('/auth/login')) {
-      console.warn('Unauthorized access, redirecting to login...');
-      localStorage.removeItem('token');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('user');
-      if (typeof window !== 'undefined') {
-        window.location.href = '/auth/login?expired=true';
       }
     }
 

@@ -28,15 +28,15 @@ export default function Error({
           setButtonText('Return to Admin Dashboard');
           break;
         case 'instructor':
-          setDestination('/instructor/Dashboard');
+          setDestination('/instructor/dashboard');
           setButtonText('Return to Instructor Dashboard');
           break;
         case 'student':
-          setDestination('/dashboard');
+          setDestination('/student/dashboard');
           setButtonText('Return to Student Dashboard');
           break;
         default:
-          setDestination('/dashboard');
+          setDestination('/student/dashboard');
           setButtonText('Return to Dashboard');
           break;
       }

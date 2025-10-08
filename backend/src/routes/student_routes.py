@@ -4,6 +4,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import json
+from sqlalchemy import or_
 
 from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission
@@ -710,34 +711,39 @@ def browse_courses():
     current_user_id = int(get_jwt_identity())
     
     try:
+        print(f"[DEBUG] Browse courses called by user: {current_user_id}")
+        
         # Get query parameters for filtering
         category = request.args.get('category', 'all')
         level = request.args.get('level', 'all')
         price_filter = request.args.get('price', 'all')
         search = request.args.get('search', '')
         
-        # Base query
+        print(f"[DEBUG] Filters: category={category}, level={level}, price={price_filter}, search={search}")
+        
+        # Base query - only published courses
         query = Course.query.filter(Course.is_published == True)
         
-        # Apply filters
-        if category and category.lower() != 'all':
-            query = query.filter(Course.category.ilike(f'%{category}%'))
-            
+        # Apply search filter if provided
         if search:
             query = query.filter(
-                db.or_(
+                or_(
                     Course.title.ilike(f'%{search}%'),
                     Course.description.ilike(f'%{search}%')
                 )
             )
         
         courses = query.all()
+        print(f"[DEBUG] Found {len(courses)} courses")
         
         # Get student's enrollments
         enrollments = {e.course_id: e for e in Enrollment.query.filter_by(student_id=current_user_id).all()}
+        print(f"[DEBUG] User has {len(enrollments)} enrollments")
         
         courses_data = []
         for course in courses:
+            print(f"[DEBUG] Processing course {course.id}: {course.title}")
+            
             instructor = User.query.get(course.instructor_id)
             enrollment = enrollments.get(course.id)
             
@@ -746,14 +752,31 @@ def browse_courses():
             is_scholarship = course.id % 4 == 0  # Mock: every 4th course requires scholarship
             price = 0 if is_free else (199 + (course.id * 50))
             
+            # Derive category from target_audience or use default
+            category = course.target_audience if course.target_audience else 'General'
+            
+            # Determine level based on course ID for now (mock)
+            level_options = ['Beginner', 'Intermediate', 'Advanced']
+            course_level = level_options[course.id % 3]
+            
+            # Apply level filtering
+            if level and level.lower() != 'all' and course_level != level:
+                print(f"[DEBUG] Skipping course {course.id} due to level filter")
+                continue
+            
+            # Apply category filtering  
+            if category and category.lower() != 'all' and category.lower() != category.lower():
+                # For now, skip category filtering since we don't have proper categories
+                pass
+            
             course_data = {
                 'id': course.id,
                 'title': course.title,
                 'description': course.description,
                 'instructor': instructor.first_name + " " + instructor.last_name if instructor else "Unknown",
-                'instructorTitle': "Senior Instructor",  # Mock data
-                'duration': '8 weeks',  # Mock data
-                'studentsCount': 1200 + (course.id * 100),  # Mock data
+                'instructorAvatar': None,  # TODO: Add when user profile images are implemented
+                'duration': course.estimated_duration or '8 weeks',
+                'studentsCount': len(list(course.enrollments)) if course.enrollments else 0,
                 'rating': 4.5 + (course.id % 10) * 0.05,  # Mock rating
                 'reviewsCount': 200 + (course.id * 20),  # Mock reviews
                 'price': price,
@@ -761,34 +784,43 @@ def browse_courses():
                 'isScholarshipRequired': is_scholarship and not is_free,
                 'isFree': is_free,
                 'tags': ['Programming', 'Backend', 'Python'],  # Mock tags
-                'level': ['Beginner', 'Intermediate', 'Advanced'][course.id % 3],
-                'category': course.category or 'General',
-                'thumbnail': f'/course-{course.id}.jpg',
+                'level': course_level,
+                'category': category,
+                'thumbnail': None,  # TODO: Add when course images are implemented
                 'isEnrolled': enrollment is not None,
                 'prerequisites': ['Basic programming knowledge'] if course.id % 2 == 0 else [],
-                'learningOutcomes': [
+                'learningOutcomes': course.learning_objectives.split('\n') if course.learning_objectives else [
                     f'Master {course.title} concepts',
                     'Build real-world projects',
                     'Gain practical experience'
                 ],
-                'modules': len(course.modules) if course.modules else 8,
+                'modules': course.modules.count() if course.modules else 0,
                 'certificateAvailable': True,
-                'nextCohortDate': '2024-03-01'  # Mock date
             }
+            
+            print(f"[DEBUG] Course {course.id} data prepared")
             
             # Apply price filtering
             if price_filter == 'free' and not is_free:
+                print(f"[DEBUG] Skipping course {course.id} due to price filter (free)")
                 continue
             elif price_filter == 'paid' and (is_free or is_scholarship):
+                print(f"[DEBUG] Skipping course {course.id} due to price filter (paid)")
                 continue
             elif price_filter == 'scholarship' and not is_scholarship:
+                print(f"[DEBUG] Skipping course {course.id} due to price filter (scholarship)")
                 continue
                 
             courses_data.append(course_data)
         
+        print(f"[DEBUG] Returning {len(courses_data)} courses")
         return jsonify(courses_data), 200
         
     except Exception as e:
+        print(f"[ERROR] Exception in browse_courses: {str(e)}")
+        print(f"[ERROR] Exception type: {type(e)}")
+        import traceback
+        print(f"[ERROR] Traceback: {traceback.format_exc()}")
         return jsonify({"message": "Error browsing courses", "error": str(e)}), 500
 
 @student_bp.route("/courses/<int:course_id>/enroll", methods=["POST"])

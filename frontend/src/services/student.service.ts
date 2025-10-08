@@ -140,6 +140,39 @@ export interface RecentActivity {
   completed_at: string;
 }
 
+export interface BrowseFilters {
+  category?: string;
+  level?: string;
+  price?: string;
+  search?: string;
+}
+
+export interface BrowseCourse {
+  id: number;
+  title: string;
+  description: string;
+  thumbnail?: string;
+  instructor: string;
+  instructorAvatar?: string;
+  category: string;
+  level: 'Beginner' | 'Intermediate' | 'Advanced';
+  price: number;
+  originalPrice?: number;
+  isFree: boolean;
+  isScholarshipRequired: boolean;
+  isEnrolled: boolean;
+  studentsCount: number;
+  rating: number;
+  reviewsCount: number;
+  duration: string;
+  modules: number;
+  certificateAvailable: boolean;
+  prerequisites?: string[];
+  learningOutcomes?: string[];
+  tags?: string[];
+  lastUpdated?: string;
+}
+
 export class StudentService {
   private static readonly BASE_PATH = '/student';
 
@@ -153,10 +186,58 @@ export class StudentService {
     }
   }
 
+  // Browse Courses
+  static async browseCourses(filters?: BrowseFilters): Promise<BrowseCourse[]> {
+    try {
+      const queryParams = new URLSearchParams();
+      if (filters?.category && filters.category !== 'all') {
+        queryParams.append('category', filters.category);
+      }
+      if (filters?.level && filters.level !== 'all') {
+        queryParams.append('level', filters.level);
+      }
+      if (filters?.price && filters.price !== 'all') {
+        queryParams.append('price', filters.price);
+      }
+      if (filters?.search) {
+        queryParams.append('search', filters.search);
+      }
+      
+      const url = queryParams.toString() 
+        ? `${this.BASE_PATH}/courses/browse?${queryParams}`
+        : `${this.BASE_PATH}/courses/browse`;
+      
+      const response = await apiClient.get(url);
+      return response.data.courses || response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Enroll in Course
+  static async enrollInCourse(courseId: number): Promise<{ message: string }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/courses/${courseId}/enroll`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
   // My Learning
   static async getMyLearning(): Promise<EnrolledCourse[]> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/learning`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Get Course for Learning (detailed course data for enrolled students)
+  static async getCourseForLearning(courseId: number): Promise<any> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/learning/courses/${courseId}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

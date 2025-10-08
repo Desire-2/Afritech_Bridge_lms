@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -11,27 +11,40 @@ import { useAuth } from '@/contexts/AuthContext';
 export function InstructorGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated } = useAuth();
   const router = useRouter();
+  const [hasCheckedPermissions, setHasCheckedPermissions] = useState(false);
 
   useEffect(() => {
     // Wait for authentication to complete
-    if (!isLoading) {
+    if (!isLoading && !hasCheckedPermissions) {
       // If not authenticated, redirect to login
       if (!isAuthenticated) {
+        console.log('InstructorGuard: Not authenticated, redirecting to login');
+        setHasCheckedPermissions(true);
         router.push('/auth/login');
+        return;
       } 
-      // If authenticated but not an instructor, redirect to dashboard based on role
+      // If authenticated but not an instructor, redirect to their appropriate dashboard
       else if (user?.role !== 'instructor') {
+        console.log('InstructorGuard: User role is', user?.role, ', redirecting to appropriate dashboard');
+        setHasCheckedPermissions(true);
         if (user?.role === 'admin') {
           router.push('/admin/dashboard');
+        } else if (user?.role === 'student') {
+          router.push('/student/dashboard');
         } else {
-          router.push('/dashboard'); // Default to student dashboard
+          // Fallback to student dashboard for unknown roles
+          router.push('/student/dashboard');
         }
+        return;
+      } else {
+        // User is instructor, allow access
+        setHasCheckedPermissions(true);
       }
     }
-  }, [isAuthenticated, isLoading, router, user]);
+  }, [isAuthenticated, isLoading, router, user, hasCheckedPermissions]);
 
-  // Show nothing while checking authentication
-  if (isLoading || !isAuthenticated || user?.role !== 'instructor') {
+  // Show loading while checking authentication
+  if (isLoading || !hasCheckedPermissions || !isAuthenticated || user?.role !== 'instructor') {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-900 text-white">
         <div className="text-center">

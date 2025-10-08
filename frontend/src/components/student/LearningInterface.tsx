@@ -466,7 +466,7 @@ const LearningInterface: React.FC<LearningInterfaceProps> = ({ courseId }) => {
         <div className="bg-background border-b p-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <Link href="/student/learning">
+              <Link href="/student/learn">
                 <Button variant="ghost" size="sm">
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Back to My Learning

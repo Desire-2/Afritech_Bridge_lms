@@ -1,0 +1,17 @@
+# Build artifacts
+.next/
+node_modules/
+
+# Cache
+.cache/
+*.pack
+*.pack.old
+*.gz
+*.gz.old
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

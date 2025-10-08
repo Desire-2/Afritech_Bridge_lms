@@ -12,22 +12,22 @@ const StudentSidebar = () => {
   const iconSize = 20;
 
   const navItems = [
-    { href: '/dashboard', label: 'Overview', icon: <LayoutDashboard size={iconSize} /> },
-    { href: '/mylearning', label: 'My Learning', icon: <BookOpen size={iconSize} /> },
-    { href: '/myprogress', label: 'My Progress', icon: <GraduationCap size={iconSize} /> },
-    { href: '/courses', label: 'Browse Courses', icon: <Bookmark size={iconSize} /> },
-    { href: '/opportunities', label: 'Opportunities', icon: <Briefcase size={iconSize} /> },
-    { href: '/forums' , label: 'Forums', icon: <UserCircle size={iconSize} />},
-    { href: '/dashboard/profile', label: 'My Profile', icon: <UserCircle size={iconSize} /> },
-    { href: '/dashboard/settings', label: 'Settings', icon: <UserCircle size={iconSize} /> },
-    { href: '/dashboard/help', label: 'Help & Support', icon: <UserCircle size={iconSize} /> },
+    { href: '/student/dashboard', label: 'Overview', icon: <LayoutDashboard size={iconSize} /> },
+    { href: '/student/mylearning', label: 'My Learning', icon: <BookOpen size={iconSize} /> },
+    { href: '/student/courses/myprogress', label: 'My Progress', icon: <GraduationCap size={iconSize} /> },
+    { href: '/student/courses', label: 'Browse Courses', icon: <Bookmark size={iconSize} /> },
+    { href: '/student/opportunities', label: 'Opportunities', icon: <Briefcase size={iconSize} /> },
+    { href: '/student/forums' , label: 'Forums', icon: <UserCircle size={iconSize} />},
+    { href: '/student/dashboard/profile', label: 'My Profile', icon: <UserCircle size={iconSize} /> },
+    { href: '/student/dashboard/settings', label: 'Settings', icon: <UserCircle size={iconSize} /> },
+    { href: '/student/dashboard/help', label: 'Help & Support', icon: <UserCircle size={iconSize} /> },
   ];
 
   return (
     <aside className="w-64 bg-gray-800 text-white p-6 min-h-screen">
       {/* Header Section */}
       <div className="mb-8 px-2">
-        <Link href="/dashboard" className="flex items-center gap-2">
+        <Link href="/student/dashboard" className="flex items-center gap-2">
           <GraduationCap className="text-indigo-400" size={28} />
           <h2 className="text-xl font-semibold text-gray-100">Student Portal</h2>
         </Link>

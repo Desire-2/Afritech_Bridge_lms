@@ -21,14 +21,14 @@ export default function RootRedirect() {
             router.push('/admin/dashboard');
             break;
           case 'instructor':
-            router.push('/instructor/Dashboard'); // Updated to match the capital 'D'
+            router.push('/instructor/dashboard');
             break;
           case 'student':
-            router.push('/dashboard');
+            router.push('/student/dashboard');
             break;
           default:
             // If role is not recognized, default to student dashboard
-            router.push('/dashboard');
+            router.push('/student/dashboard');
             break;
         }
       }

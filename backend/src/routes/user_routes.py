@@ -98,8 +98,12 @@ def login():
     identifier = data.get('identifier') # Can be username or email
     password = data.get('password')
 
+    # Log the login attempt (without password)
+    print(f"Login attempt for identifier: {identifier}")
+
     # Input validation with specific error messages
     if not identifier and not password:
+        print("Login failed: Both identifier and password missing")
         return jsonify({
             'message': 'Email/username and password are required',
             'error_type': 'validation_error',
@@ -109,6 +113,7 @@ def login():
             }
         }), 400
     elif not identifier:
+        print("Login failed: Identifier missing")
         return jsonify({
             'message': 'Email or username is required',
             'error_type': 'validation_error',
@@ -118,6 +123,7 @@ def login():
             }
         }), 400
     elif not password:
+        print("Login failed: Password missing")
         return jsonify({
             'message': 'Password is required',
             'error_type': 'validation_error',
@@ -132,6 +138,7 @@ def login():
     if '@' in identifier:
         # If it contains @, treat as email and do basic validation
         if not identifier.count('@') == 1 or not identifier.split('@')[1]:
+            print(f"Login failed: Invalid email format for {identifier}")
             return jsonify({
                 'message': 'Please enter a valid email address',
                 'error_type': 'validation_error',
@@ -144,6 +151,7 @@ def login():
     user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
 
     if not user:
+        print(f"Login failed: No user found for identifier {identifier}")
         return jsonify({
             'message': 'No account found with this email or username',
             'error_type': 'authentication_error',
@@ -154,6 +162,7 @@ def login():
         }), 401
     
     if not user.check_password(password):
+        print(f"Login failed: Invalid password for user {user.email}")
         return jsonify({
             'message': 'Incorrect password. Please try again.',
             'error_type': 'authentication_error',
@@ -164,14 +173,37 @@ def login():
         }), 401
 
     # Successful login
-    access_token = create_access_token(identity=str(user.id), fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
-    refresh_token = create_refresh_token(identity=str(user.id), expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
-    return jsonify({
-        'message': 'Login successful',
-        'access_token': access_token,
-        'refresh_token': refresh_token,
-        'user': user.to_dict()
-    }), 200
+    try:
+        access_token = create_access_token(identity=str(user.id), fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
+        refresh_token = create_refresh_token(identity=str(user.id), expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
+        
+        # Verify user data is properly serialized
+        user_data = user.to_dict()
+        if not user_data or 'id' not in user_data or 'role' not in user_data:
+            print(f"Login error: User data validation failed for {user.email}")
+            return jsonify({
+                'message': 'User data validation failed',
+                'error_type': 'server_error'
+            }), 500
+            
+        # Log successful authentication
+        print(f"✓ User {user.email} ({user.role}) logged in successfully")
+        
+        return jsonify({
+            'message': 'Login successful',
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'user': user_data
+        }), 200
+        
+    except Exception as e:
+        print(f"Login error: Failed to generate tokens for user {user.email}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'message': 'Authentication tokens could not be generated',
+            'error_type': 'server_error'
+        }), 500
 
 @auth_bp.route('/refresh', methods=['POST'])
 @jwt_required(refresh=True)
