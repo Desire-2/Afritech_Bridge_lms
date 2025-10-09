@@ -22,7 +22,7 @@ import {
 } from '@/types/api';
 
 export class CourseService {
-  private static readonly BASE_PATH = '/courses';
+  private static readonly BASE_PATH = '/v1/courses';
 
   // Course management
   static async getAllCourses(): Promise<Course[]> {
@@ -109,7 +109,7 @@ export class CourseService {
   // Enrollment management
   static async enrollInCourse(courseId: number): Promise<Enrollment> {
     try {
-      const response = await apiClient.post('/enrollments', { course_id: courseId });
+      const response = await apiClient.post('/v1/enrollments', { course_id: courseId });
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -118,7 +118,7 @@ export class CourseService {
 
   static async getEnrollments(courseId?: number): Promise<Enrollment[]> {
     try {
-      const url = courseId ? `/enrollments?course_id=${courseId}` : '/enrollments';
+      const url = courseId ? `/v1/enrollments?course_id=${courseId}` : '/v1/enrollments';
       const response = await apiClient.get(url);
       return response.data;
     } catch (error) {
@@ -137,7 +137,7 @@ export class CourseService {
 
   static async unenrollFromCourse(enrollmentId: number): Promise<{ message: string }> {
     try {
-      const response = await apiClient.delete(`/enrollments/${enrollmentId}`);
+      const response = await apiClient.delete(`/v1/enrollments/${enrollmentId}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -146,7 +146,7 @@ export class CourseService {
 }
 
 export class ModuleService {
-  private static readonly BASE_PATH = '/modules';
+  private static readonly BASE_PATH = '/v1/modules';
 
   static async getModules(courseId: number): Promise<Module[]> {
     try {
@@ -195,7 +195,7 @@ export class ModuleService {
 
   static async reorderModules(courseId: number, moduleIds: number[]): Promise<{ message: string }> {
     try {
-      const response = await apiClient.patch(`/courses/${courseId}/modules/reorder`, { module_ids: moduleIds });
+      const response = await apiClient.patch(`/v1/courses/${courseId}/modules/reorder`, { module_ids: moduleIds });
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -204,7 +204,7 @@ export class ModuleService {
 }
 
 export class LessonService {
-  private static readonly BASE_PATH = '/lessons';
+  private static readonly BASE_PATH = '/v1/lessons';
 
   static async getLessons(moduleId: number): Promise<Lesson[]> {
     try {
@@ -253,7 +253,7 @@ export class LessonService {
 
   static async reorderLessons(moduleId: number, lessonIds: number[]): Promise<{ message: string }> {
     try {
-      const response = await apiClient.patch(`/modules/${moduleId}/lessons/reorder`, { lesson_ids: lessonIds });
+      const response = await apiClient.patch(`/v1/modules/${moduleId}/lessons/reorder`, { lesson_ids: lessonIds });
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -262,7 +262,7 @@ export class LessonService {
 }
 
 export class QuizService {
-  private static readonly BASE_PATH = '/quizzes';
+  private static readonly BASE_PATH = '/v1/quizzes';
 
   static async getQuizzes(moduleId: number): Promise<Quiz[]> {
     try {
@@ -311,7 +311,7 @@ export class QuizService {
 
   static async submitQuiz(submissionData: QuizSubmissionRequest): Promise<Submission> {
     try {
-      const response = await apiClient.post('/submissions', submissionData);
+      const response = await apiClient.post('/v1/submissions', submissionData);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -320,7 +320,7 @@ export class QuizService {
 
   static async getQuizSubmissions(quizId: number): Promise<Submission[]> {
     try {
-      const response = await apiClient.get(`/submissions?quiz_id=${quizId}`);
+      const response = await apiClient.get(`/v1/submissions?quiz_id=${quizId}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -329,7 +329,7 @@ export class QuizService {
 
   static async getSubmission(submissionId: number): Promise<Submission> {
     try {
-      const response = await apiClient.get(`/submissions/${submissionId}`);
+      const response = await apiClient.get(`/v1/submissions/${submissionId}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -338,7 +338,7 @@ export class QuizService {
 
   static async gradeSubmission(submissionId: number, score: number): Promise<Submission> {
     try {
-      const response = await apiClient.patch(`/submissions/${submissionId}/grade`, { score });
+      const response = await apiClient.patch(`/v1/submissions/${submissionId}/grade`, { score });
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -349,7 +349,7 @@ export class QuizService {
 export class QuestionService {
   static async createQuestion(questionData: CreateQuestionRequest): Promise<Question> {
     try {
-      const response = await apiClient.post('/questions', questionData);
+      const response = await apiClient.post('/v1/questions', questionData);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -358,7 +358,7 @@ export class QuestionService {
 
   static async updateQuestion(questionId: number, questionData: Partial<CreateQuestionRequest>): Promise<Question> {
     try {
-      const response = await apiClient.put(`/questions/${questionId}`, questionData);
+      const response = await apiClient.put(`/v1/questions/${questionId}`, questionData);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -367,7 +367,7 @@ export class QuestionService {
 
   static async deleteQuestion(questionId: number): Promise<{ message: string }> {
     try {
-      const response = await apiClient.delete(`/questions/${questionId}`);
+      const response = await apiClient.delete(`/v1/questions/${questionId}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -376,7 +376,7 @@ export class QuestionService {
 
   static async createAnswer(answerData: CreateAnswerRequest): Promise<Answer> {
     try {
-      const response = await apiClient.post('/answers', answerData);
+      const response = await apiClient.post('/v1/answers', answerData);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -385,7 +385,7 @@ export class QuestionService {
 
   static async updateAnswer(answerId: number, answerData: Partial<CreateAnswerRequest>): Promise<Answer> {
     try {
-      const response = await apiClient.put(`/answers/${answerId}`, answerData);
+      const response = await apiClient.put(`/v1/answers/${answerId}`, answerData);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -394,7 +394,7 @@ export class QuestionService {
 
   static async deleteAnswer(answerId: number): Promise<{ message: string }> {
     try {
-      const response = await apiClient.delete(`/answers/${answerId}`);
+      const response = await apiClient.delete(`/v1/answers/${answerId}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -403,11 +403,11 @@ export class QuestionService {
 }
 
 export class AnnouncementService {
-  private static readonly BASE_PATH = '/announcements';
+  private static readonly BASE_PATH = '/v1/announcements';
 
   static async getAnnouncements(courseId: number): Promise<Announcement[]> {
     try {
-      const response = await apiClient.get(`/courses/${courseId}/announcements`);
+      const response = await apiClient.get(`/v1/courses/${courseId}/announcements`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

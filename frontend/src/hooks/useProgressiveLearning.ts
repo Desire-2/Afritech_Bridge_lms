@@ -134,6 +134,12 @@ export const useModuleAttempts = (moduleId: number) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Skip loading if moduleId is invalid
+    if (!moduleId || moduleId <= 0) {
+      setLoading(false);
+      return;
+    }
+
     const loadAttempts = async () => {
       try {
         const eligibility = await AssessmentApiService.checkRetakeEligibility(moduleId);
@@ -156,6 +162,11 @@ export const useModuleAttempts = (moduleId: number) => {
   }, [moduleId]);
 
   const recordAttempt = useCallback(async (): Promise<boolean> => {
+    if (!moduleId || moduleId <= 0) {
+      console.error('Invalid module ID for recording attempt');
+      return false;
+    }
+
     if (attemptState.remainingAttempts === 0) {
       throw new Error('Maximum attempts reached. Course access will be revoked.');
     }
@@ -216,6 +227,12 @@ export const useModuleScoring = (moduleId: number) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Skip loading if moduleId is invalid
+    if (!moduleId || moduleId <= 0) {
+      setLoading(false);
+      return;
+    }
+
     const loadScoring = async () => {
       try {
         const moduleData = await ProgressApiService.getModuleProgress(moduleId);
@@ -251,29 +268,39 @@ export const useModuleScoring = (moduleId: number) => {
   }, [moduleId]);
 
   const recalculate = useCallback(async () => {
+    if (!moduleId || moduleId <= 0) {
+      console.error('Invalid module ID for recalculating scoring');
+      return;
+    }
+
     setLoading(true);
-    const moduleData = await ProgressApiService.getModuleProgress(moduleId);
-    const progress = moduleData.progress;
+    try {
+      const moduleData = await ProgressApiService.getModuleProgress(moduleId);
+      const progress = moduleData.progress;
 
-    const cumulative = 
-      (progress.course_contribution_score * 0.10) +
-      (progress.quiz_score * 0.30) +
-      (progress.assignment_score * 0.40) +
-      (progress.final_assessment_score * 0.20);
+      const cumulative = 
+        (progress.course_contribution_score * 0.10) +
+        (progress.quiz_score * 0.30) +
+        (progress.assignment_score * 0.40) +
+        (progress.final_assessment_score * 0.20);
 
-    setScoringState({
-      cumulativeScore: cumulative,
-      passingThreshold: 80,
-      isPassing: cumulative >= 80,
-      breakdown: {
-        courseContribution: progress.course_contribution_score,
-        quizzes: progress.quiz_score,
-        assignments: progress.assignment_score,
-        finalAssessment: progress.final_assessment_score,
-      },
-      missingPoints: Math.max(0, 80 - cumulative),
-    });
-    setLoading(false);
+      setScoringState({
+        cumulativeScore: cumulative,
+        passingThreshold: 80,
+        isPassing: cumulative >= 80,
+        breakdown: {
+          courseContribution: progress.course_contribution_score,
+          quizzes: progress.quiz_score,
+          assignments: progress.assignment_score,
+          finalAssessment: progress.final_assessment_score,
+        },
+        missingPoints: Math.max(0, 80 - cumulative),
+      });
+    } catch (error) {
+      console.error('Failed to recalculate scoring:', error);
+    } finally {
+      setLoading(false);
+    }
   }, [moduleId]);
 
   return {

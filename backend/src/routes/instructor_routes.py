@@ -29,7 +29,7 @@ instructor_bp = Blueprint("instructor_bp", __name__, url_prefix="/api/v1/instruc
 @instructor_required
 def get_instructor_dashboard():
     """Get instructor dashboard data including courses, students, pending items, etc."""
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
     user = User.query.get(current_user_id)
     
     try:
@@ -92,7 +92,7 @@ def get_instructor_dashboard():
 @instructor_required
 def get_instructor_courses():
     """Get all courses taught by the current instructor."""
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
     
     try:
         courses = Course.query.filter_by(instructor_id=current_user_id).all()

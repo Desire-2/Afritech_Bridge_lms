@@ -3,7 +3,7 @@ import axios from 'axios';
 // Create axios instance with default configuration
 const apiClient = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1',
-  timeout: 15000, // Increased timeout to 15 seconds for slower connections
+  timeout: 8000, // Reduced timeout to 8 seconds for faster refresh experience
   withCredentials: true, // Enable sending cookies and credentials with CORS requests
   headers: {
     'Content-Type': 'application/json',
@@ -68,7 +68,7 @@ apiClient.interceptors.response.use(
               headers: {
                 Authorization: `Bearer ${refreshToken}`,
               },
-              timeout: 5000, // 5 second timeout for refresh requests
+              timeout: 3000, // 3 second timeout for refresh requests
               withCredentials: true, // Include credentials for refresh
             }
           );

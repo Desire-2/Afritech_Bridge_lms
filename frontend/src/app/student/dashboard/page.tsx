@@ -68,7 +68,7 @@ const StudentDashboardOverviewPage = () => {
   };
 
   const getMotivationalMessage = () => {
-    const progress = dashboardData?.stats.completed_courses || 0;
+    const progress = dashboardData?.stats?.completed_courses || 0;
     if (progress === 0) return "Let's start your learning journey! 🚀";
     if (progress < 3) return "You're building momentum! Keep it up! 💪";
     if (progress < 5) return "Excellent progress! You're on fire! 🔥";

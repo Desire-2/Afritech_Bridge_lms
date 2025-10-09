@@ -32,17 +32,17 @@ echo "Using Python: $($PYTHON_CMD --version)"
 echo "Starting Afritec Bridge LMS backend..."
 
 # Set default port and allow override through PORT environment variable
-export PORT=${PORT:-5000}
+export PORT=${PORT:-5001}
 # Try alternative ports if the main one is taken
-if [ "$PORT" = "5000" ]; then
+if [ "$PORT" = "5001" ]; then
     for alt_port in 5001 5002 5003 8000 8080; do
         if ! netstat -tuln | grep -q ":$alt_port "; then
             export PORT=$alt_port
-            echo "Port 5000 is in use, switching to port $PORT"
+            echo "Running on port $PORT"
             break
         fi
     done
+else
+    echo "Running on port $PORT"
 fi
-
-echo "Running on port $PORT"
 $PYTHON_CMD main.py

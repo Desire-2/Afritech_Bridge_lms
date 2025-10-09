@@ -26,7 +26,7 @@ export interface CourseAnalytics {
 }
 
 export class InstructorService {
-  private static readonly BASE_PATH = '/instructor';
+  private static readonly BASE_PATH = '/v1/instructor';
 
   // Dashboard data
   static async getDashboardData(): Promise<InstructorDashboardData> {
@@ -84,7 +84,7 @@ export class InstructorService {
   // Grade submission
   static async gradeSubmission(submissionId: number, grade: number, feedback?: string): Promise<void> {
     try {
-      await apiClient.patch(`/submissions/${submissionId}/grade`, {
+      await apiClient.patch(`/v1/submissions/${submissionId}/grade`, {
         grade,
         feedback
       });

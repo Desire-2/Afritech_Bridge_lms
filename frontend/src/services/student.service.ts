@@ -174,7 +174,7 @@ export interface BrowseCourse {
 }
 
 export class StudentService {
-  private static readonly BASE_PATH = '/student';
+  private static readonly BASE_PATH = '/v1/student';
 
   // Dashboard
   static async getDashboard(): Promise<StudentDashboard> {

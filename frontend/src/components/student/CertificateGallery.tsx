@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Award, 
@@ -30,7 +30,8 @@ import {
   Database,
   Globe,
   Shield,
-  FileText
+  FileText,
+  Target
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -441,25 +442,39 @@ const CertificateGallery: React.FC = () => {
   const [showCertificateViewer, setShowCertificateViewer] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [selectedTab, setSelectedTab] = useState('certificates');
+  const [newCertificateAlert, setNewCertificateAlert] = useState(false);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [certsData, badgesData] = await Promise.all([
+        StudentApiService.getCertificates(),
+        StudentApiService.getBadges()
+      ]);
+      
+      // Check for new certificates
+      const newCerts = Array.isArray(certsData) ? certsData : [];
+      if (newCerts.length > certificates.length && certificates.length > 0) {
+        setNewCertificateAlert(true);
+        setTimeout(() => setNewCertificateAlert(false), 5000);
+      }
+      
+      setCertificates(newCerts);
+      setBadges(Array.isArray(badgesData) ? badgesData : []);
+    } catch (error) {
+      console.error('Failed to fetch certificate data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [certificates.length]);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [certsData, badgesData] = await Promise.all([
-          StudentApiService.getCertificates(),
-          StudentApiService.getBadges()
-        ]);
-        setCertificates(Array.isArray(certsData) ? certsData : []);
-        setBadges(Array.isArray(badgesData) ? badgesData : []);
-      } catch (error) {
-        console.error('Failed to fetch certificate data:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchData();
-  }, []);
+    
+    // Poll for new certificates every 30 seconds
+    const interval = setInterval(fetchData, 30000);
+    
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
   const handleViewCertificate = (certificate: Certificate) => {
     setSelectedCertificate(certificate);
@@ -489,6 +504,26 @@ const CertificateGallery: React.FC = () => {
       initial="hidden"
       animate="visible"
     >
+      {/* New Certificate Alert */}
+      <AnimatePresence>
+        {newCertificateAlert && (
+          <motion.div
+            initial={{ opacity: 0, y: -50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -50 }}
+            className="fixed top-4 right-4 z-50 bg-green-500 text-white p-4 rounded-lg shadow-lg max-w-sm"
+          >
+            <div className="flex items-center space-x-3">
+              <Trophy className="h-6 w-6" />
+              <div>
+                <h4 className="font-semibold">New Certificate Earned! 🎉</h4>
+                <p className="text-sm">Congratulations on completing your course!</p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Header */}
       <motion.div variants={itemVariants}>
         <div className="text-center mb-8">

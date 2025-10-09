@@ -10,7 +10,8 @@ from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
-    StudentBookmark, StudentForum, ForumPost
+    StudentBookmark, StudentForum, ForumPost, ModuleProgress,
+    Certificate, SkillBadge, StudentSkillBadge
 )
 
 # Helper for role checking
@@ -211,6 +212,118 @@ def get_course_progress(course_id):
         'modules': modules_progress
     }), 200
 
+# --- Lesson Progress Routes ---
+@student_bp.route("/lessons/<int:lesson_id>/progress", methods=["POST"])
+@student_required
+def update_lesson_progress(lesson_id):
+    """Update lesson reading progress"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    lesson = Lesson.query.get_or_404(lesson_id)
+    
+    # Check if student is enrolled in the course
+    enrollment = Enrollment.query.filter_by(
+        student_id=current_user_id,
+        course_id=lesson.module.course_id
+    ).first()
+    
+    if not enrollment:
+        return jsonify({"message": "Not enrolled in this course"}), 403
+    
+    # Find or create lesson completion record
+    lesson_completion = LessonCompletion.query.filter_by(
+        student_id=current_user_id,
+        lesson_id=lesson_id
+    ).first()
+    
+    if not lesson_completion:
+        lesson_completion = LessonCompletion(
+            student_id=current_user_id,
+            lesson_id=lesson_id,
+            completed=False
+        )
+        db.session.add(lesson_completion)
+    
+    # Update progress fields
+    if 'reading_progress' in data:
+        lesson_completion.reading_progress = data['reading_progress']
+    if 'engagement_score' in data:
+        lesson_completion.engagement_score = data['engagement_score']
+    if 'scroll_progress' in data:
+        lesson_completion.scroll_progress = data['scroll_progress']
+    if 'time_spent' in data:
+        lesson_completion.time_spent = data['time_spent']
+    
+    # Update timestamps
+    lesson_completion.updated_at = datetime.utcnow()
+    if data.get('auto_saved'):
+        lesson_completion.last_accessed = datetime.utcnow()
+    
+    try:
+        db.session.commit()
+        return jsonify({
+            "message": "Lesson progress updated successfully",
+            "progress": {
+                "reading_progress": lesson_completion.reading_progress,
+                "engagement_score": lesson_completion.engagement_score,
+                "scroll_progress": lesson_completion.scroll_progress,
+                "time_spent": lesson_completion.time_spent,
+                "last_updated": lesson_completion.updated_at.isoformat()
+            }
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": f"Failed to update progress: {str(e)}"}), 500
+
+@student_bp.route("/lessons/<int:lesson_id>/progress", methods=["GET"])
+@student_required
+def get_lesson_progress(lesson_id):
+    """Get lesson reading progress"""
+    current_user_id = int(get_jwt_identity())
+    
+    lesson = Lesson.query.get_or_404(lesson_id)
+    
+    # Check if student is enrolled in the course
+    enrollment = Enrollment.query.filter_by(
+        student_id=current_user_id,
+        course_id=lesson.module.course_id
+    ).first()
+    
+    if not enrollment:
+        return jsonify({"message": "Not enrolled in this course"}), 403
+    
+    # Get lesson completion record
+    lesson_completion = LessonCompletion.query.filter_by(
+        student_id=current_user_id,
+        lesson_id=lesson_id
+    ).first()
+    
+    if lesson_completion:
+        return jsonify({
+            "lesson_id": lesson_id,
+            "progress": {
+                "reading_progress": lesson_completion.reading_progress or 0,
+                "engagement_score": lesson_completion.engagement_score or 0,
+                "scroll_progress": lesson_completion.scroll_progress or 0,
+                "time_spent": lesson_completion.time_spent or 0,
+                "completed": lesson_completion.completed,
+                "last_updated": lesson_completion.updated_at.isoformat() if lesson_completion.updated_at else None
+            }
+        }), 200
+    else:
+        return jsonify({
+            "lesson_id": lesson_id,
+            "progress": {
+                "reading_progress": 0,
+                "engagement_score": 0,
+                "scroll_progress": 0,
+                "time_spent": 0,
+                "completed": False,
+                "last_updated": None
+            }
+        }), 200
+
 # --- Lesson Completion Routes ---
 @student_bp.route("/lessons/<int:lesson_id>/complete", methods=["POST"])
 @student_required
@@ -237,14 +350,43 @@ def complete_lesson(lesson_id):
     ).first()
     
     if existing_completion:
-        return jsonify({"message": "Lesson already completed"}), 400
+        # Update existing completion with better progress data if provided
+        if data.get('reading_progress'):
+            existing_completion.reading_progress = max(existing_completion.reading_progress or 0, data.get('reading_progress', 100.0))
+        if data.get('engagement_score'):
+            existing_completion.engagement_score = max(existing_completion.engagement_score or 0, data.get('engagement_score', 75.0))
+        if data.get('scroll_progress'):
+            existing_completion.scroll_progress = max(existing_completion.scroll_progress or 0, data.get('scroll_progress', 100.0))
+        if data.get('time_spent'):
+            existing_completion.time_spent = max(existing_completion.time_spent or 0, data.get('time_spent', 0))
+        
+        existing_completion.updated_at = datetime.utcnow()
+        existing_completion.last_accessed = datetime.utcnow()
+        
+        try:
+            db.session.commit()
+            return jsonify({
+                "message": "Lesson completion updated successfully", 
+                "already_completed": True,
+                "completion": existing_completion.to_dict()
+            }), 200
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"message": f"Failed to update completion: {str(e)}"}), 500
     
     try:
         # Create completion record
         completion = LessonCompletion(
             student_id=current_user_id,
             lesson_id=lesson_id,
-            time_spent=data.get('time_spent', 0)
+            time_spent=data.get('time_spent', 0),
+            completed=True,
+            reading_progress=data.get('reading_progress', 100.0),
+            engagement_score=data.get('engagement_score', 75.0),
+            scroll_progress=data.get('scroll_progress', 100.0),
+            completed_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            last_accessed=datetime.utcnow()
         )
         db.session.add(completion)
         
@@ -926,6 +1068,271 @@ def complete_module(module_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Error updating module progress", "error": str(e)}), 500
+
+@student_bp.route("/badges/check", methods=["POST"])
+@student_required
+def check_earned_badges():
+    """Check for newly earned badges based on course progress"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    course_id = data.get('course_id')
+    
+    try:
+        # Get current progress for the course
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "Enrollment not found"}), 404
+        
+        # Get completed lessons count
+        completed_lessons = LessonCompletion.query.filter_by(
+            student_id=current_user_id,
+            completed=True
+        ).join(Lesson).filter(Lesson.module_id.in_(
+            db.session.query(Module.id).filter_by(course_id=course_id)
+        )).count()
+        
+        new_badges = []
+        
+        # Check for lesson completion badges (every 3 lessons)
+        if completed_lessons > 0 and completed_lessons % 3 == 0:
+            # Create or find the "3 Lessons Complete" badge
+            badge_name = f"Completed {completed_lessons} Lessons"
+            existing_badge = SkillBadge.query.filter_by(name=badge_name).first()
+            
+            if not existing_badge:
+                # Create the badge if it doesn't exist
+                lesson_badge = SkillBadge(
+                    name=badge_name,
+                    description=f"Successfully completed {completed_lessons} lessons in the course",
+                    criteria=json.dumps({"lessons_completed": completed_lessons}),
+                    category="learning_progress",
+                    difficulty_level="beginner",
+                    points_value=10
+                )
+                db.session.add(lesson_badge)
+                db.session.flush()
+                badge_id = lesson_badge.id
+            else:
+                badge_id = existing_badge.id
+            
+            # Check if student already has this badge
+            existing_student_badge = StudentSkillBadge.query.filter_by(
+                student_id=current_user_id,
+                badge_id=badge_id
+            ).first()
+            
+            if not existing_student_badge:
+                # Award the badge
+                student_badge = StudentSkillBadge(
+                    student_id=current_user_id,
+                    badge_id=badge_id,
+                    course_id=course_id,
+                    evidence_data=json.dumps({
+                        "lessons_completed": completed_lessons,
+                        "course_id": course_id,
+                        "earned_date": datetime.utcnow().isoformat()
+                    })
+                )
+                db.session.add(student_badge)
+                
+                new_badges.append({
+                    "id": badge_id,
+                    "name": badge_name,
+                    "description": f"Successfully completed {completed_lessons} lessons in the course",
+                    "earned_date": datetime.utcnow().isoformat()
+                })
+        
+        db.session.commit()
+        return jsonify({"newBadges": new_badges}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error checking badges", "error": str(e)}), 500
+
+@student_bp.route("/certificates/generate", methods=["POST"])
+@student_required
+def generate_certificate():
+    """Generate certificate for completed course"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    course_id = data.get('course_id')
+    
+    try:
+        # Check if course is completed and eligible for certificate
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "Enrollment not found"}), 404
+        
+        course = enrollment.course
+        if not course:
+            return jsonify({"message": "Course not found"}), 404
+        
+        # Check completion criteria
+        total_lessons = db.session.query(Lesson).join(Module).filter(
+            Module.course_id == course_id
+        ).count()
+        
+        completed_lessons = LessonCompletion.query.filter_by(
+            student_id=current_user_id,
+            completed=True
+        ).join(Lesson).join(Module).filter(
+            Module.course_id == course_id
+        ).count()
+        
+        # Get module scores
+        module_scores = []
+        modules = Module.query.filter_by(course_id=course_id).all()
+        for module in modules:
+            module_progress = ModuleProgress.query.filter_by(
+                student_id=current_user_id,
+                module_id=module.id
+            ).first()
+            if module_progress:
+                score = (
+                    module_progress.course_contribution_score * 0.10 +
+                    module_progress.quiz_score * 0.30 +
+                    module_progress.assignment_score * 0.40 +
+                    module_progress.final_assessment_score * 0.20
+                )
+                module_scores.append(score)
+        
+        overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
+        
+        # Check eligibility
+        all_lessons_completed = completed_lessons >= total_lessons
+        passing_score = overall_score >= 80
+        
+        if not (all_lessons_completed and passing_score):
+            return jsonify({
+                "success": False,
+                "message": "Course completion requirements not met",
+                "requirements": {
+                    "lessons_completed": f"{completed_lessons}/{total_lessons}",
+                    "overall_score": f"{overall_score:.1f}/80.0",
+                    "eligible": False
+                }
+            }), 400
+        
+        # Check if certificate already exists
+        existing_certificate = Certificate.query.filter_by(
+            student_id=current_user_id,
+            course_id=course_id
+        ).first()
+        
+        if existing_certificate:
+            return jsonify({
+                "success": True,
+                "message": "Certificate already exists",
+                "certificate": existing_certificate.to_dict()
+            }), 200
+        
+        # Generate new certificate
+        certificate = Certificate(
+            student_id=current_user_id,
+            course_id=course_id,
+            enrollment_id=enrollment.id,
+            overall_score=overall_score,
+            grade="A" if overall_score >= 90 else "B" if overall_score >= 80 else "C",
+            skills_acquired=json.dumps([course.category, "Problem Solving", "Critical Thinking"]),
+            portfolio_items=json.dumps([])
+        )
+        certificate.generate_certificate_number()
+        
+        db.session.add(certificate)
+        
+        # Update enrollment completion
+        enrollment.completion_date = datetime.utcnow()
+        enrollment.grade = overall_score
+        enrollment.progress = 1.0
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "message": "Certificate generated successfully",
+            "certificate": certificate.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error generating certificate", "error": str(e)}), 500
+
+@student_bp.route("/courses/<int:course_id>/detailed-progress", methods=["GET"])
+@student_required
+def get_detailed_course_progress(course_id):
+    """Get detailed course progress including quizzes and assignments"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Get course modules and lessons
+        course = Course.query.get_or_404(course_id)
+        modules = Module.query.filter_by(course_id=course_id).all()
+        
+        total_lessons = 0
+        completed_lessons = 0
+        total_quizzes = 0
+        completed_quizzes = 0
+        total_assignments = 0
+        completed_assignments = 0
+        
+        for module in modules:
+            # Count lessons
+            module_lessons = Lesson.query.filter_by(module_id=module.id).all()
+            total_lessons += len(module_lessons)
+            
+            for lesson in module_lessons:
+                lesson_progress = LessonCompletion.query.filter_by(
+                    student_id=current_user_id,
+                    lesson_id=lesson.id,
+                    completed=True
+                ).first()
+                if lesson_progress:
+                    completed_lessons += 1
+            
+            # Count quizzes (would need Quiz model - placeholder for now)
+            # total_quizzes += Quiz.query.filter_by(module_id=module.id).count()
+            
+            # Count assignments (would need Assignment model - placeholder for now)
+            # total_assignments += Assignment.query.filter_by(module_id=module.id).count()
+        
+        # Calculate overall score from module progress
+        module_scores = []
+        for module in modules:
+            module_progress = ModuleProgress.query.filter_by(
+                student_id=current_user_id,
+                module_id=module.id
+            ).first()
+            if module_progress:
+                score = (
+                    module_progress.course_contribution_score * 0.10 +
+                    module_progress.quiz_score * 0.30 +
+                    module_progress.assignment_score * 0.40 +
+                    module_progress.final_assessment_score * 0.20
+                )
+                module_scores.append(score)
+        
+        overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
+        
+        return jsonify({
+            "lessons_completed": completed_lessons,
+            "total_lessons": total_lessons,
+            "completed_quizzes": completed_quizzes,
+            "total_quizzes": total_quizzes,
+            "completed_assignments": completed_assignments,
+            "total_assignments": total_assignments,
+            "overall_score": overall_score
+        }), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching course progress", "error": str(e)}), 500
 
 @student_bp.route("/certificates", methods=["GET"])
 @student_required

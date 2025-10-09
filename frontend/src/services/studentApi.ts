@@ -372,7 +372,23 @@ export class StudentApiService {
   }
 
   static async completeLesson(lessonId: number, data: any): Promise<any> {
-    const response = await api.post(`/student/learning/lessons/${lessonId}/complete`, data);
+    const response = await api.post(`/student/lessons/${lessonId}/complete`, data);
+    return response.data;
+  }
+
+  static async updateLessonProgress(lessonId: number, progressData: {
+    reading_progress?: number;
+    engagement_score?: number;
+    scroll_progress?: number;
+    time_spent?: number;
+    auto_saved?: boolean;
+  }): Promise<any> {
+    const response = await api.post(`/student/lessons/${lessonId}/progress`, progressData);
+    return response.data;
+  }
+
+  static async getLessonProgress(lessonId: number): Promise<any> {
+    const response = await api.get(`/student/lessons/${lessonId}/progress`);
     return response.data;
   }
 
@@ -411,7 +427,7 @@ export class StudentApiService {
   }
 
   static async getCourseEnrollmentDetails(courseId: number): Promise<Course> {
-    const response = await api.get(`/courses/${courseId}`);
+    const response = await api.get(`/student/courses/${courseId}`);
     return response.data;
   }
 
@@ -444,8 +460,16 @@ export class StudentApiService {
     return response.data;
   }
 
-  static async getCourseProgress(courseId: number): Promise<any> {
-    const response = await api.get(`/student/progress/courses/${courseId}`);
+  static async getCourseProgress(courseId: number): Promise<{
+    lessons_completed: number;
+    total_lessons: number;
+    completed_quizzes: number;
+    total_quizzes: number;
+    completed_assignments: number;
+    total_assignments: number;
+    overall_score: number;
+  }> {
+    const response = await api.get(`/student/courses/${courseId}/detailed-progress`);
     return response.data;
   }
 
@@ -495,13 +519,40 @@ export class StudentApiService {
     return response.data.badges;
   }
 
-  static async checkCertificateEligibility(courseId: number): Promise<any> {
-    const response = await api.get(`/student/certificate/courses/${courseId}/eligibility`);
+  // Check for newly earned badges
+  static async checkEarnedBadges(courseId: number): Promise<SkillBadge[]> {
+    const response = await api.post('/student/badges/check', { course_id: courseId });
+    return response.data.newBadges || [];
+  }
+
+  // Generate certificate for completed course
+  static async generateCertificate(courseId: number): Promise<{ success: boolean; certificate?: any }> {
+    const response = await api.post('/student/certificates/generate', { course_id: courseId });
     return response.data;
   }
 
-  static async generateCertificate(courseId: number): Promise<any> {
-    const response = await api.post(`/student/certificate/courses/${courseId}/generate`);
+  // Get course progress including quizzes and assignments
+  static async getCourseProgress(courseId: number): Promise<{
+    lessons_completed: number;
+    total_lessons: number;
+    completed_quizzes: number;
+    total_quizzes: number;
+    completed_assignments: number;
+    total_assignments: number;
+    overall_score: number;
+  }> {
+    const response = await api.get(`/student/courses/${courseId}/detailed-progress`);
+    return response.data;
+  }
+
+  // Get module progress with scores
+  static async getModuleProgress(moduleId: number): Promise<ModuleProgress> {
+    const response = await api.get(`/student/modules/${moduleId}/progress`);
+    return response.data;
+  }
+
+  static async checkCertificateEligibility(courseId: number): Promise<any> {
+    const response = await api.get(`/student/certificate/courses/${courseId}/eligibility`);
     return response.data;
   }
 

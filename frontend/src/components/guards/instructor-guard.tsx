@@ -43,16 +43,21 @@ export function InstructorGuard({ children }: { children: React.ReactNode }) {
     }
   }, [isAuthenticated, isLoading, router, user, hasCheckedPermissions]);
 
-  // Show loading while checking authentication
-  if (isLoading || !hasCheckedPermissions || !isAuthenticated || user?.role !== 'instructor') {
+  // Show loading screen only during initial load
+  if (isLoading && !hasCheckedPermissions) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-900 text-white">
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-sky-500 mx-auto mb-4"></div>
-          <p className="text-lg">Checking permissions...</p>
+          <p className="text-lg text-gray-700 dark:text-gray-300">Loading instructor dashboard...</p>
         </div>
       </div>
     );
+  }
+
+  // Don't show anything if we're redirecting
+  if (!isAuthenticated || user?.role !== 'instructor') {
+    return null;
   }
 
   return <>{children}</>;

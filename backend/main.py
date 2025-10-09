@@ -25,7 +25,8 @@ from src.routes.course_creation_routes import course_creation_bp # Import course
 from src.routes.assessment_routes import assessment_bp # Import assessment blueprint
 from src.routes.dashboard_routes import dashboard_bp # Import dashboard blueprint
 from src.routes.student_routes import student_bp # Import student blueprint
-from src.routes.learning_routes import learning_bp # Import learning blueprint
+from src.routes.learning_routes import learning_bp # Import learning blueprint 
+from src.routes.content_assignment_routes import content_assignment_bp # Import content assignment blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -47,7 +48,7 @@ if os.environ.get('FLASK_ENV') == 'production':
     CORS(app, 
          resources={r"/*": {
              "origins": allowed_origins,
-             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
              "expose_headers": ["Content-Type", "Authorization"],
              "supports_credentials": True,
@@ -62,7 +63,7 @@ else:
                         "http://localhost:3005", "http://localhost:5173", 
                         "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
                         "http://192.168.116.116:3002", "http://192.168.116.116:3005"],
-             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+             "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
              "expose_headers": ["Content-Type", "Authorization"],
              "supports_credentials": True,
@@ -189,6 +190,7 @@ app.register_blueprint(assessment_bp) # Register assessment blueprint
 app.register_blueprint(dashboard_bp) # Register dashboard blueprint
 app.register_blueprint(student_bp) # Register student blueprint
 app.register_blueprint(learning_bp) # Register learning blueprint
+app.register_blueprint(content_assignment_bp) # Register content assignment blueprint
 
 with app.app_context():
     db.create_all()

@@ -11,7 +11,7 @@ import {
 } from '@/types/api';
 
 export class AuthService {
-  private static readonly BASE_PATH = '/auth';
+  private static readonly BASE_PATH = '/v1/auth';
 
   static async login(credentials: LoginRequest): Promise<AuthResponse> {
     try {
@@ -78,7 +78,7 @@ export class AuthService {
 
   static async getCurrentUser(): Promise<User> {
     try {
-      const response = await apiClient.get('/users/me');
+      const response = await apiClient.get('/v1/users/me');
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -87,7 +87,7 @@ export class AuthService {
 
   static async updateProfile(data: Partial<User>): Promise<User> {
     try {
-      const response = await apiClient.put('/users/me', data);
+      const response = await apiClient.put('/v1/users/me', data);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -96,7 +96,7 @@ export class AuthService {
 
   static async changePassword(oldPassword: string, newPassword: string): Promise<{ message: string }> {
     try {
-      const response = await apiClient.put('/users/me/password', {
+      const response = await apiClient.put('/v1/users/me/password', {
         old_password: oldPassword,
         new_password: newPassword,
       });

@@ -14,6 +14,14 @@ class LessonCompletion(db.Model):
     completed_at = db.Column(db.DateTime, default=datetime.utcnow)
     time_spent = db.Column(db.Integer, default=0)  # in seconds
     
+    # Enhanced progress tracking fields
+    completed = db.Column(db.Boolean, default=False)
+    reading_progress = db.Column(db.Float, default=0.0)  # 0-100 percentage
+    engagement_score = db.Column(db.Float, default=0.0)  # 0-100 engagement score
+    scroll_progress = db.Column(db.Float, default=0.0)  # 0-100 scroll percentage
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
+    
     student = db.relationship('User', backref=db.backref('lesson_completions', lazy='dynamic'))
     lesson = db.relationship('Lesson', backref=db.backref('completions', lazy='dynamic'))
     
@@ -24,8 +32,14 @@ class LessonCompletion(db.Model):
             'id': self.id,
             'student_id': self.student_id,
             'lesson_id': self.lesson_id,
-            'completed_at': self.completed_at.isoformat(),
-            'time_spent': self.time_spent
+            'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'time_spent': self.time_spent,
+            'completed': self.completed,
+            'reading_progress': self.reading_progress,
+            'engagement_score': self.engagement_score,
+            'scroll_progress': self.scroll_progress,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None
         }
 
 class UserProgress(db.Model):

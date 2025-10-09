@@ -37,14 +37,14 @@ announcement_bp = Blueprint("announcement_bp", __name__, url_prefix="/api/v1/ann
 @role_required(["admin", "instructor"])
 def create_course():
     data = request.get_json()
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())  # Ensure integer
     user = User.query.get(current_user_id)
 
     # Ensure instructor_id is the current user if they are an instructor, or allow admin to set it
     instructor_id_to_set = current_user_id
     if user.role.name == "admin" and data.get("instructor_id"):
-        if User.query.get(data.get("instructor_id")):
-             instructor_id_to_set = data.get("instructor_id")
+        if User.query.get(int(data.get("instructor_id"))):  # Ensure integer
+             instructor_id_to_set = int(data.get("instructor_id"))
         else:
             return jsonify({"message": "Specified instructor_id not found"}), 400
 
@@ -98,7 +98,7 @@ def get_course(course_id):
 @role_required(["admin", "instructor"])
 def update_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -143,11 +143,11 @@ def delete_course(course_id):
         db.session.rollback()
         return jsonify({"message": "Could not delete course", "error": str(e)}), 500
 
-@course_bp.route("/<int:course_id>/publish", methods=["POST"])
+@course_bp.route("/<int:course_id>/publish", methods=["POST", "PATCH"])
 @role_required(["admin", "instructor"])
 def publish_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
     user = User.query.get(current_user_id)
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
         return jsonify({"message": "Not authorized"}), 403
@@ -155,11 +155,11 @@ def publish_course(course_id):
     db.session.commit()
     return jsonify({"message": "Course published", "course": course.to_dict()}), 200
 
-@course_bp.route("/<int:course_id>/unpublish", methods=["POST"])
+@course_bp.route("/<int:course_id>/unpublish", methods=["POST", "PATCH"])
 @role_required(["admin", "instructor"])
 def unpublish_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
     user = User.query.get(current_user_id)
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
         return jsonify({"message": "Not authorized"}), 403

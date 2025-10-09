@@ -119,31 +119,73 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
         setToken(storedToken);
+        
+        // Check if token is valid before making API call
         try {
-          // Set a timeout for the authentication check
-          const authPromise = fetchUserProfile();
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Authentication timeout')), 10000)
-          );
+          const decoded: TokenPayload = jwtDecode(storedToken);
+          const currentTime = Math.floor(Date.now() / 1000);
           
-          await Promise.race([authPromise, timeoutPromise]);
-          // Don't set isAuthenticated here - fetchUserProfile already does it
-        } catch (error: any) {
-          console.error('Auth initialization failed:', error);
-          // Only clear tokens if it's an authentication error (401), not timeout or network errors
-          if (error.response?.status === 401 || error.message?.includes('401')) {
-            console.log('Token invalid, clearing auth data');
-            localStorage.removeItem('token');
-            localStorage.removeItem('refreshToken');
-            setToken(null);
-            setUser(null);
-            setIsAuthenticated(false);
-          } else {
-            // For timeouts or network errors, keep the token but mark as not authenticated
-            // The user can try again
-            console.log('Temporary error, keeping token for retry');
-            setIsAuthenticated(false);
+          // If token is expired, don't bother with API call
+          if (decoded.exp <= currentTime) {
+            console.log('Token expired, attempting refresh...');
+            const refreshSuccess = await refreshToken();
+            if (!refreshSuccess) {
+              console.log('Refresh failed, clearing auth data');
+              localStorage.removeItem('token');
+              localStorage.removeItem('refreshToken');
+              setToken(null);
+              setUser(null);
+              setIsAuthenticated(false);
+              setIsLoading(false);
+              return;
+            }
           }
+
+          // Token is valid or was refreshed successfully, fetch user profile
+          try {
+            // Reduced timeout for faster refresh experience
+            const authPromise = fetchUserProfile();
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Authentication timeout')), 5000)
+            );
+            
+            await Promise.race([authPromise, timeoutPromise]);
+          } catch (error: any) {
+            console.error('Auth initialization failed:', error);
+            // Only clear tokens if it's an authentication error (401), not timeout or network errors
+            if (error.response?.status === 401 || error.message?.includes('401')) {
+              console.log('Token invalid, clearing auth data');
+              localStorage.removeItem('token');
+              localStorage.removeItem('refreshToken');
+              setToken(null);
+              setUser(null);
+              setIsAuthenticated(false);
+            } else {
+              // For timeouts or network errors, try to continue with stored user data if available
+              console.log('Temporary error during auth check, checking stored user data');
+              const storedUser = localStorage.getItem('user');
+              if (storedUser) {
+                try {
+                  const parsedUser = JSON.parse(storedUser);
+                  setUser(parsedUser);
+                  setIsAuthenticated(true);
+                  console.log('Using cached user data due to network error');
+                } catch (parseError) {
+                  console.error('Failed to parse stored user data:', parseError);
+                  setIsAuthenticated(false);
+                }
+              } else {
+                setIsAuthenticated(false);
+              }
+            }
+          }
+        } catch (tokenError) {
+          console.error('Error decoding token:', tokenError);
+          localStorage.removeItem('token');
+          localStorage.removeItem('refreshToken');
+          setToken(null);
+          setUser(null);
+          setIsAuthenticated(false);
         }
       }
       setIsLoading(false);
@@ -164,15 +206,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      // Add timeout to user data fetch
+      // Reduced timeout for better user experience on refresh
       const userPromise = AuthService.getCurrentUser();
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile fetch timeout')), 8000)
+        setTimeout(() => reject(new Error('Profile fetch timeout')), 4000)
       );
       
       const userData = await Promise.race([userPromise, timeoutPromise]);
       setUser(userData as User);
       setIsAuthenticated(true);
+      
+      // Cache user data for offline/error scenarios
+      localStorage.setItem('user', JSON.stringify(userData));
     } catch (error) {
       console.error('Failed to fetch user profile:', error);
       // Re-throw the error so initializeAuth can handle it appropriately
@@ -258,10 +303,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setToken(null);
     
-    // Clear storage
+    // Clear storage including cached user data
     try {
       localStorage.removeItem('token');
       localStorage.removeItem('refreshToken');
+      localStorage.removeItem('user');
     } catch (error) {
       console.error('Error clearing localStorage:', error);
     }
