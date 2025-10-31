@@ -24,6 +24,7 @@ export default function LoginForm() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authCheckTimeout, setAuthCheckTimeout] = useState<number>(0);
   const [initialAuthCheckComplete, setInitialAuthCheckComplete] = useState(false);
@@ -90,7 +91,7 @@ export default function LoginForm() {
       }));
       
       // Only clear validation errors, not authentication errors
-      // Authentication errors should persist until next login attempt
+      // Authentication errors should persist until user tries to login again
     }
   }, [identifier, identifierTouched]);
 
@@ -103,7 +104,7 @@ export default function LoginForm() {
       }));
       
       // Only clear validation errors, not authentication errors
-      // Authentication errors should persist until next login attempt
+      // Authentication errors should persist until user tries to login again
     }
   }, [password, passwordTouched]);
   
@@ -168,9 +169,10 @@ export default function LoginForm() {
       return;
     }
 
-    // Clear validation errors and existing error if everything passes
+    // Clear validation errors and existing error only when starting new submission
     setValidationErrors({});
-    setError(''); // Only clear error after validation passes
+    setError(''); // Clear previous errors before new attempt
+    setSuccessMessage(''); // Clear any success messages
 
     try {
       console.log('LoginForm: Submitting login request');
@@ -213,12 +215,34 @@ export default function LoginForm() {
     } catch (err: any) {
       console.error('Login submission error:', err);
       
+      // Handle timeout error
       if (err.message === 'Login request timed out') {
         setError('Login request timed out. Please check your connection and try again.');
-      } else {
-        // Error will be set by the AuthContext login function for other errors
-        setError(err.message || 'Login failed. Please try again.');
+        return;
       }
+      
+      // Use the error handler to get user-friendly messages
+      let errorMessage = 'Login failed. Please try again.';
+      
+      if (err.error_type === 'authentication_error' || err.status === 401) {
+        // Handle authentication-specific errors
+        errorMessage = ApiErrorHandler.getLoginErrorMessage(err);
+      } else if (err.error_type === 'validation_error' || err.status === 400 || err.status === 422) {
+        // Handle validation errors
+        errorMessage = ApiErrorHandler.getLoginErrorMessage(err);
+      } else if (err.status === 500) {
+        errorMessage = 'Server error. Please try again later or contact support if the problem persists.';
+      } else if (err.status === 503) {
+        errorMessage = 'Service temporarily unavailable. Please try again in a few moments.';
+      } else if (!err.status && !err.response) {
+        // Network error
+        errorMessage = 'Unable to connect to the server. Please check your internet connection.';
+      } else {
+        // Use the error message from the API or error handler
+        errorMessage = err.message || errorMessage;
+      }
+      
+      setError(errorMessage);
     } finally {
       setIsSubmitting(false);
     }
@@ -261,27 +285,86 @@ export default function LoginForm() {
 
         <h2 className="text-3xl font-bold mb-8 text-center text-white">Welcome Back</h2>
         
+        {/* Success Messages */}
         {registrationSuccess && (
-          <div className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-100 px-4 py-3 rounded-lg mb-6 flex items-center gap-2">
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
-            </svg>
-            Account created successfully! Please log in.
+          <div className="bg-emerald-500/20 border border-emerald-500/30 rounded-lg mb-6 overflow-hidden">
+            <div className="flex items-start gap-3 p-4">
+              <svg className="w-5 h-5 text-emerald-300 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+              </svg>
+              <div className="flex-1">
+                <p className="text-emerald-100 text-sm font-medium">
+                  🎉 Account created successfully!
+                </p>
+                <p className="text-emerald-200/70 text-xs mt-1">
+                  Welcome to Afritec Bridge! Please log in with your credentials to get started.
+                </p>
+              </div>
+            </div>
           </div>
         )}
         
         {resetSuccess && (
-          <div className="bg-emerald-500/20 border border-emerald-500/30 text-emerald-100 px-4 py-3 rounded-lg mb-6 flex items-center gap-2">
-            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
-            </svg>
-            Password reset successful! You can now log in with your new password.
+          <div className="bg-emerald-500/20 border border-emerald-500/30 rounded-lg mb-6 overflow-hidden">
+            <div className="flex items-start gap-3 p-4">
+              <svg className="w-5 h-5 text-emerald-300 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+              </svg>
+              <div className="flex-1">
+                <p className="text-emerald-100 text-sm font-medium">
+                  ✅ Password reset successful!
+                </p>
+                <p className="text-emerald-200/70 text-xs mt-1">
+                  You can now log in with your new password.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {message && !registrationSuccess && !resetSuccess && (
+          <div className="bg-sky-500/20 border border-sky-500/30 rounded-lg mb-6 overflow-hidden">
+            <div className="flex items-start gap-3 p-4">
+              <svg className="w-5 h-5 text-sky-300 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd"/>
+              </svg>
+              <div className="flex-1">
+                <p className="text-sky-100 text-sm">
+                  {message}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {successMessage && (
+          <div className="bg-emerald-500/20 border border-emerald-500/30 rounded-lg mb-6 overflow-hidden relative">
+            <div className="flex items-start gap-3 p-4 pr-12">
+              <svg className="w-5 h-5 text-emerald-300 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
+              </svg>
+              <div className="flex-1">
+                <p className="text-emerald-100 text-sm font-medium">
+                  {successMessage}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSuccessMessage('')}
+                className="absolute top-3 right-3 text-emerald-300 hover:text-emerald-200 transition-colors"
+                aria-label="Dismiss message"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
         )}
 
         {/* Enhanced Error Display */}
         {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg relative">
             <div className="flex items-start gap-3">
               <svg 
                 className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" 
@@ -296,33 +379,90 @@ export default function LoginForm() {
                   d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-              <div className="flex-1">
+              <div className="flex-1 pr-6">
                 <p className="text-red-300 text-sm font-medium">
                   {error}
                 </p>
-                {/* Additional help text for authentication errors */}
-                {error.includes('No account found') && (
-                  <p className="text-red-400/70 text-xs mt-1">
-                    Need an account?{' '}
-                    <Link 
-                      href="/auth/register" 
-                      className="text-red-300 hover:text-red-200 underline"
-                    >
-                      Sign up here
-                    </Link>
-                  </p>
+                
+                {/* Contextual help text based on error type */}
+                {(error.toLowerCase().includes('no account') || 
+                  error.toLowerCase().includes('not found') ||
+                  error.toLowerCase().includes('user_not_found')) && (
+                  <div className="mt-2 p-2 bg-red-500/5 rounded border border-red-500/10">
+                    <p className="text-red-400/80 text-xs mb-1.5">
+                      🔍 Account not found with these credentials.
+                    </p>
+                    <p className="text-red-400/70 text-xs">
+                      Need an account?{' '}
+                      <Link 
+                        href="/auth/register" 
+                        className="text-red-300 hover:text-red-200 underline font-medium"
+                      >
+                        Create one here
+                      </Link>
+                    </p>
+                  </div>
                 )}
-                {error.includes('Incorrect password') && (
-                  <p className="text-red-400/70 text-xs mt-1">
-                    <Link 
-                      href="/auth/forgot-password" 
-                      className="text-red-300 hover:text-red-200 underline"
-                    >
-                      Forgot your password?
-                    </Link>
-                  </p>
+                
+                {(error.toLowerCase().includes('incorrect password') || 
+                  error.toLowerCase().includes('invalid password') ||
+                  error.toLowerCase().includes('invalid_password')) && (
+                  <div className="mt-2 p-2 bg-red-500/5 rounded border border-red-500/10">
+                    <p className="text-red-400/80 text-xs mb-1.5">
+                      🔒 The password you entered is incorrect.
+                    </p>
+                    <p className="text-red-400/70 text-xs">
+                      <Link 
+                        href="/auth/forgot-password" 
+                        className="text-red-300 hover:text-red-200 underline font-medium"
+                      >
+                        Reset your password
+                      </Link>
+                      {' '}or try again
+                    </p>
+                  </div>
+                )}
+                
+                {(error.toLowerCase().includes('invalid email') || 
+                  error.toLowerCase().includes('email address')) && (
+                  <div className="mt-2 p-2 bg-red-500/5 rounded border border-red-500/10">
+                    <p className="text-red-400/70 text-xs">
+                      💡 Please enter a valid email address (e.g., user@example.com) or use your username instead
+                    </p>
+                  </div>
+                )}
+                
+                {(error.toLowerCase().includes('connection') || 
+                  error.toLowerCase().includes('network') ||
+                  error.toLowerCase().includes('connect to the server')) && (
+                  <div className="mt-2 p-2 bg-red-500/5 rounded border border-red-500/10">
+                    <p className="text-red-400/70 text-xs">
+                      🌐 Please check your internet connection and try again
+                    </p>
+                  </div>
+                )}
+                
+                {(error.toLowerCase().includes('server error') || 
+                  error.toLowerCase().includes('temporarily unavailable')) && (
+                  <div className="mt-2 p-2 bg-red-500/5 rounded border border-red-500/10">
+                    <p className="text-red-400/70 text-xs">
+                      ⚙️ We're experiencing technical difficulties. Please try again in a few moments.
+                    </p>
+                  </div>
                 )}
               </div>
+              
+              {/* Dismiss Button */}
+              <button
+                type="button"
+                onClick={() => setError('')}
+                className="absolute top-3 right-3 text-red-400 hover:text-red-300 transition-colors"
+                aria-label="Dismiss error"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
           </div>
         )}
@@ -352,12 +492,14 @@ export default function LoginForm() {
               placeholder="Enter your email or username"
             />
             {validationErrors.identifier && (
-              <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded flex items-start gap-2">
+                <svg className="w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
                 </svg>
-                {validationErrors.identifier}
-              </p>
+                <p className="text-xs text-red-300 flex-1">
+                  {validationErrors.identifier}
+                </p>
+              </div>
             )}
           </div>
 
@@ -404,12 +546,14 @@ export default function LoginForm() {
               )}
             </button>
             {validationErrors.password && (
-              <p className="mt-1 text-xs text-red-400 flex items-center gap-1">
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded flex items-start gap-2">
+                <svg className="w-3.5 h-3.5 text-red-400 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd"/>
                 </svg>
-                {validationErrors.password}
-              </p>
+                <p className="text-xs text-red-300 flex-1">
+                  {validationErrors.password}
+                </p>
+              </div>
             )}
           </div>
 
@@ -439,7 +583,7 @@ export default function LoginForm() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full flex items-center justify-center gap-2 py-3.5 px-6 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-semibold rounded-lg shadow-lg transition-all duration-300 disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 py-3.5 px-6 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-semibold rounded-lg shadow-lg transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSubmitting ? (
               <>
@@ -449,8 +593,23 @@ export default function LoginForm() {
                 </svg>
                 Signing In...
               </>
-            ) : 'Sign In'}
+            ) : (
+              <>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                </svg>
+                Sign In
+              </>
+            )}
           </button>
+          
+          {isSubmitting && (
+            <div className="mt-3 text-center">
+              <p className="text-xs text-slate-400 animate-pulse">
+                Verifying your credentials...
+              </p>
+            </div>
+          )}
         </form>
 
         {/* Timeout warning for stuck authentication */}
