@@ -71,37 +71,59 @@ const CourseNavigationSidebar: React.FC<CourseNavigationSidebarProps> = ({ cours
     return <div className="w-64 bg-gray-800 text-white p-4">No course data.</div>;
   }
 
+  // Dummy completion logic: Replace with actual completion/module status from API
+  // For demonstration, assume lessons have is_completed and modules have is_completed
+  // You should fetch these flags from your backend
+
   return (
     <aside className="w-80 bg-gray-50 border-r border-gray-200 p-5 overflow-y-auto">
       <h2 className="text-xl font-semibold text-gray-800 mb-4 truncate" title={courseStructure.title}>
         {courseStructure.title}
       </h2>
       <nav>
-        {courseStructure.modules?.map((module, moduleIndex) => (
-          <div key={module.id} className="mb-6">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              Module {moduleIndex + 1}: {module.title}
-            </h3>
-            <ul>
-              {module.lessons?.map((lesson) => (
-                <li key={lesson.id} className="mb-1">
-                  <Link
-                    href={`/learn/${courseId}/${module.id}/${lesson.id}`}
-                    className={`block px-3 py-2 rounded-md text-sm font-medium 
-                                          ${
-                                            currentLessonId === String(lesson.id)
-                                              ? 'bg-indigo-100 text-indigo-700'
-                                              : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
-                                          }`}
-                  >
-                    {/* Add icon for lesson type or completion status here */}
-                    {lesson.title}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        {courseStructure.modules?.map((module, moduleIndex) => {
+          // Assume module.is_completed exists (replace with real data)
+          const moduleCompleted = module.is_completed || false;
+          return (
+            <div key={module.id} className="mb-6">
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                Module {moduleIndex + 1}: {module.title}
+              </h3>
+              <ul>
+                {module.lessons?.map((lesson) => {
+                  // Assume lesson.is_completed exists (replace with real data)
+                  const lessonCompleted = lesson.is_completed || false;
+                  // Allow access if lesson is completed or module is completed
+                  const unlocked = moduleCompleted || lessonCompleted;
+                  return (
+                    <li key={lesson.id} className="mb-1">
+                      {unlocked ? (
+                        <Link
+                          href={`/student/learn/${courseId}?lessonId=${lesson.id}`}
+                          className={`block px-3 py-2 rounded-md text-sm font-medium ${
+                            currentLessonId === String(lesson.id)
+                              ? 'bg-indigo-100 text-indigo-700'
+                              : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                          }`}
+                        >
+                          {/* Add icon for lesson type or completion status here */}
+                          {lesson.title}
+                        </Link>
+                      ) : (
+                        <span className="block px-3 py-2 rounded-md text-sm font-medium text-gray-400 cursor-not-allowed">
+                          <span className="inline-flex items-center gap-1">
+                            <span>{lesson.title}</span>
+                            <span title="Locked"><svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17 11V7a5 5 0 0 0-10 0v4"/><rect x="5" y="11" width="14" height="10" rx="2"/></svg></span>
+                          </span>
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
       </nav>
     </aside>
   );

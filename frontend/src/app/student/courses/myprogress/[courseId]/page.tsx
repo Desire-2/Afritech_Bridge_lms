@@ -75,7 +75,7 @@ const CourseProgressPage = () => {
               Try Again
             </button>
             <Link 
-              href="/mylearning"
+              href="/student/mylearning"
               className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
             >
               Back to My Learning
@@ -94,7 +94,7 @@ const CourseProgressPage = () => {
       {/* Header */}
       <div className="mb-8">
         <Link 
-          href="/mylearning"
+          href="/student/mylearning"
           className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-700 mb-4"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -256,7 +256,7 @@ const CourseProgressPage = () => {
                         <div className="flex-shrink-0">
                           {!lesson.completed && (
                             <Link
-                              href={`/learn/${courseId}/lesson/${lesson.id}`}
+                              href={`/student/learn/${courseId}`}
                               className="flex items-center gap-1 px-3 py-1 text-sm text-indigo-600 hover:text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50"
                             >
                               <Play className="w-3 h-3" />
@@ -309,7 +309,7 @@ const CourseProgressPage = () => {
             <div className="space-y-3">
               {progress.current_lesson_id ? (
                 <Link
-                  href={`/learn/${courseId}/lesson/${progress.current_lesson_id}`}
+                  href={`/student/learn/${courseId}`}
                   className="flex items-center gap-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
                 >
                   <Play className="w-5 h-5 text-indigo-600" />
@@ -317,7 +317,7 @@ const CourseProgressPage = () => {
                 </Link>
               ) : (
                 <Link
-                  href={`/learn/${courseId}`}
+                  href={`/student/learn/${courseId}`}
                   className="flex items-center gap-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100"
                 >
                   <Play className="w-5 h-5 text-indigo-600" />
@@ -326,11 +326,11 @@ const CourseProgressPage = () => {
               )}
               
               <Link
-                href={`/learn/${courseId}/notes`}
+                href={`/student/learn/${courseId}`}
                 className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100"
               >
                 <BookOpen className="w-5 h-5 text-gray-600" />
-                <span className="font-medium text-gray-700">View Notes</span>
+                <span className="font-medium text-gray-700">Go to Course</span>
               </Link>
             </div>
           </div>

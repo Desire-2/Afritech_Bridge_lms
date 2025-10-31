@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
 /**
@@ -11,6 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 export function StudentGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [loadingStartTime] = useState(Date.now());
   const [hasCheckedPermissions, setHasCheckedPermissions] = useState(false);
 
@@ -33,11 +34,13 @@ export function StudentGuard({ children }: { children: React.ReactNode }) {
     if (!isLoading && !hasCheckedPermissions) {
       clearInterval(timeoutCheck);
       
-      // If not authenticated, redirect to login
+      // If not authenticated, redirect to login with current path
       if (!isAuthenticated) {
         console.log('StudentGuard: Not authenticated, redirecting to login');
         setHasCheckedPermissions(true);
-        router.push('/auth/login');
+        const currentPath = pathname || '/';
+        const redirectUrl = `/auth/login?redirect=${encodeURIComponent(currentPath)}`;
+        router.push(redirectUrl);
         return;
       } 
       // If authenticated but not a student, redirect to their appropriate dashboard

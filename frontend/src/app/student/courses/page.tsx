@@ -240,6 +240,7 @@ const CoursesPage: React.FC = () => {
   const [filteredCourses, setFilteredCourses] = useState<CourseData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
   
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -247,6 +248,11 @@ const CoursesPage: React.FC = () => {
   const [selectedLevel, setSelectedLevel] = useState('all');
   const [selectedPrice, setSelectedPrice] = useState('all');
   const [activeTab, setActiveTab] = useState('all');
+
+  // Handle client-side hydration
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const fetchCourses = async () => {
     setIsLoading(true);
@@ -258,11 +264,15 @@ const CoursesPage: React.FC = () => {
         price: selectedPrice,
         search: searchQuery
       });
-      setCourses(coursesData);
-      setFilteredCourses(coursesData);
+      // Ensure data is always an array
+      const safeCoursesData = Array.isArray(coursesData) ? coursesData : [];
+      setCourses(safeCoursesData);
+      setFilteredCourses(safeCoursesData);
     } catch (err: any) {
       console.error('Error fetching courses:', err);
       setError(err.message || 'Failed to load courses. Please try again.');
+      setCourses([]); // Set empty array on error
+      setFilteredCourses([]);
     } finally {
       setIsLoading(false);
     }
@@ -274,6 +284,11 @@ const CoursesPage: React.FC = () => {
 
   // Apply search filter
   useEffect(() => {
+    if (!Array.isArray(courses)) {
+      setFilteredCourses([]);
+      return;
+    }
+    
     if (searchQuery.trim() === '') {
       setFilteredCourses(courses);
     } else {
@@ -288,6 +303,8 @@ const CoursesPage: React.FC = () => {
 
   // Apply tab filter
   const getTabFilteredCourses = () => {
+    if (!Array.isArray(filteredCourses)) return [];
+    
     switch (activeTab) {
       case 'enrolled':
         return filteredCourses.filter(c => c.isEnrolled);
@@ -302,19 +319,20 @@ const CoursesPage: React.FC = () => {
 
   const displayedCourses = getTabFilteredCourses();
 
-  // Get unique categories
-  const categories = ['all', ...Array.from(new Set(courses.map(c => c.category)))];
+  // Get unique categories with safety checks
+  const categories = ['all', ...(Array.isArray(courses) ? Array.from(new Set(courses.map(c => c.category))) : [])];
   const levels = ['all', 'Beginner', 'Intermediate', 'Advanced'];
 
-  // Stats
+  // Stats with safety checks
   const stats = {
-    total: courses.length,
-    enrolled: courses.filter(c => c.isEnrolled).length,
-    free: courses.filter(c => c.isFree).length,
-    scholarship: courses.filter(c => c.isScholarshipRequired).length
+    total: Array.isArray(courses) ? courses.length : 0,
+    enrolled: Array.isArray(courses) ? courses.filter(c => c.isEnrolled).length : 0,
+    free: Array.isArray(courses) ? courses.filter(c => c.isFree).length : 0,
+    scholarship: Array.isArray(courses) ? courses.filter(c => c.isScholarshipRequired).length : 0
   };
 
-  if (isLoading) {
+  // Prevent hydration mismatch by showing loading state until client-side
+  if (!isClient || isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
         <div className="container mx-auto px-4 py-8">
@@ -515,7 +533,7 @@ const CoursesPage: React.FC = () => {
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
               <TabsTrigger value="all">
-                All Courses ({filteredCourses.length})
+                All Courses ({Array.isArray(filteredCourses) ? filteredCourses.length : 0})
               </TabsTrigger>
               <TabsTrigger value="enrolled">
                 My Courses ({stats.enrolled})
@@ -532,7 +550,7 @@ const CoursesPage: React.FC = () => {
 
         {/* Courses Grid */}
         <AnimatePresence mode="wait">
-          {displayedCourses.length === 0 ? (
+          {(!Array.isArray(displayedCourses) || displayedCourses.length === 0) ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -571,7 +589,7 @@ const CoursesPage: React.FC = () => {
               exit={{ opacity: 0 }}
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
             >
-              {displayedCourses.map((course, index) => (
+              {Array.isArray(displayedCourses) && displayedCourses.map((course, index) => (
                 <CourseCard key={course.id} course={course} index={index} />
               ))}
             </motion.div>
@@ -579,7 +597,8 @@ const CoursesPage: React.FC = () => {
         </AnimatePresence>
 
         {/* Load More Button (if needed) */}
-        {displayedCourses.length > 0 && displayedCourses.length < filteredCourses.length && (
+        {Array.isArray(displayedCourses) && Array.isArray(filteredCourses) && 
+         displayedCourses.length > 0 && displayedCourses.length < filteredCourses.length && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

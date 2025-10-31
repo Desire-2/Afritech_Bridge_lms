@@ -124,6 +124,8 @@ export interface Quiz {
   title: string;
   description?: string;
   module_id: number;
+  course_id?: number;
+  is_published?: boolean;
   time_limit?: number;
   max_attempts?: number;
   created_at: string;

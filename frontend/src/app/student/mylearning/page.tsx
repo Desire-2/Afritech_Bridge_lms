@@ -11,7 +11,13 @@ const MyLearningPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'in-progress' | 'completed'>('all');
+  const [isClient, setIsClient] = useState(false);
   const { isAuthenticated, isLoading: authLoading } = useAuth();
+
+  // Handle client-side hydration
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   useEffect(() => {
     const fetchMyLearning = async () => {
@@ -20,11 +26,13 @@ const MyLearningPage = () => {
         try {
           setLoading(true);
           const data = await StudentService.getMyLearning();
-          setCourses(data);
+          // Ensure data is always an array
+          setCourses(Array.isArray(data) ? data : []);
           setError(null); // Clear any previous errors
         } catch (err: any) {
           console.error('Error fetching my learning data:', err);
           setError(err.message || 'Failed to load your learning data');
+          setCourses([]); // Set empty array on error
         } finally {
           setLoading(false);
         }
@@ -34,14 +42,16 @@ const MyLearningPage = () => {
     fetchMyLearning();
   }, [isAuthenticated, authLoading]);
 
-  const filteredCourses = courses.filter(course => {
+  // Ensure courses is always an array before filtering
+  const filteredCourses = Array.isArray(courses) ? courses.filter(course => {
     if (filter === 'all') return true;
     if (filter === 'completed') return course.progress >= 100;
     if (filter === 'in-progress') return course.progress > 0 && course.progress < 100;
     return true;
-  });
+  }) : [];
 
-  if (loading) {
+  // Prevent hydration mismatch by showing loading state until client-side
+  if (!isClient || loading) {
     return (
       <div className="container mx-auto p-6">
         <div className="animate-pulse">
@@ -84,9 +94,9 @@ const MyLearningPage = () => {
       <div className="mb-8">
         <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg w-fit">
           {[
-            { key: 'all', label: 'All Courses', count: courses.length },
-            { key: 'in-progress', label: 'In Progress', count: courses.filter(c => c.progress > 0 && c.progress < 100).length },
-            { key: 'completed', label: 'Completed', count: courses.filter(c => c.progress >= 100).length }
+            { key: 'all', label: 'All Courses', count: Array.isArray(courses) ? courses.length : 0 },
+            { key: 'in-progress', label: 'In Progress', count: Array.isArray(courses) ? courses.filter(c => c.progress > 0 && c.progress < 100).length : 0 },
+            { key: 'completed', label: 'Completed', count: Array.isArray(courses) ? courses.filter(c => c.progress >= 100).length : 0 }
           ].map((tab) => (
             <button
               key={tab.key}
@@ -112,7 +122,7 @@ const MyLearningPage = () => {
             </div>
             <div>
               <p className="text-sm text-gray-600">Total Courses</p>
-              <p className="text-2xl font-bold text-gray-800">{courses.length}</p>
+              <p className="text-2xl font-bold text-gray-800">{Array.isArray(courses) ? courses.length : 0}</p>
             </div>
           </div>
         </div>
@@ -125,7 +135,7 @@ const MyLearningPage = () => {
             <div>
               <p className="text-sm text-gray-600">In Progress</p>
               <p className="text-2xl font-bold text-gray-800">
-                {courses.filter(c => c.progress > 0 && c.progress < 100).length}
+                {Array.isArray(courses) ? courses.filter(c => c.progress > 0 && c.progress < 100).length : 0}
               </p>
             </div>
           </div>
@@ -139,7 +149,7 @@ const MyLearningPage = () => {
             <div>
               <p className="text-sm text-gray-600">Completed</p>
               <p className="text-2xl font-bold text-gray-800">
-                {courses.filter(c => c.progress >= 100).length}
+                {Array.isArray(courses) ? courses.filter(c => c.progress >= 100).length : 0}
               </p>
             </div>
           </div>
@@ -153,7 +163,7 @@ const MyLearningPage = () => {
             <div>
               <p className="text-sm text-gray-600">Avg Progress</p>
               <p className="text-2xl font-bold text-gray-800">
-                {courses.length > 0 ? Math.round(courses.reduce((sum, c) => sum + c.progress, 0) / courses.length) : 0}%
+                {Array.isArray(courses) && courses.length > 0 ? Math.round(courses.reduce((sum, c) => sum + c.progress, 0) / courses.length) : 0}%
               </p>
             </div>
           </div>

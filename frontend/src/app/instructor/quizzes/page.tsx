@@ -14,6 +14,11 @@ const QuizzesPage = () => {
   const [selectedCourse, setSelectedCourse] = useState<string>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -23,14 +28,17 @@ const QuizzesPage = () => {
       setError(null);
       try {
         const coursesData = await InstructorService.getMyCourses();
-        setCourses(coursesData);
+        setCourses(Array.isArray(coursesData) ? coursesData : []);
         
         // Fetch quizzes for all courses
         const allQuizzes: Quiz[] = [];
-        for (const course of coursesData) {
+        const validCoursesData = Array.isArray(coursesData) ? coursesData : [];
+        for (const course of validCoursesData) {
           try {
             const courseQuizzes = await QuizService.getQuizzes(course.id);
-            allQuizzes.push(...courseQuizzes);
+            if (Array.isArray(courseQuizzes)) {
+              allQuizzes.push(...courseQuizzes);
+            }
           } catch (err) {
             console.warn(`Failed to fetch quizzes for course ${course.id}:`, err);
           }
@@ -40,6 +48,8 @@ const QuizzesPage = () => {
       } catch (err: any) {
         console.error('Quizzes fetch error:', err);
         setError(err.message || 'Failed to load quizzes');
+        setCourses([]);
+        setQuizzes([]);
       } finally {
         setLoading(false);
       }
@@ -48,10 +58,10 @@ const QuizzesPage = () => {
     fetchData();
   }, [token]);
 
-  const filteredQuizzes = quizzes.filter(quiz => {
+  const filteredQuizzes = Array.isArray(quizzes) ? quizzes.filter(quiz => {
     if (selectedCourse === 'all') return true;
     return quiz.course_id === parseInt(selectedCourse);
-  });
+  }) : [];
 
   const handleDeleteQuiz = async (quizId: number) => {
     if (!window.confirm('Are you sure you want to delete this quiz? This action cannot be undone.')) {
@@ -60,14 +70,14 @@ const QuizzesPage = () => {
     
     try {
       await QuizService.deleteQuiz(quizId);
-      setQuizzes(quizzes.filter(quiz => quiz.id !== quizId));
+      setQuizzes(Array.isArray(quizzes) ? quizzes.filter(quiz => quiz.id !== quizId) : []);
     } catch (err: any) {
       console.error('Delete quiz error:', err);
       alert('Failed to delete quiz: ' + (err.message || 'Unknown error'));
     }
   };
 
-  if (loading) {
+  if (!isClient || loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-sky-500"></div>
@@ -115,7 +125,7 @@ const QuizzesPage = () => {
             className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
           >
             <option value="all">All Courses</option>
-            {courses.map(course => (
+            {Array.isArray(courses) && courses.map(course => (
               <option key={course.id} value={course.id.toString()}>
                 {course.title}
               </option>
@@ -125,19 +135,19 @@ const QuizzesPage = () => {
       </div>
 
       {/* Quizzes List */}
-      {filteredQuizzes.length === 0 ? (
+      {!Array.isArray(filteredQuizzes) || filteredQuizzes.length === 0 ? (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
           <div className="max-w-md mx-auto">
             <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">
-              {quizzes.length === 0 ? 'No quizzes yet' : 'No quizzes match your filter'}
+              {!Array.isArray(quizzes) || quizzes.length === 0 ? 'No quizzes yet' : 'No quizzes match your filter'}
             </h3>
             <p className="text-slate-600 dark:text-slate-400 mb-4">
-              {quizzes.length === 0 
+              {!Array.isArray(quizzes) || quizzes.length === 0 
                 ? "You haven't created any quizzes yet. Get started by creating your first quiz."
                 : "Try selecting a different course filter."
               }
             </p>
-            {quizzes.length === 0 && (
+            {(!Array.isArray(quizzes) || quizzes.length === 0) && (
               <Link 
                 href="/instructor/quizzes/create" 
                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
@@ -149,7 +159,7 @@ const QuizzesPage = () => {
         </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {filteredQuizzes.map((quiz) => (
+          {Array.isArray(filteredQuizzes) && filteredQuizzes.map((quiz) => (
             <div key={quiz.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
@@ -169,7 +179,7 @@ const QuizzesPage = () => {
                 
                 <div className="space-y-2 mb-4">
                   <p className="text-sm text-slate-600 dark:text-slate-400">
-                    <span className="font-medium">Course:</span> {courses.find(c => c.id === quiz.course_id)?.title || 'Unknown'}
+                    <span className="font-medium">Course:</span> {Array.isArray(courses) ? courses.find(c => c.id === quiz.course_id)?.title || 'Unknown' : 'Unknown'}
                   </p>
                   <p className="text-sm text-slate-600 dark:text-slate-400">
                     <span className="font-medium">Questions:</span> {quiz.questions?.length || 0}

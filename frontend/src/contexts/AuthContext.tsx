@@ -117,6 +117,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const initializeAuth = async () => {
       const storedToken = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
+      
       if (storedToken) {
         setToken(storedToken);
         
@@ -125,7 +127,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           const decoded: TokenPayload = jwtDecode(storedToken);
           const currentTime = Math.floor(Date.now() / 1000);
           
-          // If token is expired, don't bother with API call
+          // If we have cached user data, set it immediately for faster UI rendering
+          if (storedUser) {
+            try {
+              const parsedUser = JSON.parse(storedUser);
+              setUser(parsedUser);
+              setIsAuthenticated(true);
+              console.log('Restored user from cache');
+            } catch (parseError) {
+              console.error('Failed to parse stored user data:', parseError);
+            }
+          }
+          
+          // If token is expired, attempt refresh
           if (decoded.exp <= currentTime) {
             console.log('Token expired, attempting refresh...');
             const refreshSuccess = await refreshToken();
@@ -133,6 +147,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               console.log('Refresh failed, clearing auth data');
               localStorage.removeItem('token');
               localStorage.removeItem('refreshToken');
+              localStorage.removeItem('user');
               setToken(null);
               setUser(null);
               setIsAuthenticated(false);
@@ -141,41 +156,43 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }
           }
 
-          // Token is valid or was refreshed successfully, fetch user profile
+          // Token is valid or was refreshed successfully, fetch fresh user profile in background
           try {
-            // Reduced timeout for faster refresh experience
-            const authPromise = fetchUserProfile();
-            const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Authentication timeout')), 5000)
-            );
-            
-            await Promise.race([authPromise, timeoutPromise]);
+            const userData = await AuthService.getCurrentUser();
+            setUser(userData);
+            setIsAuthenticated(true);
+            localStorage.setItem('user', JSON.stringify(userData));
+            console.log('User profile updated from server');
           } catch (error: any) {
-            console.error('Auth initialization failed:', error);
-            // Only clear tokens if it's an authentication error (401), not timeout or network errors
-            if (error.response?.status === 401 || error.message?.includes('401')) {
-              console.log('Token invalid, clearing auth data');
+            console.error('Failed to fetch fresh user profile:', error);
+            
+            // Only clear auth state if it's a 401 (unauthorized) error
+            if (error.response?.status === 401) {
+              console.log('Token invalid (401), clearing auth data');
               localStorage.removeItem('token');
               localStorage.removeItem('refreshToken');
+              localStorage.removeItem('user');
               setToken(null);
               setUser(null);
               setIsAuthenticated(false);
             } else {
-              // For timeouts or network errors, try to continue with stored user data if available
-              console.log('Temporary error during auth check, checking stored user data');
-              const storedUser = localStorage.getItem('user');
-              if (storedUser) {
+              // For network errors or other issues, keep using cached data if available
+              console.log('Network/temporary error - maintaining session with cached data');
+              // If we don't have user data yet, try using cached data
+              if (!user && storedUser) {
                 try {
                   const parsedUser = JSON.parse(storedUser);
                   setUser(parsedUser);
                   setIsAuthenticated(true);
-                  console.log('Using cached user data due to network error');
+                  console.log('Fallback to cached user data');
                 } catch (parseError) {
                   console.error('Failed to parse stored user data:', parseError);
                   setIsAuthenticated(false);
                 }
-              } else {
-                setIsAuthenticated(false);
+              }
+              // Keep authenticated if we already have user data
+              else if (user) {
+                setIsAuthenticated(true);
               }
             }
           }
@@ -183,6 +200,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           console.error('Error decoding token:', tokenError);
           localStorage.removeItem('token');
           localStorage.removeItem('refreshToken');
+          localStorage.removeItem('user');
           setToken(null);
           setUser(null);
           setIsAuthenticated(false);

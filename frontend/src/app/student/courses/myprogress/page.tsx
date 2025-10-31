@@ -183,7 +183,7 @@ const MyProgressPage = () => {
                   
                   <div className="mt-3 flex gap-2">
                     <Link
-                      href={`/learn/${course.id}`}
+                      href={`/student/learn/${course.id}`}
                       className="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full hover:bg-indigo-200"
                     >
                       Continue Learning
@@ -200,7 +200,7 @@ const MyProgressPage = () => {
               
               {courses.length > 5 && (
                 <Link 
-                  href="/mylearning"
+                  href="/student/mylearning"
                   className="block text-center py-2 text-indigo-600 hover:text-indigo-700 font-medium"
                 >
                   View All Courses ({courses.length})
@@ -311,7 +311,7 @@ const MyProgressPage = () => {
         <h2 className="text-xl font-semibold text-gray-800 mb-4">Quick Actions</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Link
-            href="/mylearning"
+            href="/student/mylearning"
             className="flex items-center gap-3 p-4 bg-white rounded-lg border hover:shadow-md transition-shadow"
           >
             <BookOpen className="w-8 h-8 text-indigo-600" />

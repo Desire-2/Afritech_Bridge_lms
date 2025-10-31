@@ -18,6 +18,7 @@ export default function LoginForm() {
   const resetSuccess = searchParams.get('reset') === 'success';
   const message = searchParams.get('message');
   const forceLogin = searchParams.get('force') === 'true'; // Allow force login
+  const redirectPath = searchParams.get('redirect'); // Get redirect path from URL
 
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -184,23 +185,30 @@ export default function LoginForm() {
       
       console.log('LoginForm: Login successful, redirecting to dashboard');
       
-      // Get the dashboard route based on user role from returned data
+      // Determine where to redirect after login
+      let targetRoute = '/student/dashboard'; // Default fallback
+      
       if (authData && authData.user) {
-        const dashboardRoute = RolePermissions.getDashboardRoute(authData.user.role);
-        console.log(`LoginForm: Redirecting ${authData.user.role} to ${dashboardRoute}`);
-        
-        // Use router.push for client-side navigation to preserve React state
-        // Add a small delay to ensure state has updated
-        setTimeout(() => {
-          router.push(dashboardRoute);
-        }, 200);
-      } else {
-        // Fallback - redirect to student dashboard (default)
-        console.log('LoginForm: No user data, redirecting to default dashboard');
-        setTimeout(() => {
-          router.push('/student/dashboard');
-        }, 200);
+        // If there's a redirect parameter, use it (unless it's a login/auth page)
+        if (redirectPath && !redirectPath.includes('/auth/')) {
+          targetRoute = redirectPath;
+          console.log(`LoginForm: Redirecting to saved path: ${targetRoute}`);
+        } else {
+          // Otherwise use the role-based dashboard
+          targetRoute = RolePermissions.getDashboardRoute(authData.user.role);
+          console.log(`LoginForm: Redirecting ${authData.user.role} to ${targetRoute}`);
+        }
+      } else if (redirectPath && !redirectPath.includes('/auth/')) {
+        // If we have a redirect path but no user data, use the redirect
+        targetRoute = redirectPath;
+        console.log(`LoginForm: Redirecting to saved path (no user data): ${targetRoute}`);
       }
+      
+      // Use router.push for client-side navigation to preserve React state
+      // Add a small delay to ensure state has updated
+      setTimeout(() => {
+        router.push(targetRoute);
+      }, 200);
       
     } catch (err: any) {
       console.error('Login submission error:', err);

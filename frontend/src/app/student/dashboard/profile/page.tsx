@@ -209,7 +209,7 @@ const UserProfilePage: React.FC = () => {
         {/* <Card title="My Enrolled Courses">
           <div className="p-6">
             <p>Course enrollment information will be displayed here.</p>
-             <Link href="/mylearning" className="text-indigo-600 hover:underline">View My Learning Dashboard</Link>
+             <Link href="/student/mylearning" className="text-indigo-600 hover:underline">View My Learning Dashboard</Link>
           </div>
         </Card> */}
       </div>

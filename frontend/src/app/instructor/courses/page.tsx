@@ -10,7 +10,13 @@ const InstructorCoursesPage = () => {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
   const { token } = useAuth();
+
+  // Handle client-side hydration
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   useEffect(() => {
     const fetchCourses = async () => {
@@ -20,10 +26,12 @@ const InstructorCoursesPage = () => {
       setError(null);
       try {
         const coursesData = await InstructorService.getMyCourses();
-        setCourses(coursesData);
+        // Ensure courses is always an array
+        setCourses(Array.isArray(coursesData) ? coursesData : []);
       } catch (err: any) {
         console.error('Courses fetch error:', err);
         setError(err.message || 'Failed to load courses');
+        setCourses([]); // Set empty array on error
       } finally {
         setLoading(false);
       }
@@ -41,7 +49,7 @@ const InstructorCoursesPage = () => {
       // Import CourseService dynamically to avoid circular imports
       const { CourseService } = await import('@/services/course.service');
       await CourseService.deleteCourse(courseId);
-      setCourses(courses.filter(course => course.id !== courseId));
+      setCourses(Array.isArray(courses) ? courses.filter(course => course.id !== courseId) : []);
     } catch (err: any) {
       console.error('Delete course error:', err);
       alert('Failed to delete course: ' + (err.message || 'Unknown error'));
@@ -57,18 +65,19 @@ const InstructorCoursesPage = () => {
         await CourseService.publishCourse(courseId);
       }
       
-      setCourses(courses.map(course => 
+      setCourses(Array.isArray(courses) ? courses.map(course => 
         course.id === courseId 
           ? { ...course, is_published: !isPublished }
           : course
-      ));
+      ) : []);
     } catch (err: any) {
       console.error('Toggle publish error:', err);
       alert('Failed to update course: ' + (err.message || 'Unknown error'));
     }
   };
 
-  if (loading) {
+  // Prevent hydration mismatch
+  if (!isClient || loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-sky-500"></div>
@@ -103,7 +112,7 @@ const InstructorCoursesPage = () => {
         </Link>
       </div>
       
-      {courses.length === 0 ? (
+      {!Array.isArray(courses) || courses.length === 0 ? (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-8 text-center">
           <div className="max-w-md mx-auto">
             <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">No courses yet</h3>

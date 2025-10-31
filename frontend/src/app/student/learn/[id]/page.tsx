@@ -423,6 +423,12 @@ const LearningPage = () => {
         console.log('Fetching course data for ID:', courseId);
         const response = await StudentApiService.getCourseDetails(courseId);
         console.log('Course data response:', response);
+        console.log('Course data structure:', {
+          hasResponse: !!response,
+          hasCourse: !!response?.course,
+          courseKeys: response ? Object.keys(response) : [],
+          courseTitle: response?.course?.title
+        });
         
         setCourseData(response);
         
@@ -707,7 +713,15 @@ const LearningPage = () => {
     );
   }
 
-  if (!courseData?.course) {
+  if (!courseData || (!courseData.course && !courseData.id && !courseData.title && !courseData.success)) {
+    console.log('Course not found condition:', {
+      courseData,
+      hasCourseData: !!courseData,
+      hasCourse: !!courseData?.course,
+      courseDataKeys: courseData ? Object.keys(courseData) : [],
+      hasIdOrTitle: !!(courseData?.id || courseData?.title),
+      hasSuccess: !!courseData?.success
+    });
     return (
       <div className="min-h-screen bg-gradient-to-br from-yellow-50 to-orange-100 flex items-center justify-center p-4">
         <Card className="w-full max-w-md">
@@ -724,7 +738,7 @@ const LearningPage = () => {
     );
   }
 
-  const course = courseData.course;
+  const course = courseData.course || courseData;
   const allLessons = getAllLessons();
   const currentLessonIndex = getCurrentLessonIndex();
   

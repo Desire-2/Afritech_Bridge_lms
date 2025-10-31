@@ -12,7 +12,13 @@ const InstructorDashboardPage = () => {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isClient, setIsClient] = useState(false);
   const { token, user } = useAuth();
+
+  // Handle client-side hydration
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -28,7 +34,8 @@ const InstructorDashboardPage = () => {
         ]);
         
         setDashboardData(dashboardResponse);
-        setCourses(coursesResponse);
+        // Ensure courses is always an array
+        setCourses(Array.isArray(coursesResponse) ? coursesResponse : []);
       } catch (err: any) {
         console.error('Dashboard fetch error:', err);
         setError(err.message || 'An error occurred while fetching dashboard data.');
@@ -36,10 +43,11 @@ const InstructorDashboardPage = () => {
         // Fallback: try to fetch just courses if dashboard fails
         try {
           const coursesResponse = await InstructorService.getMyCourses();
-          setCourses(coursesResponse);
+          const safeCourses = Array.isArray(coursesResponse) ? coursesResponse : [];
+          setCourses(safeCourses);
           // Create minimal dashboard data
           setDashboardData({
-            taughtCourses: coursesResponse,
+            taughtCourses: safeCourses,
             totalStudents: 0,
             pendingGradingItems: 0,
             recentEnrollments: [],
@@ -49,6 +57,7 @@ const InstructorDashboardPage = () => {
         } catch (fallbackErr: any) {
           console.error('Courses fetch error:', fallbackErr);
           setError('Unable to load instructor data. Please try again.');
+          setCourses([]); // Set empty array on error
         }
       } finally {
         setLoading(false);
@@ -58,7 +67,8 @@ const InstructorDashboardPage = () => {
     fetchDashboardData();
   }, [token]);
 
-  if (loading) return (
+  // Prevent hydration mismatch by showing loading state until client-side
+  if (!isClient || loading) return (
     <div className="flex items-center justify-center py-20">
       <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-sky-500"></div>
       <span className="ml-3 text-slate-600 dark:text-slate-300">Loading dashboard...</span>
@@ -97,7 +107,7 @@ const InstructorDashboardPage = () => {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Courses Taught</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{courses.length}</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{Array.isArray(courses) ? courses.length : 0}</p>
             </div>
             <div className="rounded-full bg-sky-100 dark:bg-sky-900/30 p-3">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-sky-600 dark:text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -156,7 +166,7 @@ const InstructorDashboardPage = () => {
               </Link>
             </div>
             
-            {courses.length > 0 ? (
+            {Array.isArray(courses) && courses.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-700">
                 {courses.map(course => (
                   <div key={course.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
@@ -224,7 +234,7 @@ const InstructorDashboardPage = () => {
               </Link>
             </div>
             
-            {dashboardData?.recentAnnouncements.length > 0 ? (
+            {dashboardData?.recentAnnouncements && Array.isArray(dashboardData.recentAnnouncements) && dashboardData.recentAnnouncements.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-700">
                 {dashboardData.recentAnnouncements.map(announcement => (
                   <div key={announcement.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60">

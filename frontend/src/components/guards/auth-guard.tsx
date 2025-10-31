@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 
 /**
@@ -11,16 +11,21 @@ import { useAuth } from '@/contexts/AuthContext';
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isLoading, isAuthenticated } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [hasRedirected, setHasRedirected] = useState(false);
 
   useEffect(() => {
     // Wait for authentication to complete
     if (!isLoading && !isAuthenticated && !hasRedirected) {
-      // If not authenticated, redirect to login
+      // Save the current path to redirect back after login
+      const currentPath = pathname || '/';
+      const redirectUrl = currentPath !== '/auth/login' ? `/auth/login?redirect=${encodeURIComponent(currentPath)}` : '/auth/login';
+      
       setHasRedirected(true);
-      router.push('/auth/login');
+      console.log(`AuthGuard: Redirecting to login, will return to: ${currentPath}`);
+      router.push(redirectUrl);
     }
-  }, [isAuthenticated, isLoading, router, hasRedirected]);
+  }, [isAuthenticated, isLoading, router, pathname, hasRedirected]);
 
   // Show loading screen while checking authentication
   if (isLoading) {

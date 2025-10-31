@@ -20,6 +20,12 @@ const StudentsPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isClient, setIsClient] = useState(false);
+
+  // Handle client-side hydration
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -33,11 +39,14 @@ const StudentsPage = () => {
           InstructorService.getMyCourses()
         ]);
         
-        setStudents(studentsData);
-        setCourses(coursesData);
+        // Ensure data is always an array
+        setStudents(Array.isArray(studentsData) ? studentsData : []);
+        setCourses(Array.isArray(coursesData) ? coursesData : []);
       } catch (err: any) {
         console.error('Students fetch error:', err);
         setError(err.message || 'Failed to load students');
+        setStudents([]); // Set empty arrays on error
+        setCourses([]);
       } finally {
         setLoading(false);
       }
@@ -46,7 +55,7 @@ const StudentsPage = () => {
     fetchData();
   }, [token]);
 
-  const filteredStudents = students.filter(student => {
+  const filteredStudents = Array.isArray(students) ? students.filter(student => {
     const matchesSearch = searchTerm === '' || 
       `${student.first_name} ${student.last_name}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
       student.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -55,9 +64,10 @@ const StudentsPage = () => {
     const matchesCourse = selectedCourse === 'all' || student.course_title === selectedCourse;
     
     return matchesSearch && matchesCourse;
-  });
+  }) : [];
 
-  if (loading) {
+  // Prevent hydration mismatch
+  if (!isClient || loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-sky-500"></div>
@@ -85,7 +95,7 @@ const StudentsPage = () => {
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Students</h1>
         <div className="text-sm text-slate-500 dark:text-slate-400">
-          Total: {filteredStudents.length} students
+          Total: {Array.isArray(filteredStudents) ? filteredStudents.length : 0} students
         </div>
       </div>
 
@@ -116,7 +126,7 @@ const StudentsPage = () => {
               className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
             >
               <option value="all">All Courses</option>
-              {courses.map(course => (
+              {Array.isArray(courses) && courses.map(course => (
                 <option key={course.id} value={course.title}>
                   {course.title}
                 </option>
@@ -128,10 +138,10 @@ const StudentsPage = () => {
 
       {/* Students List */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-        {filteredStudents.length === 0 ? (
+        {!Array.isArray(filteredStudents) || filteredStudents.length === 0 ? (
           <div className="p-8 text-center">
             <p className="text-slate-500 dark:text-slate-400">
-              {students.length === 0 ? 'No students enrolled in your courses yet.' : 'No students match your search criteria.'}
+              {!Array.isArray(students) || students.length === 0 ? 'No students enrolled in your courses yet.' : 'No students match your search criteria.'}
             </p>
           </div>
         ) : (
@@ -160,7 +170,7 @@ const StudentsPage = () => {
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-slate-800 divide-y divide-slate-200 dark:divide-slate-700">
-                {filteredStudents.map((student) => (
+                {Array.isArray(filteredStudents) && filteredStudents.map((student) => (
                   <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
