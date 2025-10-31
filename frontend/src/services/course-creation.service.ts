@@ -21,8 +21,8 @@ import {
 } from '@/types/api';
 
 export class CourseCreationService {
-  private static readonly BASE_PATH = '/v1/instructor/courses';
-  private static readonly ASSESSMENT_PATH = '/v1/instructor/assessments';
+  private static readonly BASE_PATH = '/instructor/courses';
+  private static readonly ASSESSMENT_PATH = '/instructor/assessments';
 
   // =====================
   // COURSE MANAGEMENT

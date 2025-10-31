@@ -26,7 +26,7 @@ export interface CourseAnalytics {
 }
 
 export class InstructorService {
-  private static readonly BASE_PATH = '/v1/instructor';
+  private static readonly BASE_PATH = '/instructor';
 
   // Dashboard data
   static async getDashboardData(): Promise<InstructorDashboardData> {

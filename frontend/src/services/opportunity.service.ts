@@ -7,7 +7,7 @@ import {
 } from '@/types/api';
 
 export class OpportunityService {
-  private static readonly BASE_PATH = '/v1/opportunities';
+  private static readonly BASE_PATH = '/opportunities';
 
   static async getAllOpportunities(params?: {
     page?: number;

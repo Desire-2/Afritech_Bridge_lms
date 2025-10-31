@@ -3,7 +3,7 @@ import { ApiErrorHandler } from '@/lib/error-handler';
 import { User, PaginatedResponse } from '@/types/api';
 
 export class AdminService {
-  private static readonly BASE_PATH = '/v1/admin';
+  private static readonly BASE_PATH = '/admin';
 
   // User management
   static async getAllUsers(params?: {

@@ -7,7 +7,7 @@ import {
 } from '@/types/api';
 
 export class QuizProgressService {
-  private static readonly BASE_PATH = '/v1/quiz-progress';
+  private static readonly BASE_PATH = '/quiz-progress';
 
   static async getQuizProgress(quizId: number): Promise<QuizProgress | null> {
     try {
