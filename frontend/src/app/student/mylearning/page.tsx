@@ -234,7 +234,7 @@ const MyLearningPage = () => {
 
                 <div className="flex gap-2">
                   <Link
-                    href={`/student/learn/${course.id}`}
+                    href={`/learn/${course.id}`}
                     className="flex-1 flex items-center justify-center gap-2 py-2 px-4 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
                   >
                     <PlayCircle className="w-4 h-4" />

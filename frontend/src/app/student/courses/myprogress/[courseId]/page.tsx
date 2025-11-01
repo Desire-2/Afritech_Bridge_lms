@@ -256,7 +256,7 @@ const CourseProgressPage = () => {
                         <div className="flex-shrink-0">
                           {!lesson.completed && (
                             <Link
-                              href={`/student/learn/${courseId}`}
+                              href={`/learn/${courseId}`}
                               className="flex items-center gap-1 px-3 py-1 text-sm text-indigo-600 hover:text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50"
                             >
                               <Play className="w-3 h-3" />

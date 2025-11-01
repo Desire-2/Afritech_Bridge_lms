@@ -183,7 +183,7 @@ const MyProgressPage = () => {
                   
                   <div className="mt-3 flex gap-2">
                     <Link
-                      href={`/student/learn/${course.id}`}
+                      href={`/learn/${course.id}`}
                       className="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full hover:bg-indigo-200"
                     >
                       Continue Learning

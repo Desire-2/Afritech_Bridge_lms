@@ -76,7 +76,7 @@ const CourseCard: React.FC<CourseCardProps> = ({ course, viewMode, onEnrollClick
   const getEnrollmentButton = () => {
     if (course.is_enrolled) {
       return (
-        <Link href={`/student/learn/${course.id}`}>
+        <Link href={`/learn/${course.id}`}>
           <Button className="w-full">Continue Learning</Button>
         </Link>
       );

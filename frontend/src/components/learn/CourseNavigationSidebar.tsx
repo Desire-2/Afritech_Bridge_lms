@@ -99,7 +99,7 @@ const CourseNavigationSidebar: React.FC<CourseNavigationSidebarProps> = ({ cours
                     <li key={lesson.id} className="mb-1">
                       {unlocked ? (
                         <Link
-                          href={`/student/learn/${courseId}?lessonId=${lesson.id}`}
+                          href={`/learn/${courseId}?lessonId=${lesson.id}`}
                           className={`block px-3 py-2 rounded-md text-sm font-medium ${
                             currentLessonId === String(lesson.id)
                               ? 'bg-indigo-100 text-indigo-700'

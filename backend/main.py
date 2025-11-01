@@ -66,6 +66,8 @@ else:
          resources={r"/*": {
              "origins": ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", 
                         "http://localhost:3005", "http://localhost:5173", 
+                        "http://192.168.0.5:3000", "http://192.168.0.5:3001", 
+                        "http://192.168.0.5:3002", "http://192.168.0.5:3005",
                         "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
                         "http://192.168.116.116:3002", "http://192.168.116.116:3005"],
              "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],

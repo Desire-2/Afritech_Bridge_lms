@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import RootLayout from './layout';
 import RootRedirect from './root-redirect';
 
 // Company Logo Component
@@ -45,7 +44,7 @@ const CompanyLogo = () => (
 
 export default function HomePage() {
   return (
-    <RootLayout>
+    <>
       <RootRedirect />
       <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-8 relative overflow-hidden">
         {/* Animated background elements */}
@@ -118,6 +117,6 @@ export default function HomePage() {
           </div>
         </div>
       </main>
-    </RootLayout>
+    </>
   );
 }

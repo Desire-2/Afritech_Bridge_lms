@@ -204,7 +204,7 @@ const CourseCard: React.FC<{ course: CourseData; index: number }> = ({ course, i
           {/* Action Buttons */}
           <div className="mt-auto space-y-2">
             {course.isEnrolled ? (
-              <Link href={`/student/learn/${course.id}`} className="block">
+              <Link href={`/learn/${course.id}`} className="block">
                 <Button className="w-full bg-green-600 hover:bg-green-700">
                   <Play className="w-4 h-4 mr-2" />
                   Continue Learning

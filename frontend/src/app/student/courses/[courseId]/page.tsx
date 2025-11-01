@@ -215,7 +215,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ courseI
       // - ContextualHelpDialog with 4-tab help system
       // - Enhanced content viewer with interactive features
       // - Learning analytics and progress tracking
-      router.push(`/student/learn/${courseId}`);
+      router.push(`/learn/${courseId}`);
     }
   };
 

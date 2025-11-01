@@ -4,51 +4,50 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useParams } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { StudentApiService } from '@/services/studentApi';
-import ContentAssignmentService, { type LessonContent, type ContentQuiz, type ContentAssignment } from '@/services/contentAssignmentApi';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import ContentAssignmentService, { type ContentQuiz, type ContentAssignment } from '@/services/contentAssignmentApi';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, AlertCircle, BookOpen, Play, Target, Settings, HelpCircle, ArrowLeft, ArrowRight, Lock, CheckCircle, Clock, Menu, X, Eye, Timer, Award, Brain, ChevronUp, ChevronDown, Heart, Star, Trophy, Zap, Bookmark, Share2, Download, Medal, FileText, PenTool, Clipboard, ExternalLink } from 'lucide-react';
+import { Loader2, AlertCircle, BookOpen, Award, X } from 'lucide-react';
 import Link from 'next/link';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Phase 5 Enhanced Learning Interface Component with Automatic Progress Tracking
+// Import custom components and utilities
+import { LearningHeader } from './components/LearningHeader';
+import { LearningSidebar } from './components/LearningSidebar';
+import { LessonContent } from './components/LessonContent';
+import { CelebrationModal } from './components/CelebrationModal';
+import { UnlockAnimation } from './components/UnlockAnimation';
+import { useProgressTracking } from './hooks/useProgressTracking';
+import * as NavUtils from './utils/navigationUtils';
+import type { 
+  CourseCompletion, 
+  InteractionEvent, 
+  ViewMode, 
+  CourseData,
+  ModuleStatus
+} from './types';
+
+// Enhanced Learning Interface Component with Automatic Progress Tracking
 const LearningPage = () => {
   const { user, isAuthenticated } = useAuth();
   const params = useParams();
   const courseId = parseInt(params.id as string);
   
   // Core state
-  const [courseData, setCourseData] = useState<any>(null);
+  const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentLesson, setCurrentLesson] = useState<any>(null);
   const [currentModuleId, setCurrentModuleId] = useState<number | null>(null);
   
   // Enhanced content state
-  const [lessonContent, setLessonContent] = useState<LessonContent | null>(null);
   const [lessonQuiz, setLessonQuiz] = useState<ContentQuiz | null>(null);
   const [lessonAssignments, setLessonAssignments] = useState<ContentAssignment[]>([]);
   const [contentLoading, setContentLoading] = useState(false);
   
-  // Enhanced Progress Tracking State
-  const [readingProgress, setReadingProgress] = useState<number>(0);
-  const [timeSpent, setTimeSpent] = useState<number>(0);
-  const [scrollProgress, setScrollProgress] = useState<number>(0);
-  const [engagementScore, setEngagementScore] = useState<number>(0);
-  const [isLessonCompleted, setIsLessonCompleted] = useState<boolean>(false);
-  const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null);
-  
   // Course Completion Tracking
-  const [courseCompletion, setCourseCompletion] = useState({
+  const [courseCompletion, setCourseCompletion] = useState<CourseCompletion>({
     totalLessons: 0,
     completedLessons: 0,
     totalQuizzes: 0,
@@ -65,26 +64,39 @@ const LearningPage = () => {
   const [showUnlockAnimation, setShowUnlockAnimation] = useState(false);
   const [unlockedModuleName, setUnlockedModuleName] = useState<string | null>(null);
   const [helpDialogOpen, setHelpDialogOpen] = useState(false);
-  const [currentViewMode, setCurrentViewMode] = useState<'content' | 'assessment' | 'notes'>('content');
-  const [interactionHistory, setInteractionHistory] = useState<any[]>([]);
+  const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('content');
+  const [interactionHistory, setInteractionHistory] = useState<InteractionEvent[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [lessonNotes, setLessonNotes] = useState<string>('');
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
-  const [completionInProgress, setCompletionInProgress] = useState(false);
   
   // Refs for tracking
   const contentRef = useRef<HTMLDivElement>(null);
-  const startTimeRef = useRef<number>(Date.now());
-  const lastInteractionRef = useRef<number>(Date.now());
-  const readingTimeRef = useRef<number>(0);
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   // Progressive Learning Hooks (always called to maintain hook order)
   const progressiveLearning = useProgressiveLearning(courseId);
   const moduleAttempts = useModuleAttempts(currentModuleId || 0);
   const moduleScoring = useModuleScoring(currentModuleId || 0);
+
+  // Progress tracking hook
+  const {
+    readingProgress,
+    timeSpent,
+    scrollProgress,
+    engagementScore,
+    isLessonCompleted,
+    updateReadingProgress,
+    handleAutoLessonCompletion
+  } = useProgressTracking({
+    currentLesson,
+    currentModuleId,
+    showCelebration,
+    contentRef,
+    interactionHistory
+  });
 
   // Helper function to close celebration
   const closeCelebration = useCallback(() => {
@@ -95,164 +107,30 @@ const LearningPage = () => {
     }
   }, []);
 
-  // Automatic Progress Tracking Functions
-  const updateReadingProgress = useCallback(() => {
-    // Don't update progress when celebration modal is showing
-    if (showCelebration) return;
+  // Wrap the completion handler with celebration logic
+  const handleLessonComplete = useCallback(async () => {
+    setShowCelebration(true);
     
-    const currentTime = Date.now();
-    const timeSinceStart = (currentTime - startTimeRef.current) / 1000; // seconds
-    
-    let scrollProgress = 0;
-    
-    if (contentRef.current) {
-      const element = contentRef.current;
-      const scrollTop = element.scrollTop;
-      const scrollHeight = element.scrollHeight - element.clientHeight;
-      
-      if (scrollHeight > 0) {
-        scrollProgress = (scrollTop / scrollHeight) * 100;
-      } else {
-        // If content is not scrollable, use time-based progress
-        scrollProgress = Math.min(100, (timeSinceStart / 180) * 100); // 3 minutes = 100%
-      }
-    }
-    
-    // Update scroll progress
-    setScrollProgress(Math.min(100, Math.max(0, scrollProgress)));
-    
-    // Calculate time-based progress (fallback for short content)
-    const timeProgress = Math.min(100, (timeSinceStart / 300) * 100); // 5 minutes = 100%
-    
-    // Use the higher of scroll or time progress
-    const combinedProgress = Math.max(scrollProgress, timeProgress);
-    setReadingProgress(combinedProgress);
-    
-    console.log('Progress update:', 
-      `Scroll: ${scrollProgress.toFixed(1)}%, Time: ${timeProgress.toFixed(1)}%, Combined: ${combinedProgress.toFixed(1)}%, TimeSince: ${timeSinceStart}s`); // Debug log
-    
-    // Track engagement
-    if (scrollProgress > 0 || timeSinceStart > 10) { // Consider engaged after 10 seconds
-      lastInteractionRef.current = currentTime;
-      readingTimeRef.current += 2; // Increment by 2 since we update every 2 seconds
-    }
-    
-    // Calculate engagement score
-    const engagementFactors = {
-      scrollProgress: scrollProgress / 100,
-      timeSpent: Math.min(timeSinceStart / 600, 1), // 10 minutes max
-      interactions: Math.min(interactionHistory.length / 10, 1),
-      consistency: Math.min(readingTimeRef.current / 100, 1) // Reading consistency
-    };
-    
-    const newEngagementScore = (
-      engagementFactors.scrollProgress * 0.3 +
-      engagementFactors.timeSpent * 0.3 +
-      engagementFactors.interactions * 0.2 +
-      engagementFactors.consistency * 0.2
-    ) * 100;
-    
-    setEngagementScore(newEngagementScore);
-    
-    console.log('Engagement factors:', 
-      `Scroll: ${engagementFactors.scrollProgress.toFixed(2)}, Time: ${engagementFactors.timeSpent.toFixed(2)}, Interactions: ${engagementFactors.interactions.toFixed(2)}, Consistency: ${engagementFactors.consistency.toFixed(2)}`,
-      'Score:', newEngagementScore.toFixed(2)); // Debug log
-    
-    // Auto-complete when thresholds are met (only once per lesson)
-    if (combinedProgress >= 80 && newEngagementScore >= 70 && !isLessonCompleted) {
-      console.log('Auto-completing lesson'); // Debug log
-      handleAutoLessonCompletion();
-    }
-  }, [interactionHistory.length, isLessonCompleted, showCelebration]);
-
-  // Auto-save progress function
-  const autoSaveProgress = useCallback(async () => {
-    if (!currentLesson || isLessonCompleted) return;
-    
-    try {
-      await StudentApiService.updateLessonProgress(currentLesson.id, {
-        reading_progress: readingProgress,
-        engagement_score: engagementScore,
-        scroll_progress: scrollProgress,
-        time_spent: Math.floor((Date.now() - startTimeRef.current) / 1000),
-        auto_saved: true
-      });
-      console.log('Progress auto-saved successfully');
-    } catch (error) {
-      console.error('Auto-save failed:', error);
-    }
-  }, [currentLesson, readingProgress, engagementScore, scrollProgress, isLessonCompleted]);
-
-  // Handle automatic lesson completion
-  const handleAutoLessonCompletion = useCallback(async () => {
-    if (!currentLesson || isLessonCompleted || completionInProgress) return;
-    
-    try {
-      setCompletionInProgress(true);
-      setIsLessonCompleted(true);
-      setShowCelebration(true);
-      
-      const timeSpentSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
-      
-      console.log('Attempting to complete lesson:', {
-        lessonId: currentLesson.id,
-        progressData: {
-          time_spent: timeSpentSeconds,
-          reading_progress: readingProgress,
-          engagement_score: engagementScore,
-          scroll_progress: scrollProgress,
-          completion_method: 'automatic'
-        }
-      });
-      
-      await StudentApiService.completeLesson(currentLesson.id, {
-        time_spent: timeSpentSeconds,
-        reading_progress: readingProgress,
-        engagement_score: engagementScore,
-        scroll_progress: scrollProgress,
-        completion_method: 'automatic'
-      });
-      
-      // Track completion interaction
-      setInteractionHistory(prev => [...prev, {
-        type: 'lesson_completed',
-        lessonId: currentLesson.id,
-        moduleId: currentModuleId,
-        timestamp: new Date().toISOString(),
-        timeSpent: timeSpentSeconds,
-        engagementScore: engagementScore
-      }]);
-      
-      // Check for new badges and course completion after lesson completion
-      await checkBadgeEligibility();
-      await checkCourseCompletion();
-      
-      // Auto-advance after celebration
-      autoAdvanceTimeoutRef.current = setTimeout(() => {
-        setShowCelebration(false);
-        autoAdvanceToNextLesson();
-      }, 3000);
-      
-    } catch (error: any) {
-      console.error('Failed to complete lesson:', error);
-      
-      // Check if it's an already completed error (which is actually okay)
-      if (error?.response?.status === 400 && error?.response?.data?.message?.includes('already completed')) {
-        console.log('Lesson was already completed, proceeding with celebration');
-        // Don't reset completion state, keep the celebration
-      } else {
-        // For other errors, reset completion state
-        setIsLessonCompleted(false);
-        setCompletionInProgress(false);
+    await handleAutoLessonCompletion(
+      async (completionData) => {
+        // Track completion interaction
+        setInteractionHistory(prev => [...prev, completionData]);
+        
+        // Check for new badges and course completion
+        await checkBadgeEligibility();
+        await checkCourseCompletion();
+        
+        // Auto-advance after celebration
+        autoAdvanceTimeoutRef.current = setTimeout(() => {
+          setShowCelebration(false);
+          autoAdvanceToNextLesson();
+        }, 3000);
+      },
+      (error) => {
         setShowCelebration(false);
       }
-    } finally {
-      // Ensure completion flag is reset after a short delay to prevent immediate re-triggering
-      setTimeout(() => {
-        setCompletionInProgress(false);
-      }, 1000);
-    }
-  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, isLessonCompleted]);
+    );
+  }, [handleAutoLessonCompletion]);
 
   // Auto-advance to next lesson
   const autoAdvanceToNextLesson = useCallback(() => {
@@ -303,8 +181,7 @@ const LearningPage = () => {
   // Enhanced scroll tracking
   useEffect(() => {
     const handleScroll = () => {
-      if (showCelebration) return; // Don't track scroll during celebration
-      console.log('Scroll event triggered'); // Debug log
+      if (showCelebration) return;
       updateReadingProgress();
     };
     
@@ -313,7 +190,6 @@ const LearningPage = () => {
     if (element) {
       element.addEventListener('scroll', handleScroll, { passive: true });
       
-      // Also trigger initial progress calculation (only if no celebration)
       setTimeout(() => {
         if (!showCelebration) {
           updateReadingProgress();
@@ -324,57 +200,25 @@ const LearningPage = () => {
     }
   }, [updateReadingProgress, showCelebration]);
 
-  // Time tracking and periodic progress updates
-  useEffect(() => {
-    const timer = setInterval(() => {
-      if (showCelebration) return; // Don't update progress during celebration
-      
-      setTimeSpent(Math.floor((Date.now() - startTimeRef.current) / 1000));
-      
-      // Trigger progress update even without scrolling
-      updateReadingProgress();
-    }, 2000); // Update every 2 seconds
-    
-    return () => clearInterval(timer);
-  }, [updateReadingProgress, showCelebration]);
-
   // Prevent body scroll when modal is open
   useEffect(() => {
     if (showCelebration) {
-      // Save current scroll position
       const scrollY = window.scrollY;
       
-      // Prevent body scroll
       document.body.style.overflow = 'hidden';
       document.body.style.position = 'fixed';
       document.body.style.top = `-${scrollY}px`;
       document.body.style.width = '100%';
       
       return () => {
-        // Restore body scroll
         document.body.style.overflow = '';
         document.body.style.position = '';
         document.body.style.top = '';
         document.body.style.width = '';
-        
-        // Restore scroll position
         window.scrollTo(0, scrollY);
       };
     }
   }, [showCelebration]);
-
-  // Auto-save timer
-  useEffect(() => {
-    if (currentLesson && !isLessonCompleted) {
-      const timer = setInterval(autoSaveProgress, 30000); // Auto-save every 30 seconds
-      setAutoSaveTimer(timer);
-      
-      return () => {
-        clearInterval(timer);
-        setAutoSaveTimer(null);
-      };
-    }
-  }, [currentLesson, autoSaveProgress, isLessonCompleted]);
 
   // Load content when lesson changes
   useEffect(() => {
@@ -383,19 +227,11 @@ const LearningPage = () => {
     }
   }, [currentLesson?.id, loadLessonContent]);
 
-  // Reset progress when lesson changes
+  // Clear auto-advance timeout when changing lessons
   useEffect(() => {
     if (currentLesson) {
-      startTimeRef.current = Date.now();
-      setReadingProgress(0);
-      setScrollProgress(0);
-      setEngagementScore(0);
-      setTimeSpent(0);
-      setIsLessonCompleted(false);
-      setShowCelebration(false); // Also hide celebration when changing lessons
-      readingTimeRef.current = 0;
+      setShowCelebration(false);
       
-      // Clear any pending auto-advance timeout
       if (autoAdvanceTimeoutRef.current) {
         clearTimeout(autoAdvanceTimeoutRef.current);
         autoAdvanceTimeoutRef.current = null;
@@ -629,63 +465,30 @@ const LearningPage = () => {
   }, [currentLesson?.id]);
 
   // Get module status for navigation
-  const getModuleStatus = (moduleId: number) => {
+  const getModuleStatus = (moduleId: number): ModuleStatus => {
     if (progressiveLearning && progressiveLearning.canAccessModule(moduleId)) {
       const status = progressiveLearning.getModuleStatus(moduleId);
-      return status?.status || 'locked';
+      return (status?.status as ModuleStatus) || 'locked';
     }
     return 'locked';
   };
 
-  // Navigation helpers
-  const getCurrentLessonIndex = () => {
-    if (!currentLesson || !courseData?.course?.modules) return -1;
-    const allLessons = courseData.course.modules.flatMap((module: any) => module.lessons || []);
-    return allLessons.findIndex((l: any) => l.id === currentLesson.id);
-  };
+  // Get course modules safely
+  const courseModules = courseData?.course?.modules || courseData?.modules || [];
 
-  const getAllLessons = () => {
-    if (!courseData?.course?.modules) return [];
-    return courseData.course.modules.flatMap((module: any) => 
-      (module.lessons || []).map((lesson: any) => ({ ...lesson, moduleId: module.id }))
-    );
-  };
-
+  // Navigation helpers using extracted utilities
+  const allLessons = NavUtils.getAllLessons(courseModules);
+  const currentLessonIndex = NavUtils.getCurrentLessonIndex(currentLesson, courseModules);
+  
   const navigateToLesson = (direction: 'prev' | 'next') => {
-    const allLessons = getAllLessons();
-    const currentIndex = getCurrentLessonIndex();
-    
-    if (direction === 'prev' && currentIndex > 0) {
-      const prevLesson = allLessons[currentIndex - 1];
-      // Check if previous lesson's module is accessible (completed or current)
-      const prevLessonModule = courseData?.course?.modules?.find((m: any) => m.id === prevLesson.moduleId);
-      
-      if (prevLessonModule) {
-        const prevModuleStatus = getModuleStatus(prevLessonModule.id);
-        // Allow access if module is completed, in_progress, or unlocked
-        if (prevModuleStatus === 'completed' || prevModuleStatus === 'in_progress' || prevModuleStatus === 'unlocked') {
-          handleLessonSelect(prevLesson.id, prevLesson.moduleId);
-        }
-      }
-    } else if (direction === 'next' && currentIndex < allLessons.length - 1) {
-      const nextLesson = allLessons[currentIndex + 1];
-      
-      // Check if next lesson is in a different module
-      const currentModule = courseData?.course?.modules?.find((m: any) => m.id === currentModuleId);
-      const nextLessonModule = courseData?.course?.modules?.find((m: any) => m.id === nextLesson.moduleId);
-      
-      if (nextLessonModule && nextLessonModule.id !== currentModuleId) {
-        // Next lesson is in a different module - check if we can access it
-        const nextModuleStatus = getModuleStatus(nextLessonModule.id);
-        if (nextModuleStatus === 'locked') {
-          // Module is locked - don't allow navigation
-          console.log('Cannot access next module - it is locked');
-          return;
-        }
-      }
-      
-      handleLessonSelect(nextLesson.id, nextLesson.moduleId);
-    }
+    NavUtils.navigateToLesson(
+      direction,
+      currentLesson,
+      courseModules,
+      currentModuleId,
+      getModuleStatus,
+      handleLessonSelect
+    );
   };
 
   if (loading) {
@@ -748,53 +551,41 @@ const LearningPage = () => {
   }
 
   const course = courseData.course || courseData;
-  const allLessons = getAllLessons();
-  const currentLessonIndex = getCurrentLessonIndex();
   
-  // Enhanced navigation logic with module boundary checks
-  const hasNextLesson = (() => {
-    if (currentLessonIndex >= allLessons.length - 1) return false;
-    
-    const nextLesson = allLessons[currentLessonIndex + 1];
-    if (!nextLesson) return false;
-    
-    // Check if next lesson is in a different module
-    if (nextLesson.moduleId !== currentModuleId) {
-      // Next lesson is in a different module - check if we can access it
-      const nextModuleStatus = getModuleStatus(nextLesson.moduleId);
-      if (nextModuleStatus === 'locked') {
-        return false; // Module is locked
-      }
-    }
-    
-    return true;
-  })();
+  // Enhanced navigation logic with module boundary checks using utilities
+  const hasNextLesson = NavUtils.hasNextLesson(
+    currentLessonIndex,
+    allLessons,
+    currentModuleId,
+    getModuleStatus
+  );
   
-  // Check if previous lesson exists and is accessible
-  const hasPrevLesson = (() => {
-    if (currentLessonIndex <= 0) return false;
-    
-    const prevLesson = allLessons[currentLessonIndex - 1];
-    if (!prevLesson) return false;
-    
-    // Check if previous lesson's module is accessible
-    const prevModuleStatus = getModuleStatus(prevLesson.moduleId);
-    return prevModuleStatus === 'completed' || 
-           prevModuleStatus === 'in_progress' || 
-           prevModuleStatus === 'unlocked';
-  })();
+  const hasPrevLesson = NavUtils.hasPrevLesson(
+    currentLessonIndex,
+    allLessons,
+    getModuleStatus
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-      {/* Enhanced Header */}
-      <div className="bg-white border-b shadow-lg sticky top-0 z-40 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-4">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
+      {/* Enhanced Header Component */}
+      <LearningHeader
+        courseTitle={course.title}
+        currentLessonTitle={currentLesson?.title}
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        timeSpent={timeSpent}
+        engagementScore={engagementScore}
+        currentLessonIndex={currentLessonIndex}
+        totalLessons={allLessons.length}
+        isBookmarked={isBookmarked}
+        focusMode={focusMode}
+        courseId={courseId}
+        onBookmark={handleBookmark}
+        onShare={handleShare}
+        onToggleFocus={() => setFocusMode(!focusMode)}
+        helpDialogOpen={helpDialogOpen}
+        setHelpDialogOpen={setHelpDialogOpen}
                 className="lg:hidden hover:bg-blue-50"
               >
                 {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}

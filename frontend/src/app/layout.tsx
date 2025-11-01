@@ -16,6 +16,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: 'Afritech Bridge LMS',
   description: 'Learning Management System for Afritech Bridge',
+  icons: {
+    icon: '/favicon.ico',
+  },
 }
 
 export default function RootLayout({
