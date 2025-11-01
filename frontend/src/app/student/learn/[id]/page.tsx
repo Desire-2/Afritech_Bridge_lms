@@ -657,8 +657,16 @@ const LearningPage = () => {
     
     if (direction === 'prev' && currentIndex > 0) {
       const prevLesson = allLessons[currentIndex - 1];
-      // Previous lessons are always accessible if they exist
-      handleLessonSelect(prevLesson.id, prevLesson.moduleId);
+      // Check if previous lesson's module is accessible (completed or current)
+      const prevLessonModule = courseData?.course?.modules?.find((m: any) => m.id === prevLesson.moduleId);
+      
+      if (prevLessonModule) {
+        const prevModuleStatus = getModuleStatus(prevLessonModule.id);
+        // Allow access if module is completed, in_progress, or unlocked
+        if (prevModuleStatus === 'completed' || prevModuleStatus === 'in_progress' || prevModuleStatus === 'unlocked') {
+          handleLessonSelect(prevLesson.id, prevLesson.moduleId);
+        }
+      }
     } else if (direction === 'next' && currentIndex < allLessons.length - 1) {
       const nextLesson = allLessons[currentIndex + 1];
       
@@ -668,7 +676,8 @@ const LearningPage = () => {
       
       if (nextLessonModule && nextLessonModule.id !== currentModuleId) {
         // Next lesson is in a different module - check if we can access it
-        if (!progressiveLearning || !progressiveLearning.canAccessModule(nextLessonModule.id)) {
+        const nextModuleStatus = getModuleStatus(nextLessonModule.id);
+        if (nextModuleStatus === 'locked') {
           // Module is locked - don't allow navigation
           console.log('Cannot access next module - it is locked');
           return;
@@ -752,7 +761,8 @@ const LearningPage = () => {
     // Check if next lesson is in a different module
     if (nextLesson.moduleId !== currentModuleId) {
       // Next lesson is in a different module - check if we can access it
-      if (!progressiveLearning || !progressiveLearning.canAccessModule(nextLesson.moduleId)) {
+      const nextModuleStatus = getModuleStatus(nextLesson.moduleId);
+      if (nextModuleStatus === 'locked') {
         return false; // Module is locked
       }
     }
@@ -760,7 +770,19 @@ const LearningPage = () => {
     return true;
   })();
   
-  const hasPrevLesson = currentLessonIndex > 0;
+  // Check if previous lesson exists and is accessible
+  const hasPrevLesson = (() => {
+    if (currentLessonIndex <= 0) return false;
+    
+    const prevLesson = allLessons[currentLessonIndex - 1];
+    if (!prevLesson) return false;
+    
+    // Check if previous lesson's module is accessible
+    const prevModuleStatus = getModuleStatus(prevLesson.moduleId);
+    return prevModuleStatus === 'completed' || 
+           prevModuleStatus === 'in_progress' || 
+           prevModuleStatus === 'unlocked';
+  })();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
@@ -975,7 +997,7 @@ const LearningPage = () => {
                           variant="ghost"
                           className="w-full justify-between text-left p-3 h-auto"
                         >
-                          <div className="flex items-center space-x-3">
+                          <div className="flex items-center space-x-3 flex-1 min-w-0">
                             <div className="flex-shrink-0">
                               {moduleStatus === 'completed' ? (
                                 <CheckCircle className="h-5 w-5 text-green-500" />
@@ -986,34 +1008,53 @@ const LearningPage = () => {
                               )}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate">
-                                Module {moduleIndex + 1}: {module.title}
-                              </p>
+                              <div className="flex items-center space-x-2">
+                                <p className="font-medium text-sm truncate">
+                                  Module {moduleIndex + 1}: {module.title}
+                                </p>
+                                {moduleStatus === 'completed' && (
+                                  <Badge variant="secondary" className="bg-green-50 text-green-700 text-xs px-1.5 py-0">
+                                    ✓
+                                  </Badge>
+                                )}
+                              </div>
                               <p className="text-xs text-gray-500">
                                 {module.lessons?.length || 0} lessons
+                                {moduleStatus === 'completed' && ' • Completed'}
+                                {moduleStatus === 'locked' && ' • Locked'}
                               </p>
                             </div>
                           </div>
+                          <ChevronDown className="h-4 w-4 text-gray-400" />
                         </Button>
                       </CollapsibleTrigger>
                       
                       <CollapsibleContent className="ml-8 mt-1 space-y-1">
                         {module.lessons?.map((lesson: any, lessonIndex: number) => {
                           const isCurrentLesson = lesson.id === currentLesson?.id;
+                          // Allow access to lessons in completed modules or current unlocked/in-progress module
+                          const canAccessLesson = moduleStatus === 'completed' || 
+                                                   moduleStatus === 'in_progress' || 
+                                                   moduleStatus === 'unlocked';
                           
                           return (
                             <Button
                               key={lesson.id}
                               variant={isCurrentLesson ? "secondary" : "ghost"}
-                              className="w-full justify-start text-left p-2 h-auto text-sm"
-                              onClick={() => handleLessonSelect(lesson.id, module.id)}
-                              disabled={moduleStatus === 'locked'}
+                              className={`w-full justify-start text-left p-2 h-auto text-sm ${
+                                !canAccessLesson ? 'opacity-50 cursor-not-allowed' : ''
+                              }`}
+                              onClick={() => canAccessLesson && handleLessonSelect(lesson.id, module.id)}
+                              disabled={!canAccessLesson}
                             >
                               <div className="flex items-center space-x-2">
                                 <span className="text-xs text-gray-500 w-6">
                                   {lessonIndex + 1}.
                                 </span>
                                 <span className="truncate">{lesson.title}</span>
+                                {!canAccessLesson && (
+                                  <Lock className="h-3 w-3 text-gray-400 ml-auto" />
+                                )}
                               </div>
                             </Button>
                           );
@@ -1079,7 +1120,19 @@ const LearningPage = () => {
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              {hasPrevLesson ? 'Go to previous lesson' : 'No previous lesson available'}
+                              {(() => {
+                                if (currentLessonIndex <= 0) {
+                                  return 'No previous lesson available';
+                                }
+                                const prevLesson = allLessons[currentLessonIndex - 1];
+                                if (prevLesson) {
+                                  const prevModuleStatus = getModuleStatus(prevLesson.moduleId);
+                                  if (prevModuleStatus === 'locked') {
+                                    return 'Previous lesson is locked';
+                                  }
+                                }
+                                return 'Go to previous lesson';
+                              })()}
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -1103,7 +1156,8 @@ const LearningPage = () => {
                                 }
                                 const nextLesson = allLessons[currentLessonIndex + 1];
                                 if (nextLesson?.moduleId !== currentModuleId) {
-                                  if (!progressiveLearning?.canAccessModule(nextLesson.moduleId)) {
+                                  const nextModuleStatus = getModuleStatus(nextLesson.moduleId);
+                                  if (nextModuleStatus === 'locked') {
                                     return 'Complete current module to unlock next lesson';
                                   }
                                 }

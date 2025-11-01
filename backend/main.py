@@ -15,6 +15,10 @@ from src.models.course_models import (
     Assignment, AssignmentSubmission, Project, ProjectSubmission
 )
 from src.models.opportunity_models import Opportunity # Import Opportunity model
+from src.models.achievement_models import (
+    Achievement, UserAchievement, LearningStreak, StudentPoints, 
+    Milestone, UserMilestone, Leaderboard, QuestChallenge, UserQuestProgress
+) # Import achievement models
 from src.utils.email_utils import mail # Import the mail instance
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
@@ -27,6 +31,7 @@ from src.routes.dashboard_routes import dashboard_bp # Import dashboard blueprin
 from src.routes.student_routes import student_bp # Import student blueprint
 from src.routes.learning_routes import learning_bp # Import learning blueprint 
 from src.routes.content_assignment_routes import content_assignment_bp # Import content assignment blueprint
+from src.routes.achievement_routes import achievement_bp # Import achievement blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -191,6 +196,7 @@ app.register_blueprint(dashboard_bp) # Register dashboard blueprint
 app.register_blueprint(student_bp) # Register student blueprint
 app.register_blueprint(learning_bp) # Register learning blueprint
 app.register_blueprint(content_assignment_bp) # Register content assignment blueprint
+app.register_blueprint(achievement_bp) # Register achievement blueprint
 
 with app.app_context():
     db.create_all()

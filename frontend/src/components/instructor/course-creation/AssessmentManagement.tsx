@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { Course, Assignment, Project, Quiz, EnhancedModule } from '@/types/api';
+import { Course, Assignment, Project, Quiz, EnhancedModule, Question, Answer } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 
 interface AssessmentManagementProps {
@@ -16,6 +16,20 @@ interface AssessmentManagementProps {
 
 type AssessmentType = 'quiz' | 'assignment' | 'project';
 
+interface RubricCriteria {
+  name: string;
+  description: string;
+  max_points: number;
+}
+
+interface QuizQuestionForm {
+  question_text: string;
+  question_type: 'multiple_choice' | 'true_false' | 'short_answer' | 'essay';
+  points: number;
+  answers: { answer_text: string; is_correct: boolean }[];
+  explanation?: string;
+}
+
 const AssessmentManagement: React.FC<AssessmentManagementProps> = ({ 
   course, 
   assessments, 
@@ -24,6 +38,12 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [activeTab, setActiveTab] = useState<AssessmentType>('assignment');
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'published' | 'draft'>('all');
+  const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
+  const [showQuestionBuilder, setShowQuestionBuilder] = useState(false);
+  const [currentQuestions, setCurrentQuestions] = useState<QuizQuestionForm[]>([]);
+  const [rubricCriteria, setRubricCriteria] = useState<RubricCriteria[]>([]);
 
   // Assignment form state
   const [assignmentForm, setAssignmentForm] = useState({
@@ -62,7 +82,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     description: '',
     module_id: '',
     lesson_id: '',
-    is_published: false
+    is_published: false,
+    time_limit: '',
+    max_attempts: '',
+    passing_score: 70,
+    shuffle_questions: false,
+    shuffle_answers: false,
+    show_correct_answers: true,
+    points_possible: 100,
+    due_date: ''
   });
 
   const resetAssignmentForm = () => {
@@ -79,6 +107,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       points_possible: 100,
       is_published: false
     });
+    setRubricCriteria([]);
   };
 
   const resetProjectForm = () => {
@@ -104,8 +133,17 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       description: '',
       module_id: '',
       lesson_id: '',
-      is_published: false
+      is_published: false,
+      time_limit: '',
+      max_attempts: '',
+      passing_score: 70,
+      shuffle_questions: false,
+      shuffle_answers: false,
+      show_correct_answers: true,
+      points_possible: 100,
+      due_date: ''
     });
+    setCurrentQuestions([]);
   };
 
   const handleCreateAssignment = async () => {
@@ -149,10 +187,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const handleCreateQuiz = async () => {
     try {
       const quizData = {
-        ...quizForm,
+        title: quizForm.title,
+        description: quizForm.description,
         course_id: course.id,
         module_id: quizForm.module_id ? parseInt(quizForm.module_id) : undefined,
-        lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined
+        lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined,
+        time_limit: quizForm.time_limit ? parseInt(quizForm.time_limit) : undefined,
+        max_attempts: quizForm.max_attempts ? parseInt(quizForm.max_attempts) : undefined,
+        is_published: quizForm.is_published
       };
 
       await CourseCreationService.createQuiz(quizData);
@@ -198,6 +240,43 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     } catch (error) {
       console.error('Error deleting quiz:', error);
       alert('Failed to delete quiz');
+    }
+  };
+
+  // Publish/Unpublish handlers
+  const handlePublishAssignment = async (assignmentId: number, isPublished: boolean) => {
+    try {
+      await CourseCreationService.updateAssignment(assignmentId, {
+        is_published: !isPublished
+      });
+      onAssessmentUpdate();
+    } catch (error) {
+      console.error('Error publishing/unpublishing assignment:', error);
+      alert('Failed to update assignment publication status');
+    }
+  };
+
+  const handlePublishProject = async (projectId: number, isPublished: boolean) => {
+    try {
+      await CourseCreationService.updateProject(projectId, {
+        is_published: !isPublished
+      });
+      onAssessmentUpdate();
+    } catch (error) {
+      console.error('Error publishing/unpublishing project:', error);
+      alert('Failed to update project publication status');
+    }
+  };
+
+  const handlePublishQuiz = async (quizId: number, isPublished: boolean) => {
+    try {
+      await CourseCreationService.updateQuiz(quizId, {
+        is_published: !isPublished
+      });
+      onAssessmentUpdate();
+    } catch (error) {
+      console.error('Error publishing/unpublishing quiz:', error);
+      alert('Failed to update quiz publication status');
     }
   };
 
@@ -247,8 +326,16 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       title: quiz.title,
       description: quiz.description || '',
       module_id: quiz.module_id ? quiz.module_id.toString() : '',
-      lesson_id: quiz.lesson_id ? quiz.lesson_id.toString() : '',
-      is_published: quiz.is_published || false
+      lesson_id: '',
+      is_published: quiz.is_published || false,
+      time_limit: quiz.time_limit?.toString() || '',
+      max_attempts: quiz.max_attempts?.toString() || '',
+      passing_score: 70,
+      shuffle_questions: false,
+      shuffle_answers: false,
+      show_correct_answers: true,
+      points_possible: 100,
+      due_date: ''
     });
     setActiveTab('quiz');
     setShowForm(true);
@@ -323,6 +410,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         description: quizForm.description,
         module_id: quizForm.module_id ? parseInt(quizForm.module_id) : undefined,
         lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined,
+        time_limit: quizForm.time_limit ? parseInt(quizForm.time_limit) : undefined,
+        max_attempts: quizForm.max_attempts ? parseInt(quizForm.max_attempts) : undefined,
         is_published: quizForm.is_published
       };
 
@@ -353,6 +442,99 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     })) || [];
   };
 
+  // Filter and search functions
+  const filterAssessments = <T extends { is_published?: boolean; title: string }>(items: T[] | undefined): T[] => {
+    if (!items) return [];
+    
+    let filtered = items;
+    
+    // Filter by status
+    if (filterStatus !== 'all') {
+      filtered = filtered.filter(item => 
+        filterStatus === 'published' ? (item.is_published ?? false) : !(item.is_published ?? false)
+      );
+    }
+    
+    // Filter by search query
+    if (searchQuery) {
+      filtered = filtered.filter(item => 
+        item.title.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    return filtered;
+  };
+
+  // Question builder functions
+  const addQuestion = () => {
+    setCurrentQuestions([...currentQuestions, {
+      question_text: '',
+      question_type: 'multiple_choice',
+      points: 10,
+      answers: [
+        { answer_text: '', is_correct: false },
+        { answer_text: '', is_correct: false }
+      ],
+      explanation: ''
+    }]);
+  };
+
+  const updateQuestion = (index: number, updates: Partial<QuizQuestionForm>) => {
+    const newQuestions = [...currentQuestions];
+    newQuestions[index] = { ...newQuestions[index], ...updates };
+    setCurrentQuestions(newQuestions);
+  };
+
+  const removeQuestion = (index: number) => {
+    setCurrentQuestions(currentQuestions.filter((_, i) => i !== index));
+  };
+
+  const addAnswer = (questionIndex: number) => {
+    const newQuestions = [...currentQuestions];
+    newQuestions[questionIndex].answers.push({ answer_text: '', is_correct: false });
+    setCurrentQuestions(newQuestions);
+  };
+
+  const updateAnswer = (questionIndex: number, answerIndex: number, updates: Partial<{ answer_text: string; is_correct: boolean }>) => {
+    const newQuestions = [...currentQuestions];
+    newQuestions[questionIndex].answers[answerIndex] = {
+      ...newQuestions[questionIndex].answers[answerIndex],
+      ...updates
+    };
+    setCurrentQuestions(newQuestions);
+  };
+
+  const removeAnswer = (questionIndex: number, answerIndex: number) => {
+    const newQuestions = [...currentQuestions];
+    newQuestions[questionIndex].answers = newQuestions[questionIndex].answers.filter((_, i) => i !== answerIndex);
+    setCurrentQuestions(newQuestions);
+  };
+
+  // Rubric functions
+  const addRubricCriteria = () => {
+    setRubricCriteria([...rubricCriteria, { name: '', description: '', max_points: 10 }]);
+  };
+
+  const updateRubricCriteria = (index: number, updates: Partial<RubricCriteria>) => {
+    const newRubric = [...rubricCriteria];
+    newRubric[index] = { ...newRubric[index], ...updates };
+    setRubricCriteria(newRubric);
+  };
+
+  const removeRubricCriteria = (index: number) => {
+    setRubricCriteria(rubricCriteria.filter((_, i) => i !== index));
+  };
+
+  const toggleItemExpansion = (itemId: number) => {
+    const newExpanded = new Set(expandedItems);
+    if (newExpanded.has(itemId)) {
+      newExpanded.delete(itemId);
+    } else {
+      newExpanded.add(itemId);
+    }
+    setExpandedItems(newExpanded);
+  };
+
   const tabs = [
     { id: 'assignment' as AssessmentType, label: 'Assignments', icon: '📝', count: assessments?.assignments?.length || 0 },
     { id: 'quiz' as AssessmentType, label: 'Quizzes', icon: '❓', count: assessments?.quizzes?.length || 0 },
@@ -362,15 +544,24 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-          Course Assessments
-        </h3>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+            📋 Course Assessments
+          </h3>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+            Create and manage quizzes, assignments, and projects
+          </p>
+        </div>
         <button
-          onClick={() => setShowForm(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          onClick={() => {
+            setShowForm(true);
+            setEditingItem(null);
+          }}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2 shadow-sm"
         >
-          Create {activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'}
+          <span>➕</span>
+          <span>Create {activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'}</span>
         </button>
       </div>
 
@@ -381,20 +572,74 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              className={`py-3 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
                 activeTab === tab.id
                   ? 'border-blue-500 text-blue-600 dark:text-blue-400'
                   : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
               }`}
             >
-              <span>{tab.icon}</span>
+              <span className="text-lg">{tab.icon}</span>
               <span>{tab.label}</span>
-              <span className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 px-2 py-1 rounded-full text-xs">
+              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                activeTab === tab.id
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                  : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+              }`}>
                 {tab.count}
               </span>
             </button>
           ))}
         </nav>
+      </div>
+
+      {/* Search and Filter Controls */}
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search assessments..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+              />
+              <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setFilterStatus('all')}
+              className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                filterStatus === 'all'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setFilterStatus('published')}
+              className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                filterStatus === 'published'
+                  ? 'bg-green-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+              }`}
+            >
+              Published
+            </button>
+            <button
+              onClick={() => setFilterStatus('draft')}
+              className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+                filterStatus === 'draft'
+                  ? 'bg-yellow-600 text-white'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+              }`}
+            >
+              Drafts
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Assessment Forms */}
@@ -520,6 +765,112 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
                   />
                 </div>
+              </div>
+
+              {/* Grading Rubric Builder */}
+              <div className="border-t border-slate-200 dark:border-slate-700 pt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h5 className="font-medium text-slate-900 dark:text-white flex items-center space-x-2">
+                      <span>📊</span>
+                      <span>Grading Rubric (Optional)</span>
+                    </h5>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                      Define clear grading criteria for consistent evaluation
+                    </p>
+                  </div>
+                  {rubricCriteria.length === 0 && (
+                    <button
+                      onClick={addRubricCriteria}
+                      className="text-sm px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded transition-colors"
+                    >
+                      + Add Criteria
+                    </button>
+                  )}
+                </div>
+
+                {rubricCriteria.length > 0 && (
+                  <div className="space-y-3">
+                    {rubricCriteria.map((criteria, index) => (
+                      <div key={index} className="p-4 bg-slate-50 dark:bg-slate-700/30 rounded-lg border border-slate-200 dark:border-slate-600">
+                        <div className="flex items-start justify-between mb-3">
+                          <h6 className="font-medium text-slate-900 dark:text-white text-sm">
+                            Criteria {index + 1}
+                          </h6>
+                          <button
+                            onClick={() => removeRubricCriteria(index)}
+                            className="text-red-600 hover:text-red-700 text-sm"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div className="md:col-span-2">
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Criteria Name *
+                              </label>
+                              <input
+                                type="text"
+                                value={criteria.name}
+                                onChange={(e) => updateRubricCriteria(index, { name: e.target.value })}
+                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                                placeholder="e.g., Code Quality, Documentation"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Max Points *
+                              </label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={criteria.max_points}
+                                onChange={(e) => updateRubricCriteria(index, { max_points: parseInt(e.target.value) || 0 })}
+                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
+                              Description
+                            </label>
+                            <textarea
+                              value={criteria.description}
+                              onChange={(e) => updateRubricCriteria(index, { description: e.target.value })}
+                              rows={2}
+                              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                              placeholder="Describe what you're evaluating"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={addRubricCriteria}
+                      className="w-full py-2 px-4 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg text-slate-600 dark:text-slate-400 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors text-sm"
+                    >
+                      + Add Another Criteria
+                    </button>
+
+                    {rubricCriteria.length > 0 && (
+                      <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium text-slate-900 dark:text-white">
+                            Total Rubric Points:
+                          </span>
+                          <span className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                            {rubricCriteria.reduce((sum, c) => sum + c.max_points, 0)} points
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center">
@@ -708,80 +1059,358 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
 
           {/* Quiz Form */}
           {activeTab === 'quiz' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Quiz Title *
-                </label>
-                <input
-                  type="text"
-                  value={quizForm.title}
-                  onChange={(e) => setQuizForm({ ...quizForm, title: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                  placeholder="Enter quiz title"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Description
-                </label>
-                <textarea
-                  value={quizForm.description}
-                  onChange={(e) => setQuizForm({ ...quizForm, description: e.target.value })}
-                  rows={3}
-                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                  placeholder="Describe the quiz"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-6">
+              {/* Basic Info */}
+              <div className="space-y-4">
+                <h5 className="font-medium text-slate-900 dark:text-white flex items-center space-x-2">
+                  <span>📝</span>
+                  <span>Basic Information</span>
+                </h5>
+                
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Attach to Module (Optional)
+                    Quiz Title *
                   </label>
-                  <select
-                    value={quizForm.module_id}
-                    onChange={(e) => setQuizForm({ ...quizForm, module_id: e.target.value, lesson_id: '' })}
-                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                  >
-                    <option value="">Select module...</option>
-                    {getModuleOptions().map(module => (
-                      <option key={module.id} value={module.id}>{module.title}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Attach to Lesson (Optional)
-                  </label>
-                  <select
-                    value={quizForm.lesson_id}
-                    onChange={(e) => setQuizForm({ ...quizForm, lesson_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                    disabled={!quizForm.module_id}
-                  >
-                    <option value="">Select lesson...</option>
-                    {getLessonOptions(quizForm.module_id).map(lesson => (
-                      <option key={lesson.id} value={lesson.id}>{lesson.title}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="flex items-center space-x-2">
                   <input
-                    type="checkbox"
-                    checked={quizForm.is_published}
-                    onChange={(e) => setQuizForm({ ...quizForm, is_published: e.target.checked })}
-                    className="form-checkbox h-4 w-4 text-blue-600"
+                    type="text"
+                    value={quizForm.title}
+                    onChange={(e) => setQuizForm({ ...quizForm, title: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    placeholder="Enter quiz title"
                   />
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Publish quiz immediately
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Description
+                  </label>
+                  <textarea
+                    value={quizForm.description}
+                    onChange={(e) => setQuizForm({ ...quizForm, description: e.target.value })}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    placeholder="Describe the quiz"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Attach to Module (Optional)
+                    </label>
+                    <select
+                      value={quizForm.module_id}
+                      onChange={(e) => setQuizForm({ ...quizForm, module_id: e.target.value, lesson_id: '' })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    >
+                      <option value="">Select module...</option>
+                      {getModuleOptions().map(module => (
+                        <option key={module.id} value={module.id}>{module.title}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Attach to Lesson (Optional)
+                    </label>
+                    <select
+                      value={quizForm.lesson_id}
+                      onChange={(e) => setQuizForm({ ...quizForm, lesson_id: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                      disabled={!quizForm.module_id}
+                    >
+                      <option value="">Select lesson...</option>
+                      {getLessonOptions(quizForm.module_id).map(lesson => (
+                        <option key={lesson.id} value={lesson.id}>{lesson.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Advanced Settings */}
+              <div className="space-y-4 border-t border-slate-200 dark:border-slate-700 pt-6">
+                <h5 className="font-medium text-slate-900 dark:text-white flex items-center space-x-2">
+                  <span>⚙️</span>
+                  <span>Quiz Settings</span>
+                </h5>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Time Limit (minutes)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={quizForm.time_limit}
+                      onChange={(e) => setQuizForm({ ...quizForm, time_limit: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                      placeholder="No limit"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Max Attempts
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={quizForm.max_attempts}
+                      onChange={(e) => setQuizForm({ ...quizForm, max_attempts: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                      placeholder="Unlimited"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Passing Score (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={quizForm.passing_score}
+                      onChange={(e) => setQuizForm({ ...quizForm, passing_score: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Due Date (Optional)
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={quizForm.due_date}
+                      onChange={(e) => setQuizForm({ ...quizForm, due_date: e.target.value })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                      Total Points
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={quizForm.points_possible}
+                      onChange={(e) => setQuizForm({ ...quizForm, points_possible: parseInt(e.target.value) })}
+                      className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={quizForm.shuffle_questions}
+                      onChange={(e) => setQuizForm({ ...quizForm, shuffle_questions: e.target.checked })}
+                      className="form-checkbox h-4 w-4 text-blue-600"
+                    />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Shuffle questions for each student
+                    </span>
+                  </label>
+
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={quizForm.shuffle_answers}
+                      onChange={(e) => setQuizForm({ ...quizForm, shuffle_answers: e.target.checked })}
+                      className="form-checkbox h-4 w-4 text-blue-600"
+                    />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Shuffle answer choices
+                    </span>
+                  </label>
+
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={quizForm.show_correct_answers}
+                      onChange={(e) => setQuizForm({ ...quizForm, show_correct_answers: e.target.checked })}
+                      className="form-checkbox h-4 w-4 text-blue-600"
+                    />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Show correct answers after submission
+                    </span>
+                  </label>
+
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={quizForm.is_published}
+                      onChange={(e) => setQuizForm({ ...quizForm, is_published: e.target.checked })}
+                      className="form-checkbox h-4 w-4 text-blue-600"
+                    />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Publish quiz immediately
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Question Builder Toggle */}
+              <div className="border-t border-slate-200 dark:border-slate-700 pt-6">
+                <button
+                  onClick={() => setShowQuestionBuilder(!showQuestionBuilder)}
+                  className="flex items-center justify-between w-full px-4 py-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                >
+                  <div className="flex items-center space-x-2">
+                    <span className="text-lg">❓</span>
+                    <span className="font-medium text-slate-900 dark:text-white">Quiz Questions</span>
+                    <span className="text-sm text-slate-600 dark:text-slate-400">
+                      ({currentQuestions.length} questions)
+                    </span>
+                  </div>
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {showQuestionBuilder ? '▼' : '▶'}
                   </span>
-                </label>
+                </button>
+
+                {showQuestionBuilder && (
+                  <div className="mt-4 space-y-4">
+                    {currentQuestions.map((question, qIndex) => (
+                      <div key={qIndex} className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-700/30">
+                        <div className="flex items-start justify-between mb-3">
+                          <h6 className="font-medium text-slate-900 dark:text-white">Question {qIndex + 1}</h6>
+                          <button
+                            onClick={() => removeQuestion(qIndex)}
+                            className="text-red-600 hover:text-red-700 text-sm"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="space-y-3">
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                              Question Text *
+                            </label>
+                            <textarea
+                              value={question.question_text}
+                              onChange={(e) => updateQuestion(qIndex, { question_text: e.target.value })}
+                              rows={2}
+                              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                              placeholder="Enter your question"
+                            />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Question Type
+                              </label>
+                              <select
+                                value={question.question_type}
+                                onChange={(e) => updateQuestion(qIndex, { question_type: e.target.value as any })}
+                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                              >
+                                <option value="multiple_choice">Multiple Choice</option>
+                                <option value="true_false">True/False</option>
+                                <option value="short_answer">Short Answer</option>
+                                <option value="essay">Essay</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                Points
+                              </label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={question.points}
+                                onChange={(e) => updateQuestion(qIndex, { points: parseInt(e.target.value) })}
+                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                              />
+                            </div>
+                          </div>
+
+                          {(question.question_type === 'multiple_choice' || question.question_type === 'true_false') && (
+                            <div className="space-y-2">
+                              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                Answer Choices
+                              </label>
+                              {question.answers.map((answer, aIndex) => (
+                                <div key={aIndex} className="flex items-center space-x-2">
+                                  <input
+                                    type={question.question_type === 'multiple_choice' ? 'checkbox' : 'radio'}
+                                    checked={answer.is_correct}
+                                    onChange={(e) => {
+                                      if (question.question_type === 'true_false') {
+                                        // For true/false, only one can be correct
+                                        const newAnswers = question.answers.map((a, i) => ({
+                                          ...a,
+                                          is_correct: i === aIndex
+                                        }));
+                                        updateQuestion(qIndex, { answers: newAnswers });
+                                      } else {
+                                        updateAnswer(qIndex, aIndex, { is_correct: e.target.checked });
+                                      }
+                                    }}
+                                    className="h-4 w-4 text-green-600"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={answer.answer_text}
+                                    onChange={(e) => updateAnswer(qIndex, aIndex, { answer_text: e.target.value })}
+                                    className="flex-1 px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                                    placeholder={`Answer ${aIndex + 1}`}
+                                  />
+                                  {question.question_type !== 'true_false' && question.answers.length > 2 && (
+                                    <button
+                                      onClick={() => removeAnswer(qIndex, aIndex)}
+                                      className="text-red-600 hover:text-red-700 text-sm px-2"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                              {question.question_type === 'multiple_choice' && (
+                                <button
+                                  onClick={() => addAnswer(qIndex)}
+                                  className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                                >
+                                  + Add Answer Choice
+                                </button>
+                              )}
+                            </div>
+                          )}
+
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                              Explanation (Optional)
+                            </label>
+                            <textarea
+                              value={question.explanation || ''}
+                              onChange={(e) => updateQuestion(qIndex, { explanation: e.target.value })}
+                              rows={2}
+                              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white text-sm"
+                              placeholder="Explain the correct answer"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={addQuestion}
+                      className="w-full py-2 px-4 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg text-slate-600 dark:text-slate-400 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                    >
+                      + Add Question
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end space-x-3">
@@ -797,9 +1426,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 </button>
                 <button
                   onClick={editingItem ? handleUpdateQuiz : handleCreateQuiz}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
                 >
-                  {editingItem ? 'Update Quiz' : 'Create Quiz'}
+                  <span>{editingItem ? 'Update Quiz' : 'Create Quiz'}</span>
+                  {currentQuestions.length > 0 && (
+                    <span className="text-xs bg-blue-700 px-2 py-1 rounded">
+                      {currentQuestions.length} questions
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
@@ -812,42 +1446,85 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         {/* Assignments */}
         {activeTab === 'assignment' && (
           <div className="space-y-4">
-            {(assessments?.assignments?.length || 0) > 0 ? (
-              assessments?.assignments?.map((assignment) => (
-                <div key={assignment.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <h4 className="font-semibold text-slate-900 dark:text-white">{assignment.title}</h4>
-                      <p className="text-slate-600 dark:text-slate-400 mt-1">{assignment.description}</p>
-                      <div className="flex items-center space-x-4 mt-3 text-sm text-slate-600 dark:text-slate-400">
-                        <span className="capitalize">{assignment.assignment_type.replace('_', ' ')}</span>
-                        <span>{assignment.points_possible} points</span>
-                        {assignment.due_date && (
-                          <span>Due: {new Date(assignment.due_date).toLocaleDateString()}</span>
-                        )}
-                        <span className={`px-2 py-1 rounded-full text-xs ${
-                          assignment.is_published 
-                            ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-                        }`}>
-                          {assignment.is_published ? 'Published' : 'Draft'}
-                        </span>
+            {filterAssessments(assessments?.assignments).length > 0 ? (
+              filterAssessments(assessments?.assignments).map((assignment) => (
+                <div key={assignment.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <div className="p-6">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <h4 className="font-semibold text-slate-900 dark:text-white">{assignment.title}</h4>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            assignment.is_published 
+                              ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                              : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                          }`}>
+                            {assignment.is_published ? '✓ Published' : '📝 Draft'}
+                          </span>
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-400 text-sm mt-1">{assignment.description}</p>
+                        <div className="flex flex-wrap items-center gap-3 mt-3 text-sm text-slate-600 dark:text-slate-400">
+                          <span className="flex items-center space-x-1">
+                            <span>📄</span>
+                            <span className="capitalize">{assignment.assignment_type.replace('_', ' ')}</span>
+                          </span>
+                          <span className="flex items-center space-x-1">
+                            <span>🎯</span>
+                            <span>{assignment.points_possible} points</span>
+                          </span>
+                          {assignment.due_date && (
+                            <span className="flex items-center space-x-1">
+                              <span>📅</span>
+                              <span>Due: {new Date(assignment.due_date).toLocaleDateString()}</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center space-x-2 ml-4">
+                      <div className="flex items-center space-x-2 ml-4">
                       <button 
                         onClick={() => handleEditAssignment(assignment)}
-                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded"
+                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
                       >
-                        Edit
+                        ✏️ Edit
+                      </button>
+                      <button
+                        onClick={() => handlePublishAssignment(assignment.id, assignment.is_published)}
+                        className={`text-sm px-3 py-1 rounded transition-colors ${
+                          assignment.is_published
+                            ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
+                            : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                        }`}
+                      >
+                        {assignment.is_published ? '📤 Unpublish' : '📣 Publish'}
                       </button>
                       <button 
                         onClick={() => handleDeleteAssignment(assignment.id)}
-                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded"
+                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
                       >
-                        Delete
+                        🗑️ Delete
                       </button>
                     </div>
+                  </div>
+
+                    {/* Analytics Preview */}
+                    {assignment.is_published && (
+                      <div className="border-t border-slate-200 dark:border-slate-700 mt-4 pt-4">
+                        <div className="grid grid-cols-3 gap-4">
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
+                            <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Submissions</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-green-600 dark:text-green-400">--</div>
+                            <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Avg Score</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">0%</div>
+                            <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Completion</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))
@@ -864,8 +1541,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         {/* Projects */}
         {activeTab === 'project' && (
           <div className="space-y-4">
-            {(assessments?.projects?.length || 0) > 0 ? (
-              assessments?.projects?.map((project) => (
+            {filterAssessments(assessments?.projects).length > 0 ? (
+              filterAssessments(assessments?.projects).map((project) => (
                 <div key={project.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -890,18 +1567,52 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     <div className="flex items-center space-x-2 ml-4">
                       <button 
                         onClick={() => handleEditProject(project)}
-                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded"
+                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
                       >
-                        Edit
+                        ✏️ Edit
+                      </button>
+                      <button
+                        onClick={() => handlePublishProject(project.id, project.is_published)}
+                        className={`text-sm px-3 py-1 rounded transition-colors ${
+                          project.is_published
+                            ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
+                            : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                        }`}
+                      >
+                        {project.is_published ? '📤 Unpublish' : '📣 Publish'}
                       </button>
                       <button 
                         onClick={() => handleDeleteProject(project.id)}
-                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded"
+                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
                       >
-                        Delete
+                        🗑️ Delete
                       </button>
                     </div>
                   </div>
+
+                  {/* Analytics Preview */}
+                  {project.is_published && (
+                    <div className="border-t border-slate-200 dark:border-slate-700 mt-4 pt-4">
+                      <div className="grid grid-cols-4 gap-4">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Submissions</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-green-600 dark:text-green-400">--</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Avg Score</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">0%</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Completion</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">0</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Teams</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))
             ) : (
@@ -917,8 +1628,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         {/* Quizzes */}
         {activeTab === 'quiz' && (
           <div className="space-y-4">
-            {(assessments?.quizzes?.length || 0) > 0 ? (
-              assessments?.quizzes?.map((quiz) => (
+            {filterAssessments(assessments?.quizzes).length > 0 ? (
+              filterAssessments(assessments?.quizzes).map((quiz) => (
                 <div key={quiz.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -934,18 +1645,52 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     <div className="flex items-center space-x-2 ml-4">
                       <button 
                         onClick={() => handleEditQuiz(quiz)}
-                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded"
+                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
                       >
-                        Edit
+                        ✏️ Edit
+                      </button>
+                      <button
+                        onClick={() => handlePublishQuiz(quiz.id, !!quiz.is_published)}
+                        className={`text-sm px-3 py-1 rounded transition-colors ${
+                          quiz.is_published
+                            ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
+                            : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                        }`}
+                      >
+                        {quiz.is_published ? '📤 Unpublish' : '📣 Publish'}
                       </button>
                       <button 
                         onClick={() => handleDeleteQuiz(quiz.id)}
-                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded"
+                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
                       >
-                        Delete
+                        🗑️ Delete
                       </button>
                     </div>
                   </div>
+
+                  {/* Analytics Preview */}
+                  {quiz.is_published && (
+                    <div className="border-t border-slate-200 dark:border-slate-700 mt-4 pt-4">
+                      <div className="grid grid-cols-4 gap-4">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Attempts</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-green-600 dark:text-green-400">--</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Avg Score</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">0%</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Pass Rate</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">--</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Avg Time</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))
             ) : (

@@ -52,4 +52,5 @@ coverage/
 
 # Cache
 .cache/
-.mypy_cache/
+.mypy_cache/backend/.env
+backend/instance/*.db

@@ -136,9 +136,11 @@ export interface Quiz {
 export interface CreateQuizRequest {
   title: string;
   description?: string;
-  module_id: number;
+  module_id?: number;
+  lesson_id?: number;
   time_limit?: number;
   max_attempts?: number;
+  is_published?: boolean;
 }
 
 export interface Question {
@@ -319,4 +321,115 @@ export interface UpdateQuizProgressRequest {
   current_question_index: number;
   answers: Record<string, any>;
   is_completed?: boolean;
+}
+
+// Enhanced Module and Lesson Types
+export interface EnhancedModule extends Module {
+  lessons?: EnhancedLesson[];
+}
+
+export interface CreateEnhancedModuleRequest {
+  title: string;
+  description?: string;
+  learning_objectives?: string;
+  course_id?: number;
+  is_published?: boolean;
+}
+
+export interface EnhancedLesson extends Lesson {
+  content_type?: 'text' | 'video' | 'pdf' | 'mixed';
+  content_data: string;
+  learning_objectives?: string;
+  duration_minutes?: number;
+}
+
+export interface CreateEnhancedLessonRequest {
+  title: string;
+  content_type?: 'text' | 'video' | 'pdf' | 'mixed';
+  content_data: string;
+  description?: string;
+  learning_objectives?: string;
+  duration_minutes?: number;
+  is_published?: boolean;
+}
+
+// Assignment Types
+export interface Assignment {
+  id: number;
+  title: string;
+  description: string;
+  instructions?: string;
+  course_id: number;
+  module_id?: number;
+  lesson_id?: number;
+  assignment_type: 'file_upload' | 'text_response' | 'both';
+  max_file_size_mb?: number;
+  allowed_file_types?: string;
+  due_date?: string;
+  points_possible: number;
+  is_published: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAssignmentRequest {
+  title: string;
+  description: string;
+  instructions?: string;
+  course_id: number;
+  module_id?: number;
+  lesson_id?: number;
+  assignment_type: 'file_upload' | 'text_response' | 'both';
+  max_file_size_mb?: number;
+  allowed_file_types?: string;
+  due_date?: string;
+  points_possible?: number;
+  is_published?: boolean;
+}
+
+// Project Types
+export interface Project {
+  id: number;
+  title: string;
+  description: string;
+  objectives?: string;
+  course_id: number;
+  module_ids: number[];
+  due_date: string;
+  points_possible: number;
+  is_published: boolean;
+  submission_format: 'file_upload' | 'text_response' | 'both' | 'presentation';
+  max_file_size_mb?: number;
+  allowed_file_types?: string;
+  collaboration_allowed: boolean;
+  max_team_size: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateProjectRequest {
+  title: string;
+  description: string;
+  objectives?: string;
+  course_id: number;
+  module_ids: number[];
+  due_date: string;
+  points_possible?: number;
+  is_published?: boolean;
+  submission_format?: 'file_upload' | 'text_response' | 'both' | 'presentation';
+  max_file_size_mb?: number;
+  allowed_file_types?: string;
+  collaboration_allowed?: boolean;
+  max_team_size?: number;
+}
+
+// Module and Lesson Ordering
+export interface ModuleOrderUpdate {
+  id: number;
+  order: number;
+}
+
+export interface LessonOrderUpdate {
+  id: number;
+  order: number;
 }

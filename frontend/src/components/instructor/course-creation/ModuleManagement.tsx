@@ -170,6 +170,24 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     }
   };
 
+  const handlePublishModule = async (moduleId: number, isPublished: boolean) => {
+    try {
+      await CourseCreationService.updateModule(course.id, moduleId, {
+        is_published: !isPublished
+      });
+      
+      // Update the local state
+      setModules(modules.map(m => 
+        m.id === moduleId 
+          ? { ...m, is_published: !isPublished }
+          : m
+      ));
+    } catch (error) {
+      console.error('Error publishing/unpublishing module:', error);
+      alert('Failed to update module publication status');
+    }
+  };
+
   const handlePublishLesson = async (moduleId: number, lessonId: number, isPublished: boolean) => {
     try {
       await CourseCreationService.updateLesson(course.id, moduleId, lessonId, {
@@ -429,19 +447,29 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                             </span>
                             <button
                               onClick={() => setShowLessonForm({ moduleId: module.id })}
-                              className="text-sm px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded"
+                              className="text-sm px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded transition-colors"
                             >
                               Add Lesson
                             </button>
                             <button
                               onClick={() => startEditingModule(module)}
-                              className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded"
+                              className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
                             >
                               Edit
                             </button>
                             <button
+                              onClick={() => handlePublishModule(module.id, module.is_published)}
+                              className={`text-sm px-3 py-1 rounded transition-colors ${
+                                module.is_published
+                                  ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
+                                  : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
+                              }`}
+                            >
+                              {module.is_published ? 'Unpublish' : 'Publish'}
+                            </button>
+                            <button
                               onClick={() => handleDeleteModule(module.id)}
-                              className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded"
+                              className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
                             >
                               Delete
                             </button>
