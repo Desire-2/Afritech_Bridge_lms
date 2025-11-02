@@ -145,18 +145,28 @@ export class CourseCreationService {
 
   static async createQuiz(quizData: CreateQuizRequest & { course_id: number }): Promise<Quiz> {
     try {
+      console.log('[CourseCreationService] Creating quiz at:', `${this.ASSESSMENT_PATH}/quizzes`);
+      console.log('[CourseCreationService] Quiz data:', quizData);
       const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes`, quizData);
+      console.log('[CourseCreationService] Quiz created response:', response.data);
       return response.data.quiz;
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[CourseCreationService] Error creating quiz:', error);
+      console.error('[CourseCreationService] Error response:', error?.response?.data);
       throw ApiErrorHandler.handleError(error);
     }
   }
 
   static async updateQuiz(quizId: number, quizData: Partial<CreateQuizRequest>): Promise<Quiz> {
     try {
+      console.log('[CourseCreationService] Updating quiz at:', `${this.ASSESSMENT_PATH}/quizzes/${quizId}`);
+      console.log('[CourseCreationService] Update data:', quizData);
       const response = await apiClient.put(`${this.ASSESSMENT_PATH}/quizzes/${quizId}`, quizData);
+      console.log('[CourseCreationService] Quiz updated response:', response.data);
       return response.data.quiz;
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[CourseCreationService] Error updating quiz:', error);
+      console.error('[CourseCreationService] Error response:', error?.response?.data);
       throw ApiErrorHandler.handleError(error);
     }
   }
@@ -173,6 +183,15 @@ export class CourseCreationService {
     try {
       const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions`, questionData);
       return response.data.question;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async addBulkQuizQuestions(quizId: number, questions: (CreateQuestionRequest & { answers: Answer[] })[]): Promise<Question[]> {
+    try {
+      const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions/bulk`, { questions });
+      return response.data.questions;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }

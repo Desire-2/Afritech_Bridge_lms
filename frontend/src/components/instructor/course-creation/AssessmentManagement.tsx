@@ -186,24 +186,51 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
 
   const handleCreateQuiz = async () => {
     try {
+      // Validate required fields
+      if (!quizForm.title || !quizForm.title.trim()) {
+        alert('Quiz title is required');
+        return;
+      }
+
+      // Only send fields that exist in the Quiz model
       const quizData = {
         title: quizForm.title,
         description: quizForm.description,
         course_id: course.id,
         module_id: quizForm.module_id ? parseInt(quizForm.module_id) : undefined,
         lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined,
-        time_limit: quizForm.time_limit ? parseInt(quizForm.time_limit) : undefined,
-        max_attempts: quizForm.max_attempts ? parseInt(quizForm.max_attempts) : undefined,
-        is_published: quizForm.is_published
+        is_published: quizForm.is_published,
+        questions: currentQuestions.length > 0 ? currentQuestions : undefined
+        // Note: time_limit and max_attempts are not in the current Quiz model
       };
 
-      await CourseCreationService.createQuiz(quizData);
+      console.log('Creating quiz with data:', JSON.stringify(quizData, null, 2));
+
+      const createdQuiz = await CourseCreationService.createQuiz(quizData);
+      console.log('Quiz created successfully:', createdQuiz);
+      
+      // If questions weren't sent with quiz creation (backward compatibility),
+      // add them using bulk endpoint
+      if (!quizData.questions && currentQuestions.length > 0) {
+        console.log('Adding questions separately:', currentQuestions);
+        // Cast to any to avoid type issues - backend accepts flexible format
+        await CourseCreationService.addBulkQuizQuestions(createdQuiz.id, currentQuestions as any);
+      }
+      
+      alert('Quiz created successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       resetQuizForm();
-    } catch (error) {
+      setCurrentQuestions([]);  // Clear questions after successful creation
+    } catch (error: any) {
       console.error('Error creating quiz:', error);
-      alert('Failed to create quiz');
+      console.error('Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status
+      });
+      const errorMessage = error?.response?.data?.message || error?.message || 'Failed to create quiz';
+      alert(`Failed to create quiz: ${errorMessage}`);
     }
   };
 
@@ -321,6 +348,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   };
 
   const handleEditQuiz = (quiz: Quiz) => {
+    console.log('Editing quiz:', quiz);
     setEditingItem(quiz);
     setQuizForm({
       title: quiz.title,
@@ -337,6 +365,27 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       points_possible: 100,
       due_date: ''
     });
+    
+    // Load existing questions if available
+    if (quiz.questions && Array.isArray(quiz.questions) && quiz.questions.length > 0) {
+      console.log('Loading existing questions:', quiz.questions);
+      const formattedQuestions = quiz.questions.map((q: Question) => ({
+        question_text: q.text || '', // Backend uses 'text', frontend uses 'question_text'
+        question_type: q.question_type || 'multiple_choice',
+        points: 10, // Default points since it's not in the model
+        answers: (q.answers || []).map((a: Answer) => ({
+          answer_text: a.text || '', // Backend uses 'text', frontend uses 'answer_text'
+          is_correct: a.is_correct || false
+        })),
+        explanation: ''
+      }));
+      setCurrentQuestions(formattedQuestions);
+      console.log('Formatted questions for editing:', formattedQuestions);
+    } else {
+      console.log('No questions found in quiz data');
+      setCurrentQuestions([]);
+    }
+    
     setActiveTab('quiz');
     setShowForm(true);
   };
@@ -405,24 +454,49 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     if (!editingItem) return;
     
     try {
+      // Validate required fields
+      if (!quizForm.title || !quizForm.title.trim()) {
+        alert('Quiz title is required');
+        return;
+      }
+
+      // Only send fields that exist in the Quiz model
       const quizData = {
         title: quizForm.title,
         description: quizForm.description,
         module_id: quizForm.module_id ? parseInt(quizForm.module_id) : undefined,
         lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined,
-        time_limit: quizForm.time_limit ? parseInt(quizForm.time_limit) : undefined,
-        max_attempts: quizForm.max_attempts ? parseInt(quizForm.max_attempts) : undefined,
         is_published: quizForm.is_published
+        // Note: time_limit and max_attempts are not in the current Quiz model
       };
 
+      console.log('Updating quiz with data:', JSON.stringify(quizData, null, 2));
+
       await CourseCreationService.updateQuiz(editingItem.id, quizData);
+      console.log('Quiz updated successfully');
+      
+      // Add new questions if any were added
+      if (currentQuestions.length > 0) {
+        console.log('Adding new questions:', currentQuestions);
+        // Cast to any to avoid type issues - backend accepts flexible format
+        await CourseCreationService.addBulkQuizQuestions(editingItem.id, currentQuestions as any);
+      }
+      
+      alert('Quiz updated successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       setEditingItem(null);
       resetQuizForm();
-    } catch (error) {
+      setCurrentQuestions([]);  // Clear questions after successful update
+    } catch (error: any) {
       console.error('Error updating quiz:', error);
-      alert('Failed to update quiz');
+      console.error('Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        status: error?.response?.status
+      });
+      const errorMessage = error?.response?.data?.message || error?.message || 'Failed to update quiz';
+      alert(`Failed to update quiz: ${errorMessage}`);
     }
   };
 
@@ -1639,6 +1713,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       )}
                       <div className="flex items-center space-x-4 mt-3 text-sm text-slate-600 dark:text-slate-400">
                         <span>Quiz</span>
+                        <span>{quiz.questions?.length || 0} questions</span>
                         <span>Created: {new Date(quiz.created_at).toLocaleDateString()}</span>
                       </div>
                     </div>

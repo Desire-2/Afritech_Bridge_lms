@@ -32,10 +32,42 @@ instructor_assessment_bp = Blueprint("instructor_assessment_bp", __name__, url_p
 # QUIZ MANAGEMENT
 # =====================
 
+@instructor_assessment_bp.route("/quizzes", methods=["GET"])
+@instructor_required
+def get_instructor_quizzes():
+    """Get all quizzes for instructor's courses"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        # Get all courses taught by the instructor
+        courses = Course.query.filter_by(instructor_id=current_user_id).all()
+        course_ids = [course.id for course in courses]
+        
+        if not course_ids:
+            return jsonify([]), 200
+        
+        # Get all quizzes for these courses
+        quizzes = Quiz.query.filter(Quiz.course_id.in_(course_ids)).all()
+        
+        # Return quizzes with enhanced data
+        quizzes_data = []
+        for quiz in quizzes:
+            quiz_dict = quiz.to_dict(include_questions=True)
+            # Add course title for display
+            course = next((c for c in courses if c.id == quiz.course_id), None)
+            if course:
+                quiz_dict['course_title'] = course.title
+            quizzes_data.append(quiz_dict)
+        
+        return jsonify(quizzes_data), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Failed to fetch quizzes", "error": str(e)}), 500
+
 @instructor_assessment_bp.route("/quizzes", methods=["POST"])
 @instructor_required
 def create_quiz():
-    """Create a new quiz for a course"""
+    """Create a new quiz for a course with optional questions"""
     try:
         current_user_id = int(get_jwt_identity())
         data = request.get_json()
@@ -58,21 +90,80 @@ def create_quiz():
             if not module:
                 return jsonify({"message": "Module not found"}), 404
         
+        # Handle due_date parsing
+        due_date = None
+        if data.get('due_date'):
+            try:
+                date_str = data['due_date']
+                if 'T' in date_str and not date_str.endswith('Z') and '+' not in date_str:
+                    due_date = datetime.fromisoformat(date_str)
+                else:
+                    due_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            except (ValueError, AttributeError):
+                pass  # Invalid date format, keep as None
+        
         quiz = Quiz(
             title=data.get('title', ''),
             description=data.get('description', ''),
             course_id=course_id,
             module_id=module_id,
             lesson_id=data.get('lesson_id'),
-            is_published=data.get('is_published', False)
+            is_published=data.get('is_published', False),
+            time_limit=int(data['time_limit']) if data.get('time_limit') and str(data['time_limit']).strip() else None,
+            max_attempts=int(data['max_attempts']) if data.get('max_attempts') and str(data['max_attempts']).strip() else None,
+            passing_score=int(data.get('passing_score', 70)),
+            due_date=due_date,
+            points_possible=float(data.get('points_possible', 100.0)),
+            shuffle_questions=bool(data.get('shuffle_questions', False)),
+            shuffle_answers=bool(data.get('shuffle_answers', False)),
+            show_correct_answers=bool(data.get('show_correct_answers', True))
         )
         
         db.session.add(quiz)
+        db.session.flush()  # Get quiz ID before adding questions
+        
+        # Add questions if provided
+        questions_data = data.get('questions', [])
+        if questions_data:
+            for idx, question_data in enumerate(questions_data):
+                # Support both 'text' and 'question_text' field names
+                question_text = question_data.get('text') or question_data.get('question_text')
+                if not question_text:
+                    continue  # Skip questions without text
+                
+                question = Question(
+                    quiz_id=quiz.id,
+                    text=question_text,
+                    question_type=question_data.get('question_type', 'multiple_choice'),
+                    order=idx + 1,  # Auto-increment order based on array position
+                    points=float(question_data.get('points', 10.0)),
+                    explanation=question_data.get('explanation', '')
+                )
+                
+                db.session.add(question)
+                db.session.flush()  # Get question ID
+                
+                # Add answers if provided
+                answers_data = question_data.get('answers', [])
+                for answer_data in answers_data:
+                    # Support both 'text' and 'answer_text' field names
+                    answer_text = answer_data.get('text') or answer_data.get('answer_text')
+                    if not answer_text:
+                        continue  # Skip empty answers
+                    
+                    answer = Answer(
+                        question_id=question.id,
+                        text=answer_text,
+                        is_correct=answer_data.get('is_correct', False)
+                    )
+                    db.session.add(answer)
+        
         db.session.commit()
         
+        # Return quiz with questions
         return jsonify({
             "message": "Quiz created successfully",
-            "quiz": quiz.to_dict()
+            "quiz": quiz.to_dict(include_questions=True)
         }), 201
         
     except Exception as e:
@@ -95,31 +186,51 @@ def update_quiz(quiz_id):
         if quiz.course.instructor_id != current_user_id:
             return jsonify({"message": "Access denied"}), 403
         
-        # Update quiz fields
+        # Update quiz fields that exist in the model
         if 'title' in data:
             quiz.title = data['title']
         if 'description' in data:
             quiz.description = data['description']
-        if 'max_attempts' in data:
-            quiz.max_attempts = data['max_attempts']
+        if 'is_published' in data:
+            quiz.is_published = data['is_published']
+        if 'module_id' in data:
+            quiz.module_id = data['module_id']
+        if 'lesson_id' in data:
+            quiz.lesson_id = data['lesson_id']
+        
+        # Update quiz settings fields
         if 'time_limit' in data:
-            quiz.time_limit = data['time_limit']
+            quiz.time_limit = int(data['time_limit']) if data['time_limit'] and str(data['time_limit']).strip() else None
+        if 'max_attempts' in data:
+            quiz.max_attempts = int(data['max_attempts']) if data['max_attempts'] and str(data['max_attempts']).strip() else None
         if 'passing_score' in data:
-            quiz.passing_score = data['passing_score']
+            quiz.passing_score = int(data['passing_score']) if data['passing_score'] else 70
+        if 'due_date' in data:
+            if data['due_date']:
+                try:
+                    date_str = data['due_date']
+                    if 'T' in date_str and not date_str.endswith('Z') and '+' not in date_str:
+                        quiz.due_date = datetime.fromisoformat(date_str)
+                    else:
+                        quiz.due_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    pass
+            else:
+                quiz.due_date = None
+        if 'points_possible' in data:
+            quiz.points_possible = float(data['points_possible']) if data['points_possible'] else 100.0
         if 'shuffle_questions' in data:
-            quiz.shuffle_questions = data['shuffle_questions']
-        if 'show_results' in data:
-            quiz.show_results = data['show_results']
-        if 'available_from' in data:
-            quiz.available_from = datetime.fromisoformat(data['available_from']) if data['available_from'] else None
-        if 'available_until' in data:
-            quiz.available_until = datetime.fromisoformat(data['available_until']) if data['available_until'] else None
+            quiz.shuffle_questions = bool(data['shuffle_questions'])
+        if 'shuffle_answers' in data:
+            quiz.shuffle_answers = bool(data['shuffle_answers'])
+        if 'show_correct_answers' in data:
+            quiz.show_correct_answers = bool(data['show_correct_answers'])
         
         db.session.commit()
         
         return jsonify({
             "message": "Quiz updated successfully",
-            "quiz": quiz.to_dict()
+            "quiz": quiz.to_dict(include_questions=True)
         }), 200
         
     except Exception as e:
@@ -166,15 +277,21 @@ def add_quiz_question(quiz_id):
         if quiz.course.instructor_id != current_user_id:
             return jsonify({"message": "Access denied"}), 403
         
-        if not data or 'question_text' not in data or 'answers' not in data:
+        # Accept both 'question_text' and 'text' for compatibility
+        question_text = data.get('question_text') or data.get('text')
+        if not question_text or 'answers' not in data:
             return jsonify({"message": "Question text and answers are required"}), 400
+        
+        # Get the next order number
+        last_question = Question.query.filter_by(quiz_id=quiz_id).order_by(Question.order.desc()).first()
+        next_order = (last_question.order + 1) if last_question else 1
         
         question = Question(
             quiz_id=quiz_id,
-            question_text=data['question_text'],
+            text=question_text,
             question_type=data.get('question_type', 'multiple_choice'),
-            points=data.get('points', 1),
-            order=data.get('order', 1),
+            order=data.get('order', next_order),
+            points=float(data.get('points', 10.0)),
             explanation=data.get('explanation', '')
         )
         
@@ -184,11 +301,15 @@ def add_quiz_question(quiz_id):
         # Add answers
         answers_data = data['answers']
         for answer_data in answers_data:
+            # Accept both 'answer_text' and 'text' for compatibility
+            answer_text = answer_data.get('answer_text') or answer_data.get('text')
+            if not answer_text:
+                continue  # Skip empty answers
+                
             answer = Answer(
                 question_id=question.id,
-                answer_text=answer_data['answer_text'],
-                is_correct=answer_data.get('is_correct', False),
-                order=answer_data.get('order', 1)
+                text=answer_text,
+                is_correct=answer_data.get('is_correct', False)
             )
             db.session.add(answer)
         
@@ -202,6 +323,81 @@ def add_quiz_question(quiz_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Failed to add question", "error": str(e)}), 500
+
+@instructor_assessment_bp.route("/quizzes/<int:quiz_id>/questions/bulk", methods=["POST"])
+@instructor_required
+def add_bulk_quiz_questions(quiz_id):
+    """Add multiple questions to a quiz at once"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        quiz = Quiz.query.get(quiz_id)
+        if not quiz:
+            return jsonify({"message": "Quiz not found"}), 404
+        
+        # Verify instructor owns the course
+        if quiz.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+        
+        questions_data = data.get('questions', [])
+        if not questions_data or not isinstance(questions_data, list):
+            return jsonify({"message": "Questions array is required"}), 400
+        
+        # Get the next order number
+        last_question = Question.query.filter_by(quiz_id=quiz_id).order_by(Question.order.desc()).first()
+        next_order = (last_question.order + 1) if last_question else 1
+        
+        added_questions = []
+        
+        for idx, question_data in enumerate(questions_data):
+            # Support both 'text' and 'question_text' field names
+            question_text = question_data.get('text') or question_data.get('question_text')
+            if not question_text:
+                continue  # Skip questions without text
+            
+            if 'answers' not in question_data or not question_data['answers']:
+                continue  # Skip questions without answers
+            
+            question = Question(
+                quiz_id=quiz_id,
+                text=question_text,
+                question_type=question_data.get('question_type', 'multiple_choice'),
+                order=next_order + idx,
+                points=float(question_data.get('points', 10.0)),
+                explanation=question_data.get('explanation', '')
+            )
+            
+            db.session.add(question)
+            db.session.flush()  # Get the question ID
+            
+            # Add answers
+            answers_data = question_data['answers']
+            for answer_data in answers_data:
+                # Support both 'text' and 'answer_text' field names
+                answer_text = answer_data.get('text') or answer_data.get('answer_text')
+                if not answer_text:
+                    continue  # Skip empty answers
+                    
+                answer = Answer(
+                    question_id=question.id,
+                    text=answer_text,
+                    is_correct=answer_data.get('is_correct', False)
+                )
+                db.session.add(answer)
+            
+            added_questions.append(question)
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": f"Successfully added {len(added_questions)} questions",
+            "questions": [q.to_dict(include_answers=True) for q in added_questions]
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Failed to add questions", "error": str(e)}), 500
 
 # =====================
 # ASSIGNMENT MANAGEMENT
@@ -253,9 +449,9 @@ def create_assignment():
             allowed_file_types=data.get('allowed_file_types', ''),
             due_date=due_date,
             points_possible=data.get('points_possible', 100.0),  # Map to model field
-            is_published=data.get('is_published', False),
-            allow_late_submission=data.get('allow_late_submission', True),
-            late_penalty=data.get('late_penalty', 0.0)
+            is_published=data.get('is_published', False)
+            # Note: allow_late_submission and late_penalty fields don't exist in Assignment model
+            # They would need to be added via database migration if needed
         )
         
         db.session.add(assignment)
@@ -291,18 +487,27 @@ def update_assignment(assignment_id):
             assignment.title = data['title']
         if 'description' in data:
             assignment.description = data['description']
-        if 'max_points' in data:
-            assignment.max_points = data['max_points']
+        # Support both 'max_points' and 'points_possible' field names
+        if 'max_points' in data or 'points_possible' in data:
+            assignment.points_possible = data.get('points_possible') or data.get('max_points')
         if 'due_date' in data:
             assignment.due_date = datetime.fromisoformat(data['due_date']) if data['due_date'] else None
-        if 'submission_type' in data:
-            assignment.submission_type = data['submission_type']
+        if 'assignment_type' in data:
+            assignment.assignment_type = data['assignment_type']
         if 'instructions' in data:
             assignment.instructions = data['instructions']
-        if 'allow_late_submission' in data:
-            assignment.allow_late_submission = data['allow_late_submission']
-        if 'late_penalty' in data:
-            assignment.late_penalty = data['late_penalty']
+        if 'module_id' in data:
+            assignment.module_id = data['module_id']
+        if 'lesson_id' in data:
+            assignment.lesson_id = data['lesson_id']
+        if 'max_file_size_mb' in data:
+            assignment.max_file_size_mb = data['max_file_size_mb']
+        if 'allowed_file_types' in data:
+            assignment.allowed_file_types = data['allowed_file_types']
+        if 'is_published' in data:
+            assignment.is_published = data['is_published']
+        # Note: allow_late_submission and late_penalty fields don't exist in Assignment model
+        # They would need to be added via database migration if needed
         
         db.session.commit()
         
@@ -429,20 +634,28 @@ def update_project(project_id):
             project.title = data['title']
         if 'description' in data:
             project.description = data['description']
-        if 'max_points' in data:
-            project.max_points = data['max_points']
+        # Support both 'max_points' and 'points_possible' field names
+        if 'max_points' in data or 'points_possible' in data:
+            project.points_possible = data.get('points_possible') or data.get('max_points')
         if 'due_date' in data:
             project.due_date = datetime.fromisoformat(data['due_date']) if data['due_date'] else None
-        if 'requirements' in data:
-            project.requirements = data['requirements']
-        if 'deliverables' in data:
-            project.deliverables = data['deliverables']
-        if 'rubric' in data:
-            project.rubric = data['rubric']
-        if 'allow_group_work' in data:
-            project.allow_group_work = data['allow_group_work']
-        if 'max_group_size' in data:
-            project.max_group_size = data['max_group_size']
+        if 'objectives' in data:
+            project.objectives = data['objectives']
+        if 'module_ids' in data:
+            import json
+            project.module_ids = json.dumps(data['module_ids']) if isinstance(data['module_ids'], list) else data['module_ids']
+        if 'submission_format' in data:
+            project.submission_format = data['submission_format']
+        if 'max_file_size_mb' in data:
+            project.max_file_size_mb = data['max_file_size_mb']
+        if 'allowed_file_types' in data:
+            project.allowed_file_types = data['allowed_file_types']
+        if 'collaboration_allowed' in data:
+            project.collaboration_allowed = data['collaboration_allowed']
+        if 'max_team_size' in data:
+            project.max_team_size = data['max_team_size']
+        if 'is_published' in data:
+            project.is_published = data['is_published']
         
         db.session.commit()
         
@@ -501,7 +714,7 @@ def get_assessments_overview(course_id):
         projects = Project.query.filter_by(course_id=course_id).all()
         
         return jsonify({
-            "quizzes": [quiz.to_dict() for quiz in quizzes],
+            "quizzes": [quiz.to_dict(include_questions=True) for quiz in quizzes],
             "assignments": [assignment.to_dict() for assignment in assignments],
             "projects": [project.to_dict() for project in projects]
         }), 200

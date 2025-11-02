@@ -150,6 +150,16 @@ class Quiz(db.Model):
     lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=True) # Quiz can be linked to a lesson
     is_published = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Quiz settings fields
+    time_limit = db.Column(db.Integer, nullable=True)  # Time limit in minutes
+    max_attempts = db.Column(db.Integer, nullable=True)  # Maximum number of attempts
+    passing_score = db.Column(db.Integer, default=70)  # Passing score percentage
+    due_date = db.Column(db.DateTime, nullable=True)  # Due date for the quiz
+    points_possible = db.Column(db.Float, default=100.0)  # Total points possible
+    shuffle_questions = db.Column(db.Boolean, default=False)  # Shuffle questions for each student
+    shuffle_answers = db.Column(db.Boolean, default=False)  # Shuffle answer choices
+    show_correct_answers = db.Column(db.Boolean, default=True)  # Show correct answers after submission
 
     questions = db.relationship('Question', backref='quiz', lazy='dynamic', cascade="all, delete-orphan")
     # Relationships to Course, Module, Lesson if needed for direct linking
@@ -169,7 +179,15 @@ class Quiz(db.Model):
             'module_id': self.module_id,
             'lesson_id': self.lesson_id,
             'is_published': self.is_published,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at.isoformat(),
+            'time_limit': self.time_limit,
+            'max_attempts': self.max_attempts,
+            'passing_score': self.passing_score,
+            'due_date': self.due_date.isoformat() if self.due_date else None,
+            'points_possible': self.points_possible,
+            'shuffle_questions': self.shuffle_questions,
+            'shuffle_answers': self.shuffle_answers,
+            'show_correct_answers': self.show_correct_answers
         }
         if include_questions:
             data['questions'] = [q.to_dict(include_answers=True) for q in self.questions]
@@ -182,6 +200,8 @@ class Question(db.Model):
     text = db.Column(db.Text, nullable=False)
     question_type = db.Column(db.String(50), nullable=False) # e.g., "multiple_choice", "true_false", "short_answer"
     order = db.Column(db.Integer, nullable=False, default=0)
+    points = db.Column(db.Float, default=10.0)
+    explanation = db.Column(db.Text, nullable=True)
 
     answers = db.relationship('Answer', backref='question', lazy='dynamic', cascade="all, delete-orphan")
 
@@ -194,7 +214,9 @@ class Question(db.Model):
             'quiz_id': self.quiz_id,
             'text': self.text,
             'question_type': self.question_type,
-            'order': self.order
+            'order': self.order,
+            'points': self.points,
+            'explanation': self.explanation
         }
         if include_answers:
             data['answers'] = [ans.to_dict(for_student=for_student) for ans in self.answers]

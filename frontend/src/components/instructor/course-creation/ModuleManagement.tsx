@@ -65,6 +65,45 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     });
   };
 
+  // Helper function to get content data configuration based on content type
+  const getContentDataConfig = (contentType: string) => {
+    switch (contentType) {
+      case 'video':
+        return {
+          label: 'Video URL or Embed Code',
+          placeholder: 'Enter YouTube URL, Vimeo URL, or embed code (e.g., https://www.youtube.com/watch?v=...)',
+          helperText: 'Supports YouTube, Vimeo, and other video platforms. You can also paste embed codes.',
+          inputType: 'textarea' as const,
+          rows: 3
+        };
+      case 'pdf':
+        return {
+          label: 'PDF File URL or Path',
+          placeholder: 'Enter PDF file URL or path (e.g., /uploads/documents/lesson.pdf or https://...)',
+          helperText: 'Provide a direct link to the PDF file or upload path.',
+          inputType: 'input' as const,
+          rows: 1
+        };
+      case 'mixed':
+        return {
+          label: 'Mixed Content (JSON Format)',
+          placeholder: 'Enter content in JSON format:\n{\n  "text": "Your text content...",\n  "video_url": "https://...",\n  "pdf_url": "https://...",\n  "images": ["url1", "url2"]\n}',
+          helperText: 'Use JSON format to combine different content types (text, videos, PDFs, images).',
+          inputType: 'textarea' as const,
+          rows: 8
+        };
+      case 'text':
+      default:
+        return {
+          label: 'Text Content (Markdown Supported)',
+          placeholder: 'Enter your lesson content here. You can use Markdown formatting:\n\n# Heading\n## Subheading\n- Bullet point\n**bold text**\n*italic text*\n\nAdd paragraphs, code blocks, and more...',
+          helperText: 'Supports Markdown formatting for rich text content. Use headings, lists, code blocks, etc.',
+          inputType: 'textarea' as const,
+          rows: 8
+        };
+    }
+  };
+
   const handleCreateModule = async () => {
     try {
       const newModule = await CourseCreationService.createModule(course.id, moduleForm);
@@ -509,32 +548,56 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                 </label>
                                 <select
                                   value={lessonForm.content_type}
-                                  onChange={(e) => setLessonForm({ ...lessonForm, content_type: e.target.value as any })}
+                                  onChange={(e) => {
+                                    const newContentType = e.target.value as any;
+                                    setLessonForm({ 
+                                      ...lessonForm, 
+                                      content_type: newContentType,
+                                      // Clear content_data when changing type to avoid confusion
+                                      content_data: ''
+                                    });
+                                  }}
                                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
                                 >
-                                  <option value="text">Text Content</option>
-                                  <option value="video">Video</option>
-                                  <option value="pdf">PDF Document</option>
-                                  <option value="mixed">Mixed Content</option>
+                                  <option value="text">📝 Text Content</option>
+                                  <option value="video">🎥 Video</option>
+                                  <option value="pdf">📄 PDF Document</option>
+                                  <option value="mixed">🎨 Mixed Content</option>
                                 </select>
                               </div>
                             </div>
                             
                             <div>
-                              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                                Content Data *
-                              </label>
-                              <textarea
-                                value={lessonForm.content_data}
-                                onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
-                                rows={4}
-                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                                placeholder={
-                                  lessonForm.content_type === 'video' ? 'Enter video URL' :
-                                  lessonForm.content_type === 'pdf' ? 'Enter PDF file path or URL' :
-                                  'Enter lesson content'
-                                }
-                              />
+                              {(() => {
+                                const config = getContentDataConfig(lessonForm.content_type);
+                                return (
+                                  <>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                      {config.label} *
+                                    </label>
+                                    {config.inputType === 'textarea' ? (
+                                      <textarea
+                                        value={lessonForm.content_data}
+                                        onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
+                                        rows={config.rows}
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm"
+                                        placeholder={config.placeholder}
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={lessonForm.content_data}
+                                        onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                                        placeholder={config.placeholder}
+                                      />
+                                    )}
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                      {config.helperText}
+                                    </p>
+                                  </>
+                                );
+                              })()}
                             </div>
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -696,27 +759,55 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                 </label>
                                 <select
                                   value={lessonForm.content_type}
-                                  onChange={(e) => setLessonForm({ ...lessonForm, content_type: e.target.value as any })}
+                                  onChange={(e) => {
+                                    const newContentType = e.target.value as any;
+                                    setLessonForm({ 
+                                      ...lessonForm, 
+                                      content_type: newContentType
+                                      // Keep existing content_data when editing
+                                    });
+                                  }}
                                   className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
                                 >
-                                  <option value="text">Text Content</option>
-                                  <option value="video">Video</option>
-                                  <option value="pdf">PDF Document</option>
-                                  <option value="mixed">Mixed Content</option>
+                                  <option value="text">📝 Text Content</option>
+                                  <option value="video">🎥 Video</option>
+                                  <option value="pdf">📄 PDF Document</option>
+                                  <option value="mixed">🎨 Mixed Content</option>
                                 </select>
                               </div>
                             </div>
                             
                             <div>
-                              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                                Content Data *
-                              </label>
-                              <textarea
-                                value={lessonForm.content_data}
-                                onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
-                                rows={4}
-                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                              />
+                              {(() => {
+                                const config = getContentDataConfig(lessonForm.content_type);
+                                return (
+                                  <>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                      {config.label} *
+                                    </label>
+                                    {config.inputType === 'textarea' ? (
+                                      <textarea
+                                        value={lessonForm.content_data}
+                                        onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
+                                        rows={config.rows}
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm"
+                                        placeholder={config.placeholder}
+                                      />
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        value={lessonForm.content_data}
+                                        onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                                        placeholder={config.placeholder}
+                                      />
+                                    )}
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                      {config.helperText}
+                                    </p>
+                                  </>
+                                );
+                              })()}
                             </div>
                             
                             <div className="flex justify-end space-x-3">

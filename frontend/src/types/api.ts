@@ -123,13 +123,15 @@ export interface Quiz {
   id: number;
   title: string;
   description?: string;
-  module_id: number;
+  module_id?: number;
+  lesson_id?: number;
   course_id?: number;
+  course_title?: string;
   is_published?: boolean;
   time_limit?: number;
   max_attempts?: number;
   created_at: string;
-  updated_at: string;
+  updated_at?: string;
   questions?: Question[];
 }
 

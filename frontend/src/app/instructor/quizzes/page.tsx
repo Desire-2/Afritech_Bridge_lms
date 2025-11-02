@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-import { QuizService } from '@/services/course.service';
+import InstructorAssessmentService from '@/services/instructor-assessment.service';
 import InstructorService from '@/services/instructor.service';
 import { Quiz, Course } from '@/types/api';
 
@@ -27,24 +27,14 @@ const QuizzesPage = () => {
       setLoading(true);
       setError(null);
       try {
-        const coursesData = await InstructorService.getMyCourses();
+        // Fetch courses and quizzes in parallel
+        const [coursesData, quizzesData] = await Promise.all([
+          InstructorService.getMyCourses(),
+          InstructorAssessmentService.getAllQuizzes()
+        ]);
+        
         setCourses(Array.isArray(coursesData) ? coursesData : []);
-        
-        // Fetch quizzes for all courses
-        const allQuizzes: Quiz[] = [];
-        const validCoursesData = Array.isArray(coursesData) ? coursesData : [];
-        for (const course of validCoursesData) {
-          try {
-            const courseQuizzes = await QuizService.getQuizzes(course.id);
-            if (Array.isArray(courseQuizzes)) {
-              allQuizzes.push(...courseQuizzes);
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch quizzes for course ${course.id}:`, err);
-          }
-        }
-        
-        setQuizzes(allQuizzes);
+        setQuizzes(Array.isArray(quizzesData) ? quizzesData : []);
       } catch (err: any) {
         console.error('Quizzes fetch error:', err);
         setError(err.message || 'Failed to load quizzes');
@@ -60,7 +50,7 @@ const QuizzesPage = () => {
 
   const filteredQuizzes = Array.isArray(quizzes) ? quizzes.filter(quiz => {
     if (selectedCourse === 'all') return true;
-    return quiz.course_id === parseInt(selectedCourse);
+    return quiz.course_id === parseInt(selectedCourse, 10);
   }) : [];
 
   const handleDeleteQuiz = async (quizId: number) => {
@@ -69,7 +59,7 @@ const QuizzesPage = () => {
     }
     
     try {
-      await QuizService.deleteQuiz(quizId);
+      await InstructorAssessmentService.deleteQuiz(quizId);
       setQuizzes(Array.isArray(quizzes) ? quizzes.filter(quiz => quiz.id !== quizId) : []);
     } catch (err: any) {
       console.error('Delete quiz error:', err);
@@ -179,7 +169,7 @@ const QuizzesPage = () => {
                 
                 <div className="space-y-2 mb-4">
                   <p className="text-sm text-slate-600 dark:text-slate-400">
-                    <span className="font-medium">Course:</span> {Array.isArray(courses) ? courses.find(c => c.id === quiz.course_id)?.title || 'Unknown' : 'Unknown'}
+                    <span className="font-medium">Course:</span> {quiz.course_title || (Array.isArray(courses) ? courses.find(c => c.id === quiz.course_id)?.title : null) || 'Unknown'}
                   </p>
                   <p className="text-sm text-slate-600 dark:text-slate-400">
                     <span className="font-medium">Questions:</span> {quiz.questions?.length || 0}
