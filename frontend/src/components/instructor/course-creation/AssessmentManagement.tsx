@@ -44,6 +44,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [showQuestionBuilder, setShowQuestionBuilder] = useState(false);
   const [currentQuestions, setCurrentQuestions] = useState<QuizQuestionForm[]>([]);
   const [rubricCriteria, setRubricCriteria] = useState<RubricCriteria[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Assignment form state
   const [assignmentForm, setAssignmentForm] = useState({
@@ -147,6 +150,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   };
 
   const handleCreateAssignment = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       const assignmentData = {
         ...assignmentForm,
@@ -157,16 +162,23 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       };
 
       await CourseCreationService.createAssignment(assignmentData);
+      setSuccessMessage('Assignment created successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       resetAssignmentForm();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error creating assignment:', error);
-      alert('Failed to create assignment');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to create assignment';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCreateProject = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       const projectData = {
         ...projectForm,
@@ -175,24 +187,39 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       };
 
       await CourseCreationService.createProject(projectData);
+      setSuccessMessage('Project created successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       resetProjectForm();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error creating project:', error);
-      alert('Failed to create project');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to create project';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleCreateQuiz = async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       // Validate required fields
       if (!quizForm.title || !quizForm.title.trim()) {
-        alert('Quiz title is required');
+        setErrorMessage('Quiz title is required');
+        setIsLoading(false);
         return;
       }
 
-      // Only send fields that exist in the Quiz model
+      // Prevent publishing quiz without questions
+      if (quizForm.is_published && currentQuestions.length === 0) {
+        setErrorMessage('Cannot publish a quiz without questions. Please add at least one question or uncheck "Publish immediately"');
+        setIsLoading(false);
+        return;
+      }
+
+      // Include all quiz settings fields that exist in the model
       const quizData = {
         title: quizForm.title,
         description: quizForm.description,
@@ -200,8 +227,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         module_id: quizForm.module_id ? parseInt(quizForm.module_id) : undefined,
         lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined,
         is_published: quizForm.is_published,
+        time_limit: quizForm.time_limit ? parseInt(quizForm.time_limit) : undefined,
+        max_attempts: quizForm.max_attempts ? parseInt(quizForm.max_attempts) : undefined,
+        passing_score: quizForm.passing_score,
+        due_date: quizForm.due_date || undefined,
+        points_possible: quizForm.points_possible,
+        shuffle_questions: quizForm.shuffle_questions,
+        shuffle_answers: quizForm.shuffle_answers,
+        show_correct_answers: quizForm.show_correct_answers,
         questions: currentQuestions.length > 0 ? currentQuestions : undefined
-        // Note: time_limit and max_attempts are not in the current Quiz model
       };
 
       console.log('Creating quiz with data:', JSON.stringify(quizData, null, 2));
@@ -213,15 +247,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       // add them using bulk endpoint
       if (!quizData.questions && currentQuestions.length > 0) {
         console.log('Adding questions separately:', currentQuestions);
-        // Cast to any to avoid type issues - backend accepts flexible format
         await CourseCreationService.addBulkQuizQuestions(createdQuiz.id, currentQuestions as any);
       }
       
-      alert('Quiz created successfully!');
+      setSuccessMessage('Quiz created successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       resetQuizForm();
-      setCurrentQuestions([]);  // Clear questions after successful creation
+      setCurrentQuestions([]);
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error('Error creating quiz:', error);
       console.error('Error details:', {
@@ -229,81 +263,134 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         response: error?.response?.data,
         status: error?.response?.status
       });
-      const errorMessage = error?.response?.data?.message || error?.message || 'Failed to create quiz';
-      alert(`Failed to create quiz: ${errorMessage}`);
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to create quiz';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleDeleteAssignment = async (assignmentId: number) => {
-    if (!confirm('Are you sure you want to delete this assignment?')) return;
+    if (!confirm('Are you sure you want to delete this assignment? This action cannot be undone.')) return;
     
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await CourseCreationService.deleteAssignment(assignmentId);
+      setSuccessMessage('Assignment deleted successfully!');
       onAssessmentUpdate();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error deleting assignment:', error);
-      alert('Failed to delete assignment');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete assignment';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleDeleteProject = async (projectId: number) => {
-    if (!confirm('Are you sure you want to delete this project?')) return;
+    if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) return;
     
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await CourseCreationService.deleteProject(projectId);
+      setSuccessMessage('Project deleted successfully!');
       onAssessmentUpdate();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error deleting project:', error);
-      alert('Failed to delete project');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete project';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleDeleteQuiz = async (quizId: number) => {
-    if (!confirm('Are you sure you want to delete this quiz?')) return;
+    if (!confirm('Are you sure you want to delete this quiz? This action cannot be undone.')) return;
     
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await CourseCreationService.deleteQuiz(quizId);
+      setSuccessMessage('Quiz deleted successfully!');
       onAssessmentUpdate();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error deleting quiz:', error);
-      alert('Failed to delete quiz');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete quiz';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   // Publish/Unpublish handlers
   const handlePublishAssignment = async (assignmentId: number, isPublished: boolean) => {
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await CourseCreationService.updateAssignment(assignmentId, {
         is_published: !isPublished
       });
+      setSuccessMessage(`Assignment ${!isPublished ? 'published' : 'unpublished'} successfully!`);
       onAssessmentUpdate();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error publishing/unpublishing assignment:', error);
-      alert('Failed to update assignment publication status');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update assignment publication status';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handlePublishProject = async (projectId: number, isPublished: boolean) => {
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await CourseCreationService.updateProject(projectId, {
         is_published: !isPublished
       });
+      setSuccessMessage(`Project ${!isPublished ? 'published' : 'unpublished'} successfully!`);
       onAssessmentUpdate();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error publishing/unpublishing project:', error);
-      alert('Failed to update project publication status');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update project publication status';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handlePublishQuiz = async (quizId: number, isPublished: boolean) => {
+    // If trying to publish, check if quiz has questions
+    if (!isPublished) {
+      const quiz = assessments?.quizzes?.find(q => q.id === quizId);
+      if (quiz && (!quiz.questions || quiz.questions.length === 0)) {
+        setErrorMessage('Cannot publish a quiz without questions. Please edit the quiz and add questions first.');
+        return;
+      }
+    }
+
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       await CourseCreationService.updateQuiz(quizId, {
         is_published: !isPublished
       });
+      setSuccessMessage(`Quiz ${!isPublished ? 'published' : 'unpublished'} successfully!`);
       onAssessmentUpdate();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error publishing/unpublishing quiz:', error);
-      alert('Failed to update quiz publication status');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update quiz publication status';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -394,6 +481,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const handleUpdateAssignment = async () => {
     if (!editingItem) return;
     
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       const assignmentData = {
         title: assignmentForm.title,
@@ -410,19 +499,26 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       };
 
       await CourseCreationService.updateAssignment(editingItem.id, assignmentData);
+      setSuccessMessage('Assignment updated successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       setEditingItem(null);
       resetAssignmentForm();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error updating assignment:', error);
-      alert('Failed to update assignment');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update assignment';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleUpdateProject = async () => {
     if (!editingItem) return;
     
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       const projectData = {
         title: projectForm.title,
@@ -440,34 +536,57 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       };
 
       await CourseCreationService.updateProject(editingItem.id, projectData);
+      setSuccessMessage('Project updated successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       setEditingItem(null);
       resetProjectForm();
-    } catch (error) {
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (error: any) {
       console.error('Error updating project:', error);
-      alert('Failed to update project');
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update project';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleUpdateQuiz = async () => {
     if (!editingItem) return;
     
+    setIsLoading(true);
+    setErrorMessage(null);
     try {
       // Validate required fields
       if (!quizForm.title || !quizForm.title.trim()) {
-        alert('Quiz title is required');
+        setErrorMessage('Quiz title is required');
+        setIsLoading(false);
         return;
       }
 
-      // Only send fields that exist in the Quiz model
+      // Prevent publishing quiz without questions
+      const totalQuestions = (editingItem.questions?.length || 0) + currentQuestions.length;
+      if (quizForm.is_published && totalQuestions === 0) {
+        setErrorMessage('Cannot publish a quiz without questions. Please add at least one question or uncheck "Publish immediately"');
+        setIsLoading(false);
+        return;
+      }
+
+      // Include all quiz settings fields that exist in the model
       const quizData = {
         title: quizForm.title,
         description: quizForm.description,
         module_id: quizForm.module_id ? parseInt(quizForm.module_id) : undefined,
         lesson_id: quizForm.lesson_id ? parseInt(quizForm.lesson_id) : undefined,
-        is_published: quizForm.is_published
-        // Note: time_limit and max_attempts are not in the current Quiz model
+        is_published: quizForm.is_published,
+        time_limit: quizForm.time_limit ? parseInt(quizForm.time_limit) : undefined,
+        max_attempts: quizForm.max_attempts ? parseInt(quizForm.max_attempts) : undefined,
+        passing_score: quizForm.passing_score,
+        due_date: quizForm.due_date || undefined,
+        points_possible: quizForm.points_possible,
+        shuffle_questions: quizForm.shuffle_questions,
+        shuffle_answers: quizForm.shuffle_answers,
+        show_correct_answers: quizForm.show_correct_answers
       };
 
       console.log('Updating quiz with data:', JSON.stringify(quizData, null, 2));
@@ -478,16 +597,16 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       // Add new questions if any were added
       if (currentQuestions.length > 0) {
         console.log('Adding new questions:', currentQuestions);
-        // Cast to any to avoid type issues - backend accepts flexible format
         await CourseCreationService.addBulkQuizQuestions(editingItem.id, currentQuestions as any);
       }
       
-      alert('Quiz updated successfully!');
+      setSuccessMessage('Quiz updated successfully!');
       onAssessmentUpdate();
       setShowForm(false);
       setEditingItem(null);
       resetQuizForm();
-      setCurrentQuestions([]);  // Clear questions after successful update
+      setCurrentQuestions([]);
+      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error('Error updating quiz:', error);
       console.error('Error details:', {
@@ -495,8 +614,10 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         response: error?.response?.data,
         status: error?.response?.status
       });
-      const errorMessage = error?.response?.data?.message || error?.message || 'Failed to update quiz';
-      alert(`Failed to update quiz: ${errorMessage}`);
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update quiz';
+      setErrorMessage(errorMsg);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -617,6 +738,38 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Success Message */}
+      {successMessage && (
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-200 px-4 py-3 rounded-lg flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-xl">✅</span>
+            <span className="font-medium">{successMessage}</span>
+          </div>
+          <button
+            onClick={() => setSuccessMessage(null)}
+            className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Error Message */}
+      {errorMessage && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 px-4 py-3 rounded-lg flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-xl">⚠️</span>
+            <span className="font-medium">{errorMessage}</span>
+          </div>
+          <button
+            onClick={() => setErrorMessage(null)}
+            className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
@@ -967,15 +1120,23 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     setEditingItem(null);
                     resetAssignmentForm();
                   }}
-                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                  disabled={isLoading}
+                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={editingItem ? handleUpdateAssignment : handleCreateAssignment}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
                 >
-                  {editingItem ? 'Update Assignment' : 'Create Assignment'}
+                  {isLoading && (
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  <span>{isLoading ? 'Saving...' : (editingItem ? 'Update Assignment' : 'Create Assignment')}</span>
                 </button>
               </div>
             </div>
@@ -1117,15 +1278,23 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     setEditingItem(null);
                     resetProjectForm();
                   }}
-                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                  disabled={isLoading}
+                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={editingItem ? handleUpdateProject : handleCreateProject}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
                 >
-                  {editingItem ? 'Update Project' : 'Create Project'}
+                  {isLoading && (
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  <span>{isLoading ? 'Saving...' : (editingItem ? 'Update Project' : 'Create Project')}</span>
                 </button>
               </div>
             </div>
@@ -1323,10 +1492,11 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       type="checkbox"
                       checked={quizForm.is_published}
                       onChange={(e) => setQuizForm({ ...quizForm, is_published: e.target.checked })}
-                      className="form-checkbox h-4 w-4 text-blue-600"
+                      disabled={currentQuestions.length === 0}
+                      className="form-checkbox h-4 w-4 text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     />
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                      Publish quiz immediately
+                    <span className={`text-sm font-medium ${currentQuestions.length === 0 ? 'text-slate-400 dark:text-slate-600' : 'text-slate-700 dark:text-slate-300'}`}>
+                      Publish quiz immediately {currentQuestions.length === 0 && '(Add questions first)'}
                     </span>
                   </label>
                 </div>
@@ -1494,16 +1664,24 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     setEditingItem(null);
                     resetQuizForm();
                   }}
-                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                  disabled={isLoading}
+                  className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={editingItem ? handleUpdateQuiz : handleCreateQuiz}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
                 >
-                  <span>{editingItem ? 'Update Quiz' : 'Create Quiz'}</span>
-                  {currentQuestions.length > 0 && (
+                  {isLoading && (
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  <span>{isLoading ? 'Saving...' : (editingItem ? 'Update Quiz' : 'Create Quiz')}</span>
+                  {!isLoading && currentQuestions.length > 0 && (
                     <span className="text-xs bg-blue-700 px-2 py-1 rounded">
                       {currentQuestions.length} questions
                     </span>
@@ -1707,15 +1885,37 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 <div key={quiz.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <h4 className="font-semibold text-slate-900 dark:text-white">{quiz.title}</h4>
+                      <div className="flex items-center space-x-2 mb-2">
+                        <h4 className="font-semibold text-slate-900 dark:text-white">{quiz.title}</h4>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          quiz.is_published 
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                        }`}>
+                          {quiz.is_published ? '✓ Published' : '📝 Draft'}
+                        </span>
+                        {(!quiz.questions || quiz.questions.length === 0) && (
+                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400">
+                            ⚠️ No Questions
+                          </span>
+                        )}
+                      </div>
                       {quiz.description && (
                         <p className="text-slate-600 dark:text-slate-400 mt-1">{quiz.description}</p>
                       )}
                       <div className="flex items-center space-x-4 mt-3 text-sm text-slate-600 dark:text-slate-400">
                         <span>Quiz</span>
-                        <span>{quiz.questions?.length || 0} questions</span>
+                        <span className={quiz.questions?.length === 0 ? 'text-orange-600 dark:text-orange-400 font-medium' : ''}>
+                          {quiz.questions?.length || 0} question{quiz.questions?.length !== 1 ? 's' : ''}
+                        </span>
                         <span>Created: {new Date(quiz.created_at).toLocaleDateString()}</span>
                       </div>
+                      {(!quiz.questions || quiz.questions.length === 0) && !quiz.is_published && (
+                        <div className="mt-2 text-xs text-orange-600 dark:text-orange-400 flex items-center space-x-1">
+                          <span>💡</span>
+                          <span>Add questions to publish this quiz</span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center space-x-2 ml-4">
                       <button 
@@ -1726,11 +1926,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       </button>
                       <button
                         onClick={() => handlePublishQuiz(quiz.id, !!quiz.is_published)}
+                        disabled={!quiz.is_published && (!quiz.questions || quiz.questions.length === 0)}
                         className={`text-sm px-3 py-1 rounded transition-colors ${
                           quiz.is_published
                             ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
+                            : (!quiz.questions || quiz.questions.length === 0)
+                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed dark:bg-slate-700 dark:text-slate-600'
                             : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
                         }`}
+                        title={!quiz.is_published && (!quiz.questions || quiz.questions.length === 0) ? 'Add questions before publishing' : ''}
                       >
                         {quiz.is_published ? '📤 Unpublish' : '📣 Publish'}
                       </button>
