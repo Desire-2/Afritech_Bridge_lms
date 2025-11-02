@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Course, EnhancedModule, EnhancedLesson, ModuleOrderUpdate, LessonOrderUpdate } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -43,6 +43,9 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     duration_minutes: '',
     is_published: false
   });
+
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const resetModuleForm = () => {
     setModuleForm({
@@ -102,6 +105,161 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
           rows: 8
         };
     }
+  };
+
+  // Markdown toolbar helper functions
+  const insertMarkdown = (syntax: string, placeholder: string = '') => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selectedText = lessonForm.content_data.substring(start, end);
+    const textToInsert = selectedText || placeholder;
+
+    let newText = '';
+    let cursorOffset = 0;
+
+    // Handle different markdown syntaxes
+    switch (syntax) {
+      case 'bold':
+        newText = `**${textToInsert}**`;
+        cursorOffset = selectedText ? newText.length : 2;
+        break;
+      case 'italic':
+        newText = `*${textToInsert}*`;
+        cursorOffset = selectedText ? newText.length : 1;
+        break;
+      case 'code':
+        newText = `\`${textToInsert}\``;
+        cursorOffset = selectedText ? newText.length : 1;
+        break;
+      case 'codeblock':
+        newText = `\`\`\`\n${textToInsert}\n\`\`\``;
+        cursorOffset = selectedText ? newText.length : 4;
+        break;
+      case 'h1':
+        newText = `# ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 2;
+        break;
+      case 'h2':
+        newText = `## ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 3;
+        break;
+      case 'h3':
+        newText = `### ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 4;
+        break;
+      case 'ul':
+        newText = `- ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 2;
+        break;
+      case 'ol':
+        newText = `1. ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 3;
+        break;
+      case 'quote':
+        newText = `> ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 2;
+        break;
+      case 'link':
+        newText = `[${textToInsert || 'Link Text'}](https://example.com)`;
+        cursorOffset = selectedText ? textToInsert.length + 3 : 10;
+        break;
+      case 'image':
+        newText = `![${textToInsert || 'Alt Text'}](https://example.com/image.jpg)`;
+        cursorOffset = selectedText ? textToInsert.length + 4 : 10;
+        break;
+      case 'table':
+        newText = `| Header 1 | Header 2 | Header 3 |\n|----------|----------|----------|\n| Cell 1   | Cell 2   | Cell 3   |\n| Cell 4   | Cell 5   | Cell 6   |`;
+        cursorOffset = newText.length;
+        break;
+      case 'hr':
+        newText = '\n---\n';
+        cursorOffset = newText.length;
+        break;
+      case 'strikethrough':
+        newText = `~~${textToInsert}~~`;
+        cursorOffset = selectedText ? newText.length : 2;
+        break;
+      case 'highlight':
+        newText = `==${textToInsert}==`;
+        cursorOffset = selectedText ? newText.length : 2;
+        break;
+      case 'task':
+        newText = `- [ ] ${textToInsert}`;
+        cursorOffset = selectedText ? newText.length : 6;
+        break;
+      default:
+        return;
+    }
+
+    const newContent = 
+      lessonForm.content_data.substring(0, start) +
+      newText +
+      lessonForm.content_data.substring(end);
+
+    setLessonForm({ ...lessonForm, content_data: newContent });
+
+    // Set cursor position after update
+    setTimeout(() => {
+      textarea.focus();
+      const newPosition = start + cursorOffset;
+      textarea.setSelectionRange(newPosition, newPosition);
+    }, 0);
+  };
+
+  // Simple markdown to HTML preview
+  const renderMarkdownPreview = (markdown: string) => {
+    let html = markdown;
+    
+    // Headers
+    html = html.replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-semibold mt-4 mb-2">$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-4 mb-2">$1</h1>');
+    
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold">$1</strong>');
+    
+    // Italic
+    html = html.replace(/\*(.*?)\*/g, '<em class="italic">$1</em>');
+    
+    // Strikethrough
+    html = html.replace(/~~(.*?)~~/g, '<del class="line-through">$1</del>');
+    
+    // Highlight
+    html = html.replace(/==(.*?)==/g, '<mark class="bg-yellow-200 dark:bg-yellow-700">$1</mark>');
+    
+    // Code inline
+    html = html.replace(/`([^`]+)`/g, '<code class="bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded text-sm font-mono">$1</code>');
+    
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-blue-600 dark:text-blue-400 underline" target="_blank" rel="noopener noreferrer">$1</a>');
+    
+    // Images
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="max-w-full h-auto rounded-lg my-2" />');
+    
+    // Unordered lists
+    html = html.replace(/^\- (.*$)/gim, '<li class="ml-4">$1</li>');
+    html = html.replace(/(<li.*<\/li>)/s, '<ul class="list-disc list-inside my-2">$1</ul>');
+    
+    // Ordered lists
+    html = html.replace(/^\d+\. (.*$)/gim, '<li class="ml-4">$1</li>');
+    
+    // Blockquote
+    html = html.replace(/^> (.*$)/gim, '<blockquote class="border-l-4 border-slate-300 dark:border-slate-600 pl-4 italic my-2">$1</blockquote>');
+    
+    // Horizontal rule
+    html = html.replace(/^---$/gim, '<hr class="my-4 border-slate-300 dark:border-slate-600" />');
+    
+    // Task lists
+    html = html.replace(/^\- \[ \] (.*$)/gim, '<li class="ml-4"><input type="checkbox" disabled class="mr-2" />$1</li>');
+    html = html.replace(/^\- \[x\] (.*$)/gim, '<li class="ml-4"><input type="checkbox" disabled checked class="mr-2" />$1</li>');
+    
+    // Line breaks
+    html = html.replace(/\n/g, '<br />');
+    
+    return html;
   };
 
   const handleCreateModule = async () => {
@@ -570,19 +728,124 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                             <div>
                               {(() => {
                                 const config = getContentDataConfig(lessonForm.content_type);
+                                const isTextContent = lessonForm.content_type === 'text' || lessonForm.content_type === 'mixed';
+                                
                                 return (
                                   <>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                                      {config.label} *
-                                    </label>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        {config.label} *
+                                      </label>
+                                      {isTextContent && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
+                                          className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                        >
+                                          {showMarkdownPreview ? '✏️ Edit' : '👁️ Preview'}
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Markdown Toolbar - For text and mixed content */}
+                                    {isTextContent && !showMarkdownPreview && (
+                                      <div className="mb-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg border border-slate-300 dark:border-slate-600">
+                                        <div className="flex flex-wrap gap-1">
+                                          {/* Text Formatting */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('bold', 'Bold text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Bold (Ctrl+B)">
+                                              <span className="font-bold text-sm">B</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('italic', 'Italic text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Italic (Ctrl+I)">
+                                              <span className="italic text-sm">I</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('strikethrough', 'Strikethrough text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Strikethrough">
+                                              <span className="line-through text-sm">S</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('highlight', 'Highlighted text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Highlight">
+                                              <span className="bg-yellow-200 dark:bg-yellow-600 px-1 text-sm">H</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Headings */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('h1', 'Heading 1')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors text-xs font-bold" title="Heading 1">
+                                              H1
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('h2', 'Heading 2')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors text-xs font-bold" title="Heading 2">
+                                              H2
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('h3', 'Heading 3')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors text-xs font-bold" title="Heading 3">
+                                              H3
+                                            </button>
+                                          </div>
+
+                                          {/* Lists */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('ul', 'List item')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Bullet List">
+                                              <span className="text-sm">• List</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('ol', 'List item')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Numbered List">
+                                              <span className="text-sm">1. List</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('task', 'Task item')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Task List">
+                                              <span className="text-sm">☑ Task</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Code */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('code', 'code')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Inline Code">
+                                              <span className="text-sm font-mono">&lt;/&gt;</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('codeblock', 'code block')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Code Block">
+                                              <span className="text-sm font-mono">{ }</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Links & Media */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('link')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Link">
+                                              <span className="text-sm">🔗</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('image')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Image">
+                                              <span className="text-sm">🖼️</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Other */}
+                                          <div className="flex gap-1">
+                                            <button type="button" onClick={() => insertMarkdown('quote', 'Quote text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Quote">
+                                              <span className="text-sm">"</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('table')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Table">
+                                              <span className="text-sm">⊞</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('hr')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Horizontal Rule">
+                                              <span className="text-sm">─</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Editor/Preview Area */}
                                     {config.inputType === 'textarea' ? (
-                                      <textarea
-                                        value={lessonForm.content_data}
-                                        onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
-                                        rows={config.rows}
-                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm"
-                                        placeholder={config.placeholder}
-                                      />
+                                      showMarkdownPreview && isTextContent ? (
+                                        <div 
+                                          className="w-full min-h-[200px] p-4 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 prose dark:prose-invert max-w-none overflow-auto"
+                                          dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(lessonForm.content_data) }}
+                                        />
+                                      ) : (
+                                        <textarea
+                                          ref={textareaRef}
+                                          value={lessonForm.content_data}
+                                          onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
+                                          rows={config.rows}
+                                          className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm resize-y"
+                                          placeholder={config.placeholder}
+                                        />
+                                      )
                                     ) : (
                                       <input
                                         type="text"
@@ -780,19 +1043,124 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                             <div>
                               {(() => {
                                 const config = getContentDataConfig(lessonForm.content_type);
+                                const isTextContent = lessonForm.content_type === 'text' || lessonForm.content_type === 'mixed';
+                                
                                 return (
                                   <>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                                      {config.label} *
-                                    </label>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        {config.label} *
+                                      </label>
+                                      {isTextContent && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
+                                          className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                        >
+                                          {showMarkdownPreview ? '✏️ Edit' : '👁️ Preview'}
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {/* Markdown Toolbar - For text and mixed content */}
+                                    {isTextContent && !showMarkdownPreview && (
+                                      <div className="mb-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg border border-slate-300 dark:border-slate-600">
+                                        <div className="flex flex-wrap gap-1">
+                                          {/* Text Formatting */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('bold', 'Bold text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Bold">
+                                              <span className="font-bold text-sm">B</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('italic', 'Italic text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Italic">
+                                              <span className="italic text-sm">I</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('strikethrough', 'Strikethrough text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Strikethrough">
+                                              <span className="line-through text-sm">S</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('highlight', 'Highlighted text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Highlight">
+                                              <span className="bg-yellow-200 dark:bg-yellow-600 px-1 text-sm">H</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Headings */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('h1', 'Heading 1')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors text-xs font-bold" title="Heading 1">
+                                              H1
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('h2', 'Heading 2')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors text-xs font-bold" title="Heading 2">
+                                              H2
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('h3', 'Heading 3')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors text-xs font-bold" title="Heading 3">
+                                              H3
+                                            </button>
+                                          </div>
+
+                                          {/* Lists */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('ul', 'List item')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Bullet List">
+                                              <span className="text-sm">• List</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('ol', 'List item')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Numbered List">
+                                              <span className="text-sm">1. List</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('task', 'Task item')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Task List">
+                                              <span className="text-sm">☑ Task</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Code */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('code', 'code')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Inline Code">
+                                              <span className="text-sm font-mono">&lt;/&gt;</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('codeblock', 'code block')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Code Block">
+                                              <span className="text-sm font-mono">{ }</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Links & Media */}
+                                          <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
+                                            <button type="button" onClick={() => insertMarkdown('link')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Link">
+                                              <span className="text-sm">🔗</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('image')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Image">
+                                              <span className="text-sm">🖼️</span>
+                                            </button>
+                                          </div>
+
+                                          {/* Other */}
+                                          <div className="flex gap-1">
+                                            <button type="button" onClick={() => insertMarkdown('quote', 'Quote text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Quote">
+                                              <span className="text-sm">"</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('table')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Table">
+                                              <span className="text-sm">⊞</span>
+                                            </button>
+                                            <button type="button" onClick={() => insertMarkdown('hr')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Horizontal Rule">
+                                              <span className="text-sm">─</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Editor/Preview Area */}
                                     {config.inputType === 'textarea' ? (
-                                      <textarea
-                                        value={lessonForm.content_data}
-                                        onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
-                                        rows={config.rows}
-                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm"
-                                        placeholder={config.placeholder}
-                                      />
+                                      showMarkdownPreview && isTextContent ? (
+                                        <div 
+                                          className="w-full min-h-[200px] p-4 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 prose dark:prose-invert max-w-none overflow-auto"
+                                          dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(lessonForm.content_data) }}
+                                        />
+                                      ) : (
+                                        <textarea
+                                          ref={textareaRef}
+                                          value={lessonForm.content_data}
+                                          onChange={(e) => setLessonForm({ ...lessonForm, content_data: e.target.value })}
+                                          rows={config.rows}
+                                          className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm resize-y"
+                                          placeholder={config.placeholder}
+                                        />
+                                      )
                                     ) : (
                                       <input
                                         type="text"
