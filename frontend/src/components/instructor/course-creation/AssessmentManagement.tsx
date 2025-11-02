@@ -645,20 +645,32 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const handleEditQuiz = (quiz: Quiz) => {
     console.log('Editing quiz:', quiz);
     setEditingItem(quiz);
+    
+    // Format due_date for datetime-local input (YYYY-MM-DDTHH:mm)
+    let formattedDueDate = '';
+    if (quiz.due_date) {
+      try {
+        const date = new Date(quiz.due_date);
+        formattedDueDate = date.toISOString().slice(0, 16);
+      } catch (e) {
+        formattedDueDate = '';
+      }
+    }
+    
     setQuizForm({
       title: quiz.title,
       description: quiz.description || '',
       module_id: quiz.module_id ? quiz.module_id.toString() : '',
-      lesson_id: '',
+      lesson_id: quiz.lesson_id ? quiz.lesson_id.toString() : '',
       is_published: quiz.is_published || false,
       time_limit: quiz.time_limit?.toString() || '',
       max_attempts: quiz.max_attempts?.toString() || '',
-      passing_score: 70,
-      shuffle_questions: false,
-      shuffle_answers: false,
-      show_correct_answers: true,
-      points_possible: 100,
-      due_date: ''
+      passing_score: quiz.passing_score ?? 70,
+      shuffle_questions: quiz.shuffle_questions ?? false,
+      shuffle_answers: quiz.shuffle_answers ?? false,
+      show_correct_answers: quiz.show_correct_answers ?? true,
+      points_possible: quiz.points_possible ?? 100,
+      due_date: formattedDueDate
     });
     
     // Load existing questions if available
