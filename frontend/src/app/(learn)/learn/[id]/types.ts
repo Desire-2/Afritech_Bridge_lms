@@ -36,6 +36,7 @@ export interface LessonData {
   description?: string;
   content?: string;
   module_id?: number;
+  is_completed?: boolean;
 }
 
 export interface ModuleData {

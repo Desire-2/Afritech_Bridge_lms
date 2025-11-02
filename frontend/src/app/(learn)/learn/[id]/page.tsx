@@ -30,7 +30,7 @@ import type {
 
 // Enhanced Learning Interface Component with Automatic Progress Tracking
 const LearningPage = () => {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const params = useParams();
   const courseId = parseInt(params.id as string);
   
@@ -71,6 +71,8 @@ const LearningPage = () => {
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [lessonAssessments, setLessonAssessments] = useState<{ [lessonId: number]: any[] }>({});
+  const [lessonCompletionStatus, setLessonCompletionStatus] = useState<{ [lessonId: number]: boolean }>({});
   
   // Video tracking state
   const [videoProgress, setVideoProgress] = useState(0);
@@ -124,6 +126,37 @@ const LearningPage = () => {
       
       setLessonQuiz(quizResponse.quiz);
       setLessonAssignments(assignmentsResponse.assignments || []);
+      
+      // Build assessments data for sidebar
+      const assessments: any[] = [];
+      
+      if (quizResponse.quiz) {
+        assessments.push({
+          id: quizResponse.quiz.id,
+          title: quizResponse.quiz.title || 'Quiz',
+          type: 'quiz',
+          status: quizResponse.quiz.completed ? 'completed' : 'pending',
+          dueDate: quizResponse.quiz.due_date
+        });
+      }
+      
+      if (assignmentsResponse.assignments && assignmentsResponse.assignments.length > 0) {
+        assignmentsResponse.assignments.forEach((assignment: any) => {
+          assessments.push({
+            id: assignment.id,
+            title: assignment.title || 'Assignment',
+            type: 'assignment',
+            status: assignment.status || 'pending',
+            dueDate: assignment.due_date
+          });
+        });
+      }
+      
+      // Update assessments map
+      setLessonAssessments(prev => ({
+        ...prev,
+        [lessonId]: assessments
+      }));
     } catch (error) {
       console.error('Error loading lesson content:', error);
     } finally {
@@ -149,6 +182,43 @@ const LearningPage = () => {
       console.error('Error checking badge eligibility:', error);
     }
   }, [courseData, courseId]);
+
+  // Fetch lesson completion status for all lessons
+  const fetchLessonCompletionStatus = useCallback(async () => {
+    if (!courseData?.course?.modules) return;
+
+    try {
+      const completionMap: { [lessonId: number]: boolean } = {};
+      
+      // Create an array of all lessons with their lesson IDs
+      courseData.course.modules.forEach((module: any) => {
+        module.lessons?.forEach((lesson: any) => {
+          completionMap[lesson.id] = false;
+        });
+      });
+
+      // Try to fetch lesson progress for each lesson
+      const progressPromises = courseData.course.modules.flatMap((module: any) =>
+        (module.lessons || []).map(async (lesson: any) => {
+          try {
+            const progress = await StudentApiService.getLessonProgress(lesson.id);
+            // Check if lesson is completed (reading progress >= 100 or auto_completed)
+            if (progress.reading_progress >= 100 || progress.auto_completed) {
+              completionMap[lesson.id] = true;
+            }
+          } catch (error) {
+            // If API fails, assume not completed
+            completionMap[lesson.id] = false;
+          }
+        })
+      );
+
+      await Promise.all(progressPromises);
+      setLessonCompletionStatus(completionMap);
+    } catch (error) {
+      console.error('Error fetching lesson completion status:', error);
+    }
+  }, [courseData?.course?.modules]);
 
   // Check course completion
   const checkCourseCompletion = useCallback(async () => {
@@ -333,15 +403,21 @@ const LearningPage = () => {
 
   // Authentication check
   useEffect(() => {
+    if (authLoading) {
+      // Still loading auth, don't redirect yet
+      return;
+    }
+    
     if (!isAuthenticated) {
+      // Only redirect after auth loading is complete and user is not authenticated
       window.location.href = '/auth/signin';
       return;
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authLoading]);
 
   // Load course data
   useEffect(() => {
-    if (!isAuthenticated || !courseId) return;
+    if (authLoading || !isAuthenticated || !courseId) return;
 
     const fetchCourseData = async () => {
       try {
@@ -373,7 +449,14 @@ const LearningPage = () => {
     };
 
     fetchCourseData();
-  }, [courseId, isAuthenticated]);
+  }, [courseId, isAuthenticated, authLoading]);
+
+  // Fetch lesson completion status when course data is loaded
+  useEffect(() => {
+    if (courseData?.course?.modules) {
+      fetchLessonCompletionStatus();
+    }
+  }, [courseData?.course?.modules, fetchLessonCompletionStatus]);
 
   // Handle lesson selection
   const handleLessonSelect = (lessonId: number, moduleId: number) => {
@@ -492,6 +575,21 @@ const LearningPage = () => {
     getModuleStatus
   );
 
+  // Authentication loading state - show while auth is being initialized
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
+        <Card className="w-96 bg-gray-800/50 border-gray-700">
+          <CardContent className="p-8 text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-green-400" />
+            <h3 className="text-lg font-semibold mb-2 text-white">Verifying Your Access</h3>
+            <p className="text-gray-300">Checking your authentication status...</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   // Loading state
   if (loading) {
     return (
@@ -577,6 +675,8 @@ const LearningPage = () => {
           currentModuleId={currentModuleId}
           getModuleStatus={getModuleStatus}
           onLessonSelect={handleLessonSelect}
+          lessonAssessments={lessonAssessments}
+          lessonCompletionStatus={lessonCompletionStatus}
         />
 
         {currentLesson ? (

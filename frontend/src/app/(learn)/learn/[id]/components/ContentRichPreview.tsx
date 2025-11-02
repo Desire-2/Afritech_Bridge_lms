@@ -10,6 +10,7 @@ import {
   Video, 
   Download, 
   Maximize2,
+  Minimize2,
   Clock,
   BookOpen,
   CheckCircle,
@@ -47,6 +48,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const youtubePlayerRef = useRef<any>(null);
   const vimeoPlayerRef = useRef<any>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
 
   // Track video progress for direct video elements
   useEffect(() => {
@@ -251,6 +253,61 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     };
   }, []);
 
+  const handleFullscreenToggle = async (element: HTMLElement | null) => {
+    if (!element) return;
+
+    try {
+      if (!fullscreen) {
+        // Enter fullscreen
+        if (element.requestFullscreen) {
+          await element.requestFullscreen();
+        } else if ((element as any).webkitRequestFullscreen) {
+          await (element as any).webkitRequestFullscreen();
+        } else if ((element as any).mozRequestFullScreen) {
+          await (element as any).mozRequestFullScreen();
+        } else if ((element as any).msRequestFullscreen) {
+          await (element as any).msRequestFullscreen();
+        }
+        setFullscreen(true);
+      } else {
+        // Exit fullscreen
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        } else if ((document as any).webkitFullscreenElement) {
+          await (document as any).webkitExitFullscreen();
+        } else if ((document as any).mozFullScreenElement) {
+          await (document as any).mozCancelFullScreen();
+        } else if ((document as any).msFullscreenElement) {
+          await (document as any).msExitFullscreen();
+        }
+        setFullscreen(false);
+      }
+    } catch (error) {
+      console.error('Error toggling fullscreen:', error);
+    }
+  };
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && !((document as any).webkitFullscreenElement || (document as any).mozFullScreenElement || (document as any).msFullscreenElement)) {
+        setFullscreen(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, []);
+
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
@@ -279,11 +336,26 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       if (videoId) {
         return (
           <div className="space-y-4">
-            <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
+            <div 
+              ref={videoContainerRef}
+              className="relative aspect-video rounded-lg overflow-hidden bg-black group"
+            >
               <div
                 ref={iframeRef as any}
                 id={`youtube-player-${videoId}`}
+                className="absolute inset-0 w-full h-full"
               />
+              <button
+                onClick={() => handleFullscreenToggle(videoContainerRef.current)}
+                className="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              >
+                {fullscreen ? (
+                  <Minimize2 className="h-5 w-5" />
+                ) : (
+                  <Maximize2 className="h-5 w-5" />
+                )}
+              </button>
             </div>
             
             {/* YouTube Progress Tracker */}
@@ -332,7 +404,10 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       if (videoId) {
         return (
           <div className="space-y-4">
-            <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
+            <div 
+              ref={videoContainerRef}
+              className="relative aspect-video rounded-lg overflow-hidden bg-black group"
+            >
               <iframe
                 ref={iframeRef}
                 src={`https://player.vimeo.com/video/${videoId}`}
@@ -340,6 +415,17 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 allow="autoplay; fullscreen; picture-in-picture"
                 allowFullScreen
               />
+              <button
+                onClick={() => handleFullscreenToggle(videoContainerRef.current)}
+                className="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              >
+                {fullscreen ? (
+                  <Minimize2 className="h-5 w-5" />
+                ) : (
+                  <Maximize2 className="h-5 w-5" />
+                )}
+              </button>
             </div>
             
             {/* Vimeo Progress Tracker */}
@@ -387,10 +473,14 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     // Direct video URL with progress tracking
     return (
       <div className="space-y-4">
-        <div className="relative aspect-video rounded-lg overflow-hidden bg-black">
+        <div 
+          ref={videoContainerRef}
+          className="relative aspect-video rounded-lg overflow-hidden bg-black group"
+        >
           <video
             ref={videoRef}
             controls
+            controlsList="nodownload"
             className="w-full h-full"
             onPlay={() => setIsPlaying(true)}
             onPause={() => setIsPlaying(false)}
@@ -398,6 +488,17 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             <source src={videoUrl} type="video/mp4" />
             Your browser does not support the video tag.
           </video>
+          <button
+            onClick={() => handleFullscreenToggle(videoContainerRef.current)}
+            className="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+            title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            {fullscreen ? (
+              <Minimize2 className="h-5 w-5" />
+            ) : (
+              <Maximize2 className="h-5 w-5" />
+            )}
+          </button>
         </div>
         
         {/* Video Progress Tracker */}
@@ -521,9 +622,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full">
       {/* Content Header */}
-      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg p-6 border border-blue-800/50">
+      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg p-6 border border-blue-800/50 w-full">
         <div className="flex items-start justify-between mb-4">
           <div className="flex-1">
             <h3 className="text-xl font-semibold text-white mb-2">
@@ -567,7 +668,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       </div>
 
       {/* Content Display based on type */}
-      <div className="bg-gray-800/30 rounded-lg p-6 border border-gray-700">
+      <div className="bg-gray-800/30 rounded-lg p-6 border border-gray-700 w-full">
         {lesson.content_type === 'text' && renderTextContent(lesson.content_data)}
         {lesson.content_type === 'video' && renderVideoContent(lesson.content_data)}
         {lesson.content_type === 'pdf' && renderPdfContent(lesson.content_data)}
