@@ -26,8 +26,7 @@ from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment
 from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
 from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
 from src.routes.course_creation_routes import course_creation_bp # Import course creation blueprint
-from src.routes.assessment_routes import assessment_bp # Import assessment blueprint
-from src.routes.instructor_assessment_routes import instructor_assessment_bp # Import instructor assessment blueprint
+from src.routes.instructor_assessment_routes import instructor_assessment_bp # Import instructor assessment blueprint (consolidated - replaced old assessment_bp)
 from src.routes.dashboard_routes import dashboard_bp # Import dashboard blueprint
 from src.routes.student_routes import student_bp # Import student blueprint
 from src.routes.learning_routes import learning_bp # Import learning blueprint 
@@ -194,8 +193,7 @@ app.register_blueprint(announcement_bp)
 app.register_blueprint(opportunity_bp) # Register opportunity blueprint
 app.register_blueprint(instructor_bp) # Register instructor blueprint
 app.register_blueprint(course_creation_bp) # Register course creation blueprint
-app.register_blueprint(assessment_bp) # Register assessment blueprint
-app.register_blueprint(instructor_assessment_bp) # Register instructor assessment blueprint
+app.register_blueprint(instructor_assessment_bp) # Register instructor assessment blueprint (consolidated endpoint - OLD assessment_bp removed)
 app.register_blueprint(dashboard_bp) # Register dashboard blueprint
 app.register_blueprint(student_bp) # Register student blueprint
 app.register_blueprint(learning_bp) # Register learning blueprint
