@@ -9,13 +9,25 @@ from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Que
 
 # Helper for role checking (decorator)
 from functools import wraps
+import logging
+
+logger = logging.getLogger(__name__)
+
+def get_user_id():
+    """Helper function to get user ID as integer from JWT"""
+    try:
+        user_id = get_jwt_identity()
+        return int(user_id) if user_id is not None else None
+    except (ValueError, TypeError) as e:
+        logger.error(f"ERROR in get_user_id: {e}")
+        return None
 
 def role_required(roles):
     def decorator(f):
         @wraps(f)
         @jwt_required()
         def decorated_function(*args, **kwargs):
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or not user.role or user.role.name not in roles:
                 return jsonify({"message": "User does not have the required role(s)"}), 403
@@ -37,7 +49,7 @@ announcement_bp = Blueprint("announcement_bp", __name__, url_prefix="/api/v1/ann
 @role_required(["admin", "instructor"])
 def create_course():
     data = request.get_json()
-    current_user_id = int(get_jwt_identity())  # Ensure integer
+    current_user_id = get_user_id()  # Ensure integer
     user = User.query.get(current_user_id)
 
     # Ensure instructor_id is the current user if they are an instructor, or allow admin to set it
@@ -85,7 +97,7 @@ def get_course(course_id):
     if not course.is_published:
         # Check if user is admin or instructor of this course to allow viewing unpublished
         try:
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
                 return jsonify({"message": "Course not found or not published"}), 404
@@ -98,7 +110,7 @@ def get_course(course_id):
 @role_required(["admin", "instructor"])
 def update_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
+    current_user_id = get_user_id()  # Ensure integer comparison
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -129,25 +141,44 @@ def update_course(course_id):
 @role_required(["admin", "instructor"])
 def delete_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
+    
+    if current_user_id is None:
+        logger.error("Could not extract user ID from JWT token")
+        return jsonify({"message": "Authentication error"}), 401
+    
     user = User.query.get(current_user_id)
 
+    # Log for debugging
+    logger.info(f"Delete course check: course.instructor_id={course.instructor_id} (type: {type(course.instructor_id)}), current_user_id={current_user_id} (type: {type(current_user_id)})")
+    
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
-        return jsonify({"message": "You are not authorized to delete this course"}), 403
+        logger.warning(f"User {current_user_id} attempted to delete course {course_id} owned by instructor {course.instructor_id}")
+        return jsonify({
+            "message": "Forbidden. You do not have permission to perform this action.",
+            "error_type": "authorization_error",
+            "details": {
+                "course_id": course_id,
+                "required_instructor_id": course.instructor_id,
+                "your_user_id": current_user_id
+            }
+        }), 403
 
     try:
         db.session.delete(course)
         db.session.commit()
+        logger.info(f"Course {course_id} deleted successfully by user {current_user_id}")
         return jsonify({"message": "Course deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Error deleting course {course_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Could not delete course", "error": str(e)}), 500
 
 @course_bp.route("/<int:course_id>/publish", methods=["POST", "PATCH"])
 @role_required(["admin", "instructor"])
 def publish_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
+    current_user_id = get_user_id()  # Ensure integer comparison
     user = User.query.get(current_user_id)
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
         return jsonify({"message": "Not authorized"}), 403
@@ -159,7 +190,7 @@ def publish_course(course_id):
 @role_required(["admin", "instructor"])
 def unpublish_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
+    current_user_id = get_user_id()  # Ensure integer comparison
     user = User.query.get(current_user_id)
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
         return jsonify({"message": "Not authorized"}), 403
@@ -171,7 +202,7 @@ def unpublish_course(course_id):
 @role_required(["admin", "instructor"])
 def get_course_instructor_details(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -203,7 +234,7 @@ def get_course_instructor_details(course_id):
 @role_required(["admin", "instructor"])
 def create_module_for_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -232,7 +263,7 @@ def get_modules_for_course(course_id):
     course = Course.query.get_or_404(course_id)
     if not course.is_published:
         try:
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
                 return jsonify({"message": "Course not found or not published"}), 404
@@ -249,7 +280,7 @@ def get_module(module_id):
     course = Course.query.get_or_404(module.course_id)
     if not course.is_published:
         try:
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
                 return jsonify({"message": "Module not found or part of an unpublished course"}), 404
@@ -262,7 +293,7 @@ def get_module(module_id):
 def update_module(module_id):
     module = Module.query.get_or_404(module_id)
     course = Course.query.get_or_404(module.course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -284,18 +315,38 @@ def update_module(module_id):
 def delete_module(module_id):
     module = Module.query.get_or_404(module_id)
     course = Course.query.get_or_404(module.course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
+    
+    if current_user_id is None:
+        logger.error("Could not extract user ID from JWT token")
+        return jsonify({"message": "Authentication error"}), 401
+    
     user = User.query.get(current_user_id)
 
+    # Log for debugging
+    logger.info(f"Delete module check: course.instructor_id={course.instructor_id} (type: {type(course.instructor_id)}), current_user_id={current_user_id} (type: {type(current_user_id)})")
+    
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
-        return jsonify({"message": "You are not authorized to delete this module"}), 403
+        logger.warning(f"User {current_user_id} attempted to delete module {module_id} from course {course.id} owned by instructor {course.instructor_id}")
+        return jsonify({
+            "message": "Forbidden. You do not have permission to perform this action.",
+            "error_type": "authorization_error",
+            "details": {
+                "module_id": module_id,
+                "course_id": course.id,
+                "required_instructor_id": course.instructor_id,
+                "your_user_id": current_user_id
+            }
+        }), 403
 
     try:
         db.session.delete(module)
         db.session.commit()
+        logger.info(f"Module {module_id} deleted successfully by user {current_user_id}")
         return jsonify({"message": "Module deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Error deleting module {module_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Could not delete module", "error": str(e)}), 500
 
 # --- Lesson Routes (nested under modules for creation) ---
@@ -304,7 +355,7 @@ def delete_module(module_id):
 def create_lesson_for_module(module_id):
     module = Module.query.get_or_404(module_id)
     course = Course.query.get_or_404(module.course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -335,7 +386,7 @@ def get_lessons_for_module(module_id):
     course = Course.query.get_or_404(module.course_id)
     if not course.is_published:
         try:
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
                 return jsonify({"message": "Module not found or part of an unpublished course"}), 404
@@ -353,7 +404,7 @@ def get_lesson(lesson_id):
     course = Course.query.get_or_404(module.course_id)
     if not course.is_published:
         try:
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
                 return jsonify({"message": "Lesson not found or part of an unpublished course"}), 404
@@ -367,7 +418,7 @@ def update_lesson(lesson_id):
     lesson = Lesson.query.get_or_404(lesson_id)
     module = Module.query.get_or_404(lesson.module_id)
     course = Course.query.get_or_404(module.course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -390,7 +441,7 @@ def update_lesson(lesson_id):
 @role_required(["admin", "instructor"])
 def create_announcement_for_course(course_id):
     course = Course.query.get_or_404(course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -418,7 +469,7 @@ def get_announcements_for_course(course_id):
     course = Course.query.get_or_404(course_id)
     if not course.is_published:
         try:
-            current_user_id = get_jwt_identity()
+            current_user_id = get_user_id()
             user = User.query.get(current_user_id)
             if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
                 return jsonify({"message": "Course not found or not published"}), 404
@@ -433,7 +484,7 @@ def get_announcements_for_course(course_id):
 def update_announcement(announcement_id):
     announcement = Announcement.query.get_or_404(announcement_id)
     course = Course.query.get_or_404(announcement.course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
     user = User.query.get(current_user_id)
 
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
@@ -454,16 +505,36 @@ def update_announcement(announcement_id):
 def delete_announcement(announcement_id):
     announcement = Announcement.query.get_or_404(announcement_id)
     course = Course.query.get_or_404(announcement.course_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
+    
+    if current_user_id is None:
+        logger.error("Could not extract user ID from JWT token")
+        return jsonify({"message": "Authentication error"}), 401
+    
     user = User.query.get(current_user_id)
 
+    # Log for debugging
+    logger.info(f"Delete announcement check: course.instructor_id={course.instructor_id} (type: {type(course.instructor_id)}), current_user_id={current_user_id} (type: {type(current_user_id)})")
+    
     if user.role.name == "instructor" and course.instructor_id != current_user_id:
-        return jsonify({"message": "You are not authorized to delete this announcement"}), 403
+        logger.warning(f"User {current_user_id} attempted to delete announcement {announcement_id} from course {course.id} owned by instructor {course.instructor_id}")
+        return jsonify({
+            "message": "Forbidden. You do not have permission to perform this action.",
+            "error_type": "authorization_error",
+            "details": {
+                "announcement_id": announcement_id,
+                "course_id": course.id,
+                "required_instructor_id": course.instructor_id,
+                "your_user_id": current_user_id
+            }
+        }), 403
 
     try:
         db.session.delete(announcement)
         db.session.commit()
+        logger.info(f"Announcement {announcement_id} deleted successfully by user {current_user_id}")
         return jsonify({"message": "Announcement deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Error deleting announcement {announcement_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Could not delete announcement", "error": str(e)}), 500

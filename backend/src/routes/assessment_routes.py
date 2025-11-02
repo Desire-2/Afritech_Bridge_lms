@@ -7,6 +7,7 @@ import json
 import os
 from datetime import datetime
 from werkzeug.utils import secure_filename
+import logging
 
 from ..models.user_models import db, User, Role
 from ..models.course_models import (
@@ -16,6 +17,8 @@ from ..models.course_models import (
 
 # Helper for role checking
 from functools import wraps
+
+logger = logging.getLogger(__name__)
 
 def get_user_id():
     """Helper function to get user ID as integer from JWT"""
@@ -125,11 +128,67 @@ def update_quiz(quiz_id):
     """Update a quiz"""
     try:
         current_user_id = get_user_id()
+        if current_user_id is None:
+            logger.error("Assessment update_quiz: Could not extract user ID from JWT token")
+            return jsonify({"message": "Authentication error"}), 401
+
         quiz = Quiz.query.get_or_404(quiz_id)
-        
-        # Verify course ownership
+
+        if not quiz.course:
+            logger.error(
+                "Assessment update_quiz: Quiz %s has no associated course (course_id=%s)",
+                quiz_id,
+                quiz.course_id
+            )
+            return jsonify({
+                "message": "Quiz has no associated course",
+                "error": "invalid_quiz_state",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id
+                }
+            }), 400
+
+        if quiz.course.instructor_id is None:
+            logger.error(
+                "Assessment update_quiz: Quiz %s course %s lacks instructor assignment",
+                quiz_id,
+                quiz.course_id
+            )
+            return jsonify({
+                "message": "Quiz course is not linked to an instructor",
+                "error": "invalid_course_state",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id
+                }
+            }), 400
+
+        logger.info(
+            "Assessment update_quiz ownership check: quiz.course.instructor_id=%s (type: %s), current_user_id=%s (type: %s)",
+            quiz.course.instructor_id,
+            type(quiz.course.instructor_id),
+            current_user_id,
+            type(current_user_id)
+        )
+
         if quiz.course.instructor_id != current_user_id:
-            return jsonify({"message": "Access denied to this quiz"}), 403
+            logger.warning(
+                "Assessment update_quiz: User %s attempted to update quiz %s owned by instructor %s",
+                current_user_id,
+                quiz_id,
+                quiz.course.instructor_id
+            )
+            return jsonify({
+                "message": "Forbidden. You do not have permission to perform this action.",
+                "error_type": "authorization_error",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id,
+                    "required_instructor_id": quiz.course.instructor_id,
+                    "your_user_id": current_user_id
+                }
+            }), 403
         
         data = request.get_json()
         
@@ -161,12 +220,64 @@ def update_quiz(quiz_id):
 def add_quiz_question(quiz_id):
     """Add a question to a quiz"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = get_user_id()
+        if current_user_id is None:
+            logger.error("Assessment add_quiz_question: Could not extract user ID from JWT token")
+            return jsonify({"message": "Authentication error"}), 401
+
         quiz = Quiz.query.get_or_404(quiz_id)
-        
-        # Verify course ownership
+
+        if not quiz.course:
+            logger.error("Assessment add_quiz_question: Quiz %s has no associated course", quiz_id)
+            return jsonify({
+                "message": "Quiz has no associated course",
+                "error": "invalid_quiz_state",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id
+                }
+            }), 400
+
+        if quiz.course.instructor_id is None:
+            logger.error(
+                "Assessment add_quiz_question: Quiz %s course %s lacks instructor assignment",
+                quiz_id,
+                quiz.course_id
+            )
+            return jsonify({
+                "message": "Quiz course is not linked to an instructor",
+                "error": "invalid_course_state",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id
+                }
+            }), 400
+
+        logger.info(
+            "Assessment add_quiz_question ownership check: quiz.course.instructor_id=%s (type: %s), current_user_id=%s (type: %s)",
+            quiz.course.instructor_id,
+            type(quiz.course.instructor_id),
+            current_user_id,
+            type(current_user_id)
+        )
+
         if quiz.course.instructor_id != current_user_id:
-            return jsonify({"message": "Access denied to this quiz"}), 403
+            logger.warning(
+                "Assessment add_quiz_question: User %s attempted to add question to quiz %s owned by instructor %s",
+                current_user_id,
+                quiz_id,
+                quiz.course.instructor_id
+            )
+            return jsonify({
+                "message": "Forbidden. You do not have permission to perform this action.",
+                "error_type": "authorization_error",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id,
+                    "required_instructor_id": quiz.course.instructor_id,
+                    "your_user_id": current_user_id
+                }
+            }), 403
         
         data = request.get_json()
         
@@ -216,12 +327,32 @@ def add_quiz_question(quiz_id):
 def delete_quiz(quiz_id):
     """Delete a quiz"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = get_user_id()
+        
+        if current_user_id is None:
+            return jsonify({"message": "Authentication error"}), 401
+        
         quiz = Quiz.query.get_or_404(quiz_id)
+        
+        # Check if quiz has a course
+        if not quiz.course:
+            return jsonify({
+                "message": "Quiz has no associated course",
+                "error": "invalid_quiz_state"
+            }), 400
         
         # Verify course ownership
         if quiz.course.instructor_id != current_user_id:
-            return jsonify({"message": "Access denied to this quiz"}), 403
+            return jsonify({
+                "message": "Forbidden. You do not have permission to perform this action.",
+                "error_type": "authorization_error",
+                "details": {
+                    "quiz_id": quiz_id,
+                    "course_id": quiz.course_id,
+                    "required_instructor_id": quiz.course.instructor_id,
+                    "your_user_id": current_user_id
+                }
+            }), 403
         
         db.session.delete(quiz)
         db.session.commit()
@@ -351,12 +482,32 @@ def update_assignment(assignment_id):
 def delete_assignment(assignment_id):
     """Delete an assignment"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = get_user_id()
+        
+        if current_user_id is None:
+            return jsonify({"message": "Authentication error"}), 401
+        
         assignment = Assignment.query.get_or_404(assignment_id)
+        
+        # Check if assignment has a course
+        if not assignment.course:
+            return jsonify({
+                "message": "Assignment has no associated course",
+                "error": "invalid_assignment_state"
+            }), 400
         
         # Verify course ownership
         if assignment.course.instructor_id != current_user_id:
-            return jsonify({"message": "Access denied to this assignment"}), 403
+            return jsonify({
+                "message": "Forbidden. You do not have permission to perform this action.",
+                "error_type": "authorization_error",
+                "details": {
+                    "assignment_id": assignment_id,
+                    "course_id": assignment.course_id,
+                    "required_instructor_id": assignment.course.instructor_id,
+                    "your_user_id": current_user_id
+                }
+            }), 403
         
         db.session.delete(assignment)
         db.session.commit()
@@ -512,12 +663,32 @@ def update_project(project_id):
 def delete_project(project_id):
     """Delete a project"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = get_user_id()
+        
+        if current_user_id is None:
+            return jsonify({"message": "Authentication error"}), 401
+        
         project = Project.query.get_or_404(project_id)
+        
+        # Check if project has a course
+        if not project.course:
+            return jsonify({
+                "message": "Project has no associated course",
+                "error": "invalid_project_state"
+            }), 400
         
         # Verify course ownership
         if project.course.instructor_id != current_user_id:
-            return jsonify({"message": "Access denied to this project"}), 403
+            return jsonify({
+                "message": "Forbidden. You do not have permission to perform this action.",
+                "error_type": "authorization_error",
+                "details": {
+                    "project_id": project_id,
+                    "course_id": project.course_id,
+                    "required_instructor_id": project.course.instructor_id,
+                    "your_user_id": current_user_id
+                }
+            }), 403
         
         db.session.delete(project)
         db.session.commit()
@@ -542,7 +713,7 @@ def get_assessments_overview(course_id):
         projects = Project.query.filter_by(course_id=course_id).all()
         
         return jsonify({
-            "quizzes": [quiz.to_dict() for quiz in quizzes],
+            "quizzes": [quiz.to_dict(include_questions=True) for quiz in quizzes],
             "assignments": [assignment.to_dict() for assignment in assignments],
             "projects": [project.to_dict(include_modules=True) for project in projects]
         }), 200

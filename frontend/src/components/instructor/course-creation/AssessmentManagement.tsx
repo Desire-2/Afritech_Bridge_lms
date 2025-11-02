@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Course, Assignment, Project, Quiz, EnhancedModule, Question, Answer } from '@/types/api';
+import React, { useState, useEffect } from 'react';
+import { Course, Assignment, Project, Quiz, EnhancedModule, Question, Answer, QuizQuestionPayload } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 
 interface AssessmentManagementProps {
@@ -11,7 +11,7 @@ interface AssessmentManagementProps {
     assignments?: Assignment[];
     projects?: Project[];
   };
-  onAssessmentUpdate: () => void;
+  onAssessmentUpdate: () => void | Promise<void>;
 }
 
 type AssessmentType = 'quiz' | 'assignment' | 'project';
@@ -22,12 +22,22 @@ interface RubricCriteria {
   max_points: number;
 }
 
+interface QuizAnswerForm {
+  id?: number;
+  answer_text: string;
+  is_correct: boolean;
+}
+
 interface QuizQuestionForm {
+  id?: number;
   question_text: string;
   question_type: 'multiple_choice' | 'true_false' | 'short_answer' | 'essay';
   points: number;
-  answers: { answer_text: string; is_correct: boolean }[];
+  answers: QuizAnswerForm[];
   explanation?: string;
+  order_index?: number;
+  isNew?: boolean;
+  isDirty?: boolean;
 }
 
 const AssessmentManagement: React.FC<AssessmentManagementProps> = ({ 
@@ -47,6 +57,186 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Monitor assessments prop changes for debugging
+  useEffect(() => {
+    if (assessments?.quizzes) {
+      console.log(`[AssessmentManagement] Prop update received - Total quizzes: ${assessments.quizzes.length}`);
+      console.log('[AssessmentManagement] Full assessments object:', assessments);
+      assessments.quizzes.forEach((quiz, idx) => {
+        const qCount = quiz.questions?.length || 0;
+        console.log(`  └─ Quiz ${idx + 1}: ID=${quiz.id}, Title="${quiz.title}", Questions=${qCount}`);
+        if (quiz.questions) {
+          console.log(`     └─ Questions array exists with ${quiz.questions.length} items`);
+          if (quiz.questions.length > 0) {
+            console.log(`     └─ First question in array: "${quiz.questions[0].question_text || quiz.questions[0].text}"`);
+          }
+        } else {
+          console.log(`     └─ NO questions property found!`);
+        }
+      });
+    } else {
+      console.log('[AssessmentManagement] No quizzes in assessments prop');
+    }
+  }, [assessments]);
+
+  const isAnswerBasedQuestion = (type: QuizQuestionForm['question_type']) =>
+    type === 'multiple_choice' || type === 'true_false';
+
+  const createDefaultTrueFalseAnswers = (): QuizAnswerForm[] => [
+    { answer_text: 'True', is_correct: true },
+    { answer_text: 'False', is_correct: false }
+  ];
+
+  const ensureAnswerStructure = (
+    question: QuizQuestionForm,
+    updatedType?: QuizQuestionForm['question_type']
+  ): QuizQuestionForm => {
+    const targetType = updatedType ?? question.question_type;
+
+    if (!isAnswerBasedQuestion(targetType)) {
+      return { ...question, question_type: targetType, answers: [] };
+    }
+
+    if (targetType === 'true_false') {
+      const normalized = createDefaultTrueFalseAnswers().map((defaultAnswer, index) => {
+        const existing = question.answers[index];
+        return {
+          id: existing?.id,
+          answer_text: existing?.answer_text ?? defaultAnswer.answer_text,
+          is_correct: index === 0 ? existing?.is_correct ?? true : existing?.is_correct ?? false
+        };
+      });
+
+      // Ensure only one correct answer remains true
+      const firstCorrectIndex = normalized.findIndex(answer => answer.is_correct);
+      return {
+        ...question,
+        question_type: targetType,
+        answers: normalized.map((answer, idx) => ({
+          ...answer,
+          is_correct: idx === (firstCorrectIndex >= 0 ? firstCorrectIndex : 0)
+        }))
+      };
+    }
+
+    // Multiple choice: ensure at least two answer slots
+    const existingAnswers = question.answers.length > 0 ? question.answers : [
+      { answer_text: '', is_correct: true },
+      { answer_text: '', is_correct: false }
+    ];
+
+    const normalized = [...existingAnswers];
+    while (normalized.length < 2) {
+      normalized.push({ answer_text: '', is_correct: false });
+    }
+
+    return {
+      ...question,
+      question_type: targetType,
+      answers: normalized
+    };
+  };
+
+  const questionHasValidCorrectAnswer = (question: QuizQuestionForm) => {
+    if (!isAnswerBasedQuestion(question.question_type)) {
+      return true;
+    }
+    return question.answers.some(answer => answer.is_correct && answer.answer_text.trim().length > 0);
+  };
+
+  const mapQuestionFormToPayload = (
+    question: QuizQuestionForm,
+    index: number
+  ): QuizQuestionPayload => {
+    const orderIndex = question.order_index ?? index + 1;
+    const commonFields: QuizQuestionPayload = {
+      id: question.id,
+      question_text: question.question_text.trim(),
+      text: question.question_text.trim(),
+      question_type: question.question_type,
+      points: Number.isFinite(question.points) ? question.points : 0,
+      order_index: orderIndex,
+      order: orderIndex,
+      explanation: question.explanation?.trim() || undefined
+    };
+
+    if (isAnswerBasedQuestion(question.question_type)) {
+      commonFields.answers = question.answers.map(answer => ({
+        id: answer.id,
+        answer_text: answer.answer_text,
+        text: answer.answer_text,
+        is_correct: answer.is_correct
+      }));
+    }
+
+    return commonFields;
+  };
+
+  const validateQuizQuestions = (questions: QuizQuestionForm[]): QuizQuestionForm[] | null => {
+    setErrorMessage(null);
+
+    const sanitizedQuestions = questions.map(question => ({
+      ...question,
+      answers: question.answers.map(answer => ({ ...answer }))
+    }));
+
+    const autoFixedIndices: number[] = [];
+
+    for (const [index, question] of sanitizedQuestions.entries()) {
+      if (!question.question_text || !question.question_text.trim()) {
+        setErrorMessage(`Question ${index + 1} requires text.`);
+        return null;
+      }
+
+      if (!Number.isFinite(question.points) || question.points <= 0) {
+        setErrorMessage(`Question ${index + 1} must have points greater than 0.`);
+        return null;
+      }
+
+      if (isAnswerBasedQuestion(question.question_type)) {
+        if (question.answers.length < 2) {
+          setErrorMessage(`Question ${index + 1} needs at least two answer choices.`);
+          return null;
+        }
+
+        for (const [answerIndex, answer] of question.answers.entries()) {
+          if (!answer.answer_text || !answer.answer_text.trim()) {
+            setErrorMessage(`Answer ${answerIndex + 1} for question ${index + 1} cannot be empty.`);
+            return null;
+          }
+        }
+
+        if (!questionHasValidCorrectAnswer(question)) {
+          const firstAnswerWithText = question.answers.findIndex(ans => ans.answer_text.trim().length > 0);
+          if (firstAnswerWithText === -1) {
+            setErrorMessage(`Question ${index + 1} requires at least one correct answer.`);
+            return null;
+          }
+
+          autoFixedIndices.push(index);
+          const updatedAnswers = question.answers.map((answer, answerIndex) => ({
+            ...answer,
+            is_correct: answerIndex === firstAnswerWithText
+          }));
+
+          sanitizedQuestions[index] = {
+            ...question,
+            answers: updatedAnswers,
+            isDirty: question.id ? true : question.isDirty ?? true
+          };
+        }
+      }
+    }
+
+    if (autoFixedIndices.length > 0) {
+      setCurrentQuestions(sanitizedQuestions);
+      const autoFixedCount = autoFixedIndices.length;
+      setSuccessMessage(`Auto-selected a correct answer for ${autoFixedCount} question${autoFixedCount > 1 ? 's' : ''}.`);
+    }
+
+    return sanitizedQuestions;
+  };
 
   // Assignment form state
   const [assignmentForm, setAssignmentForm] = useState({
@@ -219,6 +409,20 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         return;
       }
 
+      let preparedQuestions: QuizQuestionForm[] = currentQuestions;
+      if (preparedQuestions.length > 0) {
+        const sanitized = validateQuizQuestions(preparedQuestions);
+        if (!sanitized) {
+          setIsLoading(false);
+          return;
+        }
+        preparedQuestions = sanitized;
+      }
+
+      const questionPayloads = preparedQuestions.length > 0
+        ? preparedQuestions.map((question, index) => mapQuestionFormToPayload(question, index))
+        : undefined;
+
       // Include all quiz settings fields that exist in the model
       const quizData = {
         title: quizForm.title,
@@ -235,26 +439,30 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         shuffle_questions: quizForm.shuffle_questions,
         shuffle_answers: quizForm.shuffle_answers,
         show_correct_answers: quizForm.show_correct_answers,
-        questions: currentQuestions.length > 0 ? currentQuestions : undefined
+        questions: questionPayloads
       };
 
-      console.log('Creating quiz with data:', JSON.stringify(quizData, null, 2));
+      console.log('=== CREATING QUIZ ===');
+  console.log('Current questions in state:', preparedQuestions);
+      console.log('Quiz data being sent:', JSON.stringify(quizData, null, 2));
 
       const createdQuiz = await CourseCreationService.createQuiz(quizData);
       console.log('Quiz created successfully:', createdQuiz);
+      console.log('Questions in created quiz:', createdQuiz.questions);
       
       // If questions weren't sent with quiz creation (backward compatibility),
       // add them using bulk endpoint
-      if (!quizData.questions && currentQuestions.length > 0) {
-        console.log('Adding questions separately:', currentQuestions);
-        await CourseCreationService.addBulkQuizQuestions(createdQuiz.id, currentQuestions as any);
+      if (!quizData.questions && preparedQuestions.length > 0) {
+        console.log('Adding questions separately (fallback):', preparedQuestions);
+        await CourseCreationService.addBulkQuizQuestions(createdQuiz.id, questionPayloads ?? []);
       }
       
-      setSuccessMessage('Quiz created successfully!');
+      const questionCount = preparedQuestions.length;
+      setSuccessMessage(`Quiz created successfully with ${questionCount} question${questionCount !== 1 ? 's' : ''}!`);
       onAssessmentUpdate();
       setShowForm(false);
       resetQuizForm();
-      setCurrentQuestions([]);
+  setCurrentQuestions([]);
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
       console.error('Error creating quiz:', error);
@@ -456,16 +664,32 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     // Load existing questions if available
     if (quiz.questions && Array.isArray(quiz.questions) && quiz.questions.length > 0) {
       console.log('Loading existing questions:', quiz.questions);
-      const formattedQuestions = quiz.questions.map((q: Question) => ({
-        question_text: q.text || '', // Backend uses 'text', frontend uses 'question_text'
-        question_type: q.question_type || 'multiple_choice',
-        points: 10, // Default points since it's not in the model
-        answers: (q.answers || []).map((a: Answer) => ({
-          answer_text: a.text || '', // Backend uses 'text', frontend uses 'answer_text'
-          is_correct: a.is_correct || false
-        })),
-        explanation: ''
-      }));
+      const sortedQuestions = [...quiz.questions].sort((a, b) => {
+        const orderA = a.order_index ?? a.order ?? 0;
+        const orderB = b.order_index ?? b.order ?? 0;
+        return orderA - orderB;
+      });
+
+      const formattedQuestions = sortedQuestions.map((q: Question, idx): QuizQuestionForm => {
+        const baseQuestion: QuizQuestionForm = {
+          id: q.id,
+          question_text: q.question_text || q.text || '',
+          question_type: (q.question_type as QuizQuestionForm['question_type']) || 'multiple_choice',
+          points: q.points || 10,
+          answers: (q.answers || []).map((a: Answer) => ({
+            id: a.id,
+            answer_text: a.answer_text || a.text || '',
+            is_correct: !!a.is_correct
+          })),
+          explanation: q.explanation || '',
+          order_index: q.order_index || q.order || idx + 1,
+          isNew: false,
+          isDirty: false
+        };
+
+        return ensureAnswerStructure(baseQuestion, baseQuestion.question_type);
+      });
+
       setCurrentQuestions(formattedQuestions);
       console.log('Formatted questions for editing:', formattedQuestions);
     } else {
@@ -565,11 +789,20 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       }
 
       // Prevent publishing quiz without questions
-      const totalQuestions = (editingItem.questions?.length || 0) + currentQuestions.length;
-      if (quizForm.is_published && totalQuestions === 0) {
+      if (quizForm.is_published && currentQuestions.length === 0) {
         setErrorMessage('Cannot publish a quiz without questions. Please add at least one question or uncheck "Publish immediately"');
         setIsLoading(false);
         return;
+      }
+
+      let preparedQuestions: QuizQuestionForm[] = currentQuestions;
+      if (preparedQuestions.length > 0) {
+        const sanitized = validateQuizQuestions(preparedQuestions);
+        if (!sanitized) {
+          setIsLoading(false);
+          return;
+        }
+        preparedQuestions = sanitized;
       }
 
       // Include all quiz settings fields that exist in the model
@@ -594,19 +827,84 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       await CourseCreationService.updateQuiz(editingItem.id, quizData);
       console.log('Quiz updated successfully');
       
-      // Add new questions if any were added
-      if (currentQuestions.length > 0) {
-        console.log('Adding new questions:', currentQuestions);
-        await CourseCreationService.addBulkQuizQuestions(editingItem.id, currentQuestions as any);
+      const resolvedQuestions: QuizQuestionForm[] = [];
+
+      for (let index = 0; index < preparedQuestions.length; index++) {
+        const question = preparedQuestions[index];
+        const payload = mapQuestionFormToPayload({
+          ...question,
+          order_index: index + 1
+        }, index);
+
+        if (question.id) {
+          if (question.isDirty || question.order_index !== index + 1) {
+            await CourseCreationService.updateQuizQuestion(editingItem.id, question.id, payload);
+          }
+
+          resolvedQuestions.push({
+            ...ensureAnswerStructure({ ...question, order_index: index + 1 }, question.question_type),
+            isDirty: false,
+            isNew: false
+          });
+        } else {
+          const createdQuestion = await CourseCreationService.addQuizQuestion(editingItem.id, payload);
+          const responseAnswers = (createdQuestion.answers || []).map((answer: Answer) => ({
+            id: answer.id,
+            answer_text: answer.answer_text || answer.text || '',
+            is_correct: !!answer.is_correct
+          }));
+
+          const normalizedAnswers: QuizAnswerForm[] = responseAnswers.length > 0
+            ? responseAnswers
+            : question.answers.map(answer => ({ ...answer }));
+
+          const normalizedQuestion: QuizQuestionForm = ensureAnswerStructure({
+            id: createdQuestion.id,
+            question_text: createdQuestion.question_text || createdQuestion.text || question.question_text,
+            question_type: (createdQuestion.question_type as QuizQuestionForm['question_type']) || question.question_type,
+            points: createdQuestion.points || question.points,
+            answers: normalizedAnswers,
+            explanation: createdQuestion.explanation || question.explanation,
+            order_index: createdQuestion.order_index || createdQuestion.order || index + 1,
+            isNew: false,
+            isDirty: false
+          }, (createdQuestion.question_type as QuizQuestionForm['question_type']) || question.question_type);
+
+          resolvedQuestions.push(normalizedQuestion);
+        }
+      }
+
+      // Reorder all questions that have IDs (newly created will now have IDs from creation)
+      const questionsWithIds = resolvedQuestions.filter(q => q.id);
+      if (questionsWithIds.length > 0) {
+        const orderingIds = questionsWithIds.map(q => q.id!) as number[];
+        try {
+          await CourseCreationService.reorderQuizQuestions(editingItem.id, orderingIds);
+        } catch (reorderError: any) {
+          // Log but don't fail - reorder is not critical to the update
+          console.warn('Could not reorder questions:', reorderError?.response?.data?.message || reorderError?.message);
+        }
+      }
+
+      setCurrentQuestions(resolvedQuestions);
+
+      setSuccessMessage('Quiz updated successfully!');
+      
+      // Wait for parent to refresh data from backend before closing
+      try {
+        await Promise.resolve(onAssessmentUpdate());
+      } catch (updateError) {
+        console.warn('Error during assessment update callback:', updateError);
       }
       
-      setSuccessMessage('Quiz updated successfully!');
-      onAssessmentUpdate();
-      setShowForm(false);
-      setEditingItem(null);
-      resetQuizForm();
-      setCurrentQuestions([]);
-      setTimeout(() => setSuccessMessage(null), 3000);
+      // Close form with slight delay to show success message
+      setTimeout(() => {
+        setShowForm(false);
+        setEditingItem(null);
+        resetQuizForm();
+      }, 500);
+      
+      setTimeout(() => setSuccessMessage(null), 4000);
     } catch (error: any) {
       console.error('Error updating quiz:', error);
       console.error('Error details:', {
@@ -660,50 +958,180 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     return filtered;
   };
 
-  // Question builder functions
+  // Question builder helpers
+  const recalculateQuestionOrder = (questions: QuizQuestionForm[]) =>
+    questions.map((question, index) => ({
+      ...question,
+      order_index: index + 1
+    }));
+
   const addQuestion = () => {
-    setCurrentQuestions([...currentQuestions, {
-      question_text: '',
-      question_type: 'multiple_choice',
-      points: 10,
-      answers: [
-        { answer_text: '', is_correct: false },
-        { answer_text: '', is_correct: false }
-      ],
-      explanation: ''
-    }]);
+    setCurrentQuestions(prev => {
+      const newQuestion: QuizQuestionForm = {
+        question_text: '',
+        question_type: 'multiple_choice',
+        points: 10,
+        answers: [
+          { answer_text: '', is_correct: false },
+          { answer_text: '', is_correct: false }
+        ],
+        explanation: '',
+        order_index: prev.length + 1,
+        isNew: true,
+        isDirty: true
+      };
+      const updated: QuizQuestionForm[] = [...prev, newQuestion];
+      return recalculateQuestionOrder(updated);
+    });
+    setShowQuestionBuilder(true);
   };
+
+  const markQuestionDirty = (question: QuizQuestionForm): QuizQuestionForm =>
+    question.id ? { ...question, isDirty: true } : { ...question };
 
   const updateQuestion = (index: number, updates: Partial<QuizQuestionForm>) => {
-    const newQuestions = [...currentQuestions];
-    newQuestions[index] = { ...newQuestions[index], ...updates };
-    setCurrentQuestions(newQuestions);
+    setCurrentQuestions(prev => {
+      const updated = prev.map((question, idx) => {
+        if (idx !== index) {
+          return question;
+        }
+
+        let merged: QuizQuestionForm = {
+          ...question,
+          ...updates
+        };
+
+        if (updates.question_type && updates.question_type !== question.question_type) {
+          merged = ensureAnswerStructure(merged, updates.question_type);
+        } else if (updates.answers) {
+          merged = {
+            ...merged,
+            answers: updates.answers
+          };
+        }
+
+        return markQuestionDirty({
+          ...merged,
+          order_index: index + 1
+        });
+      });
+
+      return recalculateQuestionOrder(updated);
+    });
   };
 
-  const removeQuestion = (index: number) => {
-    setCurrentQuestions(currentQuestions.filter((_, i) => i !== index));
+  const removeQuestion = async (index: number) => {
+    const question = currentQuestions[index];
+
+    if (question?.id && editingItem) {
+      if (!confirm('Are you sure you want to delete this question? This action cannot be undone.')) {
+        return;
+      }
+
+      setIsLoading(true);
+      setErrorMessage(null);
+
+      try {
+        await CourseCreationService.deleteQuizQuestion(editingItem.id, question.id);
+        setSuccessMessage('Question deleted successfully!');
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } catch (error: any) {
+        console.error('Error deleting question:', error);
+        const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete question';
+        setErrorMessage(errorMsg);
+        setIsLoading(false);
+        return;
+      }
+      setIsLoading(false);
+      let updatedQuestionsList: QuizQuestionForm[] = [];
+      setCurrentQuestions(prev => {
+        const filtered = prev.filter((_, i) => i !== index);
+        updatedQuestionsList = recalculateQuestionOrder(filtered);
+        return updatedQuestionsList;
+      });
+
+      if (editingItem) {
+        const remainingIds = updatedQuestionsList.filter(q => q.id).map(q => q.id!) as number[];
+        if (remainingIds.length > 0) {
+          try {
+            await CourseCreationService.reorderQuizQuestions(editingItem.id, remainingIds);
+          } catch (error: any) {
+            console.error('Error reordering questions after deletion:', error);
+          }
+        }
+        onAssessmentUpdate();
+      }
+
+      setIsLoading(false);
+      return;
+    }
+
+    setCurrentQuestions(prev => recalculateQuestionOrder(prev.filter((_, i) => i !== index)));
   };
 
   const addAnswer = (questionIndex: number) => {
-    const newQuestions = [...currentQuestions];
-    newQuestions[questionIndex].answers.push({ answer_text: '', is_correct: false });
-    setCurrentQuestions(newQuestions);
+    setCurrentQuestions(prev => {
+      const updated = [...prev];
+      updated[questionIndex] = markQuestionDirty({
+        ...updated[questionIndex],
+        answers: [
+          ...updated[questionIndex].answers,
+          { answer_text: '', is_correct: false }
+        ]
+      });
+      return updated;
+    });
   };
 
-  const updateAnswer = (questionIndex: number, answerIndex: number, updates: Partial<{ answer_text: string; is_correct: boolean }>) => {
-    const newQuestions = [...currentQuestions];
-    newQuestions[questionIndex].answers[answerIndex] = {
-      ...newQuestions[questionIndex].answers[answerIndex],
-      ...updates
-    };
-    setCurrentQuestions(newQuestions);
+  const updateAnswer = (
+    questionIndex: number,
+    answerIndex: number,
+    updates: Partial<QuizAnswerForm>
+  ) => {
+    setCurrentQuestions(prev => {
+      const updated = [...prev];
+      const question = updated[questionIndex];
+      const newAnswers = [...question.answers];
+      newAnswers[answerIndex] = {
+        ...newAnswers[answerIndex],
+        ...updates
+      };
+      updated[questionIndex] = markQuestionDirty({
+        ...question,
+        answers: newAnswers
+      });
+      return updated;
+    });
   };
 
   const removeAnswer = (questionIndex: number, answerIndex: number) => {
-    const newQuestions = [...currentQuestions];
-    newQuestions[questionIndex].answers = newQuestions[questionIndex].answers.filter((_, i) => i !== answerIndex);
-    setCurrentQuestions(newQuestions);
+    setCurrentQuestions(prev => {
+      const updated = [...prev];
+      const question = updated[questionIndex];
+      const newAnswers = question.answers.filter((_, i) => i !== answerIndex);
+      updated[questionIndex] = markQuestionDirty({
+        ...question,
+        answers: newAnswers
+      });
+      return updated;
+    });
   };
+
+  const moveQuestion = (from: number, to: number) => {
+    setCurrentQuestions(prev => {
+      if (to < 0 || to >= prev.length) {
+        return prev;
+      }
+      const updated: QuizQuestionForm[] = [...prev];
+      const [moved] = updated.splice(from, 1);
+      updated.splice(to, 0, moved);
+      const marked = updated.map(markQuestionDirty);
+      return recalculateQuestionOrder(marked);
+    });
+  };
+
+  const moveQuestionUp = (index: number) => moveQuestion(index, index - 1);
+  const moveQuestionDown = (index: number) => moveQuestion(index, index + 1);
 
   // Rubric functions
   const addRubricCriteria = () => {
@@ -820,53 +1248,128 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       </div>
 
       {/* Search and Filter Controls */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4">
-        <div className="flex flex-col md:flex-row gap-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border-2 border-slate-200 dark:border-slate-700 p-5">
+        <div className="flex flex-col lg:flex-row gap-4">
+          {/* Search Bar */}
           <div className="flex-1">
-            <div className="relative">
+            <div className="relative group">
               <input
                 type="text"
-                placeholder="Search assessments..."
+                placeholder={`Search ${activeTab === 'assignment' ? 'assignments' : activeTab === 'quiz' ? 'quizzes' : 'projects'}...`}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                className="w-full pl-12 pr-4 py-3 border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-slate-700 dark:text-white transition-all duration-200 group-hover:border-blue-400"
               />
-              <span className="absolute left-3 top-2.5 text-slate-400">🔍</span>
+              <span className="absolute left-4 top-3.5 text-slate-400 text-xl group-hover:scale-110 transition-transform">🔍</span>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex gap-2">
+          
+          {/* Status Filter Buttons */}
+          <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => setFilterStatus('all')}
-              className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+              className={`px-5 py-3 rounded-lg font-semibold text-sm transition-all duration-200 flex items-center space-x-2 ${
                 filterStatus === 'all'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+                  ? 'bg-blue-600 text-white shadow-lg transform scale-105'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 hover:scale-105'
               }`}
             >
-              All
+              <span>📋</span>
+              <span>All</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                filterStatus === 'all' 
+                  ? 'bg-blue-700 text-white' 
+                  : 'bg-slate-200 dark:bg-slate-600'
+              }`}>
+                {activeTab === 'assignment' ? assessments?.assignments?.length || 0 
+                  : activeTab === 'quiz' ? assessments?.quizzes?.length || 0 
+                  : assessments?.projects?.length || 0}
+              </span>
             </button>
+            
             <button
               onClick={() => setFilterStatus('published')}
-              className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+              className={`px-5 py-3 rounded-lg font-semibold text-sm transition-all duration-200 flex items-center space-x-2 ${
                 filterStatus === 'published'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+                  ? 'bg-green-600 text-white shadow-lg transform scale-105'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 hover:scale-105'
               }`}
             >
-              Published
+              <span>✅</span>
+              <span>Published</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                filterStatus === 'published' 
+                  ? 'bg-green-700 text-white' 
+                  : 'bg-slate-200 dark:bg-slate-600'
+              }`}>
+                {activeTab === 'assignment' ? assessments?.assignments?.filter(a => a.is_published).length || 0 
+                  : activeTab === 'quiz' ? assessments?.quizzes?.filter(q => q.is_published).length || 0 
+                  : assessments?.projects?.filter(p => p.is_published).length || 0}
+              </span>
             </button>
+            
             <button
               onClick={() => setFilterStatus('draft')}
-              className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+              className={`px-5 py-3 rounded-lg font-semibold text-sm transition-all duration-200 flex items-center space-x-2 ${
                 filterStatus === 'draft'
-                  ? 'bg-yellow-600 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300'
+                  ? 'bg-yellow-600 text-white shadow-lg transform scale-105'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 hover:scale-105'
               }`}
             >
-              Drafts
+              <span>📝</span>
+              <span>Drafts</span>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                filterStatus === 'draft' 
+                  ? 'bg-yellow-700 text-white' 
+                  : 'bg-slate-200 dark:bg-slate-600'
+              }`}>
+                {activeTab === 'assignment' ? assessments?.assignments?.filter(a => !a.is_published).length || 0 
+                  : activeTab === 'quiz' ? assessments?.quizzes?.filter(q => !q.is_published).length || 0 
+                  : assessments?.projects?.filter(p => !p.is_published).length || 0}
+              </span>
             </button>
           </div>
         </div>
+        
+        {/* Active Filters Display */}
+        {(searchQuery || filterStatus !== 'all') && (
+          <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Active filters:</span>
+                {searchQuery && (
+                  <span className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded-full text-xs font-medium flex items-center space-x-1">
+                    <span>Search: "{searchQuery}"</span>
+                    <button onClick={() => setSearchQuery('')} className="ml-1 hover:text-blue-600">✕</button>
+                  </span>
+                )}
+                {filterStatus !== 'all' && (
+                  <span className="px-3 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 rounded-full text-xs font-medium flex items-center space-x-1">
+                    <span>Status: {filterStatus}</span>
+                    <button onClick={() => setFilterStatus('all')} className="ml-1 hover:text-purple-600">✕</button>
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setFilterStatus('all');
+                }}
+                className="text-sm text-red-600 dark:text-red-400 hover:underline font-medium"
+              >
+                Clear all filters
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Assessment Forms */}
@@ -1503,35 +2006,118 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
               </div>
 
               {/* Question Builder Toggle */}
-              <div className="border-t border-slate-200 dark:border-slate-700 pt-6">
+              <div className="border-t-2 border-slate-200 dark:border-slate-700 pt-6">
                 <button
+                  type="button"
                   onClick={() => setShowQuestionBuilder(!showQuestionBuilder)}
-                  className="flex items-center justify-between w-full px-4 py-3 bg-slate-50 dark:bg-slate-700/50 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  className={`flex items-center justify-between w-full px-5 py-4 rounded-xl transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-[1.02] ${
+                    currentQuestions.length === 0 
+                      ? 'bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/10 dark:to-red-900/10 hover:from-orange-100 hover:to-red-100 dark:hover:from-orange-900/20 dark:hover:to-red-900/20 border-2 border-orange-300 dark:border-orange-700'
+                      : 'bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/10 dark:to-purple-900/10 hover:from-blue-100 hover:to-purple-100 dark:hover:from-blue-900/20 dark:hover:to-purple-900/20 border-2 border-blue-300 dark:border-blue-700'
+                  }`}
                 >
-                  <div className="flex items-center space-x-2">
-                    <span className="text-lg">❓</span>
-                    <span className="font-medium text-slate-900 dark:text-white">Quiz Questions</span>
-                    <span className="text-sm text-slate-600 dark:text-slate-400">
-                      ({currentQuestions.length} questions)
-                    </span>
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                      currentQuestions.length === 0
+                        ? 'bg-orange-200 dark:bg-orange-800'
+                        : 'bg-blue-200 dark:bg-blue-800'
+                    }`}>
+                      <span className="text-xl">❓</span>
+                    </div>
+                    <div className="text-left">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-slate-900 dark:text-white text-lg">Quiz Questions</span>
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold shadow-sm ${
+                          currentQuestions.length === 0
+                            ? 'bg-orange-500 text-white animate-pulse'
+                            : 'bg-blue-600 text-white'
+                        }`}>
+                          {currentQuestions.length} {currentQuestions.length === 1 ? 'question' : 'questions'}
+                        </span>
+                        {currentQuestions.length === 0 && (
+                          <span className="text-xs text-orange-700 dark:text-orange-300 font-bold bg-orange-200 dark:bg-orange-900/40 px-2 py-1 rounded animate-pulse">
+                            ⚠️ Required
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-slate-600 dark:text-slate-400 mt-1 block">
+                        {showQuestionBuilder ? 'Click to collapse' : 'Click to expand and manage questions'}
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-slate-600 dark:text-slate-400">
-                    {showQuestionBuilder ? '▼' : '▶'}
-                  </span>
+                  <div className={`text-2xl transition-transform duration-200 ${showQuestionBuilder ? 'rotate-180' : ''}`}>
+                    <span className="text-slate-600 dark:text-slate-400">▼</span>
+                  </div>
                 </button>
 
                 {showQuestionBuilder && (
-                  <div className="mt-4 space-y-4">
+                  <div className="mt-6 space-y-5">
                     {currentQuestions.map((question, qIndex) => (
-                      <div key={qIndex} className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-700/30">
-                        <div className="flex items-start justify-between mb-3">
-                          <h6 className="font-medium text-slate-900 dark:text-white">Question {qIndex + 1}</h6>
-                          <button
-                            onClick={() => removeQuestion(qIndex)}
-                            className="text-red-600 hover:text-red-700 text-sm"
-                          >
-                            Remove
-                          </button>
+                      <div key={qIndex} className="p-5 border-2 border-slate-200 dark:border-slate-600 rounded-xl bg-gradient-to-br from-white to-slate-50 dark:from-slate-800 dark:to-slate-700/50 shadow-md hover:shadow-lg transition-all duration-200">
+                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between mb-4 gap-3">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                              {qIndex + 1}
+                            </div>
+                            <h6 className="font-bold text-slate-900 dark:text-white text-lg">Question {qIndex + 1}</h6>
+                            <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full text-xs font-bold">
+                              {question.points || 10} pts
+                            </span>
+                            {question.order_index && (
+                              <span className="px-2 py-1 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-full text-xs font-semibold">
+                                Order #{question.order_index}
+                              </span>
+                            )}
+                            {question.isNew && (
+                              <span className="px-2 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full text-xs font-semibold">
+                                New
+                              </span>
+                            )}
+                            {question.id && question.isDirty && (
+                              <span className="px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-full text-xs font-semibold animate-pulse">
+                                Unsaved changes
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center overflow-hidden rounded-lg border border-slate-300 dark:border-slate-600 shadow-sm">
+                              <button
+                                type="button"
+                                onClick={() => moveQuestionUp(qIndex)}
+                                disabled={qIndex === 0}
+                                className={`px-3 py-1 text-sm font-medium transition-colors ${
+                                  qIndex === 0
+                                    ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
+                                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                                }`}
+                                aria-label="Move question up"
+                                title="Move question up"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveQuestionDown(qIndex)}
+                                disabled={qIndex === currentQuestions.length - 1}
+                                className={`px-3 py-1 text-sm font-medium border-l border-slate-200 dark:border-slate-700 transition-colors ${
+                                  qIndex === currentQuestions.length - 1
+                                    ? 'bg-slate-100 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
+                                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                                }`}
+                                aria-label="Move question down"
+                                title="Move question down"
+                              >
+                                ▼
+                              </button>
+                            </div>
+                            <button
+                              onClick={() => removeQuestion(qIndex)}
+                              className="px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium flex items-center space-x-1 shadow-sm"
+                            >
+                              <span>🗑️</span>
+                              <span>Remove</span>
+                            </button>
+                          </div>
                         </div>
 
                         <div className="space-y-3">
@@ -1648,17 +2234,87 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     ))}
 
                     <button
+                      type="button"
                       onClick={addQuestion}
-                      className="w-full py-2 px-4 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg text-slate-600 dark:text-slate-400 hover:border-blue-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                      className="w-full py-4 px-6 border-3 border-dashed border-blue-400 dark:border-blue-600 rounded-xl text-blue-700 dark:text-blue-300 hover:border-blue-600 hover:bg-gradient-to-r hover:from-blue-50 hover:to-purple-50 dark:hover:from-blue-900/20 dark:hover:to-purple-900/20 transition-all duration-200 font-bold text-lg flex items-center justify-center space-x-3 group shadow-sm hover:shadow-md"
                     >
-                      + Add Question
+                      <span className="text-2xl group-hover:scale-110 transition-transform">➕</span>
+                      <span>Add Another Question</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Quick Add Question Button (when collapsed) */}
+                {!showQuestionBuilder && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={addQuestion}
+                      className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all duration-200 font-bold text-lg flex items-center justify-center space-x-3 shadow-lg hover:shadow-xl transform hover:scale-[1.02] group"
+                    >
+                      <span className="text-2xl group-hover:scale-110 transition-transform">➕</span>
+                      <span>Add {currentQuestions.length === 0 ? 'First' : 'Another'} Question</span>
                     </button>
                   </div>
                 )}
               </div>
 
+              {/* Quiz Summary */}
+              {currentQuestions.length > 0 && (
+                <div className="bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 dark:from-blue-900/20 dark:via-purple-900/20 dark:to-pink-900/20 border-2 border-blue-300 dark:border-blue-700 rounded-xl p-6 shadow-lg">
+                  <div className="flex items-start space-x-4">
+                    <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center shadow-md">
+                      <span className="text-3xl">📊</span>
+                    </div>
+                    <div className="flex-1">
+                      <h6 className="font-bold text-slate-900 dark:text-white mb-4 text-lg flex items-center space-x-2">
+                        <span>Quiz Summary</span>
+                        <span className="px-2 py-1 bg-green-500 text-white rounded-full text-xs font-bold animate-pulse">✓ Ready</span>
+                      </h6>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-md border border-slate-200 dark:border-slate-700">
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                            <span>❓</span>
+                            <span>Questions</span>
+                          </div>
+                          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{currentQuestions.length}</div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-md border border-slate-200 dark:border-slate-700">
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                            <span>🎯</span>
+                            <span>Total Points</span>
+                          </div>
+                          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                            {currentQuestions.reduce((sum, q) => sum + (q.points || 0), 0)}
+                          </div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-md border border-slate-200 dark:border-slate-700">
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                            <span>📈</span>
+                            <span>Avg Points</span>
+                          </div>
+                          <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                            {(currentQuestions.reduce((sum, q) => sum + (q.points || 0), 0) / currentQuestions.length).toFixed(1)}
+                          </div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 rounded-lg p-3 shadow-md border border-slate-200 dark:border-slate-700">
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                            <span>📋</span>
+                            <span>Question Types</span>
+                          </div>
+                          <div className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">
+                            {[...new Set(currentQuestions.map(q => q.question_type))].length} type(s)
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end space-x-3">
                 <button
+                  type="button"
                   onClick={() => {
                     setShowForm(false);
                     setEditingItem(null);
@@ -1670,6 +2326,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                   Cancel
                 </button>
                 <button
+                  type="button"
                   onClick={editingItem ? handleUpdateQuiz : handleCreateQuiz}
                   disabled={isLoading}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
@@ -1681,9 +2338,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     </svg>
                   )}
                   <span>{isLoading ? 'Saving...' : (editingItem ? 'Update Quiz' : 'Create Quiz')}</span>
-                  {!isLoading && currentQuestions.length > 0 && (
-                    <span className="text-xs bg-blue-700 px-2 py-1 rounded">
-                      {currentQuestions.length} questions
+                  {!isLoading && currentQuestions.length > 0 && !editingItem && (
+                    <span className="text-xs bg-blue-700 px-2 py-1 rounded font-bold">
+                      with {currentQuestions.length} question{currentQuestions.length !== 1 ? 's' : ''}
                     </span>
                   )}
                 </button>
@@ -1881,102 +2538,320 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         {activeTab === 'quiz' && (
           <div className="space-y-4">
             {filterAssessments(assessments?.quizzes).length > 0 ? (
-              filterAssessments(assessments?.quizzes).map((quiz) => (
-                <div key={quiz.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <h4 className="font-semibold text-slate-900 dark:text-white">{quiz.title}</h4>
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          quiz.is_published 
-                            ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-                        }`}>
-                          {quiz.is_published ? '✓ Published' : '📝 Draft'}
-                        </span>
-                        {(!quiz.questions || quiz.questions.length === 0) && (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400">
-                            ⚠️ No Questions
-                          </span>
-                        )}
+              <>
+                {/* Quiz Overview Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-900/10 rounded-xl p-4 border border-blue-200 dark:border-blue-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase tracking-wide">Total Quizzes</p>
+                        <p className="text-3xl font-bold text-blue-900 dark:text-blue-100 mt-1">
+                          {assessments?.quizzes?.length || 0}
+                        </p>
                       </div>
-                      {quiz.description && (
-                        <p className="text-slate-600 dark:text-slate-400 mt-1">{quiz.description}</p>
-                      )}
-                      <div className="flex items-center space-x-4 mt-3 text-sm text-slate-600 dark:text-slate-400">
-                        <span>Quiz</span>
-                        <span className={quiz.questions?.length === 0 ? 'text-orange-600 dark:text-orange-400 font-medium' : ''}>
-                          {quiz.questions?.length || 0} question{quiz.questions?.length !== 1 ? 's' : ''}
-                        </span>
-                        <span>Created: {new Date(quiz.created_at).toLocaleDateString()}</span>
+                      <div className="w-12 h-12 bg-blue-200 dark:bg-blue-800 rounded-full flex items-center justify-center">
+                        <span className="text-2xl">❓</span>
                       </div>
-                      {(!quiz.questions || quiz.questions.length === 0) && !quiz.is_published && (
-                        <div className="mt-2 text-xs text-orange-600 dark:text-orange-400 flex items-center space-x-1">
-                          <span>💡</span>
-                          <span>Add questions to publish this quiz</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center space-x-2 ml-4">
-                      <button 
-                        onClick={() => handleEditQuiz(quiz)}
-                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
-                      >
-                        ✏️ Edit
-                      </button>
-                      <button
-                        onClick={() => handlePublishQuiz(quiz.id, !!quiz.is_published)}
-                        disabled={!quiz.is_published && (!quiz.questions || quiz.questions.length === 0)}
-                        className={`text-sm px-3 py-1 rounded transition-colors ${
-                          quiz.is_published
-                            ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
-                            : (!quiz.questions || quiz.questions.length === 0)
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed dark:bg-slate-700 dark:text-slate-600'
-                            : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
-                        }`}
-                        title={!quiz.is_published && (!quiz.questions || quiz.questions.length === 0) ? 'Add questions before publishing' : ''}
-                      >
-                        {quiz.is_published ? '📤 Unpublish' : '📣 Publish'}
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteQuiz(quiz.id)}
-                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
-                      >
-                        🗑️ Delete
-                      </button>
                     </div>
                   </div>
 
-                  {/* Analytics Preview */}
-                  {quiz.is_published && (
-                    <div className="border-t border-slate-200 dark:border-slate-700 mt-4 pt-4">
-                      <div className="grid grid-cols-4 gap-4">
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
-                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Attempts</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-green-600 dark:text-green-400">--</div>
-                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Avg Score</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">0%</div>
-                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Pass Rate</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">--</div>
-                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">Avg Time</div>
-                        </div>
+                  <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-900/10 rounded-xl p-4 border border-green-200 dark:border-green-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-green-600 dark:text-green-400 uppercase tracking-wide">Published</p>
+                        <p className="text-3xl font-bold text-green-900 dark:text-green-100 mt-1">
+                          {assessments?.quizzes?.filter(q => q.is_published).length || 0}
+                        </p>
+                      </div>
+                      <div className="w-12 h-12 bg-green-200 dark:bg-green-800 rounded-full flex items-center justify-center">
+                        <span className="text-2xl">✅</span>
                       </div>
                     </div>
-                  )}
+                  </div>
+
+                  <div className="bg-gradient-to-br from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-900/10 rounded-xl p-4 border border-yellow-200 dark:border-yellow-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400 uppercase tracking-wide">Drafts</p>
+                        <p className="text-3xl font-bold text-yellow-900 dark:text-yellow-100 mt-1">
+                          {assessments?.quizzes?.filter(q => !q.is_published).length || 0}
+                        </p>
+                      </div>
+                      <div className="w-12 h-12 bg-yellow-200 dark:bg-yellow-800 rounded-full flex items-center justify-center">
+                        <span className="text-2xl">📝</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-900/10 rounded-xl p-4 border border-purple-200 dark:border-purple-800">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium text-purple-600 dark:text-purple-400 uppercase tracking-wide">Total Questions</p>
+                        <p className="text-3xl font-bold text-purple-900 dark:text-purple-100 mt-1">
+                          {assessments?.quizzes?.reduce((sum, q) => sum + (q.questions?.length || 0), 0) || 0}
+                        </p>
+                      </div>
+                      <div className="w-12 h-12 bg-purple-200 dark:bg-purple-800 rounded-full flex items-center justify-center">
+                        <span className="text-2xl">📊</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              ))
+
+                {/* Quiz Cards */}
+                <div className="space-y-4">
+                  {filterAssessments(assessments?.quizzes).map((quiz) => {
+                    const questionCount = quiz.questions?.length || 0;
+                    const hasQuestions = questionCount > 0;
+                    const totalPoints = quiz.questions?.reduce((sum, q) => sum + (q.points || 0), 0) || 0;
+                    const difficulty = questionCount < 5 ? 'Easy' : questionCount < 10 ? 'Medium' : 'Hard';
+                    const difficultyColor = difficulty === 'Easy' ? 'text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/20' 
+                                           : difficulty === 'Medium' ? 'text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/20'
+                                           : 'text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/20';
+
+                    return (
+                      <div 
+                        key={quiz.id} 
+                        className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border-2 border-slate-200 dark:border-slate-700 overflow-hidden hover:shadow-xl transition-all duration-300 hover:border-blue-300 dark:hover:border-blue-700"
+                      >
+                        {/* Header Section with Gradient */}
+                        <div className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 p-5 border-b-2 border-slate-200 dark:border-slate-700">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-3 mb-2">
+                                <span className="text-3xl">❓</span>
+                                <h4 className="text-xl font-bold text-slate-900 dark:text-white">{quiz.title}</h4>
+                              </div>
+                              
+                              {/* Status Badges */}
+                              <div className="flex flex-wrap items-center gap-2 mb-3">
+                                <span className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center space-x-1 ${
+                                  quiz.is_published 
+                                    ? 'bg-green-500 text-white shadow-md'
+                                    : 'bg-yellow-500 text-white shadow-md'
+                                }`}>
+                                  <span>{quiz.is_published ? '✓' : '📝'}</span>
+                                  <span>{quiz.is_published ? 'Published' : 'Draft'}</span>
+                                </span>
+                                
+                                {!hasQuestions && (
+                                  <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-orange-500 text-white shadow-md flex items-center space-x-1 animate-pulse">
+                                    <span>⚠️</span>
+                                    <span>No Questions</span>
+                                  </span>
+                                )}
+                                
+                                {hasQuestions && (
+                                  <span className={`px-3 py-1.5 rounded-full text-xs font-bold ${difficultyColor}`}>
+                                    {difficulty}
+                                  </span>
+                                )}
+                                
+                                {quiz.time_limit && (
+                                  <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 flex items-center space-x-1">
+                                    <span>⏱️</span>
+                                    <span>{quiz.time_limit} min</span>
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {quiz.description && (
+                                <p className="text-slate-600 dark:text-slate-400 text-sm leading-relaxed">{quiz.description}</p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-4 gap-4 p-5 bg-slate-50 dark:bg-slate-900/30">
+                          <div className="text-center">
+                            <div className="flex items-center justify-center mb-1">
+                              <span className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center space-x-1">
+                                <span>❓</span>
+                                <span>Questions</span>
+                              </span>
+                            </div>
+                            <div className={`text-2xl font-bold ${hasQuestions ? 'text-blue-600 dark:text-blue-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                              {questionCount}
+                            </div>
+                          </div>
+                          
+                          <div className="text-center">
+                            <div className="flex items-center justify-center mb-1">
+                              <span className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center space-x-1">
+                                <span>🎯</span>
+                                <span>Points</span>
+                              </span>
+                            </div>
+                            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">
+                              {totalPoints}
+                            </div>
+                          </div>
+                          
+                          <div className="text-center">
+                            <div className="flex items-center justify-center mb-1">
+                              <span className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center space-x-1">
+                                <span>🔄</span>
+                                <span>Attempts</span>
+                              </span>
+                            </div>
+                            <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                              {quiz.max_attempts || '∞'}
+                            </div>
+                          </div>
+                          
+                          <div className="text-center">
+                            <div className="flex items-center justify-center mb-1">
+                              <span className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center space-x-1">
+                                <span>📅</span>
+                                <span>Created</span>
+                              </span>
+                            </div>
+                            <div className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                              {new Date(quiz.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="p-4 bg-white dark:bg-slate-800 flex items-center justify-between border-t border-slate-200 dark:border-slate-700">
+                          <div className="flex items-center space-x-2">
+                            <button 
+                              onClick={() => handleEditQuiz(quiz)}
+                              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 font-medium text-sm flex items-center space-x-2 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
+                            >
+                              <span>✏️</span>
+                              <span>Edit Quiz</span>
+                            </button>
+                            
+                            <button
+                              onClick={() => handlePublishQuiz(quiz.id, !!quiz.is_published)}
+                              disabled={!quiz.is_published && !hasQuestions}
+                              className={`px-4 py-2 rounded-lg transition-all duration-200 font-medium text-sm flex items-center space-x-2 shadow-md ${
+                                quiz.is_published
+                                  ? 'bg-yellow-500 text-white hover:bg-yellow-600 hover:shadow-lg transform hover:-translate-y-0.5'
+                                  : !hasQuestions
+                                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-700 dark:text-slate-600'
+                                  : 'bg-green-500 text-white hover:bg-green-600 hover:shadow-lg transform hover:-translate-y-0.5'
+                              }`}
+                              title={!quiz.is_published && !hasQuestions ? 'Add questions before publishing' : ''}
+                            >
+                              <span>{quiz.is_published ? '📤' : '📣'}</span>
+                              <span>{quiz.is_published ? 'Unpublish' : 'Publish'}</span>
+                            </button>
+                            
+                            <button 
+                              onClick={() => {
+                                setEditingItem(quiz);
+                                setShowQuestionBuilder(true);
+                              }}
+                              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all duration-200 font-medium text-sm flex items-center space-x-2 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
+                            >
+                              <span>➕</span>
+                              <span>Add Questions</span>
+                            </button>
+                          </div>
+                          
+                          <button 
+                            onClick={() => handleDeleteQuiz(quiz.id)}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 font-medium text-sm flex items-center space-x-2 shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
+                          >
+                            <span>🗑️</span>
+                            <span>Delete</span>
+                          </button>
+                        </div>
+
+                        {/* Analytics Preview (for published quizzes) */}
+                        {quiz.is_published && (
+                          <div className="p-5 bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900/50 dark:to-blue-900/20 border-t-2 border-slate-200 dark:border-slate-700">
+                            <div className="flex items-center justify-between mb-3">
+                              <h5 className="text-sm font-bold text-slate-900 dark:text-white flex items-center space-x-2">
+                                <span>📊</span>
+                                <span>Performance Analytics</span>
+                              </h5>
+                              <span className="text-xs text-slate-500 dark:text-slate-400">Live Data</span>
+                            </div>
+                            <div className="grid grid-cols-4 gap-4">
+                              <div className="bg-white dark:bg-slate-800 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+                                <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                                  <span>📝</span>
+                                  <span>Attempts</span>
+                                </div>
+                                <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">Total submissions</div>
+                              </div>
+                              
+                              <div className="bg-white dark:bg-slate-800 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+                                <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                                  <span>📈</span>
+                                  <span>Avg Score</span>
+                                </div>
+                                <div className="text-2xl font-bold text-green-600 dark:text-green-400">--</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">Out of {totalPoints}</div>
+                              </div>
+                              
+                              <div className="bg-white dark:bg-slate-800 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+                                <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                                  <span>✅</span>
+                                  <span>Pass Rate</span>
+                                </div>
+                                <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">0%</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">70% to pass</div>
+                              </div>
+                              
+                              <div className="bg-white dark:bg-slate-800 rounded-lg p-3 border border-slate-200 dark:border-slate-700">
+                                <div className="text-xs text-slate-600 dark:text-slate-400 mb-1 flex items-center space-x-1">
+                                  <span>⏱️</span>
+                                  <span>Avg Time</span>
+                                </div>
+                                <div className="text-2xl font-bold text-cyan-600 dark:text-cyan-400">--</div>
+                                <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">Minutes</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Help Tip for Empty Quizzes */}
+                        {!hasQuestions && !quiz.is_published && (
+                          <div className="p-4 bg-orange-50 dark:bg-orange-900/10 border-t-2 border-orange-200 dark:border-orange-800">
+                            <div className="flex items-start space-x-3">
+                              <span className="text-2xl">💡</span>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-orange-900 dark:text-orange-200">
+                                  Ready to build your quiz?
+                                </p>
+                                <p className="text-xs text-orange-700 dark:text-orange-300 mt-1">
+                                  Click "Add Questions" or "Edit Quiz" to start building your quiz. You need at least one question before publishing.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
             ) : (
-              <div className="text-center py-12">
-                <div className="text-6xl mb-4">❓</div>
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No quizzes yet</h3>
-                <p className="text-slate-600 dark:text-slate-400">Create your first quiz to get started.</p>
+              <div className="text-center py-20">
+                <div className="inline-block p-6 bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-full mb-6">
+                  <div className="text-7xl">❓</div>
+                </div>
+                <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-3">No quizzes yet</h3>
+                <p className="text-slate-600 dark:text-slate-400 mb-6 max-w-md mx-auto">
+                  Create your first quiz to assess student learning and track their progress effectively.
+                </p>
+                <button
+                  onClick={() => {
+                    setShowForm(true);
+                    setEditingItem(null);
+                    setActiveTab('quiz');
+                  }}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 font-medium flex items-center space-x-2 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 mx-auto"
+                >
+                  <span>➕</span>
+                  <span>Create Your First Quiz</span>
+                </button>
               </div>
             )}
           </div>

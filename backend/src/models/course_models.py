@@ -163,8 +163,8 @@ class Quiz(db.Model):
 
     questions = db.relationship('Question', backref='quiz', lazy='dynamic', cascade="all, delete-orphan")
     # Relationships to Course, Module, Lesson if needed for direct linking
-    course = db.relationship('Course', backref=db.backref('quizzes', lazy='dynamic'))
-    module = db.relationship('Module', backref=db.backref('quizzes', lazy='dynamic'))
+    course = db.relationship('Course', backref=db.backref('quizzes', lazy='dynamic', cascade="all, delete-orphan"))
+    module = db.relationship('Module', backref=db.backref('quizzes', lazy='dynamic', cascade="all, delete-orphan"))
     lesson = db.relationship('Lesson', backref=db.backref('quiz', uselist=False, cascade="all, delete-orphan")) # A lesson might have one quiz directly
 
     def __repr__(self):
@@ -190,7 +190,8 @@ class Quiz(db.Model):
             'show_correct_answers': self.show_correct_answers
         }
         if include_questions:
-            data['questions'] = [q.to_dict(include_answers=True) for q in self.questions]
+            # Use .all() because questions relationship is lazy='dynamic'
+            data['questions'] = [q.to_dict(include_answers=True) for q in self.questions.all()]
         return data
 
 class Question(db.Model):
@@ -213,13 +214,16 @@ class Question(db.Model):
             'id': self.id,
             'quiz_id': self.quiz_id,
             'text': self.text,
+            'question_text': self.text,
             'question_type': self.question_type,
             'order': self.order,
+            'order_index': self.order,
             'points': self.points,
             'explanation': self.explanation
         }
         if include_answers:
-            data['answers'] = [ans.to_dict(for_student=for_student) for ans in self.answers]
+            # Use .all() because answers relationship is lazy='dynamic'
+            data['answers'] = [ans.to_dict(for_student=for_student) for ans in self.answers.all()]
         return data
 
 class Answer(db.Model):
@@ -236,7 +240,8 @@ class Answer(db.Model):
         data = {
             'id': self.id,
             'question_id': self.question_id,
-            'text': self.text
+            'text': self.text,
+            'answer_text': self.text
         }
         if not for_student:
             data['is_correct'] = self.is_correct
@@ -296,9 +301,9 @@ class Assignment(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    course = db.relationship('Course', backref=db.backref('assignments', lazy='dynamic'))
-    module = db.relationship('Module', backref=db.backref('assignments', lazy='dynamic'))
-    lesson = db.relationship('Lesson', backref=db.backref('assignments', lazy='dynamic'))
+    course = db.relationship('Course', backref=db.backref('assignments', lazy='dynamic', cascade="all, delete-orphan"))
+    module = db.relationship('Module', backref=db.backref('assignments', lazy='dynamic', cascade="all, delete-orphan"))
+    lesson = db.relationship('Lesson', backref=db.backref('assignments', lazy='dynamic', cascade="all, delete-orphan"))
     submissions = db.relationship('AssignmentSubmission', backref='assignment', lazy='dynamic', cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -382,7 +387,7 @@ class Project(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
-    course = db.relationship('Course', backref=db.backref('projects', lazy='dynamic'))
+    course = db.relationship('Course', backref=db.backref('projects', lazy='dynamic', cascade="all, delete-orphan"))
     submissions = db.relationship('ProjectSubmission', backref='project', lazy='dynamic', cascade="all, delete-orphan")
 
     def __repr__(self):

@@ -130,6 +130,12 @@ export interface Quiz {
   is_published?: boolean;
   time_limit?: number;
   max_attempts?: number;
+  passing_score?: number;
+  due_date?: string | null;
+  points_possible?: number;
+  shuffle_questions?: boolean;
+  shuffle_answers?: boolean;
+  show_correct_answers?: boolean;
   created_at: string;
   updated_at?: string;
   questions?: Question[];
@@ -143,35 +149,68 @@ export interface CreateQuizRequest {
   time_limit?: number;
   max_attempts?: number;
   is_published?: boolean;
+  passing_score?: number;
+  due_date?: string;
+  points_possible?: number;
+  shuffle_questions?: boolean;
+  shuffle_answers?: boolean;
+  show_correct_answers?: boolean;
+  questions?: QuizQuestionPayload[];
+}
+
+export interface QuizAnswerPayload {
+  id?: number;
+  answer_text?: string;
+  text?: string;
+  is_correct?: boolean;
+}
+
+export interface QuizQuestionPayload {
+  id?: number;
+  question_text?: string;
+  text?: string;
+  question_type?: 'multiple_choice' | 'true_false' | 'short_answer' | 'essay';
+  points?: number;
+  order_index?: number;
+  order?: number;
+  explanation?: string | null;
+  answers?: QuizAnswerPayload[];
 }
 
 export interface Question {
   id: number;
   quiz_id: number;
   question_text: string;
-  question_type: 'multiple_choice' | 'true_false' | 'short_answer';
+  text?: string;
+  question_type: 'multiple_choice' | 'true_false' | 'short_answer' | 'essay';
   points: number;
   order_index: number;
-  created_at: string;
-  updated_at: string;
+  order?: number;
+  explanation?: string | null;
+  created_at?: string;
+  updated_at?: string;
   answers?: Answer[];
 }
 
 export interface CreateQuestionRequest {
-  quiz_id: number;
+  quiz_id?: number;
   question_text: string;
-  question_type: 'multiple_choice' | 'true_false' | 'short_answer';
+  question_type: 'multiple_choice' | 'true_false' | 'short_answer' | 'essay';
   points: number;
   order_index: number;
+  order?: number;
+  explanation?: string | null;
+  answers?: QuizAnswerPayload[];
 }
 
 export interface Answer {
   id: number;
   question_id: number;
   answer_text: string;
+  text?: string;
   is_correct: boolean;
-  created_at: string;
-  updated_at: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface CreateAnswerRequest {

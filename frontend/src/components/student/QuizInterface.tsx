@@ -82,23 +82,30 @@ const QuizTimer: React.FC<QuizTimerProps> = ({ timeLimit, onTimeUp, isActive }) 
   const progressPercentage = ((timeLimit * 60 - timeLeft) / (timeLimit * 60)) * 100;
 
   return (
-    <Card className={`${isWarning ? 'border-destructive' : ''}`}>
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-2">
+    <Card className={`${isWarning ? 'border-red-500 border-2 shadow-lg shadow-red-200 dark:shadow-red-900/50' : 'border-blue-200 dark:border-blue-800'}`}>
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
-            <Clock className={`h-4 w-4 ${isWarning ? 'text-destructive' : 'text-muted-foreground'}`} />
-            <span className="text-sm font-medium">Time Remaining</span>
+            <div className={`p-2 rounded-full ${isWarning ? 'bg-red-100 dark:bg-red-900/30' : 'bg-blue-100 dark:bg-blue-900/30'}`}>
+              <Clock className={`h-5 w-5 ${isWarning ? 'text-red-600 dark:text-red-400 animate-pulse' : 'text-blue-600 dark:text-blue-400'}`} />
+            </div>
+            <span className="text-sm font-semibold">Time Remaining</span>
           </div>
-          <span className={`text-lg font-bold ${isWarning ? 'text-destructive' : ''}`}>
+          <span className={`text-2xl font-bold ${isWarning ? 'text-red-600 dark:text-red-400 animate-pulse' : 'text-blue-600 dark:text-blue-400'}`}>
             {formatTime(timeLeft)}
           </span>
         </div>
         <Progress 
           value={progressPercentage} 
-          className={`h-2 ${isWarning ? 'bg-destructive/20' : ''}`}
+          className={`h-3 ${isWarning ? 'bg-red-100 dark:bg-red-900/30' : 'bg-blue-100 dark:bg-blue-900/30'}`}
         />
         {isWarning && (
-          <p className="text-xs text-destructive mt-2">⚠️ Less than 5 minutes remaining!</p>
+          <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+            <p className="text-xs text-red-700 dark:text-red-300 font-medium flex items-center space-x-1">
+              <span className="text-lg">⚠️</span>
+              <span>Less than 5 minutes remaining!</span>
+            </p>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -248,33 +255,38 @@ const QuestionDisplay: React.FC<QuestionDisplayProps> = ({
           </RadioGroup>
         );
       
-      case 'multiple_select':
-        const selectedOptions = answer || [];
-        return (
-          <div className="space-y-3">
-            {question.options?.map((option, index) => (
-              <div key={index} className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                <Checkbox
-                  checked={selectedOptions.includes(option)}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      onAnswerChange([...selectedOptions, option]);
-                    } else {
-                      onAnswerChange(selectedOptions.filter((o: string) => o !== option));
-                    }
-                  }}
-                  id={`option-${index}`}
-                />
-                <label 
-                  htmlFor={`option-${index}`} 
-                  className="flex-1 cursor-pointer"
-                >
-                  {option}
-                </label>
-              </div>
-            ))}
-          </div>
-        );
+      case 'multiple_choice':
+        if (question.options && question.options.length > 4) {
+          // Multiple select for questions with many options
+          const selectedOptions = answer || [];
+          return (
+            <div className="space-y-3">
+              {question.options?.map((option, index) => (
+                <div key={index} className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                  <Checkbox
+                    checked={selectedOptions.includes(option)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        onAnswerChange([...selectedOptions, option]);
+                      } else {
+                        onAnswerChange(selectedOptions.filter((o: string) => o !== option));
+                      }
+                    }}
+                    id={`option-${index}`}
+                  />
+                  <label 
+                    htmlFor={`option-${index}`} 
+                    className="flex-1 cursor-pointer"
+                  >
+                    {option}
+                  </label>
+                </div>
+              ))}
+            </div>
+          );
+        }
+        // Fall through to regular multiple choice
+        break;
       
       case 'true_false':
         return (
@@ -315,20 +327,22 @@ const QuestionDisplay: React.FC<QuestionDisplayProps> = ({
       exit={{ opacity: 0, x: -20 }}
       transition={{ duration: 0.3 }}
     >
-      <Card>
-        <CardHeader>
+      <Card className="border-2 border-slate-200 dark:border-slate-700 shadow-lg">
+        <CardHeader className="bg-gradient-to-r from-slate-50 to-blue-50 dark:from-slate-800 dark:to-blue-900/20 border-b-2 border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between">
-            <Badge variant="outline">
+            <Badge variant="outline" className="px-4 py-2 text-base font-bold bg-white dark:bg-slate-800 shadow-sm">
+              <span className="mr-2">📝</span>
               Question {questionNumber} of {totalQuestions}
             </Badge>
-            <Badge variant="secondary">
+            <Badge variant="secondary" className="px-4 py-2 text-base font-bold bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 shadow-sm">
+              <span className="mr-2">🎯</span>
               {question.points} point{question.points !== 1 ? 's' : ''}
             </Badge>
           </div>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-6 p-8">
           <div>
-            <h3 className="text-lg font-medium mb-4">{question.question_text}</h3>
+            <h3 className="text-xl font-bold mb-6 text-slate-900 dark:text-white leading-relaxed">{question.question_text}</h3>
             {renderQuestionInput()}
           </div>
         </CardContent>
@@ -436,24 +450,42 @@ const QuizInterface: React.FC<QuizInterfaceProps> = ({ quizId, onComplete }) => 
     >
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold">{quiz.title}</h1>
-                <p className="text-muted-foreground">{quiz.description}</p>
+        <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-xl">
+          <CardContent className="p-8">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex-1">
+                <div className="flex items-center space-x-3 mb-2">
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center shadow-lg">
+                    <span className="text-2xl">❓</span>
+                  </div>
+                  <div>
+                    <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{quiz.title}</h1>
+                    <p className="text-muted-foreground mt-1">{quiz.description}</p>
+                  </div>
+                </div>
               </div>
               <div className="text-right">
-                <div className="text-2xl font-bold">{answeredQuestions}/{quiz.questions.length}</div>
-                <div className="text-sm text-muted-foreground">Questions Answered</div>
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl p-4 border-2 border-green-200 dark:border-green-800 shadow-md">
+                  <div className="text-4xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+                    {answeredQuestions}/{quiz.questions.length}
+                  </div>
+                  <div className="text-sm text-muted-foreground font-medium mt-1">Answered</div>
+                </div>
               </div>
             </div>
-            <div className="mt-4">
-              <Progress value={progress} className="h-2" />
-              <div className="flex justify-between text-sm text-muted-foreground mt-2">
-                <span>Progress: {Math.round(progress)}%</span>
-                <span>Question {currentQuestion + 1} of {quiz.questions.length}</span>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Progress</span>
+                  <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-xs font-bold">
+                    {Math.round(progress)}%
+                  </span>
+                </div>
+                <span className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                  Question {currentQuestion + 1} of {quiz.questions.length}
+                </span>
               </div>
+              <Progress value={progress} className="h-3 shadow-inner" />
             </div>
           </CardContent>
         </Card>
@@ -470,30 +502,38 @@ const QuizInterface: React.FC<QuizInterfaceProps> = ({ quizId, onComplete }) => 
             />
 
             {/* Navigation */}
-            <Card>
-              <CardContent className="p-4">
+            <Card className="border-2 border-slate-200 dark:border-slate-700 shadow-md">
+              <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <Button
                     variant="outline"
                     onClick={() => setCurrentQuestion(Math.max(0, currentQuestion - 1))}
                     disabled={currentQuestion === 0}
+                    className="px-6 py-3 font-semibold text-base shadow-sm hover:shadow-md transition-all disabled:opacity-50"
                   >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    <ArrowLeft className="h-5 w-5 mr-2" />
                     Previous
                   </Button>
 
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-3">
                     <Button
                       variant="ghost"
                       onClick={() => toggleFlag(currentQuizQuestion.id)}
-                      className={flaggedQuestions.has(currentQuizQuestion.id) ? 'text-yellow-600' : ''}
+                      className={`px-4 py-3 font-semibold text-base shadow-sm hover:shadow-md transition-all ${
+                        flaggedQuestions.has(currentQuizQuestion.id) 
+                          ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300' 
+                          : 'hover:bg-slate-100 dark:hover:bg-slate-700'
+                      }`}
                     >
-                      <Flag className="h-4 w-4 mr-2" />
+                      <Flag className="h-5 w-5 mr-2" />
                       {flaggedQuestions.has(currentQuizQuestion.id) ? 'Unflag' : 'Flag'}
                     </Button>
 
-                    <Button variant="ghost">
-                      <Save className="h-4 w-4 mr-2" />
+                    <Button 
+                      variant="ghost"
+                      className="px-4 py-3 font-semibold text-base shadow-sm hover:shadow-md transition-all hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                    >
+                      <Save className="h-5 w-5 mr-2" />
                       Save
                     </Button>
                   </div>
@@ -501,13 +541,17 @@ const QuizInterface: React.FC<QuizInterfaceProps> = ({ quizId, onComplete }) => 
                   {currentQuestion < quiz.questions.length - 1 ? (
                     <Button
                       onClick={() => setCurrentQuestion(currentQuestion + 1)}
+                      className="px-6 py-3 font-semibold text-base shadow-md hover:shadow-lg transition-all bg-blue-600 hover:bg-blue-700"
                     >
                       Next
-                      <ArrowRight className="h-4 w-4 ml-2" />
+                      <ArrowRight className="h-5 w-5 ml-2" />
                     </Button>
                   ) : (
-                    <Button onClick={() => setShowSubmitDialog(true)}>
-                      <Send className="h-4 w-4 mr-2" />
+                    <Button 
+                      onClick={() => setShowSubmitDialog(true)}
+                      className="px-6 py-3 font-semibold text-base shadow-md hover:shadow-lg transition-all bg-green-600 hover:bg-green-700"
+                    >
+                      <Send className="h-5 w-5 mr-2" />
                       Submit Quiz
                     </Button>
                   )}
@@ -553,8 +597,8 @@ const QuizInterface: React.FC<QuizInterfaceProps> = ({ quizId, onComplete }) => 
                   <span>{quiz.passing_score}%</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Attempts Left:</span>
-                  <span>{quiz.max_attempts - (quiz.current_attempts || 0)}</span>
+                  <span>Max Attempts:</span>
+                  <span>{quiz.max_attempts || 'Unlimited'}</span>
                 </div>
               </CardContent>
             </Card>

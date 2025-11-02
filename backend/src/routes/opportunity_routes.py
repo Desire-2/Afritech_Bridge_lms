@@ -2,10 +2,22 @@
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
+import logging
 
 from ..models.user_models import db, User, Role # For role checking
 from ..models.opportunity_models import Opportunity
 from .course_routes import role_required # Re-use the role_required decorator
+
+logger = logging.getLogger(__name__)
+
+def get_user_id():
+    """Helper function to get user ID as integer from JWT"""
+    try:
+        user_id = get_jwt_identity()
+        return int(user_id) if user_id is not None else None
+    except (ValueError, TypeError) as e:
+        logger.error(f"ERROR in get_user_id: {e}")
+        return None
 
 opportunity_bp = Blueprint("opportunity_bp", __name__, url_prefix="/api/v1/opportunities")
 
@@ -92,18 +104,37 @@ def update_opportunity(opportunity_id):
 @role_required(["admin", "instructor"])
 def delete_opportunity(opportunity_id):
     opportunity = Opportunity.query.get_or_404(opportunity_id)
-    current_user_id = get_jwt_identity()
+    current_user_id = get_user_id()
+    
+    if current_user_id is None:
+        logger.error("Could not extract user ID from JWT token")
+        return jsonify({"message": "Authentication error"}), 401
+    
     user = User.query.get(current_user_id)
 
+    # Log for debugging
+    logger.info(f"Delete opportunity check: opportunity.posted_by_id={opportunity.posted_by_id} (type: {type(opportunity.posted_by_id)}), current_user_id={current_user_id} (type: {type(current_user_id)})")
+    
     if user.role.name != "admin" and opportunity.posted_by_id != current_user_id:
-        return jsonify({"message": "You are not authorized to delete this opportunity"}), 403
+        logger.warning(f"User {current_user_id} attempted to delete opportunity {opportunity_id} posted by user {opportunity.posted_by_id}")
+        return jsonify({
+            "message": "Forbidden. You do not have permission to perform this action.",
+            "error_type": "authorization_error",
+            "details": {
+                "opportunity_id": opportunity_id,
+                "posted_by_id": opportunity.posted_by_id,
+                "your_user_id": current_user_id
+            }
+        }), 403
 
     try:
         db.session.delete(opportunity)
         db.session.commit()
+        logger.info(f"Opportunity {opportunity_id} deleted successfully by user {current_user_id}")
         return jsonify({"message": "Opportunity deleted successfully"}), 200
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Error deleting opportunity {opportunity_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Could not delete opportunity", "error": str(e)}), 500
 
 @opportunity_bp.route("/<int:opportunity_id>/activate", methods=["POST"])

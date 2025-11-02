@@ -14,8 +14,8 @@ import {
   Quiz,
   CreateQuizRequest,
   Question,
-  CreateQuestionRequest,
-  Answer,
+  QuizQuestionPayload,
+  QuizAnswerPayload,
   ModuleOrderUpdate,
   LessonOrderUpdate,
 } from '@/types/api';
@@ -146,9 +146,17 @@ export class CourseCreationService {
   static async createQuiz(quizData: CreateQuizRequest & { course_id: number }): Promise<Quiz> {
     try {
       console.log('[CourseCreationService] Creating quiz at:', `${this.ASSESSMENT_PATH}/quizzes`);
-      console.log('[CourseCreationService] Quiz data:', quizData);
+      console.log('[CourseCreationService] Quiz data BEFORE sending:', quizData);
+      console.log('[CourseCreationService] Questions in data:', quizData.questions);
+      console.log('[CourseCreationService] Questions count:', quizData.questions?.length || 0);
+      console.log('[CourseCreationService] Stringified data:', JSON.stringify(quizData, null, 2));
+      
       const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes`, quizData);
+      
       console.log('[CourseCreationService] Quiz created response:', response.data);
+      console.log('[CourseCreationService] Response has questions?:', !!response.data.quiz?.questions);
+      console.log('[CourseCreationService] Response questions:', response.data.quiz?.questions);
+      
       return response.data.quiz;
     } catch (error: any) {
       console.error('[CourseCreationService] Error creating quiz:', error);
@@ -179,7 +187,7 @@ export class CourseCreationService {
     }
   }
 
-  static async addQuizQuestion(quizId: number, questionData: CreateQuestionRequest & { answers: Answer[] }): Promise<Question> {
+  static async addQuizQuestion(quizId: number, questionData: QuizQuestionPayload): Promise<Question> {
     try {
       const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions`, questionData);
       return response.data.question;
@@ -188,9 +196,37 @@ export class CourseCreationService {
     }
   }
 
-  static async addBulkQuizQuestions(quizId: number, questions: (CreateQuestionRequest & { answers: Answer[] })[]): Promise<Question[]> {
+  static async addBulkQuizQuestions(quizId: number, questions: QuizQuestionPayload[]): Promise<Question[]> {
     try {
       const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions/bulk`, { questions });
+      return response.data.questions;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async updateQuizQuestion(quizId: number, questionId: number, questionData: QuizQuestionPayload): Promise<Question> {
+    try {
+      const response = await apiClient.put(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions/${questionId}`, questionData);
+      return response.data.question;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async deleteQuizQuestion(quizId: number, questionId: number): Promise<void> {
+    try {
+      await apiClient.delete(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions/${questionId}`);
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async reorderQuizQuestions(quizId: number, questionIds: number[]): Promise<Question[]> {
+    try {
+      const response = await apiClient.post(`${this.ASSESSMENT_PATH}/quizzes/${quizId}/questions/reorder`, {
+        order: questionIds
+      });
       return response.data.questions;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -268,6 +304,16 @@ export class CourseCreationService {
   }> {
     try {
       const response = await apiClient.get(`${this.ASSESSMENT_PATH}/courses/${courseId}/overview`);
+      console.log('[CourseCreationService] API Response received:', response.data);
+      console.log(`[CourseCreationService] Quizzes count: ${response.data.quizzes?.length}`);
+      if (response.data.quizzes && response.data.quizzes.length > 0) {
+        response.data.quizzes.forEach((quiz: Quiz, idx: number) => {
+          console.log(`  └─ Quiz ${idx + 1} (ID: ${quiz.id}): "${quiz.title}" - ${quiz.questions?.length || 0} questions`);
+          if (quiz.questions && quiz.questions.length > 0) {
+            console.log(`     └─ First question: "${quiz.questions[0].question_text || quiz.questions[0].text}"`);
+          }
+        });
+      }
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

@@ -65,11 +65,31 @@ const InstructorCourseDetailsPage = () => {
     setCourse(updatedCourse);
   };
 
-  const handleAssessmentUpdate = () => {
-    // Refresh assessments data
-    CourseCreationService.getAssessmentsOverview(courseId)
-      .then(setAssessments)
-      .catch(console.error);
+  const handleAssessmentUpdate = async () => {
+    // Refresh assessments data and wait for it to complete
+    try {
+      console.log('[CourseDetailsPage] Starting assessment update refresh...');
+      const updatedAssessments = await CourseCreationService.getAssessmentsOverview(courseId);
+      console.log('[CourseDetailsPage] Assessments fetched from service:', updatedAssessments);
+      console.log(`[CourseDetailsPage] Quiz count: ${updatedAssessments.quizzes?.length || 0}`);
+      
+      if (updatedAssessments.quizzes && updatedAssessments.quizzes.length > 0) {
+        updatedAssessments.quizzes.forEach((quiz, idx) => {
+          const qCount = quiz.questions?.length || 0;
+          console.log(`[CourseDetailsPage] Quiz ${idx + 1}: ID=${quiz.id}, Title="${quiz.title}", Questions=${qCount}`);
+          if (quiz.questions && quiz.questions.length > 0) {
+            const firstQ = quiz.questions[0];
+            console.log(`  └─ First question: "${firstQ.question_text || firstQ.text}"`);
+          }
+        });
+      }
+      
+      console.log('[CourseDetailsPage] About to call setAssessments with:', updatedAssessments);
+      setAssessments(updatedAssessments);
+      console.log('[CourseDetailsPage] setAssessments completed');
+    } catch (error) {
+      console.error('[CourseDetailsPage] Failed to refresh assessments:', error);
+    }
   };
 
   if (loading) {
