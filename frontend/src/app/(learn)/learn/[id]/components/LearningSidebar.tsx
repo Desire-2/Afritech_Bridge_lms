@@ -25,6 +25,7 @@ interface LearningSidebarProps {
   lessonAssessments?: { [lessonId: number]: LessonAssessment[] };
   completedLessons?: number[];
   lessonCompletionStatus?: { [lessonId: number]: boolean };
+  quizCompletionStatus?: { [quizId: number]: { completed: boolean; score: number; passed: boolean } };
 }
 
 export const LearningSidebar: React.FC<LearningSidebarProps> = ({
@@ -36,7 +37,8 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   onLessonSelect,
   lessonAssessments = {},
   completedLessons = [],
-  lessonCompletionStatus = {}
+  lessonCompletionStatus = {},
+  quizCompletionStatus = {}
 }) => {
   const allLessons = modules?.reduce((total, module) => total + (module.lessons?.length || 0), 0) || 0;
 
@@ -140,11 +142,13 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                   <CollapsibleContent className="ml-4 mt-1 space-y-2">
                     {module.lessons?.map((lesson: any, lessonIndex: number) => {
                       const isCurrentLesson = lesson.id === currentLessonId;
+                      const isLessonCompleted = lessonCompletionStatus[lesson.id] || completedLessons.includes(lesson.id);
+                      // Allow access if: module is accessible OR lesson is already completed
                       const canAccessLesson = moduleStatus === 'completed' || 
                                                moduleStatus === 'in_progress' || 
-                                               moduleStatus === 'unlocked';
+                                               moduleStatus === 'unlocked' ||
+                                               isLessonCompleted; // Completed lessons are always accessible
                       const assessments = lessonAssessments[lesson.id] || [];
-                      const isLessonCompleted = lessonCompletionStatus[lesson.id] || completedLessons.includes(lesson.id);
                       const statusText = getLessonStatusText(isLessonCompleted, canAccessLesson);
                       const statusColor = getLessonStatusColor(isLessonCompleted, canAccessLesson);
                       
@@ -158,9 +162,9 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                   className={`w-full justify-start text-left p-2 h-auto text-sm ${
                                     isCurrentLesson ? 'bg-blue-900/50 text-white hover:bg-blue-900/60' : 'text-gray-300 hover:bg-gray-800/50'
                                   } ${
-                                    isLessonCompleted ? 'ring-1 ring-green-500/50 bg-green-900/20' : ''
+                                    isLessonCompleted ? 'ring-1 ring-green-500/50 bg-green-900/20 hover:bg-green-900/30' : ''
                                   } ${
-                                    !canAccessLesson ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                                    !canAccessLesson ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:ring-1 hover:ring-blue-500/30'
                                   }`}
                                   onClick={() => canAccessLesson && onLessonSelect(lesson.id, module.id)}
                                   disabled={!canAccessLesson}
@@ -198,6 +202,11 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                       <div className={`h-2 w-2 rounded-full ${statusColor}`} />
                                       <span className={`text-xs font-medium ${statusColor}`}>{statusText}</span>
                                     </div>
+                                    {isLessonCompleted && (
+                                      <p className="text-xs text-green-400 mt-1">
+                                        ✓ Click to review this lesson
+                                      </p>
+                                    )}
                                     {lesson.duration_minutes && (
                                       <p className="text-xs text-gray-300 mt-2">
                                         ⏱️ {lesson.duration_minutes} minutes
@@ -217,14 +226,19 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                           {/* Display assessments for this lesson */}
                           {assessments.length > 0 && (
                             <div className="ml-8 space-y-1">
-                              {assessments.map((assessment: LessonAssessment) => (
+                              {assessments.map((assessment: LessonAssessment) => {
+                                const isQuizCompleted = assessment.type === 'quiz' && quizCompletionStatus[assessment.id]?.completed;
+                                const quizScore = quizCompletionStatus[assessment.id]?.score;
+                                const quizPassed = quizCompletionStatus[assessment.id]?.passed;
+                                
+                                return (
                                 <TooltipProvider key={`${assessment.type}-${assessment.id}`}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <div
                                         className={`flex items-center space-x-2 px-3 py-1.5 rounded border text-xs ${getAssessmentColor(assessment.type)} ${
                                           !canAccessLesson ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
-                                        }`}
+                                        } ${isQuizCompleted && quizPassed ? 'ring-1 ring-green-500/50' : ''}`}
                                       >
                                         <div className="flex-shrink-0">
                                           {getAssessmentIcon(assessment.type, 'h-3.5 w-3.5')}
@@ -234,14 +248,20 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                             {assessment.type.charAt(0).toUpperCase() + assessment.type.slice(1)}
                                           </p>
                                           <p className="text-xs opacity-75 truncate">{assessment.title}</p>
+                                          {isQuizCompleted && quizScore !== undefined && (
+                                            <p className={`text-xs font-semibold ${quizPassed ? 'text-green-400' : 'text-yellow-400'}`}>
+                                              Score: {Math.round(quizScore)}%
+                                            </p>
+                                          )}
                                         </div>
-                                        {assessment.status === 'completed' && (
+                                        {isQuizCompleted ? (
                                           <CheckCircle className="h-3 w-3 flex-shrink-0 text-green-400" />
-                                        )}
-                                        {assessment.status === 'in_progress' && (
+                                        ) : assessment.status === 'completed' ? (
+                                          <CheckCircle className="h-3 w-3 flex-shrink-0 text-green-400" />
+                                        ) : assessment.status === 'in_progress' ? (
                                           <Clock className="h-3 w-3 flex-shrink-0 text-yellow-400" />
-                                        )}
-                                        {!assessment.status && (
+                                        ) : null}
+                                        {!assessment.status && !isQuizCompleted && (
                                           <span className="text-xs opacity-60">pending</span>
                                         )}
                                       </div>
@@ -255,9 +275,19 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                           <p className="text-xs text-gray-200 mt-1 break-words">{assessment.title}</p>
                                         </div>
                                         <div className="pt-2 border-t border-gray-600">
+                                          {isQuizCompleted && (
+                                            <div className="mb-2">
+                                              <p className="text-xs font-semibold text-green-400">✓ Completed</p>
+                                              <p className="text-xs text-gray-200 mt-1">
+                                                Score: <span className={`font-semibold ${quizPassed ? 'text-green-400' : 'text-yellow-400'}`}>
+                                                  {Math.round(quizScore || 0)}%
+                                                </span>
+                                              </p>
+                                            </div>
+                                          )}
                                           <p className="text-xs">
                                             Status: <span className="font-medium">
-                                              {assessment.status ? assessment.status.replace('_', ' ').toUpperCase() : 'PENDING'}
+                                              {isQuizCompleted ? 'COMPLETED' : assessment.status ? assessment.status.replace('_', ' ').toUpperCase() : 'PENDING'}
                                             </span>
                                           </p>
                                           {assessment.dueDate && (
@@ -270,7 +300,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
-                              ))}
+                              )})}
                             </div>
                           )}
                         </div>

@@ -2,11 +2,12 @@
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from flask import current_app
+import json
 
 from ..models.user_models import db, User
 from ..models.course_models import Course, Enrollment
 from ..models.student_models import (
-    CourseEnrollmentApplication, ModuleProgress, StudentTranscript
+    CourseEnrollmentApplication, ModuleProgress, StudentTranscript, Certificate
 )
 
 
@@ -344,6 +345,20 @@ class EnrollmentService:
                 prerequisites_met=i == 0
             )
             db.session.add(progress)
+        
+        # Create preliminary (locked) certificate for the enrollment
+        preliminary_cert = Certificate(
+            student_id=student_id,
+            course_id=course_id,
+            enrollment_id=enrollment.id,
+            overall_score=0,
+            grade="",  # Empty grade until course is completed
+            is_active=True
+        )
+        preliminary_cert.generate_certificate_number()
+        preliminary_cert.skills_acquired = json.dumps([])
+        preliminary_cert.portfolio_items = json.dumps([])
+        db.session.add(preliminary_cert)
         
         # Initialize or update student transcript
         transcript = StudentTranscript.query.filter_by(student_id=student_id).first()

@@ -1,5 +1,0 @@
-export const dynamic = 'force-static';
-
-export default function SkipPage() {
-  return <div>Admin pages have been temporarily skipped for production build</div>;
-}

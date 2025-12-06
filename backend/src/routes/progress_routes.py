@@ -105,8 +105,14 @@ def get_module_progress(module_id):
             enrollment_id=enrollment.id
         ).first()
         
+        # Initialize if missing (instead of returning 404)
         if not module_progress:
-            return jsonify({"error": "Module progress not found"}), 404
+            from flask import current_app
+            current_app.logger.info(f"Initializing module progress for student {student_id}, module {module_id}")
+            module_progress = ProgressionService._initialize_module_progress(
+                student_id, module_id, enrollment.id
+            )
+            db.session.commit()
         
         # Get time analytics for module
         time_analytics = AnalyticsService._get_module_time_analytics(student_id, module_id)
@@ -121,6 +127,8 @@ def get_module_progress(module_id):
         }), 200
         
     except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Failed to load module progress: {str(e)}")
         return jsonify({
             "success": False,
             "error": "Failed to load module progress"

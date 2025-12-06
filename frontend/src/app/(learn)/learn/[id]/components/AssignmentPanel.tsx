@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   Upload,
   FileText,
@@ -14,13 +15,17 @@ import {
   X,
   Send,
   Paperclip,
-  Edit
+  Edit,
+  Loader2
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
+import ContentAssignmentService from '@/services/contentAssignmentApi';
+import { toast } from 'sonner';
 
 interface AssignmentPanelProps {
   assignment: ContentAssignment;
   onSubmit: (submission: AssignmentSubmission) => void;
+  onSubmitComplete?: () => void;
 }
 
 interface AssignmentSubmission {
@@ -36,12 +41,15 @@ interface RubricCriteria {
 
 export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({ 
   assignment,
-  onSubmit 
+  onSubmit,
+  onSubmitComplete
 }) => {
-  const [submissionMode, setSubmissionMode] = useState<'view' | 'submit'>('view');
+  const [submissionMode, setSubmissionMode] = useState<'view' | 'submit' | 'submitted'>('view');
   const [textResponse, setTextResponse] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [submissionResult, setSubmissionResult] = useState<any>(null);
 
   const isFileUpload = assignment.assignment_type === 'file_upload' || assignment.assignment_type === 'both';
   const isTextResponse = assignment.assignment_type === 'text_response' || assignment.assignment_type === 'both';
@@ -83,31 +91,55 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   };
 
   const handleSubmit = async () => {
+    // Validation
     if (isTextResponse && !textResponse.trim()) {
-      alert('Please provide a text response');
+      setError('Please provide a text response');
+      toast.error('Text response is required');
       return;
     }
     
     if (isFileUpload && selectedFiles.length === 0 && !isTextResponse) {
-      alert('Please select at least one file');
+      setError('Please select at least one file');
+      toast.error('File upload is required');
       return;
     }
     
     setSubmitting(true);
+    setError(null);
     
     try {
-      await onSubmit({
+      // Call backend API
+      const result = await ContentAssignmentService.submitAssignment(assignment.id, {
+        content: textResponse || undefined,
+        // Note: File upload would need to be handled separately via a file upload endpoint
+        // For now, we'll just send the text content
+        external_url: selectedFiles.length > 0 ? `Files: ${selectedFiles.map(f => f.name).join(', ')}` : undefined
+      });
+      
+      setSubmissionResult(result);
+      setSubmissionMode('submitted');
+      
+      // Call parent callbacks
+      onSubmit({
         text: textResponse || undefined,
         files: selectedFiles.length > 0 ? selectedFiles : undefined
       });
       
-      // Reset form
-      setTextResponse('');
-      setSelectedFiles([]);
-      setSubmissionMode('view');
-    } catch (error) {
+      if (onSubmitComplete) {
+        onSubmitComplete();
+      }
+
+      toast.success('Assignment Submitted!', {
+        description: result.message || 'Your assignment has been submitted successfully'
+      });
+      
+    } catch (error: any) {
       console.error('Submission error:', error);
-      alert('Failed to submit assignment. Please try again.');
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to submit assignment';
+      setError(errorMessage);
+      toast.error('Submission Failed', {
+        description: errorMessage
+      });
     } finally {
       setSubmitting(false);
     }
@@ -247,9 +279,60 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     );
   }
 
+  // Submitted State
+  if (submissionMode === 'submitted') {
+    return (
+      <div className="space-y-6">
+        <Card className="border-green-200 bg-gradient-to-r from-green-50 to-emerald-50">
+          <CardContent className="p-8 text-center">
+            <div className="h-16 w-16 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="h-8 w-8 text-white" />
+            </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-2">Assignment Submitted!</h3>
+            <p className="text-gray-600 mb-6">
+              Your assignment has been successfully submitted and is now being reviewed by your instructor.
+            </p>
+            
+            <div className="bg-white rounded-lg p-4 mb-6">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-gray-600">Submitted At</p>
+                  <p className="font-semibold text-gray-900">{new Date().toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-gray-600">Status</p>
+                  <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">
+                    Under Review
+                  </Badge>
+                </div>
+              </div>
+            </div>
+            
+            <Button
+              variant="outline"
+              onClick={() => setSubmissionMode('view')}
+              className="mt-4"
+            >
+              Back to Assignment Details
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   // Submit Mode
   return (
     <div className="space-y-6">
+      {/* Error Alert */}
+      {error && (
+        <Alert className="border-red-700 bg-red-900/30">
+          <AlertCircle className="h-4 w-4 text-red-400" />
+          <AlertTitle className="text-red-300">Submission Error</AlertTitle>
+          <AlertDescription className="text-red-200">{error}</AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -260,6 +343,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             <Button
               variant="ghost"
               onClick={() => setSubmissionMode('view')}
+              disabled={submitting}
             >
               <X className="h-4 w-4" />
             </Button>
@@ -368,6 +452,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             <Button
               variant="outline"
               onClick={() => setSubmissionMode('view')}
+              disabled={submitting}
             >
               Cancel
             </Button>
@@ -379,7 +464,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             >
               {submitting ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   Submitting...
                 </>
               ) : (

@@ -236,24 +236,42 @@ export const useModuleScoring = (moduleId: number) => {
     const loadScoring = async () => {
       try {
         const moduleData = await ProgressApiService.getModuleProgress(moduleId);
-        const progress = moduleData.progress;
+        const progress = moduleData?.progress;
+
+        // Check if progress data exists
+        if (!progress) {
+          console.warn('No progress data available for module:', moduleId);
+          setScoringState({
+            cumulativeScore: 0,
+            passingThreshold: 80,
+            isPassing: false,
+            breakdown: {
+              courseContribution: 0,
+              quizzes: 0,
+              assignments: 0,
+              finalAssessment: 0,
+            },
+            missingPoints: 80,
+          });
+          return;
+        }
 
         // Calculate weighted cumulative score
         const cumulative = 
-          (progress.course_contribution_score * 0.10) +
-          (progress.quiz_score * 0.30) +
-          (progress.assignment_score * 0.40) +
-          (progress.final_assessment_score * 0.20);
+          ((progress.course_contribution_score || 0) * 0.10) +
+          ((progress.quiz_score || 0) * 0.30) +
+          ((progress.assignment_score || 0) * 0.40) +
+          ((progress.final_assessment_score || 0) * 0.20);
 
         setScoringState({
           cumulativeScore: cumulative,
           passingThreshold: 80,
           isPassing: cumulative >= 80,
           breakdown: {
-            courseContribution: progress.course_contribution_score,
-            quizzes: progress.quiz_score,
-            assignments: progress.assignment_score,
-            finalAssessment: progress.final_assessment_score,
+            courseContribution: progress.course_contribution_score || 0,
+            quizzes: progress.quiz_score || 0,
+            assignments: progress.assignment_score || 0,
+            finalAssessment: progress.final_assessment_score || 0,
           },
           missingPoints: Math.max(0, 80 - cumulative),
         });
@@ -276,23 +294,41 @@ export const useModuleScoring = (moduleId: number) => {
     setLoading(true);
     try {
       const moduleData = await ProgressApiService.getModuleProgress(moduleId);
-      const progress = moduleData.progress;
+      const progress = moduleData?.progress;
+
+      // Check if progress data exists
+      if (!progress) {
+        console.warn('No progress data available for module:', moduleId);
+        setScoringState({
+          cumulativeScore: 0,
+          passingThreshold: 80,
+          isPassing: false,
+          breakdown: {
+            courseContribution: 0,
+            quizzes: 0,
+            assignments: 0,
+            finalAssessment: 0,
+          },
+          missingPoints: 80,
+        });
+        return;
+      }
 
       const cumulative = 
-        (progress.course_contribution_score * 0.10) +
-        (progress.quiz_score * 0.30) +
-        (progress.assignment_score * 0.40) +
-        (progress.final_assessment_score * 0.20);
+        ((progress.course_contribution_score || 0) * 0.10) +
+        ((progress.quiz_score || 0) * 0.30) +
+        ((progress.assignment_score || 0) * 0.40) +
+        ((progress.final_assessment_score || 0) * 0.20);
 
       setScoringState({
         cumulativeScore: cumulative,
         passingThreshold: 80,
         isPassing: cumulative >= 80,
         breakdown: {
-          courseContribution: progress.course_contribution_score,
-          quizzes: progress.quiz_score,
-          assignments: progress.assignment_score,
-          finalAssessment: progress.final_assessment_score,
+          courseContribution: progress.course_contribution_score || 0,
+          quizzes: progress.quiz_score || 0,
+          assignments: progress.assignment_score || 0,
+          finalAssessment: progress.final_assessment_score || 0,
         },
         missingPoints: Math.max(0, 80 - cumulative),
       });

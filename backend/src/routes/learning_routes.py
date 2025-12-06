@@ -8,6 +8,7 @@ from ..models.course_models import Course, Module, Enrollment
 from ..models.student_models import ModuleProgress, AssessmentAttempt
 from ..services.dashboard_service import DashboardService
 from ..services.progression_service import ProgressionService
+from ..services.enhanced_learning_service import EnhancedLearningService
 
 # Helper decorator for student access
 def student_required(f):
@@ -146,7 +147,7 @@ def get_course_progress(course_id):
 @learning_bp.route("/lesson/<int:lesson_id>/complete", methods=["POST"])
 @student_required
 def complete_lesson(lesson_id):
-    """Mark a lesson as completed"""
+    """Mark a lesson as completed with quiz requirement checking"""
     try:
         student_id = int(get_jwt_identity())
         data = request.get_json() or {}
@@ -157,16 +158,37 @@ def complete_lesson(lesson_id):
         )
         
         if success:
+            # Check for celebration milestone
+            celebration = EnhancedLearningService.create_celebration_milestone(
+                student_id, "lesson_complete", {"lesson_id": lesson_id}
+            )
+            
             return jsonify({
                 "success": True,
                 "message": message,
-                "data": completion_data
+                "data": completion_data,
+                "celebration": celebration
             }), 200
         else:
-            return jsonify({
-                "success": False,
-                "error": message
-            }), 400
+            # Check if failure is due to quiz requirement
+            if message == "Quiz required" and completion_data.get("quiz_required"):
+                quiz_redirect = EnhancedLearningService.auto_redirect_to_quiz_if_required(
+                    lesson_id, student_id
+                )
+                
+                return jsonify({
+                    "success": False,
+                    "error": message,
+                    "quiz_required": True,
+                    "quiz_info": completion_data,
+                    "quiz_redirect": quiz_redirect
+                }), 402  # Use 402 Payment Required as a special code for quiz requirement
+            else:
+                return jsonify({
+                    "success": False,
+                    "error": message,
+                    "data": completion_data
+                }), 400
         
     except Exception as e:
         return jsonify({
@@ -547,4 +569,150 @@ def submit_suspension_appeal(course_id):
         return jsonify({
             "success": False,
             "error": "Failed to submit appeal"
+        }), 500
+
+# ✅ ENHANCED LEARNING FEATURES
+
+@learning_bp.route("/course/<int:course_id>/next-lessons-enhanced", methods=["GET"])
+@student_required
+def get_next_lessons_enhanced(course_id):
+    """Get next lessons with quiz information and recommendations"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        # Get next lessons with quiz info
+        next_lessons = EnhancedLearningService.get_next_lessons_with_quiz_info(
+            student_id, course_id, limit=10
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": next_lessons
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to load enhanced lessons"
+        }), 500
+
+@learning_bp.route("/analytics/course/<int:course_id>", methods=["GET"])
+@student_required
+def get_course_analytics(course_id):
+    """Get comprehensive learning analytics for a course"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        analytics = EnhancedLearningService.get_course_learning_analytics(
+            student_id, course_id
+        )
+        
+        if "error" in analytics:
+            return jsonify({"error": analytics["error"]}), 400
+        
+        return jsonify({
+            "success": True,
+            "data": analytics
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to load analytics"
+        }), 500
+
+@learning_bp.route("/achievements", methods=["GET"])
+@student_required
+def get_achievements():
+    """Get student learning achievements and milestones"""
+    try:
+        student_id = int(get_jwt_identity())
+        course_id = request.args.get('course_id', type=int)
+        
+        achievements = EnhancedLearningService.get_learning_achievements(
+            student_id, course_id
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": achievements
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to load achievements"
+        }), 500
+
+@learning_bp.route("/streak", methods=["GET"])
+@student_required
+def get_learning_streak():
+    """Get learning streak information"""
+    try:
+        student_id = int(get_jwt_identity())
+        course_id = request.args.get('course_id', type=int)
+        
+        streak = EnhancedLearningService.get_learning_streak(
+            student_id, course_id
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": streak
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to load streak"
+        }), 500
+
+@learning_bp.route("/recommendations/<int:course_id>", methods=["GET"])
+@student_required
+def get_learning_recommendations(course_id):
+    """Get adaptive learning recommendations"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        recommendations = EnhancedLearningService.get_adaptive_learning_recommendations(
+            student_id, course_id
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": recommendations
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to load recommendations"
+        }), 500
+
+@learning_bp.route("/lesson/<int:lesson_id>/quiz-redirect-check", methods=["GET"])
+@student_required
+def check_quiz_redirect(lesson_id):
+    """Check if lesson has required quiz and return redirect info"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        quiz_redirect = EnhancedLearningService.auto_redirect_to_quiz_if_required(
+            lesson_id, student_id
+        )
+        
+        if quiz_redirect:
+            return jsonify({
+                "success": True,
+                "data": quiz_redirect
+            }), 200
+        else:
+            return jsonify({
+                "success": True,
+                "data": {"should_redirect": False}
+            }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to check quiz requirement"
         }), 500

@@ -303,11 +303,17 @@ class ModuleProgress(db.Model):
     
     def calculate_cumulative_score(self):
         """Calculate the weighted cumulative score"""
+        # Ensure all scores default to 0.0 if None
+        course_contrib = self.course_contribution_score or 0.0
+        quiz = self.quiz_score or 0.0
+        assignment = self.assignment_score or 0.0
+        final = self.final_assessment_score or 0.0
+        
         self.cumulative_score = (
-            (self.course_contribution_score * 0.10) +
-            (self.quiz_score * 0.30) +
-            (self.assignment_score * 0.40) +
-            (self.final_assessment_score * 0.20)
+            (course_contrib * 0.10) +
+            (quiz * 0.30) +
+            (assignment * 0.40) +
+            (final * 0.20)
         )
         return self.cumulative_score
     
@@ -321,19 +327,19 @@ class ModuleProgress(db.Model):
             'student_id': self.student_id,
             'module_id': self.module_id,
             'enrollment_id': self.enrollment_id,
-            'course_contribution_score': self.course_contribution_score,
-            'quiz_score': self.quiz_score,
-            'assignment_score': self.assignment_score,
-            'final_assessment_score': self.final_assessment_score,
-            'cumulative_score': self.cumulative_score,
-            'attempts_count': self.attempts_count,
-            'max_attempts': self.max_attempts,
-            'status': self.status,
+            'course_contribution_score': self.course_contribution_score or 0.0,
+            'quiz_score': self.quiz_score or 0.0,
+            'assignment_score': self.assignment_score or 0.0,
+            'final_assessment_score': self.final_assessment_score or 0.0,
+            'cumulative_score': self.cumulative_score or 0.0,
+            'attempts_count': self.attempts_count or 0,
+            'max_attempts': self.max_attempts or 3,
+            'status': self.status or 'locked',
             'started_at': self.started_at.isoformat() if self.started_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'failed_at': self.failed_at.isoformat() if self.failed_at else None,
             'unlocked_at': self.unlocked_at.isoformat() if self.unlocked_at else None,
-            'prerequisites_met': self.prerequisites_met,
+            'prerequisites_met': self.prerequisites_met or False,
             'module_title': self.module.title if self.module else None
         }
 

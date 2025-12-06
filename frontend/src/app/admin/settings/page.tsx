@@ -1,5 +1,8 @@
-export const dynamic = 'force-static';
+'use client';
 
-export default function AdminSettingsPage() {
-  return <div>Admin settings page temporarily unavailable</div>;
+import React from 'react';
+import SettingsPanel from '@/components/admin/SettingsPanel';
+
+export default function SettingsPage() {
+  return <SettingsPanel />;
 }

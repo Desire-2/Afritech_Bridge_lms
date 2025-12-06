@@ -4,10 +4,11 @@ from typing import Dict, List, Optional, Tuple
 from flask import current_app
 
 from ..models.user_models import db, User
-from ..models.course_models import Course, Module, Lesson, Enrollment
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz
 from ..models.student_models import (
     ModuleProgress, LessonCompletion, AssessmentAttempt, StudentTranscript, StudentSuspension
 )
+from ..models.quiz_progress_models import QuizAttempt
 
 
 class ProgressionService:
@@ -119,9 +120,71 @@ class ProgressionService:
             return {"error": "Failed to retrieve progress"}
     
     @staticmethod
+    def check_lesson_quiz_requirement(lesson_id: int) -> Tuple[bool, Optional[Dict]]:
+        """
+        Check if a lesson has a quiz assigned to it
+        
+        Args:
+            lesson_id: ID of the lesson
+            
+        Returns:
+            Tuple of (has_quiz, quiz_data)
+        """
+        try:
+            quiz = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).first()
+            
+            if quiz:
+                return True, {
+                    "quiz_id": quiz.id,
+                    "quiz_title": quiz.title,
+                    "passing_score": quiz.passing_score
+                }
+            return False, None
+            
+        except Exception as e:
+            current_app.logger.error(f"Quiz check error: {str(e)}")
+            return False, None
+    
+    @staticmethod
+    def has_passed_quiz(student_id: int, quiz_id: int) -> Tuple[bool, Optional[float]]:
+        """
+        Check if student has passed the quiz
+        
+        Args:
+            student_id: ID of the student
+            quiz_id: ID of the quiz
+            
+        Returns:
+            Tuple of (passed, score)
+        """
+        try:
+            quiz = Quiz.query.get(quiz_id)
+            if not quiz:
+                return False, None
+            
+            # Get best attempt
+            attempts = QuizAttempt.query.filter_by(
+                user_id=student_id,
+                quiz_id=quiz_id
+            ).order_by(QuizAttempt.created_at.desc()).all()
+            
+            if not attempts:
+                return False, None
+            
+            best_attempt = max(attempts, key=lambda a: a.score_percentage if a.score_percentage else 0)
+            score = best_attempt.score_percentage or 0
+            passing_score = quiz.passing_score or 70
+            
+            return score >= passing_score, score
+            
+        except Exception as e:
+            current_app.logger.error(f"Quiz pass check error: {str(e)}")
+            return False, None
+    
+    @staticmethod
     def complete_lesson(student_id: int, lesson_id: int, time_spent: int = 0) -> Tuple[bool, str, Dict]:
         """
-        Mark a lesson as completed with strict progression checking
+        Mark a lesson as completed with strict progression checking and quiz requirements
         
         Args:
             student_id: ID of the student
@@ -178,6 +241,24 @@ class ProgressionService:
             
             if existing_completion:
                 return True, "Lesson already completed", existing_completion.to_dict()
+            
+            # ✅ NEW: Check if lesson has a quiz requirement
+            has_quiz, quiz_info = ProgressionService.check_lesson_quiz_requirement(lesson_id)
+            
+            if has_quiz and quiz_info:
+                # Quiz is assigned to this lesson - check if student has passed it
+                has_passed, quiz_score = ProgressionService.has_passed_quiz(student_id, quiz_info["quiz_id"])
+                
+                if not has_passed:
+                    # Return a special response indicating quiz is required
+                    return False, "Quiz required", {
+                        "quiz_required": True,
+                        "quiz_id": quiz_info["quiz_id"],
+                        "quiz_title": quiz_info["quiz_title"],
+                        "passing_score": quiz_info["passing_score"],
+                        "current_score": quiz_score,
+                        "message": f"Complete and pass the quiz '{quiz_info['quiz_title']}' (minimum {quiz_info['passing_score']}%) to complete this lesson"
+                    }
             
             # Create completion record
             completion = LessonCompletion(

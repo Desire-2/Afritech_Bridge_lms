@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Bookmark, LogOut } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Bookmark, LogOut, Award } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
@@ -16,6 +16,7 @@ const StudentSidebar = () => {
     { href: '/student/mylearning', label: 'My Learning', icon: <BookOpen size={iconSize} /> },
     { href: '/student/courses/myprogress', label: 'My Progress', icon: <GraduationCap size={iconSize} /> },
     { href: '/student/courses', label: 'Browse Courses', icon: <Bookmark size={iconSize} /> },
+    { href: '/student/certificates', label: 'Certifications', icon: <Award size={iconSize} /> },
     { href: '/student/opportunities', label: 'Opportunities', icon: <Briefcase size={iconSize} /> },
     { href: '/student/forums' , label: 'Forums', icon: <UserCircle size={iconSize} />},
     { href: '/student/dashboard/profile', label: 'My Profile', icon: <UserCircle size={iconSize} /> },

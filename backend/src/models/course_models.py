@@ -166,6 +166,7 @@ class Quiz(db.Model):
     course = db.relationship('Course', backref=db.backref('quizzes', lazy='dynamic', cascade="all, delete-orphan"))
     module = db.relationship('Module', backref=db.backref('quizzes', lazy='dynamic', cascade="all, delete-orphan"))
     lesson = db.relationship('Lesson', backref=db.backref('quiz', uselist=False, cascade="all, delete-orphan")) # A lesson might have one quiz directly
+    # Note: quiz_attempts relationship is added via backref from QuizAttempt model to avoid circular imports
 
     def __repr__(self):
         return f'<Quiz {self.title}>'

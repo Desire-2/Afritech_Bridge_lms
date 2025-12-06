@@ -114,6 +114,75 @@ class CertificateService:
             return False, "Error checking eligibility", {}
     
     @staticmethod
+    def create_preliminary_certificate(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
+        """
+        Create a preliminary (locked) certificate for newly enrolled students.
+        This certificate will be blurred until the course is completed.
+        
+        Args:
+            student_id: ID of the student
+            course_id: ID of the course
+            
+        Returns:
+            Tuple of (success, message, certificate_data)
+        """
+        try:
+            # Check if enrollment exists
+            enrollment = Enrollment.query.filter_by(
+                user_id=student_id, course_id=course_id
+            ).first()
+            
+            if not enrollment:
+                return False, "Student not enrolled in this course", {}
+            
+            course = Course.query.get(course_id)
+            if not course:
+                return False, "Course not found", {}
+            
+            # Check if certificate already exists
+            existing_cert = Certificate.query.filter_by(
+                student_id=student_id,
+                course_id=course_id,
+                enrollment_id=enrollment.id
+            ).first()
+            
+            if existing_cert:
+                return True, "Certificate already exists", existing_cert.to_dict()
+            
+            # Create preliminary certificate with 0% completion
+            certificate = Certificate(
+                student_id=student_id,
+                course_id=course_id,
+                enrollment_id=enrollment.id,
+                overall_score=0,
+                grade="",  # Empty grade until completed
+                is_active=True
+            )
+            
+            # Generate certificate number and verification hash
+            certificate.generate_certificate_number()
+            
+            # Set initial skills and portfolio (empty)
+            certificate.skills_acquired = json.dumps([])
+            certificate.portfolio_items = json.dumps([])
+            
+            db.session.add(certificate)
+            db.session.commit()
+            
+            cert_data = certificate.to_dict()
+            # Add completion metadata for frontend
+            cert_data["completion_status"] = "not_started"
+            cert_data["completion_percentage"] = 0
+            cert_data["is_locked"] = True
+            
+            return True, "Preliminary certificate created", cert_data
+            
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"Preliminary certificate creation error: {str(e)}")
+            return False, "Failed to create preliminary certificate", {}
+    
+    @staticmethod
     def generate_certificate(student_id: int, course_id: int) -> Tuple[bool, str, Dict]:
         """
         Generate course completion certificate
@@ -292,13 +361,67 @@ class CertificateService:
             return False, "Failed to award badge", {}
     
     @staticmethod
-    def get_student_certificates(student_id: int) -> List[Dict]:
-        """Get all certificates for a student"""
+    def get_student_certificates(student_id: int, include_completion: bool = True) -> List[Dict]:
+        """
+        Get all certificates for a student with completion status
+        
+        Args:
+            student_id: ID of the student
+            include_completion: Whether to include completion percentage data
+            
+        Returns:
+            List of certificate dicts with completion data
+        """
         certificates = Certificate.query.filter_by(
             student_id=student_id, is_active=True
         ).order_by(Certificate.issued_at.desc()).all()
         
-        return [cert.to_dict() for cert in certificates]
+        cert_list = []
+        for cert in certificates:
+            cert_dict = cert.to_dict()
+            
+            if include_completion:
+                # Get enrollment for completion data
+                enrollment = cert.enrollment
+                if enrollment:
+                    # Calculate completion percentage from module progress
+                    modules = enrollment.course.modules.all()
+                    if modules:
+                        completed_modules = 0
+                        for module in modules:
+                            module_progress = ModuleProgress.query.filter_by(
+                                student_id=student_id,
+                                module_id=module.id,
+                                enrollment_id=enrollment.id
+                            ).first()
+                            
+                            if module_progress and module_progress.status == 'completed':
+                                completed_modules += 1
+                        
+                        completion_percentage = int((completed_modules / len(modules)) * 100)
+                    else:
+                        completion_percentage = 0
+                    
+                    # Determine completion status
+                    if enrollment.completion_date:
+                        completion_status = "completed"
+                        is_locked = False
+                    elif completion_percentage > 0:
+                        completion_status = "in_progress"
+                        is_locked = True
+                    else:
+                        completion_status = "not_started"
+                        is_locked = True
+                    
+                    # Add completion data to response
+                    cert_dict["completion_status"] = completion_status
+                    cert_dict["completion_percentage"] = completion_percentage
+                    cert_dict["is_locked"] = is_locked
+                    cert_dict["course_completed"] = completion_percentage == 100
+            
+            cert_list.append(cert_dict)
+        
+        return cert_list
     
     @staticmethod
     def get_student_badges(student_id: int) -> List[Dict]:

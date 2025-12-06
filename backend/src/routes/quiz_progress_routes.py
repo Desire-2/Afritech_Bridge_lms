@@ -3,9 +3,9 @@
 from flask import Blueprint, request, jsonify
 from .. import db
 from ..models.user_models import User
-from ..models.course_models import Course, Lesson, Module # Assuming these are in course_models
+from ..models.course_models import Course, Lesson, Module, Quiz, Question, Answer  # ✅ Import consolidated Quiz, Question, and Answer
 from ..models.quiz_progress_models import (
-    Quiz, Question, QuestionOption, QuizAttempt, UserAnswer,
+    QuizAttempt, UserAnswer,  # ✅ Keep only progress tracking models
     UserProgress, LessonCompletion, ModuleCompletion, Badge, UserBadge, Certificate,
     QuizFeedbackPolicy, QuizPublishStatus, QuestionType, QuizAttemptStatus
 )
@@ -164,13 +164,10 @@ def add_question_to_quiz(quiz_id):
 
     options_data = data.get("options", [])
     for opt_data in options_data:
-        new_option = QuestionOption(
+        new_option = Answer(  # ✅ Changed from QuestionOption to Answer
             question_id=new_question.id,
-            option_text=opt_data.get("option_text", ""),
-            is_correct=opt_data.get("is_correct"),
-            order_value=opt_data.get("order_value"),
-            match_value=opt_data.get("match_value"),
-            feedback_if_selected=opt_data.get("feedback_if_selected")
+            text=opt_data.get("option_text", ""),  # ✅ Changed from option_text to text
+            is_correct=opt_data.get("is_correct")
         )
         db.session.add(new_option)
     
@@ -218,15 +215,12 @@ def update_question(question_id):
     # Update options (more complex: delete existing and recreate, or match by ID)
     if "options" in data:
         # Simple approach: delete old options, add new ones
-        QuestionOption.query.filter_by(question_id=question.id).delete()
+        Answer.query.filter_by(question_id=question.id).delete()  # ✅ Changed from QuestionOption to Answer
         for opt_data in data["options"]:
-            new_option = QuestionOption(
+            new_option = Answer(  # ✅ Changed from QuestionOption to Answer
                 question_id=question.id,
-                option_text=opt_data.get("option_text", ""),
-                is_correct=opt_data.get("is_correct"),
-                order_value=opt_data.get("order_value"),
-                match_value=opt_data.get("match_value"),
-                feedback_if_selected=opt_data.get("feedback_if_selected")
+                text=opt_data.get("option_text", ""),  # ✅ Changed from option_text to text
+                is_correct=opt_data.get("is_correct")
             )
             db.session.add(new_option)
 
@@ -347,7 +341,7 @@ def submit_quiz_attempt(attempt_id):
         
         # Auto-gradable types
         if question.question_type in [QuestionType.MULTIPLE_CHOICE_SINGLE, QuestionType.MULTIPLE_CHOICE_MULTIPLE, QuestionType.TRUE_FALSE, QuestionType.FILL_IN_BLANKS]:
-            correct_options = QuestionOption.query.filter_by(question_id=question.id, is_correct=True).all()
+            correct_options = Answer.query.filter_by(question_id=question.id, is_correct=True).all()  # ✅ Changed from QuestionOption to Answer
             ua.is_correct = False # Default
             awarded_for_q = 0
 

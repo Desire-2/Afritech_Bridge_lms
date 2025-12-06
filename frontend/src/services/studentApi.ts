@@ -510,8 +510,20 @@ export class StudentApiService {
 
   // Certificate APIs
   static async getCertificates(): Promise<Certificate[]> {
-    const response = await api.get('/student/certificate/certificates');
-    return response.data.certificates;
+    try {
+      // Updated endpoint to get certificates with completion status
+      const response = await api.get('/student/certificate/my-certificates');
+      console.log('📜 Certificates API Response:', response.data);
+      
+      // Handle both response formats (certificates array directly or nested in data)
+      const certificates = response.data.certificates || response.data.data?.certificates || [];
+      console.log(`✅ Found ${certificates.length} certificates`);
+      
+      return certificates;
+    } catch (error: any) {
+      console.error('❌ Error fetching certificates:', error.response?.data || error.message);
+      throw error;
+    }
   }
 
   static async getBadges(): Promise<SkillBadge[]> {

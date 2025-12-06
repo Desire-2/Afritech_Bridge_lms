@@ -28,6 +28,42 @@ import type {
   ModuleStatus
 } from './types';
 
+// Helper functions for localStorage
+const STORAGE_KEY_PREFIX = 'learn_progress_';
+
+const saveLastLesson = (courseId: number, lessonId: number, moduleId: number) => {
+  try {
+    const key = `${STORAGE_KEY_PREFIX}${courseId}`;
+    localStorage.setItem(key, JSON.stringify({
+      lessonId,
+      moduleId,
+      timestamp: new Date().toISOString()
+    }));
+  } catch (error) {
+    console.error('Failed to save lesson progress to localStorage:', error);
+  }
+};
+
+const loadLastLesson = (courseId: number): { lessonId: number; moduleId: number } | null => {
+  try {
+    const key = `${STORAGE_KEY_PREFIX}${courseId}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Check if stored data is less than 7 days old
+      const timestamp = new Date(parsed.timestamp);
+      const now = new Date();
+      const daysDiff = (now.getTime() - timestamp.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysDiff < 7) {
+        return { lessonId: parsed.lessonId, moduleId: parsed.moduleId };
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load lesson progress from localStorage:', error);
+  }
+  return null;
+};
+
 // Enhanced Learning Interface Component with Automatic Progress Tracking
 const LearningPage = () => {
   const { user, isAuthenticated, isLoading: authLoading } = useAuth();
@@ -73,10 +109,16 @@ const LearningPage = () => {
   const [focusMode, setFocusMode] = useState(false);
   const [lessonAssessments, setLessonAssessments] = useState<{ [lessonId: number]: any[] }>({});
   const [lessonCompletionStatus, setLessonCompletionStatus] = useState<{ [lessonId: number]: boolean }>({});
+  const [quizLoadError, setQuizLoadError] = useState<string | null>(null);
+  const [quizCompletionStatus, setQuizCompletionStatus] = useState<{ [quizId: number]: { completed: boolean; score: number; passed: boolean } }>({});
+  const [lessonScore, setLessonScore] = useState(0);
   
   // Video tracking state
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoCompleted, setVideoCompleted] = useState(false);
+  
+  // Client-side mounting state to prevent hydration issues
+  const [mounted, setMounted] = useState(false);
   
   // Refs for tracking
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -95,14 +137,100 @@ const LearningPage = () => {
     engagementScore,
     isLessonCompleted,
     updateReadingProgress,
-    handleAutoLessonCompletion
+    handleAutoLessonCompletion,
+    checkAutoCompletion
   } = useProgressTracking({
     currentLesson,
     currentModuleId,
     showCelebration,
     contentRef,
-    interactionHistory
+    interactionHistory,
+    hasQuiz: !!lessonQuiz,
+    hasAssignment: lessonAssignments.length > 0
   });
+
+  // Auto-complete lessons without quiz/assignment when criteria are met
+  useEffect(() => {
+    if (!currentLesson || !currentModuleId) return;
+
+    // Check if lesson should auto-complete
+    const shouldAutoComplete = checkAutoCompletion();
+
+    if (shouldAutoComplete) {
+      console.log('🎯 Auto-completing lesson (no quiz/assignment required)...');
+      
+      // Trigger completion
+      handleAutoLessonCompletion(
+        (data) => {
+          console.log('✅ Lesson auto-completed:', data);
+          
+          // CRITICAL: Update lesson completion status immediately for sidebar display
+          setLessonCompletionStatus(prev => ({
+            ...prev,
+            [currentLesson.id]: true
+          }));
+          console.log(`🎯 Updated sidebar status for lesson ${currentLesson.id} - should now show as completed`);
+
+          // Update quiz completion status for sidebar (for lessons without actual quiz)
+          setQuizCompletionStatus(prev => ({
+            ...prev,
+            [currentLesson.id]: {
+              score: lessonScore,
+              completed: true,
+              passed: lessonScore >= 70
+            }
+          }));
+
+          // Recalculate module score
+          if (moduleScoring) {
+            moduleScoring.recalculate();
+          }
+
+          // Show celebration
+          setShowCelebration(true);
+        },
+        (error) => {
+          console.error('❌ Auto-completion failed:', error);
+        }
+      );
+    }
+  }, [readingProgress, engagementScore, currentLesson, currentModuleId, checkAutoCompletion, handleAutoLessonCompletion, lessonScore, moduleScoring]);
+
+  // Sync lesson completion status with lessonCompletionStatus state
+  // This effect ensures that when isLessonCompleted changes (from useProgressTracking),
+  // we update the sidebar's completion map immediately for instant UI feedback
+  useEffect(() => {
+    if (currentLesson?.id && isLessonCompleted) {
+      setLessonCompletionStatus(prev => {
+        // Only update if not already marked as completed to avoid unnecessary re-renders
+        if (prev[currentLesson.id] !== true) {
+          console.log(`✅ Marking lesson ${currentLesson.id} as completed in sidebar state`);
+          return {
+            ...prev,
+            [currentLesson.id]: true
+          };
+        }
+        return prev;
+      });
+    }
+  }, [currentLesson?.id, isLessonCompleted]);
+
+  // Calculate lesson score based on reading (40%), engagement (30%), quiz (30%)
+  useEffect(() => {
+    if (currentLesson?.id) {
+      const quizScore = lessonQuiz?.id && quizCompletionStatus[lessonQuiz.id]?.completed 
+        ? quizCompletionStatus[lessonQuiz.id].score 
+        : 0;
+      
+      const calculatedScore = (
+        (readingProgress * 0.4) +
+        (engagementScore * 0.3) +
+        (quizScore * 0.3)
+      );
+      
+      setLessonScore(Math.round(calculatedScore));
+    }
+  }, [currentLesson?.id, readingProgress, engagementScore, lessonQuiz?.id, quizCompletionStatus]);
 
   // Helper function to close celebration
   const closeCelebration = useCallback(() => {
@@ -118,27 +246,56 @@ const LearningPage = () => {
     if (!lessonId) return;
     
     setContentLoading(true);
+    setQuizLoadError(null);
+    
     try {
+      console.log(`🔄 Loading content for lesson ${lessonId}...`);
+      
       const [quizResponse, assignmentsResponse] = await Promise.all([
-        ContentAssignmentService.getLessonQuiz(lessonId).catch(() => ({ lesson: null, quiz: null })),
-        ContentAssignmentService.getLessonAssignments(lessonId).catch(() => ({ lesson: null, assignments: [] }))
+        ContentAssignmentService.getLessonQuiz(lessonId).catch((err) => {
+          console.error('❌ Failed to load lesson quiz:', err);
+          const errorMsg = err.response?.data?.message || err.message || 'Failed to load quiz';
+          setQuizLoadError(errorMsg);
+          return { lesson: null, quiz: null, quizzes: [] };
+        }),
+        ContentAssignmentService.getLessonAssignments(lessonId).catch((err) => {
+          console.error('❌ Failed to load lesson assignments:', err);
+          return { lesson: null, assignments: [] };
+        })
       ]);
       
+      console.log('✅ Loaded lesson content:', { 
+        quizAvailable: !!quizResponse.quiz, 
+        quizCount: quizResponse.quizzes?.length || 0,
+        assignmentCount: assignmentsResponse.assignments?.length || 0,
+        quizDetails: quizResponse.quiz ? {
+          id: quizResponse.quiz.id,
+          title: quizResponse.quiz.title,
+          questionsCount: quizResponse.quiz.questions?.length || 0
+        } : null
+      });
+      
+      // Set the primary quiz (first one) for backward compatibility
       setLessonQuiz(quizResponse.quiz);
       setLessonAssignments(assignmentsResponse.assignments || []);
       
       // Build assessments data for sidebar
       const assessments: any[] = [];
       
-      if (quizResponse.quiz) {
+      // Handle multiple quizzes from the 'quizzes' array
+      const quizzesToDisplay = quizResponse.quizzes && quizResponse.quizzes.length > 0 
+        ? quizResponse.quizzes 
+        : (quizResponse.quiz ? [quizResponse.quiz] : []);
+      
+      quizzesToDisplay.forEach((quiz: any) => {
         assessments.push({
-          id: quizResponse.quiz.id,
-          title: quizResponse.quiz.title || 'Quiz',
+          id: quiz.id,
+          title: quiz.title || 'Quiz',
           type: 'quiz',
-          status: quizResponse.quiz.completed ? 'completed' : 'pending',
-          dueDate: quizResponse.quiz.due_date
+          status: quiz.completed ? 'completed' : 'pending',
+          dueDate: quiz.due_date
         });
-      }
+      });
       
       if (assignmentsResponse.assignments && assignmentsResponse.assignments.length > 0) {
         assignmentsResponse.assignments.forEach((assignment: any) => {
@@ -163,6 +320,14 @@ const LearningPage = () => {
       setContentLoading(false);
     }
   }, []);
+
+  // Reload lesson content (useful after quiz submission)
+  const reloadLessonContent = useCallback(() => {
+    if (currentLesson?.id) {
+      console.log('🔄 Reloading lesson content...');
+      loadLessonContent(currentLesson.id);
+    }
+  }, [currentLesson?.id, loadLessonContent]);
 
   // Check for badge eligibility
   const checkBadgeEligibility = useCallback(async () => {
@@ -382,6 +547,57 @@ const LearningPage = () => {
     }
   }, [showCelebration]);
 
+  // Set mounted state on client side
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Load lesson completion statuses for all lessons in the course
+  // This runs once on mount to initialize the sidebar completion status map
+  useEffect(() => {
+    const loadLessonCompletionStatuses = async () => {
+      if (!courseData?.course?.modules) return;
+      
+      try {
+        const allLessons = courseData.course.modules.flatMap((module: any) => module.lessons || []);
+        const completionStatuses: { [lessonId: number]: boolean } = {};
+        
+        // Fetch completion status for each lesson from backend
+        await Promise.all(
+          allLessons.map(async (lesson: any) => {
+            try {
+              const response = await StudentApiService.getLessonProgress(lesson.id);
+              // Mark as completed if reading progress is 100% or explicitly marked as completed/auto_completed
+              completionStatuses[lesson.id] = response.progress?.completed || response.auto_completed || response.reading_progress >= 100 || false;
+            } catch (error) {
+              console.error(`Failed to load completion status for lesson ${lesson.id}:`, error);
+              completionStatuses[lesson.id] = false;
+            }
+          })
+        );
+        
+        setLessonCompletionStatus(prev => {
+          // Merge with existing state to preserve any recently completed lessons
+          // This prevents race conditions where a lesson is completed but API hasn't updated yet
+          const merged = { ...completionStatuses };
+          Object.keys(prev).forEach(lessonId => {
+            if (prev[lessonId] === true && !merged[lessonId]) {
+              // Preserve local completion status if backend hasn't caught up yet
+              merged[lessonId] = true;
+              console.log(`⚠️ Preserving local completion for lesson ${lessonId} (backend not synced yet)`);
+            }
+          });
+          console.log('✅ Loaded lesson completion statuses:', merged);
+          return merged;
+        });
+      } catch (error) {
+        console.error('Failed to load lesson completion statuses:', error);
+      }
+    };
+    
+    loadLessonCompletionStatuses();
+  }, [courseData?.course?.modules]);
+
   // Load content when lesson changes
   useEffect(() => {
     if (currentLesson?.id) {
@@ -427,17 +643,90 @@ const LearningPage = () => {
         const response = await StudentApiService.getCourseDetails(courseId);
         setCourseData(response);
         
-        if (response.current_lesson) {
-          setCurrentLesson(response.current_lesson);
-          const moduleWithLesson = response.course?.modules?.find((module: any) => 
-            module.lessons?.some((lesson: any) => lesson.id === response.current_lesson.id)
-          );
-          if (moduleWithLesson) {
-            setCurrentModuleId(moduleWithLesson.id);
+        // Priority order for setting current lesson:
+        // 1. Find first uncompleted lesson from backend data (most accurate)
+        // 2. Use current_lesson_id from API if available
+        // 3. Check localStorage for last accessed lesson
+        // 4. Default to first lesson
+        
+        let lessonToSet = null;
+        let moduleIdToSet = null;
+        
+        // 1. Try to find the first uncompleted lesson from backend modules data
+        if (response.modules && response.modules.length > 0) {
+          console.log('🔍 Searching for first uncompleted lesson...');
+          
+          for (const module of response.modules) {
+            if (module.lessons && module.lessons.length > 0) {
+              const uncompletedLesson = module.lessons.find((lesson: any) => !lesson.completed);
+              
+              if (uncompletedLesson) {
+                // Find full lesson object from course.modules
+                const fullModule = response.course?.modules?.find((m: any) => m.id === module.id);
+                if (fullModule) {
+                  const fullLesson = fullModule.lessons?.find((l: any) => l.id === uncompletedLesson.id);
+                  if (fullLesson) {
+                    lessonToSet = fullLesson;
+                    moduleIdToSet = module.id;
+                    console.log('✅ Found first uncompleted lesson:', fullLesson.title, 'in module:', fullModule.title);
+                    break;
+                  }
+                }
+              }
+            }
           }
-        } else if (response.course?.modules?.[0]?.lessons?.[0]) {
-          setCurrentLesson(response.course.modules[0].lessons[0]);
-          setCurrentModuleId(response.course.modules[0].id);
+        }
+        
+        // 2. Fallback to API's current_lesson_id
+        if (!lessonToSet && response.current_lesson_id && response.course?.modules) {
+          console.log('🔍 Using current_lesson_id from API:', response.current_lesson_id);
+          
+          for (const module of response.course.modules) {
+            const lesson = module.lessons?.find((l: any) => l.id === response.current_lesson_id);
+            if (lesson) {
+              lessonToSet = lesson;
+              moduleIdToSet = module.id;
+              console.log('✅ Found lesson from current_lesson_id:', lesson.title);
+              break;
+            }
+          }
+        }
+        
+        // 3. Try to restore from localStorage
+        if (!lessonToSet) {
+          const savedProgress = loadLastLesson(courseId);
+          if (savedProgress && response.course?.modules) {
+            console.log('🔍 Checking localStorage for saved lesson:', savedProgress.lessonId);
+            
+            // Verify the saved lesson still exists and is not completed
+            const moduleWithLesson = response.course.modules.find((module: any) => 
+              module.id === savedProgress.moduleId && 
+              module.lessons?.some((lesson: any) => lesson.id === savedProgress.lessonId)
+            );
+            
+            if (moduleWithLesson) {
+              const lesson = moduleWithLesson.lessons.find((l: any) => l.id === savedProgress.lessonId);
+              if (lesson) {
+                lessonToSet = lesson;
+                moduleIdToSet = savedProgress.moduleId;
+                console.log('✅ Restored lesson from localStorage:', lesson.title);
+              }
+            }
+          }
+        }
+        
+        // 4. Final fallback to first lesson
+        if (!lessonToSet && response.course?.modules?.[0]?.lessons?.[0]) {
+          lessonToSet = response.course.modules[0].lessons[0];
+          moduleIdToSet = response.course.modules[0].id;
+          console.log('✅ Using first lesson as fallback:', lessonToSet.title);
+        }
+        
+        if (lessonToSet && moduleIdToSet) {
+          setCurrentLesson(lessonToSet);
+          setCurrentModuleId(moduleIdToSet);
+          // Save this as the current position
+          saveLastLesson(courseId, lessonToSet.id, moduleIdToSet);
         }
 
       } catch (err: any) {
@@ -458,6 +747,23 @@ const LearningPage = () => {
     }
   }, [courseData?.course?.modules, fetchLessonCompletionStatus]);
 
+  // Load lesson content (quiz and assignments) when current lesson changes
+  useEffect(() => {
+    if (currentLesson?.id) {
+      loadLessonContent(currentLesson.id);
+    }
+  }, [currentLesson?.id, loadLessonContent]);
+
+  // Reload content when switching to quiz or assignment tab (if not already loaded)
+  useEffect(() => {
+    if (currentViewMode === 'quiz' || currentViewMode === 'assignments') {
+      if (currentLesson?.id && (!lessonQuiz && currentViewMode === 'quiz')) {
+        console.log(`🔄 Tab switched to ${currentViewMode}, reloading content...`);
+        loadLessonContent(currentLesson.id);
+      }
+    }
+  }, [currentViewMode, currentLesson?.id, lessonQuiz, loadLessonContent]);
+
   // Handle lesson selection
   const handleLessonSelect = (lessonId: number, moduleId: number) => {
     const courseModules = courseData?.course?.modules || courseData?.modules || [];
@@ -465,15 +771,21 @@ const LearningPage = () => {
       const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
       const lesson = allLessons.find((l: any) => l.id === lessonId);
       if (lesson) {
+        console.log('📍 Navigating to lesson:', lesson.title, '(ID:', lessonId, ')');
+        
         setCurrentLesson(lesson);
         setCurrentModuleId(moduleId);
         setLessonNotes('');
+        setCurrentViewMode('content'); // Reset to content tab when navigating to a new lesson
         
         // Reset video tracking for new lesson
         setVideoProgress(0);
         setVideoCompleted(false);
         
         loadLessonContent(lessonId);
+        
+        // Save to localStorage for persistence within session
+        saveLastLesson(courseId, lessonId, moduleId);
         
         setInteractionHistory(prev => [...prev, {
           type: 'lesson_select',
@@ -535,7 +847,51 @@ const LearningPage = () => {
       timestamp: new Date().toISOString(),
       ...data
     }]);
-  }, [currentLesson?.id]);
+    
+    // Handle quiz completion
+    if (type === 'quiz_completed' && data?.quizId) {
+      console.log(`📝 Quiz completed: quizId=${data.quizId}, score=${data.score}, passed=${data.passed}`);
+      
+      setQuizCompletionStatus(prev => ({
+        ...prev,
+        [data.quizId]: {
+          completed: true,
+          score: data.score || 0,
+          passed: data.passed || false
+        }
+      }));
+      
+      // IMPORTANT: Mark the current lesson as completed in sidebar regardless of pass/fail
+      // The backend will handle the actual completion logic, but we update UI immediately for better UX
+      if (currentLesson?.id) {
+        setLessonCompletionStatus(prev => {
+          if (prev[currentLesson.id] !== true) {
+            console.log(`✅ Marking lesson ${currentLesson.id} as completed in sidebar (quiz ${data.passed ? 'passed' : 'attempted'})`);
+            return {
+              ...prev,
+              [currentLesson.id]: true
+            };
+          }
+          return prev;
+        });
+        
+        // Show celebration if passed
+        if (data.passed) {
+          setShowCelebration(true);
+        }
+      }
+      
+      // Refresh module scoring to show updated score
+      if (moduleScoring?.recalculate) {
+        setTimeout(() => {
+          moduleScoring.recalculate();
+        }, 500);
+      }
+      
+      // Update course completion stats
+      checkCourseCompletion();
+    }
+  }, [currentLesson?.id, moduleScoring]);
 
   // Get module status
   const getModuleStatus = (moduleId: number): ModuleStatus => {
@@ -558,7 +914,8 @@ const LearningPage = () => {
       courseModules,
       currentModuleId,
       getModuleStatus,
-      handleLessonSelect
+      handleLessonSelect,
+      lessonCompletionStatus
     );
   };
 
@@ -566,14 +923,21 @@ const LearningPage = () => {
     currentLessonIndex,
     allLessons,
     currentModuleId,
-    getModuleStatus
+    getModuleStatus,
+    lessonCompletionStatus
   );
 
   const hasPrevLesson = NavUtils.hasPrevLesson(
     currentLessonIndex,
     allLessons,
-    getModuleStatus
+    getModuleStatus,
+    lessonCompletionStatus
   );
+
+  // Prevent hydration issues by not rendering until mounted on client
+  if (!mounted) {
+    return null;
+  }
 
   // Authentication loading state - show while auth is being initialized
   if (authLoading) {
@@ -677,6 +1041,7 @@ const LearningPage = () => {
           onLessonSelect={handleLessonSelect}
           lessonAssessments={lessonAssessments}
           lessonCompletionStatus={lessonCompletionStatus}
+          quizCompletionStatus={quizCompletionStatus}
         />
 
         {currentLesson ? (
@@ -685,6 +1050,7 @@ const LearningPage = () => {
             lessonQuiz={lessonQuiz}
             lessonAssignments={lessonAssignments}
             contentLoading={contentLoading}
+            quizLoadError={quizLoadError}
             readingProgress={readingProgress}
             engagementScore={engagementScore}
             timeSpent={timeSpent}
@@ -698,6 +1064,7 @@ const LearningPage = () => {
             onVideoProgress={handleVideoProgress}
             onVideoComplete={handleVideoComplete}
             moduleScoring={moduleScoring}
+            lessonScore={lessonScore}
             currentModuleId={currentModuleId}
             currentLessonIndex={currentLessonIndex}
             totalLessons={allLessons.length}
@@ -705,6 +1072,7 @@ const LearningPage = () => {
             hasPrevLesson={hasPrevLesson}
             onNavigate={navigateToLesson}
             onTrackInteraction={trackInteraction}
+            onReloadContent={reloadLessonContent}
             getModuleStatus={getModuleStatus}
             allLessons={allLessons}
           />

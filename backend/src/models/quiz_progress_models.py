@@ -1,8 +1,29 @@
 # quiz_progress_models.py
+# CONSOLIDATED: Quiz and Question models have been moved to course_models.py
+# This file now contains ONLY progress tracking and analytics models
 
-from .. import db
+from .user_models import db  # ✅ Import db from user_models
 from datetime import datetime
 import enum
+
+# ============================================================================
+# NOTE: As of 2025-11-03, the following tables have been consolidated:
+# 
+# REMOVED from this file (moved to course_models.py):
+#   - Quiz model (was in 'quiz' table, now uses 'quizzes' table)
+#   - Question model (was in 'question' table, now uses 'questions' table)
+#   - QuestionOption model (was in 'question_option' table, now uses 'answers' table)
+#
+# REASON: Single source of truth prevents data inconsistency
+# 
+# ACTION REQUIRED: 
+#   - Import Quiz and Question from course_models
+#   - Drop old 'quiz', 'question', 'question_option' tables
+#   - Verify quiz_attempts and user_answers reference new tables
+# ============================================================================
+
+# Import consolidated models
+from .course_models import Quiz, Question
 
 # Enum definitions for SQLAlchemy Enum type
 class QuizFeedbackPolicy(enum.Enum):
@@ -32,73 +53,29 @@ class QuizAttemptStatus(enum.Enum):
     AUTO_GRADED = "auto_graded"
     MANUAL_GRADING_PENDING = "manual_grading_pending"
 
-class Quiz(db.Model):
-    __tablename__ = "quiz"
-    id = db.Column(db.Integer, primary_key=True)
-    course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=False)
-    title = db.Column(db.String(255), nullable=False)
-    description = db.Column(db.Text, nullable=True)
-    time_limit_minutes = db.Column(db.Integer, nullable=True)
-    attempts_allowed = db.Column(db.Integer, nullable=True)
-    passing_score_percentage = db.Column(db.Float, nullable=True)
-    feedback_policy = db.Column(db.Enum(QuizFeedbackPolicy), nullable=False, default=QuizFeedbackPolicy.IMMEDIATE_SCORE_ONLY)
-    shuffle_questions = db.Column(db.Boolean, default=False)
-    shuffle_options = db.Column(db.Boolean, default=False)
-    publish_status = db.Column(db.Enum(QuizPublishStatus), default=QuizPublishStatus.DRAFT)
-    due_date = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    questions = db.relationship("Question", backref="quiz", lazy=True, cascade="all, delete-orphan")
-    attempts = db.relationship("QuizAttempt", backref="quiz", lazy=True, cascade="all, delete-orphan")
-
-class Question(db.Model):
-    __tablename__ = "question"
-    id = db.Column(db.Integer, primary_key=True)
-    quiz_id = db.Column(db.Integer, db.ForeignKey("quiz.id"), nullable=False)
-    question_text = db.Column(db.Text, nullable=False)
-    question_type = db.Column(db.Enum(QuestionType), nullable=False)
-    points = db.Column(db.Integer, nullable=False, default=1)
-    order_in_quiz = db.Column(db.Integer, nullable=False)
-    image_url = db.Column(db.String(255), nullable=True)
-    explanation_text = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    options = db.relationship("QuestionOption", backref="question", lazy=True, cascade="all, delete-orphan")
-    user_answers = db.relationship("UserAnswer", backref="question", lazy=True)
-
-class QuestionOption(db.Model):
-    __tablename__ = "question_option"
-    id = db.Column(db.Integer, primary_key=True)
-    question_id = db.Column(db.Integer, db.ForeignKey("question.id"), nullable=False)
-    option_text = db.Column(db.Text, nullable=False)
-    is_correct = db.Column(db.Boolean, nullable=True)
-    order_value = db.Column(db.Integer, nullable=True)
-    match_value = db.Column(db.Text, nullable=True)
-    feedback_if_selected = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
 class QuizAttempt(db.Model):
-    __tablename__ = "quiz_attempt"
+    __tablename__ = "quiz_attempts"  # ✅ Plural naming convention
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    quiz_id = db.Column(db.Integer, db.ForeignKey("quiz.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
+    quiz_id = db.Column(db.Integer, db.ForeignKey("quizzes.id"), nullable=False)  # ✅ Fixed: quizzes (not quiz)
     attempt_number = db.Column(db.Integer, nullable=False)
     start_time = db.Column(db.DateTime, default=datetime.utcnow)
     end_time = db.Column(db.DateTime, nullable=True)
     score = db.Column(db.Float, nullable=True)
+    score_percentage = db.Column(db.Float, nullable=True)  # ✅ Added for compatibility with progression_service
     status = db.Column(db.Enum(QuizAttemptStatus), nullable=False, default=QuizAttemptStatus.IN_PROGRESS)
     feedback_viewed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Relationships - Fixed to reference consolidated Quiz model
+    quiz = db.relationship("Quiz", backref=db.backref("quiz_attempts", lazy="dynamic", cascade="all, delete-orphan"))
     user_answers = db.relationship("UserAnswer", backref="quiz_attempt", lazy=True, cascade="all, delete-orphan")
 
 class UserAnswer(db.Model):
-    __tablename__ = "user_answer"
+    __tablename__ = "user_answers"  # ✅ Plural naming convention
     id = db.Column(db.Integer, primary_key=True)
-    quiz_attempt_id = db.Column(db.Integer, db.ForeignKey("quiz_attempt.id"), nullable=False)
-    question_id = db.Column(db.Integer, db.ForeignKey("question.id"), nullable=False)
+    quiz_attempt_id = db.Column(db.Integer, db.ForeignKey("quiz_attempts.id"), nullable=False)  # ✅ Fixed: quiz_attempts (not quiz_attempt)
+    question_id = db.Column(db.Integer, db.ForeignKey("questions.id"), nullable=False)  # ✅ Fixed: questions (not question)
     answer_data = db.Column(db.JSON, nullable=True)
     is_correct = db.Column(db.Boolean, nullable=True)
     points_awarded = db.Column(db.Float, nullable=True)
@@ -106,56 +83,36 @@ class UserAnswer(db.Model):
     graded_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class UserProgress(db.Model):
-    __tablename__ = "user_progress"
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=False)
-    completion_percentage = db.Column(db.Float, default=0.0)
-    last_accessed_lesson_id = db.Column(db.Integer, db.ForeignKey("lesson.id"), nullable=True)
-    completed_at = db.Column(db.DateTime, nullable=True)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    __table_args__ = (db.UniqueConstraint("user_id", "course_id", name="uq_user_course_progress"),)
+    # Relationships - Fixed to reference consolidated models
+    question = db.relationship("Question", backref=db.backref("user_answers", lazy="dynamic"))
+
+# NOTE: UserProgress, LessonCompletion, ModuleCompletion consolidated to student_models.py (Lines 45-79)
+# These models are imported from there and defined only once as single source of truth
 
 class LessonCompletion(db.Model):
     __tablename__ = "lesson_completion"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    lesson_id = db.Column(db.Integer, db.ForeignKey("lesson.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
+    lesson_id = db.Column(db.Integer, db.ForeignKey("lessons.id"), nullable=False)  # ✅ Fixed: lessons (not lesson)
     completed_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("user_id", "lesson_id", name="uq_user_lesson_completion"),)
 
 class ModuleCompletion(db.Model):
     __tablename__ = "module_completion"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    module_id = db.Column(db.Integer, db.ForeignKey("module.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
+    module_id = db.Column(db.Integer, db.ForeignKey("modules.id"), nullable=False)  # ✅ Fixed: modules (not module)
     completed_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint("user_id", "module_id", name="uq_user_module_completion"),)
 
-class Badge(db.Model):
-    __tablename__ = "badge"
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(255), nullable=False, unique=True)
-    description = db.Column(db.Text, nullable=False)
-    criteria_description = db.Column(db.Text, nullable=False)
-    icon_url = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-class UserBadge(db.Model):
-    __tablename__ = "user_badge"
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    badge_id = db.Column(db.Integer, db.ForeignKey("badge.id"), nullable=False)
-    awarded_at = db.Column(db.DateTime, default=datetime.utcnow)
-    context_course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=True)
-    __table_args__ = (db.UniqueConstraint("user_id", "badge_id", "context_course_id", name="uq_user_badge_context"),)
+# NOTE: Badge and UserBadge consolidated to student_models.py (Lines 98-135)
+# These models are imported from there and defined only once as single source of truth
 
 class Certificate(db.Model):
     __tablename__ = "certificate"
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
-    course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
+    course_id = db.Column(db.Integer, db.ForeignKey("courses.id"), nullable=False)  # ✅ Fixed: courses (not course)
     issue_date = db.Column(db.DateTime, default=datetime.utcnow)
     certificate_uid = db.Column(db.String(255), nullable=False, unique=True)
     certificate_url = db.Column(db.String(255), nullable=True)

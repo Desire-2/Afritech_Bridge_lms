@@ -52,13 +52,17 @@ export class ProgressionService {
    * Calculate weighted cumulative score for a module
    */
   static calculateCumulativeScore(progress: ModuleProgress): number {
+    if (!progress) {
+      return 0;
+    }
+    
     const weights = this.REQUIREMENTS;
     
     const score = (
-      (progress.course_contribution_score * weights.courseContribution / 100) +
-      (progress.quiz_score * weights.quizzes / 100) +
-      (progress.assignment_score * weights.assignments / 100) +
-      (progress.final_assessment_score * weights.finalAssessment / 100)
+      ((progress.course_contribution_score || 0) * weights.courseContribution / 100) +
+      ((progress.quiz_score || 0) * weights.quizzes / 100) +
+      ((progress.assignment_score || 0) * weights.assignments / 100) +
+      ((progress.final_assessment_score || 0) * weights.finalAssessment / 100)
     );
     
     return Math.round(score * 100) / 100; // Round to 2 decimal places
@@ -74,22 +78,22 @@ export class ProgressionService {
     
     const breakdown = {
       courseContribution: {
-        current: progress.course_contribution_score,
+        current: progress?.course_contribution_score || 0,
         max: 100,
         percentage: this.REQUIREMENTS.courseContribution
       },
       quizzes: {
-        current: progress.quiz_score,
+        current: progress?.quiz_score || 0,
         max: 100,
         percentage: this.REQUIREMENTS.quizzes
       },
       assignments: {
-        current: progress.assignment_score,
+        current: progress?.assignment_score || 0,
         max: 100,
         percentage: this.REQUIREMENTS.assignments
       },
       finalAssessment: {
-        current: progress.final_assessment_score,
+        current: progress?.final_assessment_score || 0,
         max: 100,
         percentage: this.REQUIREMENTS.finalAssessment
       }
@@ -113,6 +117,17 @@ export class ProgressionService {
    * Check retake eligibility for a module
    */
   static checkRetakeEligibility(progress: ModuleProgress): RetakeEligibility {
+    if (!progress) {
+      return {
+        canRetake: false,
+        attemptsUsed: 0,
+        maxAttempts: 3,
+        remainingAttempts: 3,
+        isLastAttempt: false,
+        reason: 'Module progress not initialized'
+      };
+    }
+    
     const canRetake = progress.attempts_count < progress.max_attempts && progress.status === 'failed';
     const remainingAttempts = Math.max(0, progress.max_attempts - progress.attempts_count);
     const isLastAttempt = progress.attempts_count === progress.max_attempts - 1;
@@ -141,6 +156,17 @@ export class ProgressionService {
    */
   static assessSuspensionRisk(moduleData: ModuleData): SuspensionRisk {
     const { progress } = moduleData;
+    
+    // Handle missing progress data
+    if (!progress) {
+      return {
+        isAtRisk: false,
+        riskLevel: 'low',
+        reasons: ['Module progress not initialized'],
+        recommendedActions: ['Start the module to track progress']
+      };
+    }
+    
     const currentScore = this.calculateCumulativeScore(progress);
     const retakeEligibility = this.checkRetakeEligibility(progress);
     
@@ -202,11 +228,11 @@ export class ProgressionService {
     for (let i = 0; i < sortedModules.length; i++) {
       const currentModule = sortedModules[i];
       
-      if (currentModule.progress.status === 'locked') {
+      if (currentModule.progress?.status === 'locked') {
         // Check if all previous modules are completed
         const previousModulesCompleted = sortedModules
           .slice(0, i)
-          .every(mod => mod.progress.status === 'completed');
+          .every(mod => mod.progress?.status === 'completed');
         
         if (previousModulesCompleted) {
           return currentModule;
@@ -234,11 +260,11 @@ export class ProgressionService {
     }>;
   } {
     const totalModules = modules.length;
-    const completedModules = modules.filter(m => m.progress.status === 'completed').length;
+    const completedModules = modules.filter(m => m.progress?.status === 'completed').length;
     const overallProgress = totalModules > 0 ? (completedModules / totalModules) * 100 : 0;
     
     const moduleScores = modules
-      .filter(m => m.progress.status === 'completed')
+      .filter(m => m.progress?.status === 'completed')
       .map(m => this.calculateCumulativeScore(m.progress));
     
     const averageScore = moduleScores.length > 0 
@@ -248,9 +274,9 @@ export class ProgressionService {
     const moduleBreakdown = modules.map(moduleData => ({
       moduleId: moduleData.module.id,
       title: moduleData.module.title,
-      status: moduleData.progress.status,
-      score: this.calculateCumulativeScore(moduleData.progress),
-      attempts: moduleData.progress.attempts_count
+      status: moduleData.progress?.status || 'locked',
+      score: moduleData.progress ? this.calculateCumulativeScore(moduleData.progress) : 0,
+      attempts: moduleData.progress?.attempts_count || 0
     }));
 
     return {

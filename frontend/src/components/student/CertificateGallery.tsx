@@ -31,7 +31,8 @@ import {
   Globe,
   Shield,
   FileText,
-  Target
+  Target,
+  Lock
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -65,35 +66,89 @@ const itemVariants = {
 };
 
 interface CertificateCardProps {
-  certificate: Certificate;
+  certificate: Certificate & {
+    completion_percentage?: number;
+    is_locked?: boolean;
+    completion_status?: string;
+  };
   onView: (certificate: Certificate) => void;
   onShare: (certificate: Certificate) => void;
 }
 
 const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, onShare }) => {
+  // Helper to get status badge color
+  const getStatusColor = () => {
+    if (certificate.completion_status === 'completed') {
+      return 'bg-green-100 text-green-800 border-green-200';
+    } else if (certificate.completion_status === 'in_progress') {
+      return 'bg-blue-100 text-blue-800 border-blue-200';
+    } else {
+      return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+    }
+  };
+
+  const getStatusLabel = () => {
+    if (certificate.completion_status === 'completed') {
+      return 'Completed';
+    } else if (certificate.completion_status === 'in_progress') {
+      return 'In Progress';
+    } else {
+      return 'Not Started';
+    }
+  };
+
+  const isLocked = certificate.is_locked !== false;
+  const completionPercentage = certificate.completion_percentage || 0;
+
   return (
     <motion.div variants={itemVariants}>
-      <Card className="group hover:shadow-2xl transition-all duration-500 hover:scale-105 relative overflow-hidden">
+      <Card className={`group hover:shadow-2xl transition-all duration-500 hover:scale-105 relative overflow-hidden ${
+        isLocked ? 'opacity-85' : ''
+      }`}>
         {/* Background Pattern */}
         <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-purple-50 opacity-50" />
         <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-yellow-200/20 to-transparent rounded-full -translate-y-16 translate-x-16" />
+        
+        {/* Lock Overlay for Locked Certificates */}
+        {isLocked && (
+          <div className="absolute inset-0 bg-black/5 z-10 rounded-lg" />
+        )}
         
         <CardContent className="p-6 relative">
           <div className="space-y-4">
             {/* Header with Icon */}
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-3">
-                <div className="p-3 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full">
-                  <GraduationCap className="h-6 w-6 text-white" />
+                <div className={`p-3 rounded-full ${
+                  isLocked 
+                    ? 'bg-gradient-to-br from-gray-400 to-gray-600' 
+                    : 'bg-gradient-to-br from-yellow-400 to-orange-500'
+                }`}>
+                  {isLocked ? (
+                    <Lock className="h-6 w-6 text-white" />
+                  ) : (
+                    <GraduationCap className="h-6 w-6 text-white" />
+                  )}
                 </div>
                 <div>
                   <h3 className="font-bold text-lg">{certificate.course_title}</h3>
-                  <p className="text-sm text-muted-foreground">Course Certificate</p>
+                  <p className="text-sm text-muted-foreground">
+                    {isLocked ? 'Locked Certificate' : 'Course Certificate'}
+                  </p>
                 </div>
               </div>
-              <Badge className="bg-green-100 text-green-800 border-green-200">
-                <Verified className="h-3 w-3 mr-1" />
-                Verified
+              <Badge className={`${getStatusColor()} border`}>
+                {isLocked ? (
+                  <>
+                    <Lock className="h-3 w-3 mr-1" />
+                    {getStatusLabel()}
+                  </>
+                ) : (
+                  <>
+                    <Verified className="h-3 w-3 mr-1" />
+                    Verified
+                  </>
+                )}
               </Badge>
             </div>
 
@@ -114,14 +169,30 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
                 Certificate ID: {certificate.certificate_number}
               </div>
 
+              {/* Progress Bar for Locked Certificates */}
+              {isLocked && (
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-medium text-muted-foreground">Progress</span>
+                    <span className="text-xs font-bold text-blue-600">{completionPercentage}%</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-300"
+                      style={{ width: `${Math.min(completionPercentage, 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+
               {/* Skills */}
               <div className="flex flex-wrap gap-1">
-                {certificate.skills_demonstrated.slice(0, 3).map((skill, index) => (
+                {certificate.skills_demonstrated?.slice(0, 3).map((skill, index) => (
                   <Badge key={index} variant="secondary" className="text-xs">
                     {skill}
                   </Badge>
                 ))}
-                {certificate.skills_demonstrated.length > 3 && (
+                {certificate.skills_demonstrated && certificate.skills_demonstrated.length > 3 && (
                   <Badge variant="secondary" className="text-xs">
                     +{certificate.skills_demonstrated.length - 3} more
                   </Badge>
@@ -131,17 +202,31 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
 
             {/* Actions */}
             <div className="flex space-x-2 pt-2">
-              <Button size="sm" onClick={() => onView(certificate)} className="flex-1">
+              <Button 
+                size="sm" 
+                onClick={() => onView(certificate)} 
+                className="flex-1"
+                variant={isLocked ? "outline" : "default"}
+              >
                 <Eye className="h-4 w-4 mr-2" />
-                View
+                {isLocked ? 'Preview' : 'View'}
               </Button>
               <Button size="sm" variant="outline" onClick={() => onShare(certificate)}>
                 <Share2 className="h-4 w-4" />
               </Button>
-              <Button size="sm" variant="outline">
-                <Download className="h-4 w-4" />
-              </Button>
+              {!isLocked && (
+                <Button size="sm" variant="outline">
+                  <Download className="h-4 w-4" />
+                </Button>
+              )}
             </div>
+
+            {/* Lock Status Message */}
+            {isLocked && (
+              <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                🔒 Complete the course to unlock your certificate
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -446,13 +531,19 @@ const CertificateGallery: React.FC = () => {
 
   const fetchData = useCallback(async () => {
     try {
+      console.log('📥 Fetching certificates and badges...');
       const [certsData, badgesData] = await Promise.all([
         StudentApiService.getCertificates(),
         StudentApiService.getBadges()
       ]);
       
+      console.log('📦 Certificates Data:', certsData);
+      console.log('📦 Badges Data:', badgesData);
+      
       // Check for new certificates
       const newCerts = Array.isArray(certsData) ? certsData : [];
+      console.log(`✅ Setting ${newCerts.length} certificates to state`);
+      
       if (newCerts.length > certificates.length && certificates.length > 0) {
         setNewCertificateAlert(true);
         setTimeout(() => setNewCertificateAlert(false), 5000);
@@ -461,7 +552,7 @@ const CertificateGallery: React.FC = () => {
       setCertificates(newCerts);
       setBadges(Array.isArray(badgesData) ? badgesData : []);
     } catch (error) {
-      console.error('Failed to fetch certificate data:', error);
+      console.error('❌ Failed to fetch certificate data:', error);
     } finally {
       setLoading(false);
     }

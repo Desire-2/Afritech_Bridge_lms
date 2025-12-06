@@ -8,8 +8,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { 
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
-  PenTool, Loader2
+  PenTool, Loader2, AlertCircle, Lock
 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ViewMode } from '../types';
 import type { ContentQuiz, ContentAssignment } from '@/services/contentAssignmentApi';
 import { ContentRichPreview } from './ContentRichPreview';
@@ -21,6 +22,7 @@ interface LessonContentProps {
   lessonQuiz: ContentQuiz | null;
   lessonAssignments: ContentAssignment[];
   contentLoading: boolean;
+  quizLoadError?: string | null;
   readingProgress: number;
   engagementScore: number;
   timeSpent: number;
@@ -34,6 +36,7 @@ interface LessonContentProps {
   onVideoComplete?: () => void;
   onVideoProgress?: (progress: number) => void;
   moduleScoring: any;
+  lessonScore: number;
   currentModuleId: number | null;
   currentLessonIndex: number;
   totalLessons: number;
@@ -41,6 +44,7 @@ interface LessonContentProps {
   hasPrevLesson: boolean;
   onNavigate: (direction: 'prev' | 'next') => void;
   onTrackInteraction: (type: string, data?: any) => void;
+  onReloadContent?: () => void;
   getModuleStatus: (moduleId: number) => string;
   allLessons: any[];
 }
@@ -50,6 +54,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   lessonQuiz,
   lessonAssignments,
   contentLoading,
+  quizLoadError,
   readingProgress,
   engagementScore,
   timeSpent,
@@ -61,6 +66,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   setLessonNotes,
   contentRef,
   moduleScoring,
+  lessonScore,
   currentModuleId,
   currentLessonIndex,
   totalLessons,
@@ -68,6 +74,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   hasPrevLesson,
   onNavigate,
   onTrackInteraction,
+  onReloadContent,
   getModuleStatus,
   allLessons
 }) => {
@@ -79,13 +86,32 @@ export const LessonContent: React.FC<LessonContentProps> = ({
     >
       <div className="w-full px-4 md:px-6 lg:px-8 py-6 max-w-7xl mx-auto">
         <div className="space-y-6">
+          {/* Completed Lesson Alert */}
+          {isLessonCompleted && (
+            <Alert className="bg-green-900/30 border-green-700">
+              <CheckCircle className="h-4 w-4 text-green-400" />
+              <AlertTitle className="text-green-300">Lesson Completed!</AlertTitle>
+              <AlertDescription className="text-green-200">
+                You have already completed this lesson. You can review the content anytime.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Lesson Header */}
           <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-6">
             <div className="flex items-start justify-between">
               <div className="flex-1">
-                <h2 className="text-2xl font-bold text-white mb-2">
-                  {currentLesson.title}
-                </h2>
+                <div className="flex items-center space-x-3 mb-2">
+                  <h2 className="text-2xl font-bold text-white">
+                    {currentLesson.title}
+                  </h2>
+                  {isLessonCompleted && (
+                    <Badge className="bg-green-600 hover:bg-green-700">
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      Completed
+                    </Badge>
+                  )}
+                </div>
                 {currentLesson.description && (
                   <p className="text-gray-300 mb-4">{currentLesson.description}</p>
                 )}
@@ -93,9 +119,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   <Badge variant="secondary">
                     Lesson {currentLessonIndex + 1} of {totalLessons}
                   </Badge>
+                  <Badge variant={lessonScore >= 80 ? "default" : lessonScore >= 60 ? "secondary" : "destructive"}>
+                    Lesson Score: {lessonScore}%
+                  </Badge>
                   {moduleScoring && currentModuleId && currentModuleId > 0 && (
-                    <Badge variant={moduleScoring.isPassing ? "default" : "destructive"}>
-                      Score: {moduleScoring.cumulativeScore.toFixed(1)}%
+                    <Badge variant="outline" className="text-gray-400">
+                      Module: {moduleScoring.cumulativeScore.toFixed(1)}%
                     </Badge>
                   )}
                 </div>
@@ -139,13 +168,27 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                         variant="outline"
                         size="sm"
                         onClick={() => onNavigate('next')}
-                        disabled={!hasNextLesson}
+                        disabled={!hasNextLesson || !isLessonCompleted}
                       >
                         <ArrowRight className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent>
+                    <TooltipContent className="max-w-xs">
                       {(() => {
+                        if (!isLessonCompleted) {
+                          const requirements = [];
+                          if (readingProgress < 80) {
+                            requirements.push(`Reading progress: ${Math.round(readingProgress)}% (need 80%)`);
+                          }
+                          return (
+                            <div className="space-y-1">
+                              <p className="font-semibold text-yellow-400">Complete this lesson first</p>
+                              {requirements.map((req, i) => (
+                                <p key={i} className="text-xs">• {req}</p>
+                              ))}
+                            </div>
+                          );
+                        }
                         if (currentLessonIndex >= allLessons.length - 1) {
                           return 'No more lessons in this course';
                         }
@@ -270,22 +313,64 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
                     <span className="ml-2 text-gray-300">Loading quiz...</span>
                   </div>
+                ) : quizLoadError ? (
+                  <Alert className="border-red-700 bg-red-900/30">
+                    <AlertCircle className="h-4 w-4 text-red-400" />
+                    <AlertTitle className="text-red-300">Failed to Load Quiz</AlertTitle>
+                    <AlertDescription className="text-red-200">
+                      <p className="mb-3">{quizLoadError}</p>
+                      {onReloadContent && (
+                        <Button 
+                          onClick={onReloadContent}
+                          variant="outline" 
+                          size="sm"
+                          className="border-red-600 text-red-300 hover:bg-red-900/50"
+                        >
+                          <Loader2 className="h-4 w-4 mr-2" />
+                          Try Again
+                        </Button>
+                      )}
+                    </AlertDescription>
+                  </Alert>
                 ) : lessonQuiz ? (
-                  <QuizAttemptTracker
-                    quiz={lessonQuiz}
-                    onStartQuiz={() => onTrackInteraction('quiz_started', { quizId: lessonQuiz.id })}
-                    onSubmitQuiz={(answers) => {
-                      onTrackInteraction('quiz_submitted', { quizId: lessonQuiz.id, answers });
-                      // TODO: Call API to submit quiz answers
-                    }}
-                  />
+                  <div key={`quiz-${lessonQuiz.id}-${lessonQuiz.attempts_used || 0}`}>
+                    <QuizAttemptTracker
+                      quiz={lessonQuiz}
+                      onStartQuiz={() => onTrackInteraction('quiz_started', { quizId: lessonQuiz.id })}
+                      onSubmitQuiz={(answers) => {
+                        onTrackInteraction('quiz_submitted', { quizId: lessonQuiz.id, answers });
+                      }}
+                      onQuizComplete={(score, passed) => {
+                        onTrackInteraction('quiz_completed', { 
+                          quizId: lessonQuiz.id, 
+                          score, 
+                          passed 
+                        });
+                        // Reload content to refresh attempt count
+                        if (onReloadContent) {
+                          setTimeout(() => onReloadContent(), 1000);
+                        }
+                      }}
+                    />
+                  </div>
                 ) : (
                   <div className="text-center py-12">
                     <FileText className="h-12 w-12 text-gray-500 mx-auto mb-4" />
                     <h3 className="text-lg font-medium text-white mb-2">No Quiz Available</h3>
-                    <p className="text-gray-300">
+                    <p className="text-gray-300 mb-4">
                       This lesson doesn't have an associated quiz.
                     </p>
+                    {onReloadContent && (
+                      <Button 
+                        onClick={onReloadContent}
+                        variant="outline" 
+                        size="sm"
+                        className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                      >
+                        <Loader2 className="h-4 w-4 mr-2" />
+                        Refresh
+                      </Button>
+                    )}
                   </div>
                 )}
               </TabsContent>
@@ -319,7 +404,11 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             hasText: !!submission.text,
                             fileCount: submission.files?.length || 0
                           });
-                          // TODO: Call API to submit assignment
+                        }}
+                        onSubmitComplete={() => {
+                          onTrackInteraction('assignment_completed', {
+                            assignmentId: assignment.id
+                          });
                         }}
                       />
                     ))}
@@ -357,6 +446,59 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             </Tabs>
           </div>
 
+          {/* Completion Requirements Alert */}
+          {!isLessonCompleted && hasNextLesson && (
+            <Alert className="border-yellow-700 bg-yellow-900/30">
+              <AlertCircle className="h-4 w-4 text-yellow-400" />
+              <AlertTitle className="text-yellow-300 font-semibold">Complete This Lesson to Continue</AlertTitle>
+              <AlertDescription className="text-yellow-200/90 space-y-2 mt-2">
+                <p>You need to complete the following before moving to the next lesson:</p>
+                <ul className="list-none space-y-1 mt-2">
+                  {readingProgress < 80 && (
+                    <li className="flex items-start space-x-2">
+                      <Lock className="h-4 w-4 mt-0.5 flex-shrink-0 text-yellow-400" />
+                      <span>
+                        <strong>Reading Progress:</strong> {Math.round(readingProgress)}% complete
+                        <span className="text-yellow-300/70"> (minimum 80% required)</span>
+                      </span>
+                    </li>
+                  )}
+                  {lessonQuiz && (
+                    <li className="flex items-start space-x-2">
+                      <FileText className="h-4 w-4 mt-0.5 flex-shrink-0 text-blue-400" />
+                      <span>
+                        <strong>Quiz:</strong> Complete the lesson quiz
+                        <button
+                          onClick={() => setCurrentViewMode('quiz')}
+                          className="ml-2 text-blue-300 underline hover:text-blue-200"
+                        >
+                          Take Quiz →
+                        </button>
+                      </span>
+                    </li>
+                  )}
+                  {lessonAssignments.length > 0 && (
+                    <li className="flex items-start space-x-2">
+                      <Clipboard className="h-4 w-4 mt-0.5 flex-shrink-0 text-purple-400" />
+                      <span>
+                        <strong>Assignments:</strong> Submit {lessonAssignments.length} assignment{lessonAssignments.length > 1 ? 's' : ''}
+                        <button
+                          onClick={() => setCurrentViewMode('assignments')}
+                          className="ml-2 text-purple-300 underline hover:text-purple-200"
+                        >
+                          View Assignments →
+                        </button>
+                      </span>
+                    </li>
+                  )}
+                </ul>
+                <p className="text-xs text-yellow-200/70 mt-3 italic">
+                  💡 Tip: Continue reading and interacting with the lesson content. Progress is tracked automatically.
+                </p>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Navigation Footer */}
           <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-4">
             <div className="flex justify-between items-center">
@@ -374,14 +516,32 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 Lesson {currentLessonIndex + 1} of {totalLessons}
               </div>
               
-              <Button
-                onClick={() => onNavigate('next')}
-                disabled={!hasNextLesson}
-                className="flex items-center space-x-2"
-              >
-                <span>Next Lesson</span>
-                <ArrowRight className="h-4 w-4" />
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div>
+                      <Button
+                        onClick={() => onNavigate('next')}
+                        disabled={!hasNextLesson || !isLessonCompleted}
+                        className="flex items-center space-x-2"
+                      >
+                        {!isLessonCompleted && hasNextLesson ? (
+                          <Lock className="h-4 w-4" />
+                        ) : null}
+                        <span>Next Lesson</span>
+                        <ArrowRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {!isLessonCompleted && hasNextLesson
+                      ? 'Complete this lesson first'
+                      : !hasNextLesson
+                      ? 'No more lessons available'
+                      : 'Continue to next lesson'}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
           </div>
         </div>

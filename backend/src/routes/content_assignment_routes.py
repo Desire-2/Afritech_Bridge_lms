@@ -9,6 +9,7 @@ import json
 from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Quiz, Assignment, Project
 from ..models.student_models import ModuleProgress, LessonCompletion
+from ..models.quiz_progress_models import QuizAttempt
 
 # Helper for role checking
 from functools import wraps
@@ -36,7 +37,7 @@ def role_required(roles):
 instructor_required = role_required(['instructor', 'admin'])
 admin_required = role_required(['admin'])
 
-content_assignment_bp = Blueprint('content_assignment', __name__, url_prefix='/api/content-assignment')
+content_assignment_bp = Blueprint('content_assignment', __name__, url_prefix='/api/v1/content-assignment')
 
 # ==================== QUIZ ASSIGNMENT ROUTES ====================
 
@@ -149,17 +150,62 @@ def get_module_quizzes(module_id):
 @content_assignment_bp.route("/lessons/<int:lesson_id>/quiz", methods=["GET"])
 @jwt_required()
 def get_lesson_quiz(lesson_id):
-    """Get quiz assigned to a specific lesson"""
+    """Get all quizzes assigned to a specific lesson with student attempt data"""
     try:
+        current_user_id = int(get_jwt_identity())
         lesson = Lesson.query.get(lesson_id)
         if not lesson:
             return jsonify({"message": "Lesson not found"}), 404
         
-        quiz = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).first()
+        # Get all published quizzes for this lesson
+        quizzes = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).all()
+        
+        # Enrich quiz data with student's best attempt
+        enriched_quizzes = []
+        enriched_quiz_single = None
+        
+        for quiz in quizzes:
+            # Include questions with answers (for student display, answers without is_correct)
+            quiz_data = quiz.to_dict(include_questions=True)
+            
+            # Get student's best attempt for this quiz
+            best_attempt = QuizAttempt.query.filter_by(
+                user_id=current_user_id,
+                quiz_id=quiz.id
+            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            
+            # Count total attempts
+            attempts_count = QuizAttempt.query.filter_by(
+                user_id=current_user_id,
+                quiz_id=quiz.id
+            ).count()
+            
+            # Add enriched fields for frontend
+            if best_attempt:
+                quiz_data['current_score'] = best_attempt.score_percentage
+                quiz_data['best_score'] = best_attempt.score_percentage
+                quiz_data['last_attempted'] = best_attempt.end_time.isoformat() if best_attempt.end_time else None
+                quiz_data['attempts_used'] = attempts_count
+                quiz_data['quiz_id'] = quiz.id  # Ensure quiz_id is in response
+                quiz_data['quiz_title'] = quiz.title  # Ensure quiz_title is in response
+            else:
+                quiz_data['current_score'] = None
+                quiz_data['best_score'] = None
+                quiz_data['last_attempted'] = None
+                quiz_data['attempts_used'] = 0
+                quiz_data['quiz_id'] = quiz.id
+                quiz_data['quiz_title'] = quiz.title
+            
+            enriched_quizzes.append(quiz_data)
+            
+            # Keep first quiz for backward compatibility
+            if enriched_quiz_single is None:
+                enriched_quiz_single = quiz_data
         
         return jsonify({
             "lesson": lesson.to_dict(),
-            "quiz": quiz.to_dict() if quiz else None
+            "quiz": enriched_quiz_single,  # For backward compatibility, return first as 'quiz'
+            "quizzes": enriched_quizzes  # Return all quizzes with enriched data
         }), 200
         
     except Exception as e:

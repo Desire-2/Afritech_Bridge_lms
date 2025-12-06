@@ -15,14 +15,33 @@ export interface ContentQuiz {
   is_published: boolean;
   created_at: string;
   questions?: QuizQuestion[];
+  
+  // Enhanced fields from backend - student attempt data
+  quiz_id?: number;
+  quiz_title?: string;
+  passing_score?: number;
+  current_score?: number;
+  best_score?: number;
+  last_attempted?: string;
+  time_limit?: number;
+  max_attempts?: number;
+  points_possible?: number;
+  shuffle_questions?: boolean;
+  shuffle_answers?: boolean;
+  show_correct_answers?: boolean;
 }
 
 export interface QuizQuestion {
   id: number;
   quiz_id: number;
   text: string;
+  question_text?: string;  // Alias for compatibility
+  question?: string;  // Alias for backward compatibility
   question_type: string;
   order: number;
+  order_index?: number;  // Alias for compatibility
+  points?: number;
+  explanation?: string;
   answers?: QuizAnswer[];
 }
 
@@ -30,8 +49,9 @@ export interface QuizAnswer {
   id: number;
   question_id: number;
   text: string;
-  is_correct: boolean;
-  order: number;
+  answer_text?: string;  // Alias for compatibility
+  is_correct?: boolean;  // May not be sent to students before submission
+  order?: number;
 }
 
 export interface ContentAssignment {
@@ -160,7 +180,7 @@ class ContentAssignmentService extends BaseApiService {
     lesson_id?: number;
     is_published?: boolean;
   }): Promise<{ message: string; quiz: ContentQuiz }> {
-    return this.post('/v1/content-assignment/quizzes', data);
+    return this.post('/content-assignment/quizzes', data);
   }
 
   /**
@@ -170,7 +190,7 @@ class ContentAssignmentService extends BaseApiService {
     module_id?: number;
     lesson_id?: number;
   }): Promise<{ message: string; quiz: ContentQuiz }> {
-    return this.put(`/v1/content-assignment/quizzes/${quizId}/assign`, data);
+    return this.put(`/content-assignment/quizzes/${quizId}/assign`, data);
   }
 
   /**
@@ -180,7 +200,7 @@ class ContentAssignmentService extends BaseApiService {
     module: ModuleContent;
     quizzes: ContentQuiz[];
   }> {
-    return this.get(`/v1/content-assignment/modules/${moduleId}/quizzes`);
+    return this.get(`/content-assignment/modules/${moduleId}/quizzes`);
   }
 
   /**
@@ -189,8 +209,29 @@ class ContentAssignmentService extends BaseApiService {
   async getLessonQuiz(lessonId: number): Promise<{
     lesson: LessonContent;
     quiz: ContentQuiz | null;
+    quizzes?: ContentQuiz[];
   }> {
-    return this.get(`/v1/content-assignment/lessons/${lessonId}/quiz`);
+    return this.get(`/content-assignment/lessons/${lessonId}/quiz`);
+  }
+
+  /**
+   * Get quiz details with questions (for students)
+   */
+  async getQuizDetails(quizId: number): Promise<ContentQuiz> {
+    return this.get(`/student/quizzes/${quizId}`);
+  }
+
+  /**
+   * Submit quiz answers
+   */
+  async submitQuiz(quizId: number, answers: Record<number, string>): Promise<{
+    message: string;
+    score: number;
+    passed: boolean;
+    attempt_number: number;
+    remaining_attempts: number;
+  }> {
+    return this.post(`/student/quizzes/${quizId}/submit`, { answers });
   }
 
   // ==================== ASSIGNMENT MANAGEMENT ====================
@@ -212,7 +253,7 @@ class ContentAssignmentService extends BaseApiService {
     points_possible?: number;
     is_published?: boolean;
   }): Promise<{ message: string; assignment: ContentAssignment }> {
-    return this.post('/v1/content-assignment/assignments', data);
+    return this.post('/content-assignment/assignments', data);
   }
 
   /**
@@ -222,7 +263,7 @@ class ContentAssignmentService extends BaseApiService {
     module_id?: number;
     lesson_id?: number;
   }): Promise<{ message: string; assignment: ContentAssignment }> {
-    return this.put(`/v1/content-assignment/assignments/${assignmentId}/assign`, data);
+    return this.put(`/content-assignment/assignments/${assignmentId}/assign`, data);
   }
 
   /**
@@ -232,7 +273,7 @@ class ContentAssignmentService extends BaseApiService {
     module: ModuleContent;
     assignments: ContentAssignment[];
   }> {
-    return this.get(`/v1/content-assignment/modules/${moduleId}/assignments`);
+    return this.get(`/content-assignment/modules/${moduleId}/assignments`);
   }
 
   /**
@@ -242,7 +283,28 @@ class ContentAssignmentService extends BaseApiService {
     lesson: LessonContent;
     assignments: ContentAssignment[];
   }> {
-    return this.get(`/v1/content-assignment/lessons/${lessonId}/assignments`);
+    return this.get(`/content-assignment/lessons/${lessonId}/assignments`);
+  }
+
+  /**
+   * Get assignment details (for students)
+   */
+  async getAssignmentDetails(assignmentId: number): Promise<ContentAssignment> {
+    return this.get(`/student/assignments/${assignmentId}/details`);
+  }
+
+  /**
+   * Submit assignment
+   */
+  async submitAssignment(assignmentId: number, data: {
+    content?: string;
+    file_url?: string;
+    external_url?: string;
+  }): Promise<{
+    message: string;
+    submission: any;
+  }> {
+    return this.post(`/student/assignments/${assignmentId}/submit`, data);
   }
 
   /**
@@ -301,7 +363,7 @@ class ContentAssignmentService extends BaseApiService {
     collaboration_allowed?: boolean;
     max_team_size?: number;
   }): Promise<{ message: string; project: ContentProject }> {
-    return this.post('/v1/content-assignment/projects', data);
+    return this.post('/content-assignment/projects', data);
   }
 
   /**
@@ -310,7 +372,7 @@ class ContentAssignmentService extends BaseApiService {
   async assignProjectModules(projectId: number, data: {
     module_ids: number[];
   }): Promise<{ message: string; project: ContentProject }> {
-    return this.put(`/v1/content-assignment/projects/${projectId}/assign-modules`, data);
+    return this.put(`/content-assignment/projects/${projectId}/assign-modules`, data);
   }
 
   /**
@@ -320,7 +382,7 @@ class ContentAssignmentService extends BaseApiService {
     course: any;
     projects: ContentProject[];
   }> {
-    return this.get(`/v1/content-assignment/courses/${courseId}/projects`);
+    return this.get(`/content-assignment/courses/${courseId}/projects`);
   }
 
   // ==================== COMPREHENSIVE OVERVIEW ====================
@@ -329,14 +391,14 @@ class ContentAssignmentService extends BaseApiService {
    * Get complete content overview for a course
    */
   async getCourseContentOverview(courseId: number): Promise<CourseContentOverview> {
-    return this.get(`/v1/content-assignment/courses/${courseId}/content-overview`);
+    return this.get(`/content-assignment/courses/${courseId}/content-overview`);
   }
 
   /**
    * Get student's progress on all content types
    */
   async getStudentContentProgress(studentId: number, courseId: number): Promise<StudentContentProgress> {
-    return this.get(`/v1/content-assignment/students/${studentId}/course/${courseId}/content-progress`);
+    return this.get(`/content-assignment/students/${studentId}/course/${courseId}/content-progress`);
   }
 
   // ==================== HELPER METHODS ====================

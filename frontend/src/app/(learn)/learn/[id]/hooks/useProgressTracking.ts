@@ -8,6 +8,8 @@ interface UseProgressTrackingProps {
   showCelebration: boolean;
   contentRef?: any;
   interactionHistory: InteractionEvent[];
+  hasQuiz?: boolean;
+  hasAssignment?: boolean;
 }
 
 export const useProgressTracking = ({
@@ -15,7 +17,9 @@ export const useProgressTracking = ({
   currentModuleId,
   showCelebration,
   contentRef,
-  interactionHistory
+  interactionHistory,
+  hasQuiz = false,
+  hasAssignment = false
 }: UseProgressTrackingProps) => {
   const [readingProgress, setReadingProgress] = useState<number>(0);
   const [timeSpent, setTimeSpent] = useState<number>(0);
@@ -27,10 +31,51 @@ export const useProgressTracking = ({
   const startTimeRef = useRef<number>(Date.now());
   const lastInteractionRef = useRef<number>(Date.now());
   const readingTimeRef = useRef<number>(0);
+  const [progressLoaded, setProgressLoaded] = useState<boolean>(false);
+
+  // Load existing progress from backend
+  const loadExistingProgress = useCallback(async () => {
+    if (!currentLesson) return;
+    
+    try {
+      const response = await StudentApiService.getLessonProgress(currentLesson.id);
+      const existingProgress = response.progress;
+      
+      if (existingProgress) {
+        console.log('📊 Loaded existing progress:', existingProgress);
+        
+        // Set progress from backend
+        setReadingProgress(existingProgress.reading_progress || 0);
+        setScrollProgress(existingProgress.scroll_progress || 0);
+        setEngagementScore(existingProgress.engagement_score || 0);
+        setIsLessonCompleted(existingProgress.completed || false);
+        
+        // If lesson is completed, prevent further tracking
+        if (existingProgress.completed) {
+          console.log('✅ Lesson already completed, disabling progress tracking');
+          setCompletionInProgress(false);
+        }
+        
+        // If lesson has progress, adjust the start time to account for existing time
+        if (existingProgress.time_spent > 0) {
+          startTimeRef.current = Date.now() - (existingProgress.time_spent * 1000);
+          setTimeSpent(existingProgress.time_spent);
+        }
+        
+        setProgressLoaded(true);
+      } else {
+        // No existing progress, start fresh
+        setProgressLoaded(true);
+      }
+    } catch (error) {
+      console.error('Failed to load existing progress:', error);
+      setProgressLoaded(true); // Continue even if load fails
+    }
+  }, [currentLesson]);
 
   // Update reading progress based on scroll and time
   const updateReadingProgress = useCallback(() => {
-    if (showCelebration) return;
+    if (showCelebration || !progressLoaded || isLessonCompleted) return;
     
     const currentTime = Date.now();
     const timeSinceStart = (currentTime - startTimeRef.current) / 1000;
@@ -78,11 +123,41 @@ export const useProgressTracking = ({
     ) * 100;
     
     setEngagementScore(newEngagementScore);
-  }, [interactionHistory.length, showCelebration, contentRef]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded]);
+
+  // Check if lesson should auto-complete (for lessons without quiz/assignment)
+  const checkAutoCompletion = useCallback(() => {
+    // Don't auto-complete if:
+    // - Already completed
+    // - Lesson has quiz or assignment (they need to be completed separately)
+    // - Completion already in progress
+    // - Not loaded progress yet
+    if (isLessonCompleted || hasQuiz || hasAssignment || completionInProgress || !progressLoaded) {
+      return false;
+    }
+
+    // Auto-complete criteria:
+    // - Reading progress >= 80%
+    // - Engagement score >= 60%
+    const meetsReadingRequirement = readingProgress >= 80;
+    const meetsEngagementRequirement = engagementScore >= 60;
+
+    if (meetsReadingRequirement && meetsEngagementRequirement) {
+      console.log('✅ Auto-completion criteria met:', {
+        readingProgress: readingProgress.toFixed(1),
+        engagementScore: engagementScore.toFixed(1),
+        hasQuiz,
+        hasAssignment
+      });
+      return true;
+    }
+
+    return false;
+  }, [isLessonCompleted, hasQuiz, hasAssignment, completionInProgress, progressLoaded, readingProgress, engagementScore]);
 
   // Auto-save progress
   const autoSaveProgress = useCallback(async () => {
-    if (!currentLesson || isLessonCompleted) return;
+    if (!currentLesson || isLessonCompleted || !progressLoaded) return;
     
     try {
       await StudentApiService.updateLessonProgress(currentLesson.id, {
@@ -103,15 +178,17 @@ export const useProgressTracking = ({
     onComplete: (data: any) => void,
     onError?: (error: any) => void
   ) => {
-    if (!currentLesson || isLessonCompleted || completionInProgress) return;
+    if (!currentLesson || isLessonCompleted || completionInProgress) {
+      console.log('⏭️ Skipping completion:', { isLessonCompleted, completionInProgress });
+      return;
+    }
     
     try {
       setCompletionInProgress(true);
-      setIsLessonCompleted(true);
       
       const timeSpentSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
       
-      console.log('Attempting to complete lesson:', {
+      console.log('🎯 Attempting to complete lesson:', {
         lessonId: currentLesson.id,
         progressData: {
           time_spent: timeSpentSeconds,
@@ -122,7 +199,7 @@ export const useProgressTracking = ({
         }
       });
       
-      await StudentApiService.completeLesson(currentLesson.id, {
+      const result = await StudentApiService.completeLesson(currentLesson.id, {
         time_spent: timeSpentSeconds,
         reading_progress: readingProgress,
         engagement_score: engagementScore,
@@ -130,23 +207,40 @@ export const useProgressTracking = ({
         completion_method: 'automatic'
       });
       
+      // Mark as completed only after successful backend save
+      setIsLessonCompleted(true);
+      
+      console.log('✅ Lesson completion saved to database:', result);
+      
       onComplete({
         type: 'lesson_completed',
         lessonId: currentLesson.id,
         moduleId: currentModuleId,
         timestamp: new Date().toISOString(),
         timeSpent: timeSpentSeconds,
-        engagementScore: engagementScore
+        engagementScore: engagementScore,
+        backendResult: result
       });
       
     } catch (error: any) {
-      console.error('Failed to complete lesson:', error);
+      console.error('❌ Failed to complete lesson:', error);
       
-      if (error?.response?.status === 400 && error?.response?.data?.message?.includes('already completed')) {
-        console.log('Lesson was already completed, proceeding with celebration');
+      // Check if failure is due to quiz requirement
+      if (error?.response?.status === 402 && error?.response?.data?.quiz_required) {
+        console.log('📝 Quiz is required for this lesson:', error?.response?.data?.quiz_info);
+        
+        // Return quiz requirement info
+        if (onError) {
+          onError({
+            type: 'quiz_required',
+            ...error?.response?.data?.quiz_info
+          });
+        }
+      } else if (error?.response?.status === 200 || (error?.response?.status === 400 && error?.response?.data?.message?.includes('already completed'))) {
+        console.log('✅ Lesson was already completed in database');
+        setIsLessonCompleted(true);
       } else {
-        setIsLessonCompleted(false);
-        setCompletionInProgress(false);
+        console.error('⚠️ Error completing lesson, will not mark as complete');
         if (onError) onError(error);
       }
     } finally {
@@ -156,9 +250,10 @@ export const useProgressTracking = ({
     }
   }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, isLessonCompleted, completionInProgress]);
 
-  // Reset progress when lesson changes
+  // Reset progress and load existing data when lesson changes
   useEffect(() => {
     if (currentLesson) {
+      // Reset to defaults first
       startTimeRef.current = Date.now();
       setReadingProgress(0);
       setScrollProgress(0);
@@ -166,8 +261,12 @@ export const useProgressTracking = ({
       setTimeSpent(0);
       setIsLessonCompleted(false);
       readingTimeRef.current = 0;
+      setProgressLoaded(false);
+      
+      // Then load existing progress from backend
+      loadExistingProgress();
     }
-  }, [currentLesson?.id]);
+  }, [currentLesson?.id, loadExistingProgress]);
 
   // Time tracking
   useEffect(() => {
@@ -196,10 +295,13 @@ export const useProgressTracking = ({
     engagementScore,
     isLessonCompleted,
     completionInProgress,
+    progressLoaded,
     updateReadingProgress,
     autoSaveProgress,
     handleAutoLessonCompletion,
     setIsLessonCompleted,
-    setCompletionInProgress
+    setCompletionInProgress,
+    loadExistingProgress,
+    checkAutoCompletion
   };
 };

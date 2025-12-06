@@ -113,13 +113,15 @@ def verify_certificate():
 @certificate_bp.route("/my-certificates", methods=["GET"])
 @student_required
 def get_my_certificates():
-    """Get all certificates for the student"""
+    """Get all certificates for the student, including blurred ones for incomplete courses"""
     try:
         student_id = int(get_jwt_identity())
-        certificates = CertificateService.get_student_certificates(student_id)
+        # Pass include_completion=True to get completion percentage and locked status
+        certificates = CertificateService.get_student_certificates(student_id, include_completion=True)
         
         return jsonify({
             "success": True,
+            "certificates": certificates,
             "data": {
                 "certificates": certificates,
                 "total_count": len(certificates)

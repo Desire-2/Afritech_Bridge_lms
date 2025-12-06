@@ -321,11 +321,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(null);
     setToken(null);
     
-    // Clear storage including cached user data
+    // Clear storage including cached user data and learning progress
     try {
       localStorage.removeItem('token');
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('user');
+      
+      // Clear all learning progress data
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('learn_progress_')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+      
+      console.log('Cleared learning progress data from localStorage');
     } catch (error) {
       console.error('Error clearing localStorage:', error);
     }

@@ -8,6 +8,7 @@ from sqlalchemy import or_
 
 from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission
+from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
     StudentBookmark, StudentForum, ForumPost, ModuleProgress,
@@ -350,25 +351,33 @@ def complete_lesson(lesson_id):
     ).first()
     
     if existing_completion:
-        # Update existing completion with better progress data if provided
-        if data.get('reading_progress'):
-            existing_completion.reading_progress = max(existing_completion.reading_progress or 0, data.get('reading_progress', 100.0))
-        if data.get('engagement_score'):
-            existing_completion.engagement_score = max(existing_completion.engagement_score or 0, data.get('engagement_score', 75.0))
-        if data.get('scroll_progress'):
-            existing_completion.scroll_progress = max(existing_completion.scroll_progress or 0, data.get('scroll_progress', 100.0))
-        if data.get('time_spent'):
-            existing_completion.time_spent = max(existing_completion.time_spent or 0, data.get('time_spent', 0))
+        # Lesson already completed - only update if new data is better
+        updated = False
         
-        existing_completion.updated_at = datetime.utcnow()
+        if data.get('reading_progress') and data.get('reading_progress') > (existing_completion.reading_progress or 0):
+            existing_completion.reading_progress = data.get('reading_progress')
+            updated = True
+        if data.get('engagement_score') and data.get('engagement_score') > (existing_completion.engagement_score or 0):
+            existing_completion.engagement_score = data.get('engagement_score')
+            updated = True
+        if data.get('scroll_progress') and data.get('scroll_progress') > (existing_completion.scroll_progress or 0):
+            existing_completion.scroll_progress = data.get('scroll_progress')
+            updated = True
+        if data.get('time_spent') and data.get('time_spent') > (existing_completion.time_spent or 0):
+            existing_completion.time_spent = data.get('time_spent')
+            updated = True
+        
+        if updated:
+            existing_completion.updated_at = datetime.utcnow()
         existing_completion.last_accessed = datetime.utcnow()
         
         try:
             db.session.commit()
             return jsonify({
-                "message": "Lesson completion updated successfully", 
+                "message": "Lesson already completed" if not updated else "Lesson completion updated with better scores", 
                 "already_completed": True,
-                "completion": existing_completion.to_dict()
+                "completion": existing_completion.to_dict(),
+                "updated": updated
             }), 200
         except Exception as e:
             db.session.rollback()
@@ -1432,24 +1441,55 @@ def get_quiz(quiz_id):
             quiz_id=quiz_id
         ).all()
         
+        # Get quiz questions with answers
+        questions_list = []
+        if quiz.questions:
+            for q in quiz.questions.all():
+                answers_list = []
+                if q.answers:
+                    for ans in q.answers.all():
+                        answers_list.append({
+                            'id': ans.id,
+                            'text': ans.text,
+                            'answer_text': ans.text,  # For compatibility
+                            'question_id': ans.question_id
+                        })
+                
+                questions_list.append({
+                    'id': q.id,
+                    'text': q.text,
+                    'question_text': q.text,  # For compatibility
+                    'question': q.text,  # For backward compatibility
+                    'question_type': q.question_type,
+                    'order': q.order,
+                    'order_index': q.order,  # For compatibility
+                    'points': q.points,
+                    'explanation': q.explanation,
+                    'answers': answers_list
+                })
+        
+        # Get best attempt score
+        best_score = None
+        if attempts:
+            valid_scores = [a.score_percentage for a in attempts if hasattr(a, 'score_percentage') and a.score_percentage is not None]
+            if not valid_scores:
+                valid_scores = [a.score for a in attempts if hasattr(a, 'score') and a.score is not None]
+            best_score = max(valid_scores) if valid_scores else None
+        
         quiz_data = {
             'id': quiz.id,
             'title': quiz.title,
             'description': quiz.description,
             'time_limit': quiz.time_limit,
             'passing_score': quiz.passing_score,
-            'max_attempts': quiz.max_attempts,
+            'max_attempts': quiz.max_attempts if quiz.max_attempts else -1,
             'attempts_used': len(attempts),
-            'best_score': max([a.score for a in attempts]) if attempts else None,
-            'questions': [
-                {
-                    'id': q.id,
-                    'question': q.question,
-                    'type': q.question_type,
-                    'options': q.options if hasattr(q, 'options') else [],
-                    'points': q.points
-                } for q in quiz.questions
-            ] if hasattr(quiz, 'questions') else []
+            'best_score': best_score,
+            'points_possible': quiz.points_possible,
+            'shuffle_questions': quiz.shuffle_questions,
+            'shuffle_answers': quiz.shuffle_answers,
+            'show_correct_answers': quiz.show_correct_answers,
+            'questions': questions_list
         }
         
         return jsonify(quiz_data), 200
@@ -1483,37 +1523,91 @@ def submit_quiz(quiz_id):
             quiz_id=quiz_id
         ).count()
         
-        if existing_attempts >= quiz.max_attempts:
+        # Check if max attempts is set and exceeded (None or -1 means unlimited)
+        if quiz.max_attempts and quiz.max_attempts > 0 and existing_attempts >= quiz.max_attempts:
             return jsonify({"message": "Maximum attempts exceeded"}), 400
         
-        # Calculate score (simplified calculation)
-        total_points = len(answers) * 10  # Assuming 10 points per question
-        earned_points = len(answers) * 8   # Mock scoring - 80% average
-        score = (earned_points / total_points * 100) if total_points > 0 else 0
+        # Calculate score based on actual quiz questions
+        total_points = 0
+        earned_points = 0
         
-        # Create quiz attempt
+        # Get all questions for this quiz
+        questions = quiz.questions.all() if quiz.questions else []
+        
+        for question in questions:
+            total_points += question.points
+            
+            # Get user's answer for this question
+            user_answer = answers.get(str(question.id))
+            if not user_answer:
+                continue
+            
+            # Get correct answers for this question
+            correct_answers = [ans for ans in question.answers.all() if ans.is_correct]
+            
+            if question.question_type == 'multiple_choice' or question.question_type == 'single_choice':
+                # Check if user's answer matches a correct answer
+                if any(str(ans.id) == str(user_answer) for ans in correct_answers):
+                    earned_points += question.points
+            elif question.question_type == 'true_false':
+                # For true/false, check if answer matches 'true' or 'false'
+                if correct_answers:
+                    # Check if user_answer matches the correct answer's text (case-insensitive)
+                    correct_value = correct_answers[0].text.lower()
+                    if str(user_answer).lower() == correct_value or \
+                       (str(user_answer).lower() == 'true' and correct_value in ['true', 't', 'yes', '1']) or \
+                       (str(user_answer).lower() == 'false' and correct_value in ['false', 'f', 'no', '0']):
+                        earned_points += question.points
+            elif question.question_type in ['short_answer', 'essay']:
+                # For text-based questions, award points if answer is provided
+                # Note: These should be manually graded by instructor
+                # For now, we'll award points for providing an answer
+                if user_answer and str(user_answer).strip():
+                    # Store for manual grading but award provisional points
+                    # In production, these would need instructor review
+                    earned_points += question.points
+        
+        score_percentage = (earned_points / total_points * 100) if total_points > 0 else 0
+        
+        # Create quiz attempt with attempt number
+        attempt_number = existing_attempts + 1
         attempt = QuizAttempt(
             user_id=current_user_id,
             quiz_id=quiz_id,
-            score=score,
-            answers=str(answers),  # Store as JSON string
-            completed_at=datetime.utcnow()
+            attempt_number=attempt_number,
+            score=earned_points,
+            score_percentage=score_percentage,
+            start_time=datetime.utcnow(),
+            end_time=datetime.utcnow()
         )
         
         db.session.add(attempt)
+        db.session.flush()  # Get attempt ID
         
-        # Update enrollment grade if this is the best score
-        if not enrollment.grade or score > enrollment.grade:
-            enrollment.grade = score
+        # Store individual answers
+        for question_id_str, answer_data in answers.items():
+            user_answer = UserAnswer(
+                quiz_attempt_id=attempt.id,
+                question_id=int(question_id_str),
+                answer_data={'selected_answer': answer_data}
+            )
+            db.session.add(user_answer)
         
         db.session.commit()
         
+        # Calculate remaining attempts
+        if quiz.max_attempts and quiz.max_attempts > 0:
+            remaining = quiz.max_attempts - attempt_number
+        else:
+            remaining = -1  # Unlimited
+        
         return jsonify({
             "message": "Quiz submitted successfully",
-            "score": score,
-            "passed": score >= quiz.passing_score,
-            "attempt_number": existing_attempts + 1,
-            "remaining_attempts": quiz.max_attempts - (existing_attempts + 1)
+            "score": score_percentage,
+            "passed": score_percentage >= quiz.passing_score,
+            "attempt_number": attempt_number,
+            "total_attempts": attempt_number,
+            "remaining_attempts": remaining
         }), 200
         
     except Exception as e:
