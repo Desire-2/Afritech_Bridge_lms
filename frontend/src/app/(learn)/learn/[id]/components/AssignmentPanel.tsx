@@ -257,21 +257,81 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               </ul>
             </div>
 
-            {/* Action Button */}
-            <div className="flex space-x-3">
-              <Button 
-                onClick={() => setSubmissionMode('submit')}
-                className="flex-1 bg-green-600 hover:bg-green-700 py-6 text-lg"
-              >
-                <Edit className="h-5 w-5 mr-2" />
-                Start Assignment
-              </Button>
-              
-              {/* Download template or resources if available */}
-              <Button variant="outline" className="px-6">
-                <Download className="h-4 w-4 mr-2" />
-                Resources
-              </Button>
+            {/* Action Buttons */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              {assignment.submission_status?.status === 'graded' ? (
+                <>
+                  <Button 
+                    onClick={() => setSubmissionMode('submitted')}
+                    variant="default"
+                    className="flex-1 py-6 text-lg bg-green-600 hover:bg-green-700"
+                  >
+                    <Award className="h-5 w-5 mr-2" />
+                    View Grade & Feedback
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="sm:w-auto px-6 py-6"
+                    onClick={() => window.open('/student/assessments', '_blank')}
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    All Grades
+                  </Button>
+                </>
+              ) : assignment.submission_status?.submitted ? (
+                <>
+                  <Button 
+                    onClick={() => setSubmissionMode('submitted')}
+                    variant="outline"
+                    className="flex-1 py-6 text-lg"
+                  >
+                    <CheckCircle className="h-5 w-5 mr-2" />
+                    View Submission
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="sm:w-auto px-6 py-6"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Resources
+                  </Button>
+                </>
+              ) : isOverdue ? (
+                <>
+                  <Button 
+                    variant="outline"
+                    className="flex-1 py-6 text-lg"
+                    disabled
+                  >
+                    <AlertCircle className="h-5 w-5 mr-2" />
+                    Assignment Expired
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="sm:w-auto px-6 py-6"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Resources
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button 
+                    onClick={() => setSubmissionMode('submit')}
+                    className="flex-1 bg-green-600 hover:bg-green-700 py-6 text-lg"
+                  >
+                    <Edit className="h-5 w-5 mr-2" />
+                    Start Assignment
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="sm:w-auto px-6 py-6"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Resources
+                  </Button>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -281,40 +341,126 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 
   // Submitted State
   if (submissionMode === 'submitted') {
+    const isGraded = assignment.submission_status?.status === 'graded';
+    const grade = assignment.submission_status?.grade;
+    const feedback = assignment.submission_status?.feedback;
+    const percentage = grade ? (grade / assignment.points_possible) * 100 : 0;
+    
+    // Calculate letter grade
+    const getLetterGrade = (percent: number) => {
+      if (percent >= 90) return 'A';
+      if (percent >= 80) return 'B';
+      if (percent >= 70) return 'C';
+      if (percent >= 60) return 'D';
+      return 'F';
+    };
+    
     return (
       <div className="space-y-6">
         <Card className="border-green-200 bg-gradient-to-r from-green-50 to-emerald-50">
-          <CardContent className="p-8 text-center">
-            <div className="h-16 w-16 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="h-8 w-8 text-white" />
+          <CardContent className="p-8">
+            <div className="text-center mb-6">
+              <div className="h-16 w-16 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle className="h-8 w-8 text-white" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                {isGraded ? 'Assignment Graded!' : 'Assignment Submitted!'}
+              </h3>
+              <p className="text-gray-600">
+                {isGraded 
+                  ? 'Your instructor has reviewed and graded your assignment.'
+                  : 'Your assignment has been successfully submitted and is now being reviewed by your instructor.'}
+              </p>
             </div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">Assignment Submitted!</h3>
-            <p className="text-gray-600 mb-6">
-              Your assignment has been successfully submitted and is now being reviewed by your instructor.
-            </p>
             
             <div className="bg-white rounded-lg p-4 mb-6">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-gray-600">Submitted At</p>
-                  <p className="font-semibold text-gray-900">{new Date().toLocaleString()}</p>
+                  <p className="font-semibold text-gray-900">
+                    {assignment.submission_status?.submitted_at 
+                      ? new Date(assignment.submission_status.submitted_at).toLocaleString()
+                      : new Date().toLocaleString()}
+                  </p>
                 </div>
                 <div>
                   <p className="text-gray-600">Status</p>
-                  <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300">
-                    Under Review
+                  <Badge className={isGraded 
+                    ? "bg-green-100 text-green-800 border-green-300" 
+                    : "bg-yellow-100 text-yellow-800 border-yellow-300"}>
+                    {isGraded ? 'Graded' : 'Under Review'}
                   </Badge>
                 </div>
               </div>
             </div>
             
-            <Button
-              variant="outline"
-              onClick={() => setSubmissionMode('view')}
-              className="mt-4"
-            >
-              Back to Assignment Details
-            </Button>
+            {/* Grade Display */}
+            {isGraded && grade !== undefined && (
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-6 mb-6 border-2 border-green-200">
+                <div className="text-center mb-4">
+                  <div className="flex items-center justify-center gap-3 mb-2">
+                    <Award className="h-8 w-8 text-green-600" />
+                    <span className="text-5xl font-bold text-green-600">
+                      {getLetterGrade(percentage)}
+                    </span>
+                  </div>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {grade} / {assignment.points_possible} ({percentage.toFixed(1)}%)
+                  </p>
+                </div>
+                
+                {assignment.submission_status?.graded_at && (
+                  <div className="text-center text-sm text-gray-600">
+                    Graded on {new Date(assignment.submission_status.graded_at).toLocaleDateString('en-US', {
+                      month: 'short',
+                      day: 'numeric',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                    {assignment.submission_status?.grader_name && 
+                      ` by ${assignment.submission_status.grader_name}`}
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Feedback Display */}
+            {isGraded && feedback && (
+              <div className="bg-blue-50 rounded-lg p-6 mb-6 border-l-4 border-blue-500">
+                <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
+                  <FileText className="h-5 w-5 mr-2 text-blue-600" />
+                  Instructor Feedback:
+                </h4>
+                <div className="text-gray-700 whitespace-pre-wrap">
+                  {feedback}
+                </div>
+              </div>
+            )}
+            
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setSubmissionMode('view')}
+                className="flex-1"
+              >
+                Back to Assignment Details
+              </Button>
+              
+              {isGraded && (
+                <Button
+                  variant="default"
+                  className="flex-1 bg-green-600 hover:bg-green-700"
+                  onClick={() => {
+                    // Option to download grade report or navigate to full assessment page
+                    window.open(`/student/assessments`, '_blank');
+                  }}
+                >
+                  <Award className="h-4 w-4 mr-2" />
+                  View All Grades
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

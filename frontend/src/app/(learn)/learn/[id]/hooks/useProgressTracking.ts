@@ -31,6 +31,8 @@ export const useProgressTracking = ({
   const startTimeRef = useRef<number>(Date.now());
   const lastInteractionRef = useRef<number>(Date.now());
   const readingTimeRef = useRef<number>(0);
+  const maxScrollProgressRef = useRef<number>(0); // Track maximum scroll progress reached
+  const maxReadingProgressRef = useRef<number>(0); // Track maximum reading progress reached
   const [progressLoaded, setProgressLoaded] = useState<boolean>(false);
 
   // Load existing progress from backend
@@ -49,6 +51,10 @@ export const useProgressTracking = ({
         setScrollProgress(existingProgress.scroll_progress || 0);
         setEngagementScore(existingProgress.engagement_score || 0);
         setIsLessonCompleted(existingProgress.completed || false);
+        
+        // Initialize max progress refs with loaded values
+        maxScrollProgressRef.current = existingProgress.scroll_progress || 0;
+        maxReadingProgressRef.current = existingProgress.reading_progress || 0;
         
         // If lesson is completed, prevent further tracking
         if (existingProgress.completed) {
@@ -80,7 +86,7 @@ export const useProgressTracking = ({
     const currentTime = Date.now();
     const timeSinceStart = (currentTime - startTimeRef.current) / 1000;
     
-    let scrollProgress = 0;
+    let currentScrollProgress = 0;
     
     if (contentRef.current) {
       const element = contentRef.current;
@@ -88,28 +94,39 @@ export const useProgressTracking = ({
       const scrollHeight = element.scrollHeight - element.clientHeight;
       
       if (scrollHeight > 0) {
-        scrollProgress = (scrollTop / scrollHeight) * 100;
+        currentScrollProgress = (scrollTop / scrollHeight) * 100;
       } else {
-        scrollProgress = Math.min(100, (timeSinceStart / 180) * 100);
+        currentScrollProgress = Math.min(100, (timeSinceStart / 180) * 100);
       }
     }
     
-    setScrollProgress(Math.min(100, Math.max(0, scrollProgress)));
+    // Only update scroll progress if it's higher than the maximum reached
+    // This prevents progress from going down when scrolling up
+    const newMaxScrollProgress = Math.max(maxScrollProgressRef.current, currentScrollProgress);
+    maxScrollProgressRef.current = newMaxScrollProgress;
+    
+    setScrollProgress(Math.min(100, Math.max(0, newMaxScrollProgress)));
     
     const timeProgress = Math.min(100, (timeSinceStart / 300) * 100);
-    const combinedProgress = Math.max(scrollProgress, timeProgress);
-    setReadingProgress(combinedProgress);
+    const combinedProgress = Math.max(newMaxScrollProgress, timeProgress);
+    
+    // Only update reading progress if it's higher than the maximum reached
+    // This ensures reading progress never decreases
+    const newMaxReadingProgress = Math.max(maxReadingProgressRef.current, combinedProgress);
+    maxReadingProgressRef.current = newMaxReadingProgress;
+    
+    setReadingProgress(newMaxReadingProgress);
     
     console.log('Progress update:', 
-      `Scroll: ${scrollProgress.toFixed(1)}%, Time: ${timeProgress.toFixed(1)}%, Combined: ${combinedProgress.toFixed(1)}%`);
+      `Current Scroll: ${currentScrollProgress.toFixed(1)}%, Max Scroll: ${newMaxScrollProgress.toFixed(1)}%, Time: ${timeProgress.toFixed(1)}%, Reading: ${newMaxReadingProgress.toFixed(1)}%`);
     
-    if (scrollProgress > 0 || timeSinceStart > 10) {
+    if (currentScrollProgress > 0 || timeSinceStart > 10) {
       lastInteractionRef.current = currentTime;
       readingTimeRef.current += 2;
     }
     
     const engagementFactors = {
-      scrollProgress: scrollProgress / 100,
+      scrollProgress: newMaxScrollProgress / 100,
       timeSpent: Math.min(timeSinceStart / 600, 1),
       interactions: Math.min(interactionHistory.length / 10, 1),
       consistency: Math.min(readingTimeRef.current / 100, 1)
@@ -123,7 +140,7 @@ export const useProgressTracking = ({
     ) * 100;
     
     setEngagementScore(newEngagementScore);
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted]);
 
   // Check if lesson should auto-complete (for lessons without quiz/assignment)
   const checkAutoCompletion = useCallback(() => {
@@ -261,6 +278,8 @@ export const useProgressTracking = ({
       setTimeSpent(0);
       setIsLessonCompleted(false);
       readingTimeRef.current = 0;
+      maxScrollProgressRef.current = 0; // Reset max scroll progress
+      maxReadingProgressRef.current = 0; // Reset max reading progress
       setProgressLoaded(false);
       
       // Then load existing progress from backend

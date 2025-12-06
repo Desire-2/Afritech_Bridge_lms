@@ -16,6 +16,7 @@ import type { ContentQuiz, ContentAssignment } from '@/services/contentAssignmen
 import { ContentRichPreview } from './ContentRichPreview';
 import { QuizAttemptTracker } from './QuizAttemptTracker';
 import { AssignmentPanel } from './AssignmentPanel';
+import { LessonScoreDisplay } from './LessonScoreDisplay';
 
 interface LessonContentProps {
   currentLesson: any;
@@ -37,6 +38,8 @@ interface LessonContentProps {
   onVideoProgress?: (progress: number) => void;
   moduleScoring: any;
   lessonScore: number;
+  currentLessonQuizScore?: number;
+  currentLessonAssignmentScore?: number;
   currentModuleId: number | null;
   currentLessonIndex: number;
   totalLessons: number;
@@ -45,6 +48,8 @@ interface LessonContentProps {
   onNavigate: (direction: 'prev' | 'next') => void;
   onTrackInteraction: (type: string, data?: any) => void;
   onReloadContent?: () => void;
+  onQuizComplete?: (score: number, passed: boolean) => void;
+  onAssignmentSubmit?: (assignmentId: number, score: number) => void;
   getModuleStatus: (moduleId: number) => string;
   allLessons: any[];
 }
@@ -67,6 +72,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   contentRef,
   moduleScoring,
   lessonScore,
+  currentLessonQuizScore = 0,
+  currentLessonAssignmentScore = 0,
   currentModuleId,
   currentLessonIndex,
   totalLessons,
@@ -75,6 +82,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   onNavigate,
   onTrackInteraction,
   onReloadContent,
+  onQuizComplete,
+  onAssignmentSubmit,
   getModuleStatus,
   allLessons
 }) => {
@@ -217,6 +226,15 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             </div>
           </div>
 
+          {/* Comprehensive Lesson Score Display */}
+          <LessonScoreDisplay
+            readingProgress={readingProgress}
+            engagementScore={engagementScore}
+            quizScore={currentLessonQuizScore}
+            assignmentScore={currentLessonAssignmentScore}
+            lessonScore={lessonScore}
+          />
+
           {/* Learning Interface Tabs */}
           <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700">
             <Tabs value={currentViewMode} onValueChange={(value: any) => setCurrentViewMode(value)}>
@@ -346,6 +364,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           score, 
                           passed 
                         });
+                        // Update quiz score in parent component
+                        if (onQuizComplete) {
+                          onQuizComplete(score, passed);
+                        }
                         // Reload content to refresh attempt count
                         if (onReloadContent) {
                           setTimeout(() => onReloadContent(), 1000);
@@ -376,12 +398,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               </TabsContent>
 
               <TabsContent value="assignments" className="p-6">
-                {contentLoading ? (
+                {contentLoading && lessonAssignments.length === 0 ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
                     <span className="ml-2 text-gray-300">Loading assignments...</span>
                   </div>
-                ) : lessonAssignments.length > 0 ? (
+                ) : lessonAssignments && lessonAssignments.length > 0 ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between mb-6">
                       <div>

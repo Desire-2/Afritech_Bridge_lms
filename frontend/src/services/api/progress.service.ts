@@ -35,6 +35,69 @@ class ProgressApiService extends BaseApiService {
   }
 
   /**
+   * Get detailed module score breakdown with recommendations
+   */
+  async getModuleScoreBreakdown(moduleId: number): Promise<{
+    cumulative_score: number;
+    passing_threshold: number;
+    is_passing: boolean;
+    points_needed: number;
+    breakdown: {
+      course_contribution: {
+        score: number;
+        weight: number;
+        weighted_score: number;
+        description: string;
+      };
+      quizzes: {
+        score: number;
+        weight: number;
+        weighted_score: number;
+        description: string;
+      };
+      assignments: {
+        score: number;
+        weight: number;
+        weighted_score: number;
+        description: string;
+      };
+      final_assessment: {
+        score: number;
+        weight: number;
+        weighted_score: number;
+        description: string;
+      };
+    };
+    recommendations: Array<{
+      priority: 'high' | 'medium' | 'low';
+      area: string;
+      message: string;
+    }>;
+    attempts: {
+      used: number;
+      max: number;
+      remaining: number;
+      is_last_attempt: boolean;
+    };
+    status: string;
+    can_proceed: boolean;
+  }> {
+    return this.get(`/student/progress/module/${moduleId}/score-breakdown`);
+  }
+
+  /**
+   * Manually recalculate module score (useful for refreshing after lesson completion)
+   */
+  async recalculateModuleScore(moduleId: number): Promise<{
+    lessons_average_score: number;
+    course_contribution_score: number;
+    cumulative_score: number;
+    message: string;
+  }> {
+    return this.post(`/student/progress/module/${moduleId}/recalculate-score`, {});
+  }
+
+  /**
    * Record lesson completion
    */
   async completeLesson(lessonId: number, data: {

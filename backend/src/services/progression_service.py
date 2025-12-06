@@ -260,11 +260,14 @@ class ProgressionService:
                         "message": f"Complete and pass the quiz '{quiz_info['quiz_title']}' (minimum {quiz_info['passing_score']}%) to complete this lesson"
                     }
             
-            # Create completion record
+            # Create completion record with proper flags set
             completion = LessonCompletion(
                 student_id=student_id,
                 lesson_id=lesson_id,
-                time_spent=time_spent
+                time_spent=time_spent,
+                completed=True,  # Mark as completed
+                reading_progress=100.0,  # Default to 100% if completing manually
+                engagement_score=100.0  # Default to 100% for completed lessons
             )
             
             db.session.add(completion)
@@ -274,7 +277,7 @@ class ProgressionService:
                 module_progress.status = 'in_progress'
                 module_progress.started_at = datetime.utcnow()
             
-            # Update course contribution score (10% of total)
+            # Update course contribution score (10% of total) - now uses lesson scores
             ProgressionService._update_course_contribution_score(
                 student_id, module.id, enrollment.id
             )
@@ -416,13 +419,56 @@ class ProgressionService:
         module = Module.query.get(module_id)
         first_module = module.course.modules.order_by('order').first()
         
+        # ENHANCED: Check if student has completed any lessons in this module
+        # If they have, the module should be unlocked/in_progress, not locked
+        # Query lessons in this module and check for completions
+        module_lesson_ids = [lesson.id for lesson in module.lessons]
+        has_completed_lessons = False
+        completed_count = 0
+        
+        if module_lesson_ids:
+            completed_count = LessonCompletion.query.filter(
+                LessonCompletion.student_id == student_id,
+                LessonCompletion.lesson_id.in_(module_lesson_ids)
+            ).count()
+            has_completed_lessons = completed_count > 0
+        
+        # Determine initial status
+        if module.id == first_module.id:
+            initial_status = 'unlocked'
+            is_unlocked = True
+        elif has_completed_lessons:
+            # If student has completed lessons, module must have been unlocked before
+            initial_status = 'in_progress'
+            is_unlocked = True
+            current_app.logger.info(f"Restoring module {module_id} as in_progress (found {completed_count} completed lessons)")
+        else:
+            # Check if previous modules are completed (should be unlocked)
+            previous_modules = module.course.modules.filter(
+                Module.order < module.order
+            ).order_by('order').all()
+            
+            all_previous_completed = True
+            for prev_mod in previous_modules:
+                prev_progress = ModuleProgress.query.filter_by(
+                    student_id=student_id,
+                    module_id=prev_mod.id,
+                    enrollment_id=enrollment_id
+                ).first()
+                if not prev_progress or prev_progress.status != 'completed':
+                    all_previous_completed = False
+                    break
+            
+            initial_status = 'unlocked' if all_previous_completed else 'locked'
+            is_unlocked = all_previous_completed
+        
         progress = ModuleProgress(
             student_id=student_id,
             module_id=module_id,
             enrollment_id=enrollment_id,
-            status='unlocked' if module.id == first_module.id else 'locked',
-            unlocked_at=datetime.utcnow() if module.id == first_module.id else None,
-            prerequisites_met=module.id == first_module.id
+            status=initial_status,
+            unlocked_at=datetime.utcnow() if is_unlocked else None,
+            prerequisites_met=is_unlocked
         )
         
         db.session.add(progress)
@@ -475,7 +521,7 @@ class ProgressionService:
     
     @staticmethod
     def _update_course_contribution_score(student_id: int, module_id: int, enrollment_id: int):
-        """Update the course contribution score (10% of total grade)"""
+        """Update the course contribution score (10% of total grade) based on lesson scores"""
         module_progress = ModuleProgress.query.filter_by(
             student_id=student_id,
             module_id=module_id,
@@ -483,25 +529,22 @@ class ProgressionService:
         ).first()
         
         if module_progress:
-            # Calculate contribution based on:
-            # - Lesson completion rate
-            # - Forum participation
-            # - Help given to peers
-            # - Timeliness of completion
+            # Calculate module score (average of all comprehensive lesson scores)
+            # Each lesson score includes: reading + engagement + quiz + assignment
+            module_score = module_progress.calculate_module_score()
             
-            module = Module.query.get(module_id)
-            total_lessons = module.lessons.count()
-            completed_lessons = LessonCompletion.query.filter_by(student_id=student_id).filter(
-                LessonCompletion.lesson.has(module_id=module_id)
-            ).count()
+            # Store as course contribution score (0-100)
+            module_progress.course_contribution_score = min(100.0, module_score)
             
-            completion_rate = (completed_lessons / total_lessons * 100) if total_lessons > 0 else 0
+            # Recalculate weighted cumulative score (for passing requirements)
+            module_progress.calculate_module_weighted_score()
             
-            # Base score on completion rate (can be enhanced with forum participation, etc.)
-            module_progress.course_contribution_score = min(100.0, completion_rate)
-            
-            # Recalculate cumulative score
-            module_progress.calculate_cumulative_score()
+            # Commit changes to database
+            try:
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                current_app.logger.error(f"Failed to update course contribution score: {str(e)}")
     
     @staticmethod
     def _suspend_student_from_course(student_id: int, module_id: int, enrollment_id: int, total_attempts: int) -> Tuple[bool, str]:

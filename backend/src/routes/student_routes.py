@@ -7,7 +7,7 @@ import json
 from sqlalchemy import or_
 
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
@@ -367,12 +367,36 @@ def complete_lesson(lesson_id):
             existing_completion.time_spent = data.get('time_spent')
             updated = True
         
+        # Ensure completed flag is set
+        if not existing_completion.completed:
+            existing_completion.completed = True
+            updated = True
+        
+        # If engagement_score is 0 but lesson is completed, use reading_progress or default to 100
+        if existing_completion.completed and (existing_completion.engagement_score or 0) == 0:
+            existing_completion.engagement_score = existing_completion.reading_progress or 100.0
+            updated = True
+        
         if updated:
             existing_completion.updated_at = datetime.utcnow()
         existing_completion.last_accessed = datetime.utcnow()
         
         try:
             db.session.commit()
+            
+            # Update module score after lesson update
+            if updated:
+                from ..services.progression_service import ProgressionService
+                module_progress = ModuleProgress.query.filter_by(
+                    student_id=current_user_id,
+                    module_id=lesson.module_id
+                ).first()
+                if module_progress:
+                    ProgressionService._update_course_contribution_score(
+                        current_user_id, lesson.module_id, enrollment.id
+                    )
+                    db.session.commit()
+            
             return jsonify({
                 "message": "Lesson already completed" if not updated else "Lesson completion updated with better scores", 
                 "already_completed": True,
@@ -1595,6 +1619,38 @@ def submit_quiz(quiz_id):
         
         db.session.commit()
         
+        # ===== FIX: Update module progress with quiz score =====
+        # Get the module_id from either the quiz directly or via the lesson
+        module_id = quiz.module_id
+        if not module_id and quiz.lesson_id:
+            # Quiz is attached to a lesson, get module from lesson
+            lesson = Lesson.query.get(quiz.lesson_id)
+            if lesson:
+                module_id = lesson.module_id
+        
+        if module_id:
+            try:
+                # Update module progress with the quiz score
+                module_progress = ModuleProgress.query.filter_by(
+                    student_id=current_user_id,
+                    module_id=module_id,
+                    enrollment_id=enrollment.id
+                ).first()
+                
+                if module_progress:
+                    # Use best quiz score (keep the higher score)
+                    current_quiz_score = module_progress.quiz_score or 0.0
+                    module_progress.quiz_score = max(current_quiz_score, score_percentage)
+                    module_progress.calculate_cumulative_score()
+                    db.session.commit()
+                    print(f"✅ Updated module {module_id} quiz score: {module_progress.quiz_score}%")
+                else:
+                    print(f"⚠️ No module progress found for module {module_id}")
+            except Exception as mp_error:
+                print(f"⚠️ Error updating module progress: {str(mp_error)}")
+                # Don't fail the whole request, just log the error
+        # ===== END FIX =====
+        
         # Calculate remaining attempts
         if quiz.max_attempts and quiz.max_attempts > 0:
             remaining = quiz.max_attempts - attempt_number
@@ -1739,3 +1795,171 @@ def get_learning_path():
         
     except Exception as e:
         return jsonify({"message": "Error generating learning path", "error": str(e)}), 500
+
+
+# --- Student Project Routes ---
+@student_bp.route("/projects", methods=["GET"])
+@student_required
+def get_student_projects():
+    """Get all projects for courses the student is enrolled in with submission status"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        # Get enrolled course IDs
+        enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
+        enrolled_course_ids = [e.course_id for e in enrollments]
+        
+        # Get all published projects for enrolled courses
+        projects = Project.query.filter(
+            Project.course_id.in_(enrolled_course_ids),
+            Project.is_published == True
+        ).order_by(Project.due_date.asc()).all()
+        
+        result = []
+        for project in projects:
+            # Get submission status
+            submission = ProjectSubmission.query.filter_by(
+                project_id=project.id,
+                student_id=current_user_id
+            ).first()
+            
+            # Build submission status
+            submission_status = {
+                'submitted': submission is not None,
+                'status': 'not_submitted'
+            }
+            
+            if submission:
+                submission_status['id'] = submission.id
+                submission_status['submitted_at'] = submission.submitted_at.isoformat()
+                submission_status['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at else False
+                
+                if submission.grade is not None:
+                    submission_status['status'] = 'graded'
+                    submission_status['grade'] = submission.grade
+                    submission_status['feedback'] = submission.feedback
+                    submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
+                    if submission.grader:
+                        submission_status['grader_name'] = submission.grader.full_name
+                else:
+                    submission_status['status'] = 'submitted'
+            else:
+                # Check if overdue
+                if project.due_date < datetime.utcnow():
+                    submission_status['status'] = 'late'
+                    days_late = (datetime.utcnow() - project.due_date).days
+                    submission_status['days_late'] = days_late
+                    submission_status['is_late'] = True
+                else:
+                    submission_status['is_late'] = False
+            
+            project_data = project.to_dict()
+            project_data['course_title'] = project.course.title
+            project_data['submission_status'] = submission_status
+            result.append(project_data)
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching projects", "error": str(e)}), 500
+
+
+@student_bp.route("/projects/<int:project_id>/details", methods=["GET"])
+@student_required
+def get_student_project_details(project_id):
+    """Get detailed project information with submission status"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({"message": "Project not found"}), 404
+        
+        # Verify student is enrolled in the course
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=project.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "You are not enrolled in this course"}), 403
+        
+        # Get submission
+        submission = ProjectSubmission.query.filter_by(
+            project_id=project_id,
+            student_id=current_user_id
+        ).first()
+        
+        result = {
+            'project': project.to_dict(include_modules=True),
+            'submission': None
+        }
+        
+        result['project']['course_title'] = project.course.title
+        
+        if submission:
+            submission_data = submission.to_dict()
+            submission_data['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at else False
+            if submission.grader:
+                submission_data['grader_name'] = submission.grader.full_name
+            result['submission'] = submission_data
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({"message": "Error fetching project details", "error": str(e)}), 500
+
+
+@student_bp.route("/projects/<int:project_id>/submit", methods=["POST"])
+@student_required
+def submit_project(project_id):
+    """Submit a project"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        project = Project.query.get(project_id)
+        if not project:
+            return jsonify({"message": "Project not found"}), 404
+        
+        # Verify student is enrolled in the course
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=project.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "You are not enrolled in this course"}), 403
+        
+        # Check if already submitted
+        existing_submission = ProjectSubmission.query.filter_by(
+            project_id=project_id,
+            student_id=current_user_id
+        ).first()
+        
+        if existing_submission:
+            return jsonify({"message": "Project already submitted"}), 400
+        
+        # Create submission
+        submission = ProjectSubmission(
+            project_id=project_id,
+            student_id=current_user_id,
+            text_content=data.get('text_content'),
+            file_path=data.get('file_url')  # Frontend should handle file upload
+        )
+        
+        # Handle team members if collaboration allowed
+        if project.collaboration_allowed and data.get('team_members'):
+            submission.set_team_members(data['team_members'])
+        
+        db.session.add(submission)
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Project submitted successfully",
+            "submission": submission.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error submitting project", "error": str(e)}), 500

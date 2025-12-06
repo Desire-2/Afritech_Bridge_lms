@@ -231,6 +231,9 @@ def get_course_for_learning(course_id):
         
         # Import course models here to avoid circular imports
         from ..models.course_models import Course, Enrollment
+        from ..models.student_models import ModuleProgress, LessonCompletion
+        from ..models.user_models import db
+        from flask import current_app
         
         # Get course and check enrollment
         course = Course.query.get(course_id)
@@ -249,6 +252,29 @@ def get_course_for_learning(course_id):
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
+        # ENHANCED: Ensure all modules have progress records initialized
+        # This fixes the issue where modules lose their unlock status
+        try:
+            modules = course.modules.order_by('order').all()
+            for module in modules:
+                existing_progress = ModuleProgress.query.filter_by(
+                    student_id=student_id,
+                    module_id=module.id,
+                    enrollment_id=enrollment.id
+                ).first()
+                
+                if not existing_progress:
+                    current_app.logger.info(f"Initializing missing module progress for module {module.id}")
+                    ProgressionService._initialize_module_progress(
+                        student_id, module.id, enrollment.id
+                    )
+            
+            db.session.commit()
+        except Exception as init_error:
+            current_app.logger.error(f"Error initializing module progress: {str(init_error)}")
+            # Continue even if initialization fails
+            db.session.rollback()
+        
         # Get course progress data
         try:
             progress_data = ProgressionService.get_student_course_progress(student_id, course_id)
@@ -261,7 +287,7 @@ def get_course_for_learning(course_id):
                     "modules": []
                 }
         except Exception as e:
-            print(f"ProgressionService error: {str(e)}")
+            current_app.logger.error(f"ProgressionService error: {str(e)}")
             progress_data = {
                 "overall_progress": 0,
                 "current_module": None,

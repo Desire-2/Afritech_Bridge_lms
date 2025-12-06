@@ -235,8 +235,21 @@ export const useModuleScoring = (moduleId: number) => {
 
     const loadScoring = async () => {
       try {
+        // First, trigger a recalculation to ensure fresh scores
+        try {
+          await ProgressApiService.recalculateModuleScore(moduleId);
+          console.log('🔄 Module score recalculated');
+        } catch (recalcError) {
+          console.warn('Could not recalculate score:', recalcError);
+          // Continue anyway to fetch whatever data is available
+        }
+
         const moduleData = await ProgressApiService.getModuleProgress(moduleId);
-        const progress = moduleData?.progress;
+        // Handle both response formats: data.data.progress and data.progress
+        const progress = moduleData?.data?.progress || moduleData?.progress;
+
+        console.log('📊 Module scoring data fetched for module', moduleId, ':', progress);
+        console.log('📊 Full response:', JSON.stringify(moduleData, null, 2));
 
         // Check if progress data exists
         if (!progress) {
@@ -262,6 +275,14 @@ export const useModuleScoring = (moduleId: number) => {
           ((progress.quiz_score || 0) * 0.30) +
           ((progress.assignment_score || 0) * 0.40) +
           ((progress.final_assessment_score || 0) * 0.20);
+
+        console.log('✅ Calculated cumulative score:', cumulative, 'from components:', {
+          courseContribution: progress.course_contribution_score,
+          lessonsAverage: progress.lessons_average_score,
+          quizzes: progress.quiz_score,
+          assignments: progress.assignment_score,
+          finalAssessment: progress.final_assessment_score
+        });
 
         setScoringState({
           cumulativeScore: cumulative,
@@ -294,7 +315,10 @@ export const useModuleScoring = (moduleId: number) => {
     setLoading(true);
     try {
       const moduleData = await ProgressApiService.getModuleProgress(moduleId);
-      const progress = moduleData?.progress;
+      // Handle both response formats: data.data.progress and data.progress
+      const progress = moduleData?.data?.progress || moduleData?.progress;
+
+      console.log('🔄 Recalculating module scoring for module', moduleId, ':', progress);
 
       // Check if progress data exists
       if (!progress) {
@@ -319,6 +343,8 @@ export const useModuleScoring = (moduleId: number) => {
         ((progress.quiz_score || 0) * 0.30) +
         ((progress.assignment_score || 0) * 0.40) +
         ((progress.final_assessment_score || 0) * 0.20);
+
+      console.log('✅ Recalculated cumulative score:', cumulative);
 
       setScoringState({
         cumulativeScore: cumulative,

@@ -7,7 +7,7 @@ from datetime import datetime
 import json
 
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Quiz, Assignment, Project
+from ..models.course_models import Course, Module, Lesson, Quiz, Assignment, Project, AssignmentSubmission
 from ..models.student_models import ModuleProgress, LessonCompletion
 from ..models.quiz_progress_models import QuizAttempt
 
@@ -337,20 +337,87 @@ def get_module_assignments(module_id):
 @content_assignment_bp.route("/lessons/<int:lesson_id>/assignments", methods=["GET"])
 @jwt_required()
 def get_lesson_assignments(lesson_id):
-    """Get all assignments for a lesson"""
+    """Get all assignments for a lesson with submission status"""
     try:
+        current_user_id = int(get_jwt_identity())
+        
         lesson = Lesson.query.get(lesson_id)
         if not lesson:
             return jsonify({"message": "Lesson not found"}), 404
         
         assignments = Assignment.query.filter_by(lesson_id=lesson_id, is_published=True).all()
         
+        # Add submission status for each assignment
+        assignments_with_status = []
+        for assignment in assignments:
+            try:
+                assignment_dict = assignment.to_dict()
+                
+                # Get submission for current user
+                submission = AssignmentSubmission.query.filter_by(
+                    assignment_id=assignment.id,
+                    student_id=current_user_id
+                ).first()
+                
+                # Build submission status
+                submission_status = {
+                    'submitted': submission is not None,
+                    'status': 'not_submitted'
+                }
+                
+                if submission:
+                    submission_status['id'] = submission.id
+                    submission_status['submitted_at'] = submission.submitted_at.isoformat() if submission.submitted_at else None
+                    
+                    if submission.grade is not None:
+                        submission_status['status'] = 'graded'
+                        submission_status['grade'] = submission.grade
+                        submission_status['feedback'] = submission.feedback
+                        submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
+                        # Safely get grader name
+                        try:
+                            if submission.graded_by:
+                                grader = User.query.get(submission.graded_by)
+                                if grader:
+                                    submission_status['grader_name'] = grader.full_name
+                        except:
+                            pass
+                    else:
+                        submission_status['status'] = 'submitted'
+                else:
+                    # Check if overdue - handle both datetime and string
+                    try:
+                        if assignment.due_date:
+                            due_date = assignment.due_date
+                            if isinstance(due_date, str):
+                                due_date = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                            if due_date < datetime.utcnow():
+                                submission_status['status'] = 'late'
+                    except:
+                        pass
+                
+                assignment_dict['submission_status'] = submission_status
+                assignments_with_status.append(assignment_dict)
+            except Exception as assignment_error:
+                # Log individual assignment error but continue with others
+                print(f"Error processing assignment {assignment.id}: {str(assignment_error)}")
+                # Still add the assignment without submission status
+                assignment_dict = assignment.to_dict()
+                assignment_dict['submission_status'] = {
+                    'submitted': False,
+                    'status': 'not_submitted'
+                }
+                assignments_with_status.append(assignment_dict)
+        
         return jsonify({
             "lesson": lesson.to_dict(),
-            "assignments": [assignment.to_dict() for assignment in assignments]
+            "assignments": assignments_with_status
         }), 200
         
     except Exception as e:
+        print(f"Error fetching lesson assignments: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"message": "Error fetching lesson assignments", "error": str(e)}), 500
 
 # ==================== PROJECT MANAGEMENT ROUTES ====================

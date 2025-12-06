@@ -72,11 +72,14 @@ export interface ModuleProgress {
   status: 'locked' | 'unlocked' | 'in_progress' | 'completed' | 'failed';
   attempts_count: number;
   max_attempts: number;
+  module_score: number;  // NEW: Average of all lesson scores (0-100)
   course_contribution_score: number;
+  lessons_average_score: number;  // Backwards compatibility
   quiz_score: number;
   assignment_score: number;
   final_assessment_score: number;
-  cumulative_score: number;
+  weighted_score: number;  // NEW: Weighted score for passing (0-100)
+  cumulative_score: number;  // Backwards compatibility (same as weighted_score)
   started_at?: string;
   completed_at?: string;
   failed_at?: string;

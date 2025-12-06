@@ -71,6 +71,15 @@ export interface ContentAssignment {
   is_published: boolean;
   created_at: string;
   updated_at: string;
+  submission_status?: {
+    submitted: boolean;
+    status: 'not_submitted' | 'submitted' | 'graded' | 'late';
+    grade?: number;
+    feedback?: string;
+    submitted_at?: string;
+    graded_at?: string;
+    grader_name?: string;
+  };
 }
 
 export interface ContentProject {

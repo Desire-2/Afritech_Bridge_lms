@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from functools import wraps
 
-from ..models.user_models import User
+from ..models.user_models import User, db
 from ..services.analytics_service import AnalyticsService
 from ..services.progression_service import ProgressionService
 
@@ -92,7 +92,7 @@ def get_module_progress(module_id):
             return jsonify({"error": "Module not found"}), 404
         
         enrollment = Enrollment.query.filter_by(
-            user_id=student_id, course_id=module.course_id
+            student_id=student_id, course_id=module.course_id
         ).first()
         
         if not enrollment:
@@ -183,6 +183,193 @@ def get_course_analytics(course_id):
             "error": "Failed to load course analytics"
         }), 500
 
+@progress_bp.route("/module/<int:module_id>/score-breakdown", methods=["GET"])
+@student_required
+def get_module_score_breakdown(module_id):
+    """Get detailed score breakdown with requirements and recommendations"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        from ..models.student_models import ModuleProgress
+        from ..models.course_models import Module, Enrollment
+        
+        # Get module and enrollment
+        module = Module.query.get(module_id)
+        if not module:
+            return jsonify({"error": "Module not found"}), 404
+        
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id, course_id=module.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Not enrolled in course"}), 403
+        
+        # Get module progress
+        module_progress = ModuleProgress.query.filter_by(
+            student_id=student_id,
+            module_id=module_id,
+            enrollment_id=enrollment.id
+        ).first()
+        
+        if not module_progress:
+            module_progress = ProgressionService._initialize_module_progress(
+                student_id, module_id, enrollment.id
+            )
+            db.session.commit()
+        
+        # Recalculate cumulative score
+        cumulative_score = module_progress.calculate_cumulative_score()
+        db.session.commit()
+        
+        # Calculate detailed breakdown
+        breakdown = {
+            "course_contribution": {
+                "score": module_progress.course_contribution_score or 0.0,
+                "weight": 10.0,
+                "weighted_score": (module_progress.course_contribution_score or 0.0) * 0.10,
+                "description": "Lesson completion and course engagement"
+            },
+            "quizzes": {
+                "score": module_progress.quiz_score or 0.0,
+                "weight": 30.0,
+                "weighted_score": (module_progress.quiz_score or 0.0) * 0.30,
+                "description": "Best quiz performance"
+            },
+            "assignments": {
+                "score": module_progress.assignment_score or 0.0,
+                "weight": 40.0,
+                "weighted_score": (module_progress.assignment_score or 0.0) * 0.40,
+                "description": "Best assignment quality"
+            },
+            "final_assessment": {
+                "score": module_progress.final_assessment_score or 0.0,
+                "weight": 20.0,
+                "weighted_score": (module_progress.final_assessment_score or 0.0) * 0.20,
+                "description": "Final module assessment"
+            }
+        }
+        
+        # Calculate what's needed to pass
+        passing_threshold = 80.0
+        points_needed = max(0, passing_threshold - cumulative_score)
+        
+        # Generate recommendations
+        recommendations = []
+        if module_progress.assignment_score < 70:
+            recommendations.append({
+                "priority": "high",
+                "area": "assignments",
+                "message": "Focus on improving assignment quality (40% of total grade)"
+            })
+        if module_progress.quiz_score < 70:
+            recommendations.append({
+                "priority": "medium",
+                "area": "quizzes",
+                "message": "Review quiz material and retake if possible (30% of total grade)"
+            })
+        if module_progress.final_assessment_score < 70:
+            recommendations.append({
+                "priority": "high",
+                "area": "final_assessment",
+                "message": "Prepare thoroughly for final assessment (20% of total grade)"
+            })
+        if module_progress.course_contribution_score < 90:
+            recommendations.append({
+                "priority": "low",
+                "area": "course_contribution",
+                "message": "Complete all lessons to maximize contribution score (10% of total grade)"
+            })
+        
+        # Attempt tracking
+        remaining_attempts = module_progress.max_attempts - module_progress.attempts_count
+        is_last_attempt = remaining_attempts == 1
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "cumulative_score": round(cumulative_score, 2),
+                "passing_threshold": passing_threshold,
+                "is_passing": cumulative_score >= passing_threshold,
+                "points_needed": round(points_needed, 2),
+                "breakdown": breakdown,
+                "recommendations": recommendations,
+                "attempts": {
+                    "used": module_progress.attempts_count,
+                    "max": module_progress.max_attempts,
+                    "remaining": remaining_attempts,
+                    "is_last_attempt": is_last_attempt
+                },
+                "status": module_progress.status,
+                "can_proceed": cumulative_score >= passing_threshold and module_progress.status == 'completed'
+            }
+        }), 200
+        
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Failed to get module score breakdown: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to get module score breakdown"
+        }), 500
+
+@progress_bp.route("/module/<int:module_id>/recalculate-score", methods=["POST"])
+@student_required
+def recalculate_module_score(module_id):
+    """Manually recalculate module score (useful for debugging)"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        from ..models.student_models import ModuleProgress
+        from ..models.course_models import Module, Enrollment
+        
+        # Get module and enrollment
+        module = Module.query.get(module_id)
+        if not module:
+            return jsonify({"error": "Module not found"}), 404
+        
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id, course_id=module.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Not enrolled in course"}), 403
+        
+        # Get module progress
+        module_progress = ModuleProgress.query.filter_by(
+            student_id=student_id,
+            module_id=module_id,
+            enrollment_id=enrollment.id
+        ).first()
+        
+        if not module_progress:
+            return jsonify({"error": "Module progress not found"}), 404
+        
+        # Recalculate scores
+        lessons_avg = module_progress.calculate_lessons_average_score()
+        module_progress.course_contribution_score = lessons_avg
+        cumulative = module_progress.calculate_cumulative_score()
+        
+        db.session.commit()
+        
+        return jsonify({
+            "success": True,
+            "data": {
+                "lessons_average_score": lessons_avg,
+                "course_contribution_score": module_progress.course_contribution_score,
+                "cumulative_score": cumulative,
+                "message": "Score recalculated successfully"
+            }
+        }), 200
+        
+    except Exception as e:
+        from flask import current_app
+        current_app.logger.error(f"Failed to recalculate module score: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 @progress_bp.route("/weak-areas/<int:course_id>", methods=["GET"])
 @student_required
 def get_weak_areas(course_id):
@@ -244,7 +431,7 @@ def attempt_module_retake(module_id):
             return jsonify({"error": "Module not found"}), 404
         
         enrollment = Enrollment.query.filter_by(
-            user_id=student_id, course_id=module.course_id
+            student_id=student_id, course_id=module.course_id
         ).first()
         
         if not enrollment:
@@ -307,7 +494,7 @@ def get_performance_trends():
         else:
             # Get trends for all courses
             from ..models.course_models import Enrollment
-            enrollments = Enrollment.query.filter_by(user_id=student_id).all()
+            enrollments = Enrollment.query.filter_by(student_id=student_id).all()
             trends = []
             
             for enrollment in enrollments:

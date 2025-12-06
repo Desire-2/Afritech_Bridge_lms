@@ -74,7 +74,8 @@ class Module(db.Model):
             'updated_at': self.updated_at.isoformat()
         }
         if include_lessons:
-            data['lessons'] = [lesson.to_dict() for lesson in self.lessons.order_by(Lesson.order)]
+            # Use string 'order' column name for ordering to avoid forward reference issues
+            data['lessons'] = [lesson.to_dict() for lesson in self.lessons.order_by('order')]
         return data
 
 class Lesson(db.Model):
@@ -127,6 +128,38 @@ class Enrollment(db.Model):
 
     def __repr__(self):
         return f'<Enrollment User {self.student_id} in Course {self.course_id}>'
+    
+    def calculate_course_score(self):
+        """
+        Calculate the overall course score as the average of all module scores.
+        Returns a score from 0-100.
+        """
+        from ..models.student_models import ModuleProgress
+        
+        # Get all modules in this course
+        course_modules = self.course.modules.all()
+        if not course_modules:
+            return 0.0
+        
+        total_score = 0.0
+        scored_modules = 0
+        
+        for module in course_modules:
+            # Get module progress for this student
+            module_progress = ModuleProgress.query.filter_by(
+                student_id=self.student_id,
+                module_id=module.id,
+                enrollment_id=self.id
+            ).first()
+            
+            if module_progress:
+                # Use the module score (average of all lesson scores)
+                module_score = module_progress.calculate_module_score()
+                total_score += module_score
+                scored_modules += 1
+        
+        # Calculate average, or return 0 if no modules
+        return (total_score / scored_modules) if scored_modules > 0 else 0.0
 
     def to_dict(self):
         return {
@@ -135,6 +168,7 @@ class Enrollment(db.Model):
             'course_id': self.course_id,
             'enrollment_date': self.enrollment_date.isoformat(),
             'progress': self.progress,
+            'course_score': self.calculate_course_score(),  # Overall course score
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'student_username': self.student.username if self.student else None,
             'course_title': self.course.title if self.course else None
@@ -335,9 +369,9 @@ class AssignmentSubmission(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     assignment_id = db.Column(db.Integer, db.ForeignKey('assignments.id'), nullable=False)
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    text_content = db.Column(db.Text, nullable=True)  # For text responses
-    file_path = db.Column(db.String(500), nullable=True)  # Path to uploaded file
-    file_name = db.Column(db.String(255), nullable=True)  # Original filename
+    content = db.Column(db.Text, nullable=True)  # For text responses (matches DB schema)
+    file_url = db.Column(db.String(255), nullable=True)  # URL or path to uploaded file
+    external_url = db.Column(db.String(255), nullable=True)  # External URL submission
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
     grade = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
@@ -347,6 +381,9 @@ class AssignmentSubmission(db.Model):
     # Relationships
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('assignment_submissions', lazy='dynamic'))
     grader = db.relationship('User', foreign_keys=[graded_by], backref=db.backref('graded_assignments', lazy='dynamic'))
+    
+    # Add unique constraint for assignment-student combination
+    __table_args__ = (db.UniqueConstraint('assignment_id', 'student_id', name='_assignment_student_submission_uc'),)
 
     def __repr__(self):
         return f'<AssignmentSubmission {self.id} for Assignment {self.assignment_id}>'
@@ -356,10 +393,12 @@ class AssignmentSubmission(db.Model):
             'id': self.id,
             'assignment_id': self.assignment_id,
             'student_id': self.student_id,
-            'text_content': self.text_content,
-            'file_path': self.file_path,
-            'file_name': self.file_name,
-            'submitted_at': self.submitted_at.isoformat(),
+            'content': self.content,
+            'text_content': self.content,  # Alias for backward compatibility
+            'file_url': self.file_url,
+            'file_path': self.file_url,  # Alias for backward compatibility
+            'external_url': self.external_url,
+            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'grade': self.grade,
             'feedback': self.feedback,
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,

@@ -27,6 +27,55 @@ class LessonCompletion(db.Model):
     
     __table_args__ = (db.UniqueConstraint('student_id', 'lesson_id', name='_student_lesson_completion_uc'),)
     
+    def calculate_lesson_score(self):
+        """
+        Calculate comprehensive lesson score from all components:
+        - Reading Progress (25%)
+        - Engagement Score (25%)
+        - Quiz Score (25%)
+        - Assignment Score (25%)
+        Returns a score from 0-100
+        """
+        reading = self.reading_progress or 0.0
+        engagement = self.engagement_score or 0.0
+        
+        # Get quiz score for this lesson
+        from ..models.quiz_progress_models import QuizAttempt
+        from ..models.course_models import Quiz
+        quiz_score = 0.0
+        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id).first()
+        if lesson_quiz:
+            best_attempt = QuizAttempt.query.filter_by(
+                user_id=self.student_id,
+                quiz_id=lesson_quiz.id
+            ).order_by(QuizAttempt.score.desc()).first()
+            if best_attempt:
+                quiz_score = best_attempt.score_percentage or 0.0
+        
+        # Get assignment score for this lesson
+        from ..models.course_models import Assignment, Submission
+        assignment_score = 0.0
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        if lesson_assignment:
+            # Check for submissions linked to this lesson
+            best_submission = Submission.query.filter_by(
+                student_id=self.student_id,
+                lesson_id=self.lesson_id
+            ).order_by(Submission.grade.desc()).first()
+            if best_submission and best_submission.grade is not None:
+                # Grade is already a percentage (0-100)
+                assignment_score = best_submission.grade
+        
+        # Calculate weighted average (25% each component)
+        lesson_score = (
+            (reading * 0.25) +
+            (engagement * 0.25) +
+            (quiz_score * 0.25) +
+            (assignment_score * 0.25)
+        )
+        
+        return lesson_score
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -38,6 +87,7 @@ class LessonCompletion(db.Model):
             'reading_progress': self.reading_progress,
             'engagement_score': self.engagement_score,
             'scroll_progress': self.scroll_progress,
+            'lesson_score': self.calculate_lesson_score(),  # Comprehensive lesson score
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None
         }
@@ -301,37 +351,97 @@ class ModuleProgress(db.Model):
     
     __table_args__ = (db.UniqueConstraint('student_id', 'module_id', 'enrollment_id', name='_student_module_progress_uc'),)
     
-    def calculate_cumulative_score(self):
-        """Calculate the weighted cumulative score"""
+    def calculate_module_score(self):
+        """
+        Calculate the module score as the average of all lesson scores.
+        Each lesson score is comprehensive (reading + engagement + quiz + assignment).
+        Returns a score from 0-100.
+        """
+        from sqlalchemy import func
+        
+        # Get all lessons in this module
+        module_lessons = self.module.lessons.all()
+        if not module_lessons:
+            return 0.0
+        
+        total_score = 0.0
+        scored_lessons = 0
+        
+        for lesson in module_lessons:
+            # Get lesson completion for this student
+            completion = LessonCompletion.query.filter_by(
+                student_id=self.student_id,
+                lesson_id=lesson.id
+            ).first()
+            
+            if completion:
+                # Use the comprehensive lesson score calculation
+                lesson_score = completion.calculate_lesson_score()
+                total_score += lesson_score
+                scored_lessons += 1
+        
+        # Calculate average, or return 0 if no lessons
+        return (total_score / scored_lessons) if scored_lessons > 0 else 0.0
+    
+    def calculate_lessons_average_score(self):
+        """Alias for calculate_module_score for backwards compatibility"""
+        return self.calculate_module_score()
+    
+    def calculate_module_weighted_score(self):
+        """
+        Calculate the weighted module score for passing requirements:
+        - Course Contribution (lessons) (10%)
+        - Module Quizzes (30%)
+        - Module Assignments (40%)
+        - Final Assessment (20%)
+        This is used for determining if a student can proceed to the next module.
+        Returns a score from 0-100.
+        """
+        # Get the module score (average of all lesson scores)
+        module_lessons_score = self.calculate_module_score()
+        
         # Ensure all scores default to 0.0 if None
-        course_contrib = self.course_contribution_score or 0.0
+        course_contrib = module_lessons_score
         quiz = self.quiz_score or 0.0
         assignment = self.assignment_score or 0.0
         final = self.final_assessment_score or 0.0
         
-        self.cumulative_score = (
+        weighted_score = (
             (course_contrib * 0.10) +
             (quiz * 0.30) +
             (assignment * 0.40) +
             (final * 0.20)
         )
-        return self.cumulative_score
+        
+        # Update the cached cumulative_score field
+        self.cumulative_score = weighted_score
+        return weighted_score
+    
+    def calculate_cumulative_score(self):
+        """Alias for calculate_module_weighted_score for backwards compatibility"""
+        return self.calculate_module_weighted_score()
     
     def can_proceed_to_next(self):
         """Check if student can proceed to next module"""
         return self.cumulative_score >= 80.0 and self.status == 'completed'
     
     def to_dict(self):
+        module_score = self.calculate_module_score()
+        weighted_score = self.calculate_module_weighted_score()
+        
         return {
             'id': self.id,
             'student_id': self.student_id,
             'module_id': self.module_id,
             'enrollment_id': self.enrollment_id,
+            'module_score': module_score,  # Pure average of all lesson scores (0-100)
             'course_contribution_score': self.course_contribution_score or 0.0,
+            'lessons_average_score': module_score,  # Backwards compatibility
             'quiz_score': self.quiz_score or 0.0,
             'assignment_score': self.assignment_score or 0.0,
             'final_assessment_score': self.final_assessment_score or 0.0,
-            'cumulative_score': self.cumulative_score or 0.0,
+            'weighted_score': weighted_score,  # Weighted score for passing (0-100)
+            'cumulative_score': weighted_score,  # Backwards compatibility
             'attempts_count': self.attempts_count or 0,
             'max_attempts': self.max_attempts or 3,
             'status': self.status or 'locked',

@@ -6,7 +6,7 @@ import json
 from sqlalchemy import func, desc
 
 from ..models.user_models import db, User
-from ..models.course_models import Course, Module, Enrollment
+from ..models.course_models import Course, Module, Enrollment, Lesson
 from ..models.student_models import (
     LearningAnalytics, ModuleProgress, LessonCompletion, 
     AssessmentAttempt, StudentTranscript
