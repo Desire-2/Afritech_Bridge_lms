@@ -16,7 +16,8 @@ import {
   Send,
   Paperclip,
   Edit,
-  Loader2
+  Loader2,
+  ArrowLeft
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
