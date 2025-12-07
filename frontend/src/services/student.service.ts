@@ -180,6 +180,7 @@ export class StudentService {
   static async getDashboard(): Promise<StudentDashboard> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/dashboard`);
+      // Backend returns { enrolled_courses, stats, achievements, recent_activity }
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -225,9 +226,13 @@ export class StudentService {
   }
 
   // My Learning
-  static async getMyLearning(): Promise<EnrolledCourse[]> {
+  static async getMyLearning(): Promise<any> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/learning`);
+      // Backend returns { success: true, data: { active_courses, completed_courses, course_stats, ... } }
+      if (response.data.success && response.data.data) {
+        return response.data.data;
+      }
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { StudentService, EnrolledCourse } from '@/services/student.service';
-import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2 } from 'lucide-react';
+import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2, TrendingUp, Award, Search, Filter, UserCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const MyLearningPage = () => {
@@ -11,6 +11,7 @@ const MyLearningPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'in-progress' | 'completed'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [isClient, setIsClient] = useState(false);
   const { isAuthenticated, isLoading: authLoading } = useAuth();
 
@@ -44,22 +45,40 @@ const MyLearningPage = () => {
 
   // Ensure courses is always an array before filtering
   const filteredCourses = Array.isArray(courses) ? courses.filter(course => {
-    if (filter === 'all') return true;
-    if (filter === 'completed') return course.progress >= 100;
-    if (filter === 'in-progress') return course.progress > 0 && course.progress < 100;
-    return true;
+    // Filter by status
+    const statusMatch = 
+      filter === 'all' ? true :
+      filter === 'completed' ? course.progress >= 100 :
+      filter === 'in-progress' ? course.progress > 0 && course.progress < 100 :
+      true;
+    
+    // Filter by search query
+    const searchMatch = searchQuery.trim() === '' || 
+      course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      course.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      course.instructor_name?.toLowerCase().includes(searchQuery.toLowerCase());
+    
+    return statusMatch && searchMatch;
   }) : [];
 
   // Prevent hydration mismatch by showing loading state until client-side
   if (!isClient || loading) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="animate-pulse">
-          <div className="h-8 bg-gray-200 rounded w-1/3 mb-8"></div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[1, 2, 3, 4, 5, 6].map((_, i) => (
-              <div key={i} className="h-80 bg-gray-200 rounded-lg"></div>
-            ))}
+      <div className="min-h-screen bg-[#1e293b]">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="animate-pulse">
+            <div className="h-10 bg-slate-700 rounded-lg w-1/3 mb-4"></div>
+            <div className="h-6 bg-slate-700 rounded-lg w-1/4 mb-8"></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-32 bg-slate-800 rounded-xl shadow-sm"></div>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <div key={i} className="h-96 bg-slate-800 rounded-xl shadow-sm"></div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -68,190 +87,309 @@ const MyLearningPage = () => {
 
   if (error) {
     return (
-      <div className="container mx-auto p-6">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-          <p className="text-red-600 text-lg">{error}</p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-          >
-            Try Again
-          </button>
+      <div className="min-h-screen bg-[#1e293b] flex items-center justify-center">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="max-w-md mx-auto bg-white border border-red-200 rounded-xl shadow-lg p-8 text-center">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Oops! Something went wrong</h3>
+            <p className="text-red-600 mb-6">{error}</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
+            >
+              Try Again
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="container mx-auto p-6">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">My Learning</h1>
-        <p className="text-gray-600">Track your progress and continue learning</p>
-      </div>
-
-      {/* Filter Tabs */}
-      <div className="mb-8">
-        <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg w-fit">
-          {[
-            { key: 'all', label: 'All Courses', count: Array.isArray(courses) ? courses.length : 0 },
-            { key: 'in-progress', label: 'In Progress', count: Array.isArray(courses) ? courses.filter(c => c.progress > 0 && c.progress < 100).length : 0 },
-            { key: 'completed', label: 'Completed', count: Array.isArray(courses) ? courses.filter(c => c.progress >= 100).length : 0 }
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setFilter(tab.key as any)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                filter === tab.key
-                  ? 'bg-white text-indigo-600 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
+    <div className="min-h-screen bg-[#1e293b]">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2">
+                My Learning Journey
+              </h1>
+              <p className="text-slate-300 text-sm sm:text-base">Track your progress and continue growing</p>
+            </div>
+            <Link
+              href="/student/courses"
+              className="inline-flex items-center justify-center px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:from-indigo-700 hover:to-blue-700 transition-all shadow-md hover:shadow-lg font-medium"
             >
-              {tab.label} ({tab.count})
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <BookOpen className="w-6 h-6 text-blue-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Total Courses</p>
-              <p className="text-2xl font-bold text-gray-800">{Array.isArray(courses) ? courses.length : 0}</p>
-            </div>
+              <BookOpen className="w-4 h-4 mr-2" />
+              Browse Courses
+            </Link>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-amber-100 rounded-lg">
-              <Clock className="w-6 h-6 text-amber-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">In Progress</p>
-              <p className="text-2xl font-bold text-gray-800">
-                {Array.isArray(courses) ? courses.filter(c => c.progress > 0 && c.progress < 100).length : 0}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 rounded-lg">
-              <CheckCircle2 className="w-6 h-6 text-green-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Completed</p>
-              <p className="text-2xl font-bold text-gray-800">
-                {Array.isArray(courses) ? courses.filter(c => c.progress >= 100).length : 0}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-6 rounded-lg shadow-sm border">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <BarChart3 className="w-6 h-6 text-purple-600" />
-            </div>
-            <div>
-              <p className="text-sm text-gray-600">Avg Progress</p>
-              <p className="text-2xl font-bold text-gray-800">
-                {Array.isArray(courses) && courses.length > 0 ? Math.round(courses.reduce((sum, c) => sum + c.progress, 0) / courses.length) : 0}%
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Courses Grid */}
-      {filteredCourses.length === 0 ? (
-        <div className="text-center py-12">
-          <BookOpen className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No courses found</h3>
-          <p className="text-gray-600 mb-6">
-            {filter === 'all' 
-              ? "You haven't enrolled in any courses yet." 
-              : `No ${filter.replace('-', ' ')} courses found.`}
-          </p>
-          <Link
-            href="/courses"
-            className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
-          >
-            Browse Courses
-          </Link>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredCourses.map((course) => (
-            <div key={course.id} className="bg-white rounded-lg shadow-sm border hover:shadow-md transition-shadow">
-              <div className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <h3 className="text-lg font-semibold text-gray-800 line-clamp-2">
-                    {course.title}
-                  </h3>
-                  <div className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    course.progress >= 100 
-                      ? 'bg-green-100 text-green-700'
-                      : course.progress > 0 
-                        ? 'bg-blue-100 text-blue-700'
-                        : 'bg-gray-100 text-gray-700'
-                  }`}>
-                    {course.progress >= 100 ? 'Completed' : 'In Progress'}
-                  </div>
-                </div>
-
-                <p className="text-sm text-gray-600 mb-4 line-clamp-3">
-                  {course.description}
-                </p>
-
-                <div className="mb-4">
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="text-gray-600">Progress</span>
-                    <span className="font-medium">{Math.round(course.progress)}%</span>
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div 
-                      className="bg-gradient-to-r from-indigo-500 to-blue-500 h-2 rounded-full transition-all duration-300" 
-                      style={{ width: `${course.progress}%` }}
-                    ></div>
-                  </div>
-                </div>
-
-                <div className="text-sm text-gray-600 mb-4">
-                  <p>Instructor: {course.instructor_name}</p>
-                  {course.current_lesson && (
-                    <p>Next: {course.current_lesson}</p>
-                  )}
-                  <p>Enrolled: {new Date(course.enrollment_date).toLocaleDateString()}</p>
-                </div>
-
-                <div className="flex gap-2">
-                  <Link
-                    href={`/learn/${course.id}`}
-                    className="flex-1 flex items-center justify-center gap-2 py-2 px-4 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
-                  >
-                    <PlayCircle className="w-4 h-4" />
-                    {course.progress > 0 ? 'Continue' : 'Start'}
-                  </Link>
-                  <Link
-                    href={`/student/myprogress/${course.id}`}
-                    className="flex items-center justify-center px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-                  >
-                    <BarChart3 className="w-4 h-4" />
-                  </Link>
-                </div>
+        {/* Statistics */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-700 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-sm">
+                <BookOpen className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-slate-400 font-medium">Total Courses</p>
+                <p className="text-3xl font-bold text-white">{Array.isArray(courses) ? courses.length : 0}</p>
               </div>
             </div>
-          ))}
+          </div>
+
+          <div className="bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-700 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-amber-500 to-orange-600 rounded-xl shadow-sm">
+                <Clock className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-slate-400 font-medium">In Progress</p>
+                <p className="text-3xl font-bold text-white">
+                  {Array.isArray(courses) ? courses.filter(c => c.progress > 0 && c.progress < 100).length : 0}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-700 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl shadow-sm">
+                <CheckCircle2 className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-slate-400 font-medium">Completed</p>
+                <p className="text-3xl font-bold text-white">
+                  {Array.isArray(courses) ? courses.filter(c => c.progress >= 100).length : 0}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-700 hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl shadow-sm">
+                <TrendingUp className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <p className="text-sm text-slate-400 font-medium">Avg Progress</p>
+                <p className="text-3xl font-bold text-white">
+                  {Array.isArray(courses) && courses.length > 0 ? Math.round(courses.reduce((sum, c) => sum + c.progress, 0) / courses.length) : 0}%
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
-      )}
+
+        {/* Search and Filter Bar */}
+        <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-4 mb-6">
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* Search */}
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search courses by title, description, or instructor..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-slate-700 border border-slate-600 text-white placeholder-slate-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              />
+            </div>
+            
+            {/* Filter Tabs */}
+            <div className="flex gap-2 overflow-x-auto pb-2 lg:pb-0">
+              {[
+                { key: 'all', label: 'All Courses', count: Array.isArray(courses) ? courses.length : 0, icon: BookOpen },
+                { key: 'in-progress', label: 'In Progress', count: Array.isArray(courses) ? courses.filter(c => c.progress > 0 && c.progress < 100).length : 0, icon: Clock },
+                { key: 'completed', label: 'Completed', count: Array.isArray(courses) ? courses.filter(c => c.progress >= 100).length : 0, icon: CheckCircle2 }
+              ].map((tab) => {
+                const Icon = tab.icon;
+                return (
+                <button
+                  key={tab.key}
+                  onClick={() => setFilter(tab.key as any)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                    filter === tab.key
+                      ? 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white shadow-md'
+                      : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    filter === tab.key ? 'bg-white/20 text-white' : 'bg-slate-600 text-slate-300'
+                  }`}>
+                    {tab.count}
+                  </span>
+                </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Results Count */}
+        {searchQuery && (
+          <div className="mb-4 text-sm text-slate-400">
+            Found <span className="font-semibold text-white">{filteredCourses.length}</span> course{filteredCourses.length !== 1 ? 's' : ''} matching "{searchQuery}"
+          </div>
+        )}
+
+        {/* Courses Grid */}
+        {filteredCourses.length === 0 ? (
+          <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-12 text-center">
+            <div className="max-w-sm mx-auto">
+              <div className="w-20 h-20 bg-gradient-to-br from-indigo-900 to-blue-900 rounded-full flex items-center justify-center mx-auto mb-4">
+                {searchQuery ? <Search className="w-10 h-10 text-indigo-400" /> : <BookOpen className="w-10 h-10 text-indigo-400" />}
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-2">
+                {searchQuery ? 'No matching courses' : 'No courses found'}
+              </h3>
+              <p className="text-slate-400 mb-6">
+                {searchQuery 
+                  ? `We couldn't find any courses matching "${searchQuery}". Try different keywords.`
+                  : filter === 'all' 
+                    ? "You haven't enrolled in any courses yet. Start your learning journey today!" 
+                    : `No ${filter.replace('-', ' ')} courses found.`}
+              </p>
+              {searchQuery ? (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="inline-flex items-center px-5 py-2.5 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition-colors font-medium"
+                >
+                  Clear Search
+                </button>
+              ) : (
+                <Link
+                  href="/student/courses"
+                  className="inline-flex items-center px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:from-indigo-700 hover:to-blue-700 transition-all shadow-md hover:shadow-lg font-medium"
+                >
+                  <BookOpen className="w-4 h-4 mr-2" />
+                  Explore Courses
+                </Link>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredCourses.map((course) => (
+              <div key={course.id} className="bg-white rounded-xl shadow-sm border border-gray-100 hover:shadow-lg transition-all duration-300 overflow-hidden group">
+                {/* Course Header with Gradient */}
+                <div className="h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-blue-500"></div>
+                
+                <div className="p-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900 line-clamp-2 group-hover:text-indigo-600 transition-colors">
+                      {course.title}
+                    </h3>
+                    {course.progress >= 100 && (
+                      <div className="flex-shrink-0 ml-2">
+                        <Award className="w-6 h-6 text-yellow-500" />
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="text-sm text-gray-600 mb-4 line-clamp-2">
+                    {course.description}
+                  </p>
+
+                  {/* Progress Section */}
+                  <div className="mb-4">
+                    <div className="flex justify-between items-center text-sm mb-2">
+                      <span className="text-gray-600 font-medium">Progress</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold ${
+                          course.progress >= 100 ? 'text-green-600' :
+                          course.progress >= 50 ? 'text-blue-600' :
+                          'text-amber-600'
+                        }`}>
+                          {Math.round(course.progress)}%
+                        </span>
+                        {course.progress >= 100 && (
+                          <CheckCircle2 className="w-4 h-4 text-green-600" />
+                        )}
+                      </div>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                      <div 
+                        className={`h-2.5 rounded-full transition-all duration-500 ${
+                          course.progress >= 100 
+                            ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
+                            : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-blue-500'
+                        }`}
+                        style={{ width: `${course.progress}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Course Info */}
+                  <div className="space-y-2 mb-4 text-sm">
+                    <div className="flex items-center text-gray-600">
+                      <UserCircle className="w-4 h-4 mr-2 text-gray-400" />
+                      <span className="truncate">{course.instructor_name}</span>
+                    </div>
+                    {course.current_lesson && (
+                      <div className="flex items-start text-gray-600">
+                        <PlayCircle className="w-4 h-4 mr-2 text-gray-400 mt-0.5 flex-shrink-0" />
+                        <span className="line-clamp-1">Next: {course.current_lesson}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center text-gray-500 text-xs">
+                      <Clock className="w-3.5 h-3.5 mr-2" />
+                      Enrolled {new Date(course.enrollment_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-2">
+                    {course.progress >= 100 ? (
+                      <Link
+                        href={`/learn/${course.id}`}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all shadow-sm hover:shadow-md font-medium"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        Review Course
+                      </Link>
+                    ) : (
+                      <Link
+                        href={`/learn/${course.id}`}
+                        className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:from-indigo-700 hover:to-blue-700 transition-all shadow-sm hover:shadow-md font-medium"
+                      >
+                        <PlayCircle className="w-4 h-4" />
+                        {course.progress > 0 ? 'Continue' : 'Start'}
+                      </Link>
+                    )}
+                    <Link
+                      href={`/student/courses/myprogress/${course.id}`}
+                      className="flex items-center justify-center px-4 py-2.5 border-2 border-gray-200 text-gray-700 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 transition-all"
+                      title="View Progress"
+                    >
+                      <BarChart3 className="w-4 h-4" />
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Status Badge at bottom */}
+                {course.progress >= 100 && (
+                  <div className="px-6 pb-4">
+                    <div className="flex items-center justify-center gap-2 py-2 bg-green-50 rounded-lg border border-green-200">
+                      <CheckCircle2 className="w-4 h-4 text-green-600" />
+                      <span className="text-sm font-semibold text-green-700">Course Completed!</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

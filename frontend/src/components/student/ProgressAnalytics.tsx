@@ -94,19 +94,19 @@ const StatCard: React.FC<StatCardProps> = ({
   description 
 }) => (
   <motion.div variants={itemVariants}>
-    <Card className="hover:shadow-lg transition-all duration-300 hover:scale-105">
+    <Card className="bg-slate-800 border-slate-700 hover:shadow-lg transition-all duration-300 hover:scale-105">
       <CardContent className="p-6">
         <div className="flex items-center justify-between">
           <div className="space-y-2">
-            <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className="text-3xl font-bold">{value}</p>
+            <p className="text-sm font-medium text-slate-400">{title}</p>
+            <p className="text-3xl font-bold text-white">{value}</p>
             {description && (
-              <p className="text-xs text-muted-foreground">{description}</p>
+              <p className="text-xs text-slate-400">{description}</p>
             )}
             {change && (
               <div className={`flex items-center text-sm ${
-                changeType === 'positive' ? 'text-green-600' : 
-                changeType === 'negative' ? 'text-red-600' : 'text-muted-foreground'
+                changeType === 'positive' ? 'text-green-400' : 
+                changeType === 'negative' ? 'text-red-400' : 'text-slate-400'
               }`}>
                 <TrendingUp className="h-3 w-3 mr-1" />
                 {change}
@@ -128,25 +128,25 @@ interface CourseProgressCardProps {
 
 const CourseProgressCard: React.FC<CourseProgressCardProps> = ({ course }) => {
   const getProgressColor = (percentage: number) => {
-    if (percentage >= 80) return 'text-green-600';
-    if (percentage >= 60) return 'text-yellow-600';
-    return 'text-red-600';
+    if (percentage >= 80) return 'text-green-400';
+    if (percentage >= 60) return 'text-yellow-400';
+    return 'text-red-400';
   };
 
   const getProgressBg = (percentage: number) => {
-    if (percentage >= 80) return 'bg-green-100';
-    if (percentage >= 60) return 'bg-yellow-100';
-    return 'bg-red-100';
+    if (percentage >= 80) return 'bg-green-900/30';
+    if (percentage >= 60) return 'bg-yellow-900/30';
+    return 'bg-red-900/30';
   };
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
+    <Card className="bg-slate-800 border-slate-700 hover:shadow-md transition-shadow">
       <CardContent className="p-6">
         <div className="space-y-4">
           <div className="flex items-start justify-between">
             <div>
-              <h3 className="font-semibold text-lg mb-2">{course.course_title}</h3>
-              <div className="flex items-center space-x-4 text-sm text-muted-foreground">
+              <h3 className="font-semibold text-lg mb-2 text-white">{course.course_title}</h3>
+              <div className="flex items-center space-x-4 text-sm text-slate-400">
                 <div className="flex items-center">
                   <BookOpen className="h-4 w-4 mr-1" />
                   {course.modules_completed}/{course.total_modules} modules
@@ -165,9 +165,9 @@ const CourseProgressCard: React.FC<CourseProgressCardProps> = ({ course }) => {
           </div>
           
           <div className="space-y-2">
-            <div className="flex justify-between text-sm">
+            <div className="flex justify-between text-sm text-slate-300">
               <span>Progress</span>
-              <span className="font-medium">{Math.round(course.progress_percentage)}%</span>
+              <span className="font-medium text-white">{Math.round(course.progress_percentage)}%</span>
             </div>
             <Progress value={course.progress_percentage} className="h-3" />
           </div>
@@ -175,9 +175,9 @@ const CourseProgressCard: React.FC<CourseProgressCardProps> = ({ course }) => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Star className="h-4 w-4 text-yellow-500" />
-              <span className="text-sm font-medium">Avg Score: {course.average_score}%</span>
+              <span className="text-sm font-medium text-slate-300">Avg Score: {course.average_score}%</span>
             </div>
-            <Button size="sm" variant="outline">
+            <Button size="sm" variant="outline" className="border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white">
               View Details
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
@@ -241,24 +241,25 @@ const LearningTrendsChart: React.FC<LearningTrendsChartProps> = ({ data, type })
             <stop offset="95%" stopColor={getChartColor()} stopOpacity={0.1} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+        <CartesianGrid strokeDasharray="3 3" stroke="#475569" opacity={0.3} />
         <XAxis 
           dataKey="date" 
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: 12, fill: '#94a3b8' }}
           axisLine={false}
           tickLine={false}
         />
         <YAxis 
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: 12, fill: '#94a3b8' }}
           axisLine={false}
           tickLine={false}
         />
         <Tooltip 
           contentStyle={{ 
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            border: '1px solid #e2e8f0',
+            backgroundColor: '#1e293b',
+            border: '1px solid #475569',
             borderRadius: '8px',
-            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+            color: '#fff'
           }}
           formatter={(value: any, name: string) => [value, chartData[0]?.label || 'Value']}
         />
@@ -298,9 +299,10 @@ const SkillRadar: React.FC<SkillRadarProps> = ({ skills }) => {
         <Tooltip 
           formatter={(value: any) => [`${value}%`, 'Proficiency']}
           contentStyle={{ 
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            border: '1px solid #e2e8f0',
-            borderRadius: '8px'
+            backgroundColor: '#1e293b',
+            border: '1px solid #475569',
+            borderRadius: '8px',
+            color: '#fff'
           }}
         />
       </RadialBarChart>
@@ -331,18 +333,18 @@ const ProgressAnalyticsPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[600px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="flex items-center justify-center min-h-[600px] bg-[#1e293b]">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500"></div>
       </div>
     );
   }
 
   if (!analyticsData) {
     return (
-      <div className="flex items-center justify-center min-h-[600px]">
+      <div className="flex items-center justify-center min-h-[600px] bg-[#1e293b]">
         <div className="text-center">
-          <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-          <p className="text-muted-foreground">No analytics data available</p>
+          <BarChart3 className="h-12 w-12 text-slate-500 mx-auto mb-4" />
+          <p className="text-slate-400">No analytics data available</p>
         </div>
       </div>
     );
@@ -374,23 +376,23 @@ const ProgressAnalyticsPage: React.FC = () => {
 
   return (
     <motion.div 
-      className="space-y-8 p-6"
+      className="space-y-8 p-4 sm:p-6 bg-[#1e293b] min-h-screen"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
     >
       {/* Header */}
       <motion.div variants={itemVariants}>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Learning Analytics</h1>
-            <p className="text-muted-foreground mt-2">
+            <h1 className="text-3xl font-bold tracking-tight text-white">Learning Analytics</h1>
+            <p className="text-slate-400 mt-2">
               Track your learning progress and identify areas for improvement
             </p>
           </div>
           <div className="flex items-center space-x-4">
             <Select value={timeRange} onValueChange={setTimeRange}>
-              <SelectTrigger className="w-40">
+              <SelectTrigger className="w-40 bg-slate-800 border-slate-700 text-white">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -400,11 +402,11 @@ const ProgressAnalyticsPage: React.FC = () => {
                 <SelectItem value="1y">Last year</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white">
               <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white">
               <Download className="h-4 w-4 mr-2" />
               Export
             </Button>
@@ -454,19 +456,19 @@ const ProgressAnalyticsPage: React.FC = () => {
       {/* Main Analytics Tabs */}
       <motion.div variants={itemVariants}>
         <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="trends">Learning Trends</TabsTrigger>
-            <TabsTrigger value="courses">Course Progress</TabsTrigger>
-            <TabsTrigger value="skills">Skills Assessment</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-4 bg-slate-800 border-slate-700">
+            <TabsTrigger value="overview" className="data-[state=active]:bg-slate-700 data-[state=active]:text-white text-slate-400">Overview</TabsTrigger>
+            <TabsTrigger value="trends" className="data-[state=active]:bg-slate-700 data-[state=active]:text-white text-slate-400">Learning Trends</TabsTrigger>
+            <TabsTrigger value="courses" className="data-[state=active]:bg-slate-700 data-[state=active]:text-white text-slate-400">Course Progress</TabsTrigger>
+            <TabsTrigger value="skills" className="data-[state=active]:bg-slate-700 data-[state=active]:text-white text-slate-400">Skills Assessment</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="mt-6">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
               {/* Progress Overview */}
-              <Card className="lg:col-span-2">
+              <Card className="lg:col-span-2 bg-slate-800 border-slate-700">
                 <CardHeader>
-                  <CardTitle className="flex items-center">
+                  <CardTitle className="flex items-center text-white">
                     <Activity className="h-5 w-5 mr-2" />
                     Daily Activity
                   </CardTitle>
@@ -482,16 +484,16 @@ const ProgressAnalyticsPage: React.FC = () => {
               {/* Insights Sidebar */}
               <div className="space-y-6">
                 {/* Performance Insights */}
-                <Card>
+                <Card className="bg-slate-800 border-slate-700">
                   <CardHeader>
-                    <CardTitle className="flex items-center">
+                    <CardTitle className="flex items-center text-white">
                       <Brain className="h-5 w-5 mr-2" />
                       Performance Insights
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div>
-                      <h4 className="font-medium text-green-600 mb-2">Strong Areas</h4>
+                      <h4 className="font-medium text-green-400 mb-2">Strong Areas</h4>
                       <div className="space-y-1">
                         {performance_insights.strong_areas.map((area, index) => (
                           <Badge key={index} variant="secondary" className="mr-1 mb-1">
@@ -502,10 +504,10 @@ const ProgressAnalyticsPage: React.FC = () => {
                     </div>
                     
                     <div>
-                      <h4 className="font-medium text-orange-600 mb-2">Areas for Improvement</h4>
+                      <h4 className="font-medium text-orange-400 mb-2">Areas for Improvement</h4>
                       <div className="space-y-1">
                         {performance_insights.weak_areas.map((area, index) => (
-                          <Badge key={index} variant="outline" className="mr-1 mb-1">
+                          <Badge key={index} variant="outline" className="mr-1 mb-1 border-slate-600 text-slate-300">
                             {area}
                           </Badge>
                         ))}
@@ -515,9 +517,9 @@ const ProgressAnalyticsPage: React.FC = () => {
                 </Card>
 
                 {/* Recommendations */}
-                <Card>
+                <Card className="bg-slate-800 border-slate-700">
                   <CardHeader>
-                    <CardTitle className="flex items-center">
+                    <CardTitle className="flex items-center text-white">
                       <Lightbulb className="h-5 w-5 mr-2" />
                       Recommendations
                     </CardTitle>
@@ -525,9 +527,9 @@ const ProgressAnalyticsPage: React.FC = () => {
                   <CardContent>
                     <div className="space-y-3">
                       {performance_insights.recommendations.map((rec, index) => (
-                        <div key={index} className="flex items-start space-x-3 p-3 bg-muted/50 rounded-lg">
-                          <CheckCircle className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
-                          <p className="text-sm">{rec}</p>
+                        <div key={index} className="flex items-start space-x-3 p-3 bg-slate-700/50 rounded-lg">
+                          <CheckCircle className="h-5 w-5 text-blue-400 flex-shrink-0 mt-0.5" />
+                          <p className="text-sm text-slate-300">{rec}</p>
                         </div>
                       ))}
                     </div>
@@ -539,9 +541,9 @@ const ProgressAnalyticsPage: React.FC = () => {
 
           <TabsContent value="trends" className="mt-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
+              <Card className="bg-slate-800 border-slate-700">
                 <CardHeader>
-                  <CardTitle>Weekly Progress</CardTitle>
+                  <CardTitle className="text-white">Weekly Progress</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <LearningTrendsChart 
@@ -551,9 +553,9 @@ const ProgressAnalyticsPage: React.FC = () => {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="bg-slate-800 border-slate-700">
                 <CardHeader>
-                  <CardTitle>Assessment Scores</CardTitle>
+                  <CardTitle className="text-white">Assessment Scores</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <LearningTrendsChart 
@@ -578,26 +580,26 @@ const ProgressAnalyticsPage: React.FC = () => {
 
           <TabsContent value="skills" className="mt-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
+              <Card className="bg-slate-800 border-slate-700">
                 <CardHeader>
-                  <CardTitle>Skill Proficiency</CardTitle>
+                  <CardTitle className="text-white">Skill Proficiency</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <SkillRadar skills={skillsData} />
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="bg-slate-800 border-slate-700">
                 <CardHeader>
-                  <CardTitle>Skill Development</CardTitle>
+                  <CardTitle className="text-white">Skill Development</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-4">
                     {skillsData.map((skill, index) => (
                       <div key={index} className="space-y-2">
                         <div className="flex justify-between">
-                          <span className="font-medium">{skill.name}</span>
-                          <span className="text-sm text-muted-foreground">{skill.level}%</span>
+                          <span className="font-medium text-white">{skill.name}</span>
+                          <span className="text-sm text-slate-400">{skill.level}%</span>
                         </div>
                         <Progress value={skill.level} className="h-2" />
                       </div>

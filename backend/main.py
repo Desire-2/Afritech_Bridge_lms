@@ -35,6 +35,7 @@ from src.routes.achievement_routes import achievement_bp # Import achievement bl
 from src.routes.grading_routes import grading_bp # Import grading blueprint
 from src.routes.progress_routes import progress_bp # Import progress blueprint
 from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
+from src.routes.forum_routes import forum_bp # Import forum blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -71,6 +72,7 @@ else:
                         "http://localhost:3005", "http://localhost:5173", 
                         "http://192.168.0.5:3000", "http://192.168.0.5:3001", 
                         "http://192.168.0.5:3002", "http://192.168.0.5:3005",
+                        "http://192.168.0.3:3000", "http://192.168.0.3:3001",
                         "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
                         "http://192.168.116.116:3002", "http://192.168.116.116:3005"],
              "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -80,6 +82,9 @@ else:
              "max_age": 3600
          }})
     logger.info("CORS configured for development with specific settings")
+
+# Disable strict trailing slash enforcement to prevent redirects during CORS preflight
+app.url_map.strict_slashes = False
 
 # Load environment variables
 load_dotenv()
@@ -205,6 +210,7 @@ app.register_blueprint(achievement_bp) # Register achievement blueprint
 app.register_blueprint(grading_bp) # Register grading blueprint
 app.register_blueprint(progress_bp) # Register progress blueprint
 app.register_blueprint(certificate_bp) # Register certificate blueprint
+app.register_blueprint(forum_bp) # Register forum blueprint
 
 with app.app_context():
     db.create_all()

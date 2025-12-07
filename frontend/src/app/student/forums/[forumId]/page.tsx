@@ -4,130 +4,42 @@ import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { MessageSquare, Clock, Plus, ChevronRight, AlertCircle, Loader2, ArrowLeft, Users, Pin } from 'lucide-react';
+import { ForumService, Forum, ForumPost } from '@/services/forum.service';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
-
-interface ThreadItem {
-  id: string;
-  title: string;
-  authorName: string;
-  authorId: string;
-  replyCount: number;
-  viewCount: number;
-  createdTimestamp: string;
-  lastPostTimestamp: string;
-  lastPostUserName?: string;
-  lastPostUserId?: string;
-  isPinned: boolean;
-  isLocked: boolean;
-}
-
-interface ForumDetails {
-  id: string;
-  title: string;
-  description: string;
-  threads: ThreadItem[];
-  parentCategoryName?: string;
-  parentCategoryId?: string;
-}
-
-// SVG Icons
-const PinIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-    <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z" />
-  </svg>
-);
-
-const LockIcon = () => (
-  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-    <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
-  </svg>
-);
-
-const ChevronRight = () => (
-  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-  </svg>
-);
-
-// Placeholder Data
-const placeholderForumDetails: ForumDetails = {
-  id: 'forum_python_beginners',
-  title: 'Introduction to Python - Q&A',
-  description: 'Ask questions and discuss topics related to the Python beginners course.',
-  parentCategoryName: 'Course-Specific Forums',
-  parentCategoryId: 'cat_courses',
-  threads: [
-    {
-      id: 'thread_python_listcomp',
-      title: 'Help with list comprehensions in Python',
-      authorName: 'CodeLearner22',
-      authorId: 'user789',
-      replyCount: 15,
-      viewCount: 120,
-      createdTimestamp: new Date(Date.now() - 3600000 * 2).toISOString(),  // 2 hours ago
-      lastPostTimestamp: new Date(Date.now() - 3600000 * 1).toISOString(), // 1 hour ago
-      lastPostUserName: 'PythonGuru',
-      lastPostUserId: 'user एक्सपर्ट',
-      isPinned: true,
-      isLocked: false,
-    },
-    {
-      id: 'thread_python_loops',
-      title: 'Understanding for vs while loops - when to use which?',
-      authorName: 'NewbieCoder',
-      authorId: 'user007',
-      replyCount: 8,
-      viewCount: 95,
-      createdTimestamp: new Date(Date.now() - 3600000 * 4).toISOString(),  // 4 hours ago
-      lastPostTimestamp: new Date(Date.now() - 3600000 * 3).toISOString(), // 3 hours ago
-      lastPostUserName: 'InstructorJane',
-      lastPostUserId: 'instr001',
-      isPinned: false,
-      isLocked: false,
-    },
-    {
-      id: 'thread_python_setup',
-      title: 'Problem setting up Python environment on Windows',
-      authorName: 'WinUserDev',
-      authorId: 'user654',
-      replyCount: 22,
-      viewCount: 250,
-      createdTimestamp: new Date(Date.now() - 86400000 * 1.1).toISOString(), // ~26.4 hours ago
-      lastPostTimestamp: new Date(Date.now() - 86400000 * 1).toISOString(),  // 24 hours ago
-      lastPostUserName: 'HelperBot',
-      lastPostUserId: 'bot001',
-      isPinned: false,
-      isLocked: true,
-    },
-  ],
-};
-
-const ForumTopicPage = () => {
+const ForumDetailPage = () => {
   const params = useParams();
-  const forumId = params.forumId as string;
-  const { token } = useAuth();
+  const { user, token } = useAuth();
+  const forumId = parseInt(params.forumId as string);
 
-  const [forumDetails, setForumDetails] = useState<ForumDetails | null>(null);
+  const [forum, setForum] = useState<Forum | null>(null);
+  const [threads, setThreads] = useState<ForumPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!forumId) return;
+    if (!forumId || !token) {
+      setLoading(false);
+      return;
+    }
 
-    const fetchForumThreads = async () => {
+    const fetchForum = async () => {
+      setLoading(true);
+      setError(null);
       try {
-        setLoading(true);
-        setError(null);
-        await new Promise(resolve => setTimeout(resolve, 600));
-        setForumDetails({ ...placeholderForumDetails, id: forumId });
+        const forumData = await ForumService.getForumDetails(forumId);
+        setForum(forumData);
+        setThreads(forumData.threads || []);
       } catch (err: any) {
-        setError(err.message || 'Failed to load forum threads.');
+        setError(err.message || 'Failed to load forum');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchForumThreads();
+    fetchForum();
   }, [forumId, token]);
 
   const formatRelativeTime = (timestamp: string) => {
@@ -135,217 +47,213 @@ const ForumTopicPage = () => {
     const past = new Date(timestamp);
     const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
     
-    const units = [
-      { name: 'year', seconds: 31536000 },
-      { name: 'month', seconds: 2592000 },
-      { name: 'week', seconds: 604800 },
-      { name: 'day', seconds: 86400 },
-      { name: 'hour', seconds: 3600 },
-      { name: 'minute', seconds: 60 }
-    ];
+    const units: { [key: string]: number } = {
+      year: 31536000, month: 2592000, week: 604800,
+      day: 86400, hour: 3600, minute: 60
+    };
 
-    for (const unit of units) {
-      const interval = Math.floor(diffInSeconds / unit.seconds);
-      if (interval >= 1) {
-        return `${interval} ${unit.name}${interval > 1 ? 's' : ''} ago`;
-      }
+    for (const unit in units) {
+      const interval = Math.floor(diffInSeconds / units[unit]);
+      if (interval >= 1) return `${interval} ${unit}${interval > 1 ? 's' : ''} ago`;
     }
     return 'just now';
   };
 
-  const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  };
-
-  if (loading) return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="animate-pulse space-y-6">
-        <div className="h-4 bg-gray-200 rounded w-1/4 mb-6"></div>
-        <div className="h-8 bg-gray-200 rounded w-2/3 mb-6"></div>
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="h-24 bg-gray-100 rounded-lg p-4 shadow-sm"></div>
-        ))}
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#1e293b] flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+          <div className="text-slate-300 text-lg">Loading forum...</div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
-  if (error) return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="p-6 bg-red-50 rounded-lg border border-red-200 text-red-700 flex items-center gap-3">
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-        </svg>
-        <div>Error: {error}</div>
-      </div>
-    </div>
-  );
-
-  if (!forumDetails) return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <div className="text-center py-20 text-gray-500">
-        <div className="text-2xl mb-2">Forum not found</div>
-        <Link href="/forums" className="text-blue-600 hover:underline">
-          Return to forums list
-        </Link>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      <nav aria-label="Breadcrumb" className="mb-6">
-        <ol className="flex items-center gap-2 text-sm text-gray-600 overflow-x-auto">
-          <li className="flex items-center gap-2">
-            <Link href="/forums" className="hover:text-gray-900 transition-colors">
-              Forums
-            </Link>
-            <ChevronRight />
-          </li>
-          {forumDetails.parentCategoryId && (
-            <li className="flex items-center gap-2">
-              <Link
-                href={`/forums/categories/${forumDetails.parentCategoryId}`}
-                className="hover:text-gray-900 transition-colors"
-              >
-                {forumDetails.parentCategoryName}
-              </Link>
-              <ChevronRight />
-            </li>
-          )}
-          <li className="text-gray-900 font-medium truncate" aria-current="page">
-            {forumDetails.title}
-          </li>
-        </ol>
-      </nav>
-
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 mb-8 shadow-sm">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="space-y-2">
-            <h1 className="text-3xl font-bold text-gray-900">{forumDetails.title}</h1>
-            <p className="text-gray-600 max-w-3xl leading-relaxed">
-              {forumDetails.description}
-            </p>
-          </div>
-          <Link
-            href={`/forums/${forumId}/threads/new`}
-            className="w-full md:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-6 rounded-lg shadow-md transition-all duration-200 transform hover:scale-[1.02]"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            New Thread
+  if (error || !forum) {
+    return (
+      <div className="min-h-screen bg-[#1e293b] flex items-center justify-center p-4">
+        <div className="bg-slate-800 border border-red-900/50 rounded-xl p-8 text-center max-w-md">
+          <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
+          <p className="text-red-400 text-lg mb-4">{error || 'Forum not found'}</p>
+          <Link href="/student/forums">
+            <Button className="bg-indigo-600 hover:bg-indigo-700 text-white">
+              Back to Forums
+            </Button>
           </Link>
         </div>
       </div>
+    );
+  }
 
-      {forumDetails.threads.length === 0 ? (
-        <div className="text-center py-16 bg-white rounded-xl shadow-sm border border-gray-100">
-          <div className="text-gray-400 mb-4">
-            <svg className="mx-auto w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
+  return (
+    <div className="min-h-screen bg-[#1e293b]">
+      <div className="container mx-auto px-4 py-6 sm:py-8 max-w-6xl">
+        {/* Breadcrumb */}
+        <nav aria-label="breadcrumb" className="mb-6">
+          <ol className="flex items-center gap-2 text-sm text-slate-400 flex-wrap">
+            <li>
+              <Link href="/student/forums" className="hover:text-white transition-colors flex items-center gap-1">
+                <MessageSquare className="w-4 h-4" />
+                Forums
+              </Link>
+            </li>
+            <li><ChevronRight className="w-4 h-4" /></li>
+            <li className="text-white font-medium">{forum.title}</li>
+          </ol>
+        </nav>
+
+        {/* Header */}
+        <div className="mb-6">
+          <Link 
+            href="/student/forums"
+            className="inline-flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-4"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Forums
+          </Link>
+          
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">{forum.title}</h1>
+              {forum.description && (
+                <p className="text-slate-400">{forum.description}</p>
+              )}
+              {forum.course_title && (
+                <p className="text-sm text-indigo-400 mt-2">Course: {forum.course_title}</p>
+              )}
+            </div>
+            
+            {forum.is_enrolled !== false && (
+              <Link href={`/student/forums/${forumId}/threads/new`}>
+                <Button className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white">
+                  <Plus className="w-4 h-4 mr-2" />
+                  New Thread
+                </Button>
+              </Link>
+            )}
           </div>
-          <p className="text-xl text-gray-500 mb-2">No threads found</p>
-          <p className="text-gray-400">Be the first to start a discussion!</p>
         </div>
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="bg-gray-50 px-6 py-3 border-b border-gray-100 hidden sm:grid grid-cols-12 gap-4">
-            <div className="col-span-6 text-sm font-medium text-gray-500">Thread</div>
-            <div className="col-span-2 text-sm font-medium text-gray-500">Replies</div>
-            <div className="col-span-2 text-sm font-medium text-gray-500">Views</div>
-            <div className="col-span-2 text-sm font-medium text-gray-500">Last Post</div>
+
+        {/* Stats Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-6">
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+            <div className="text-slate-400 text-sm mb-1">Threads</div>
+            <div className="text-2xl font-bold text-white">{forum.thread_count}</div>
           </div>
-          <ul className="divide-y divide-gray-100">
-            {forumDetails.threads.map(thread => (
-              <li
-                key={thread.id}
-                className="group p-6 hover:bg-gray-50 transition-colors duration-200 grid sm:grid-cols-12 gap-4"
-              >
-                <div className="sm:col-span-6 flex items-start gap-3">
-                  <div className="flex-shrink-0 pt-1">
-                    {thread.isPinned && (
-                      <span className="text-yellow-500" title="Pinned Thread">
-                        <PinIcon />
-                      </span>
-                    )}
-                    {thread.isLocked && (
-                      <span className="text-red-500" title="Locked Thread">
-                        <LockIcon />
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <Link
-                      href={`/forums/${forumId}/threads/${thread.id}`}
-                      className="text-lg font-medium text-gray-900 hover:text-blue-600 transition-colors line-clamp-2"
-                    >
-                      {thread.title}
-                    </Link>
-                    <div className="mt-1 text-sm text-gray-500">
-                      Started by{' '}
-                      <Link
-                        href={`/users/${thread.authorId}`}
-                        className="text-blue-600 hover:underline"
-                      >
-                        {thread.authorName}
-                      </Link>
-                      <span
-                        className="mx-2"
-                        title={formatTime(thread.createdTimestamp)}
-                      >
-                        {formatRelativeTime(thread.createdTimestamp)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4">
+            <div className="text-slate-400 text-sm mb-1">Posts</div>
+            <div className="text-2xl font-bold text-white">{forum.post_count}</div>
+          </div>
+          <div className="bg-slate-800 border border-slate-700 rounded-lg p-4 col-span-2 sm:col-span-1">
+            <div className="text-slate-400 text-sm mb-1">Last Activity</div>
+            <div className="text-sm font-medium text-white">
+              {forum.last_post ? formatRelativeTime(forum.last_post.created_at) : 'No activity'}
+            </div>
+          </div>
+        </div>
 
-                <div className="sm:col-span-2 flex items-center">
-                  <span className="text-gray-900 font-medium">
-                    {thread.replyCount.toLocaleString()}
-                  </span>
-                </div>
+        {/* Threads List */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
+          <div className="p-4 sm:p-6 border-b border-slate-700">
+            <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+              <MessageSquare className="w-5 h-5" />
+              Discussions
+            </h2>
+          </div>
 
-                <div className="sm:col-span-2 flex items-center">
-                  <span className="text-gray-900 font-medium">
-                    {thread.viewCount.toLocaleString()}
-                  </span>
-                </div>
-
-                <div className="sm:col-span-2">
-                  {thread.lastPostUserName ? (
-                    <div className="text-sm">
-                      <Link
-                        href={`/users/${thread.lastPostUserId}`}
-                        className="text-blue-600 hover:underline line-clamp-1"
-                      >
-                        {thread.lastPostUserName}
-                      </Link>
-                      <div
-                        className="text-gray-500 mt-1"
-                        title={formatTime(thread.lastPostTimestamp)}
-                      >
-                        {formatRelativeTime(thread.lastPostTimestamp)}
+          {threads.length === 0 ? (
+            <div className="p-8 sm:p-12 text-center">
+              <MessageSquare className="w-16 h-16 text-slate-600 mx-auto mb-4" />
+              <p className="text-slate-400 text-lg mb-4">No threads yet</p>
+              {forum.is_enrolled !== false && (
+                <Link href={`/student/forums/${forumId}/threads/new`}>
+                  <Button className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                    <Plus className="w-4 h-4 mr-2" />
+                    Start the First Discussion
+                  </Button>
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-700">
+              {threads.map((thread) => (
+                <Link
+                  key={thread.id}
+                  href={`/student/forums/${forumId}/threads/${thread.id}`}
+                  className="block p-4 sm:p-6 hover:bg-slate-900/50 transition-colors group"
+                >
+                  <div className="flex gap-4">
+                    {/* Author Avatar */}
+                    <div className="flex-shrink-0">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-indigo-900/50 flex items-center justify-center border-2 border-indigo-700">
+                        <span className="text-indigo-300 text-sm sm:text-base font-medium">
+                          {thread.author_name?.[0] || 'U'}
+                        </span>
                       </div>
                     </div>
-                  ) : (
-                    <div className="text-gray-500 text-sm">No replies</div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+
+                    {/* Thread Content */}
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-base sm:text-lg font-semibold text-white group-hover:text-indigo-400 transition-colors mb-1 flex items-center gap-2">
+                        {thread.title}
+                        <ChevronRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </h3>
+                      
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs sm:text-sm text-slate-500">
+                        <span className="flex items-center gap-1">
+                          <Users className="w-3 h-3 sm:w-4 sm:h-4" />
+                          {thread.author_name}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 sm:w-4 sm:h-4" />
+                          {formatRelativeTime(thread.created_at)}
+                        </span>
+                        {thread.reply_count !== undefined && (
+                          <Badge className="bg-slate-700 text-slate-300 border-slate-600">
+                            {thread.reply_count} {thread.reply_count === 1 ? 'reply' : 'replies'}
+                          </Badge>
+                        )}
+                      </div>
+
+                      {/* Last Reply Info */}
+                      {thread.last_reply && (
+                        <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
+                          <span>Last reply by {thread.last_reply.author_name}</span>
+                          <span>•</span>
+                          <span>{formatRelativeTime(thread.last_reply.created_at)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+
+        {/* Enrollment Notice */}
+        {forum.is_enrolled === false && forum.course_id && (
+          <div className="mt-6 bg-amber-900/20 border border-amber-800/50 rounded-xl p-6">
+            <div className="flex items-start gap-4">
+              <AlertCircle className="w-6 h-6 text-amber-400 flex-shrink-0" />
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-2">Enrollment Required</h3>
+                <p className="text-slate-300 mb-4">
+                  You need to be enrolled in <span className="text-amber-400">{forum.course_title}</span> to participate in this forum.
+                </p>
+                <Link href={`/student/courses/${forum.course_id}`}>
+                  <Button className="bg-amber-600 hover:bg-amber-700 text-white">
+                    View Course
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
-export default ForumTopicPage;
+export default ForumDetailPage;
