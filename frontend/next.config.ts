@@ -2,9 +2,6 @@ import { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
   /* config options here */
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -13,7 +10,16 @@ const nextConfig: NextConfig = {
   reactStrictMode: false, // Changed from true to false to help with hydration issues
   poweredByHeader: false,
   images: {
-    domains: ['localhost'],
+    remotePatterns: [
+      {
+        protocol: 'http',
+        hostname: 'localhost',
+      },
+      {
+        protocol: 'https',
+        hostname: 'localhost',
+      }
+    ],
     unoptimized: process.env.NODE_ENV === 'production'
   },
   // Add this to silence hydration warnings in production
