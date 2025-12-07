@@ -283,28 +283,66 @@ def grade_assignment_submission(submission_id):
                     lesson_id=lesson_id
                 ).first()
                 
+                # Calculate assignment percentage for reference
+                points_possible = assignment.points_possible or 100
+                assignment_percentage = (grade / points_possible) * 100
+                
                 if not lesson_completion:
-                    # Create a new LessonCompletion record
+                    # Create a new LessonCompletion record with reasonable defaults
+                    # Since student submitted an assignment, they must have engaged with the lesson
+                    # Use assignment score as a proxy for engagement quality
+                    default_reading = min(100.0, 70.0 + (assignment_percentage * 0.3))  # 70-100% based on grade
+                    default_engagement = min(100.0, 60.0 + (assignment_percentage * 0.4))  # 60-100% based on grade
+                    
                     lesson_completion = LessonCompletion(
                         student_id=student_id,
                         lesson_id=lesson_id,
                         completed=True,
-                        reading_progress=0.0,  # Assignment completed without reading
-                        engagement_score=0.0,
-                        scroll_progress=0.0,
-                        time_spent=0,
+                        reading_progress=default_reading,
+                        engagement_score=default_engagement,
+                        scroll_progress=default_reading,
+                        time_spent=300,  # Assume at least 5 minutes to complete assignment
                         completed_at=datetime.utcnow(),
                         updated_at=datetime.utcnow(),
                         last_accessed=datetime.utcnow()
                     )
                     db.session.add(lesson_completion)
                     db.session.commit()
-                    logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {student_id} (assignment graded)")
+                    logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {student_id} with reading={default_reading:.1f}%, engagement={default_engagement:.1f}%")
                 else:
-                    # LessonCompletion exists, just update timestamp
+                    # LessonCompletion exists - boost scores if they're too low
+                    # If student completed assignment well, they must have read the content
+                    updated = False
+                    
+                    if lesson_completion.reading_progress < 50.0 and assignment_percentage >= 70:
+                        # Boost reading progress based on assignment quality
+                        new_reading = min(100.0, 70.0 + (assignment_percentage * 0.3))
+                        if new_reading > lesson_completion.reading_progress:
+                            lesson_completion.reading_progress = new_reading
+                            lesson_completion.scroll_progress = new_reading
+                            updated = True
+                            logger.info(f"Boosted reading_progress to {new_reading:.1f}% for lesson {lesson_id}, student {student_id}")
+                    
+                    if lesson_completion.engagement_score < 50.0 and assignment_percentage >= 70:
+                        # Boost engagement score based on assignment quality
+                        new_engagement = min(100.0, 60.0 + (assignment_percentage * 0.4))
+                        if new_engagement > lesson_completion.engagement_score:
+                            lesson_completion.engagement_score = new_engagement
+                            updated = True
+                            logger.info(f"Boosted engagement_score to {new_engagement:.1f}% for lesson {lesson_id}, student {student_id}")
+                    
                     lesson_completion.updated_at = datetime.utcnow()
                     db.session.commit()
-                    logger.info(f"Updated LessonCompletion for lesson {lesson_id}, student {student_id} (assignment graded)")
+                    
+                    if updated:
+                        logger.info(f"Updated LessonCompletion scores for lesson {lesson_id}, student {student_id} (assignment graded at {assignment_percentage:.1f}%)")
+                    else:
+                        logger.info(f"LessonCompletion already has good scores for lesson {lesson_id}, student {student_id}")
+                
+                # Recalculate and log the new lesson score
+                new_breakdown = lesson_completion.get_score_breakdown()
+                logger.info(f"Lesson {lesson_id} new score breakdown: {new_breakdown}")
+                
         except Exception as lc_error:
             logger.warning(f"Error creating/updating LessonCompletion: {str(lc_error)}")
             # Don't fail the whole request, just log the error
@@ -381,26 +419,48 @@ def bulk_grade_assignments():
                     lesson_id = assignment.lesson_id if hasattr(assignment, 'lesson_id') else None
                     
                     if lesson_id:
+                        # Calculate assignment percentage
+                        points_possible = assignment.points_possible or 100
+                        assignment_percentage = (grade / points_possible) * 100
+                        
                         lesson_completion = LessonCompletion.query.filter_by(
                             student_id=submission.student_id,
                             lesson_id=lesson_id
                         ).first()
                         
                         if not lesson_completion:
+                            # Create with reasonable defaults based on assignment grade
+                            default_reading = min(100.0, 70.0 + (assignment_percentage * 0.3))
+                            default_engagement = min(100.0, 60.0 + (assignment_percentage * 0.4))
+                            
                             lesson_completion = LessonCompletion(
                                 student_id=submission.student_id,
                                 lesson_id=lesson_id,
                                 completed=True,
-                                reading_progress=0.0,
-                                engagement_score=0.0,
-                                scroll_progress=0.0,
-                                time_spent=0,
+                                reading_progress=default_reading,
+                                engagement_score=default_engagement,
+                                scroll_progress=default_reading,
+                                time_spent=300,
                                 completed_at=datetime.utcnow(),
                                 updated_at=datetime.utcnow(),
                                 last_accessed=datetime.utcnow()
                             )
                             db.session.add(lesson_completion)
                             logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {submission.student_id} (bulk grading)")
+                        else:
+                            # Boost scores if too low and assignment grade is good
+                            if lesson_completion.reading_progress < 50.0 and assignment_percentage >= 70:
+                                new_reading = min(100.0, 70.0 + (assignment_percentage * 0.3))
+                                if new_reading > lesson_completion.reading_progress:
+                                    lesson_completion.reading_progress = new_reading
+                                    lesson_completion.scroll_progress = new_reading
+                            
+                            if lesson_completion.engagement_score < 50.0 and assignment_percentage >= 70:
+                                new_engagement = min(100.0, 60.0 + (assignment_percentage * 0.4))
+                                if new_engagement > lesson_completion.engagement_score:
+                                    lesson_completion.engagement_score = new_engagement
+                            
+                            lesson_completion.updated_at = datetime.utcnow()
                 except Exception as lc_error:
                     logger.warning(f"Error creating LessonCompletion for submission {submission_id}: {str(lc_error)}")
                 

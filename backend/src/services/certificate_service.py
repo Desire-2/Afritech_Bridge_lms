@@ -403,7 +403,7 @@ class CertificateService:
                         completion_percentage = 0
                     
                     # Determine completion status
-                    if enrollment.completion_date:
+                    if enrollment.completed_at:
                         completion_status = "completed"
                         is_locked = False
                     elif completion_percentage > 0:

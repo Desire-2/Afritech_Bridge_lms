@@ -1770,6 +1770,7 @@ const LearningPage = () => {
             nextModuleInfo={nextModuleInfo}
             onUnlockNextModule={handleUnlockNextModuleClick}
             isUnlockingModule={isUnlockingModule}
+            courseId={courseId}
           />
         ) : (
           <div className="flex-1 min-w-0">

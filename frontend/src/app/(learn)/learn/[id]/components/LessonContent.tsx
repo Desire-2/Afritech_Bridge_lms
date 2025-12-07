@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,8 +8,10 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { 
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
-  PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles
+  PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles, GraduationCap
 } from 'lucide-react';
+import Link from 'next/link';
+import { StudentApiService } from '@/services/studentApi';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ViewMode } from '../types';
 import type { ContentQuiz, ContentAssignment } from '@/services/contentAssignmentApi';
@@ -58,6 +60,8 @@ interface LessonContentProps {
   nextModuleInfo?: { id: number; title: string } | null;
   onUnlockNextModule?: () => Promise<void>;
   isUnlockingModule?: boolean;
+  // Course ID for certificate generation
+  courseId?: number;
 }
 
 export const LessonContent: React.FC<LessonContentProps> = ({
@@ -97,8 +101,51 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   isLastModule = false,
   nextModuleInfo = null,
   onUnlockNextModule,
-  isUnlockingModule = false
+  isUnlockingModule = false,
+  // Course ID for certificate generation
+  courseId
 }) => {
+  const [isGeneratingCertificate, setIsGeneratingCertificate] = useState(false);
+  const [certificateGenerated, setCertificateGenerated] = useState(false);
+  const [certificateError, setCertificateError] = useState<string | null>(null);
+
+  const handleGenerateCertificate = async () => {
+    if (!courseId) return;
+    
+    setIsGeneratingCertificate(true);
+    setCertificateError(null);
+    
+    try {
+      const response = await StudentApiService.generateCertificate(courseId);
+      if (response.success) {
+        setCertificateGenerated(true);
+      } else {
+        // Handle specific error messages
+        const errorMsg = response.message || 'Failed to generate certificate';
+        const requirements = response.requirements;
+        if (requirements) {
+          const details = [];
+          if (requirements.overall_score) details.push(`Score: ${requirements.overall_score}`);
+          if (!requirements.all_modules_passing) details.push('Not all modules have passing scores');
+          setCertificateError(`${errorMsg}${details.length ? ' - ' + details.join(', ') : ''}`);
+        } else {
+          setCertificateError(errorMsg);
+        }
+      }
+    } catch (error: any) {
+      console.error('Error generating certificate:', error);
+      // Try to extract error message from response
+      const errorResponse = error.response?.data;
+      if (errorResponse?.requirements) {
+        const req = errorResponse.requirements;
+        setCertificateError(`${errorResponse.message || 'Requirements not met'} - Score: ${req.overall_score}`);
+      } else {
+        setCertificateError(errorResponse?.message || error.message || 'Failed to generate certificate');
+      }
+    } finally {
+      setIsGeneratingCertificate(false);
+    }
+  };
   // Check if module score is passing (>= 80%)
   // Handle cases where moduleScoring might be null/undefined or still loading
   const cumulativeScore = moduleScoring?.cumulativeScore ?? 0;
@@ -414,6 +461,58 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                                 <p className="text-gray-400 text-sm">
                                   Congratulations! You have completed all modules in this course.
                                 </p>
+                              </div>
+                              
+                              {/* Certificate Generation Section */}
+                              <div className="mt-4 pt-4 border-t border-green-700/50">
+                                {certificateError && (
+                                  <div className="mb-3 p-2 bg-red-900/30 border border-red-700/50 rounded-lg">
+                                    <p className="text-red-300 text-sm text-center">{certificateError}</p>
+                                  </div>
+                                )}
+                                
+                                {certificateGenerated ? (
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-center space-x-2 text-green-300">
+                                      <CheckCircle className="h-5 w-5" />
+                                      <span className="text-sm">Certificate generated successfully!</span>
+                                    </div>
+                                    <Link href="/student/certificates">
+                                      <Button 
+                                        className="w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white font-semibold"
+                                      >
+                                        <Award className="h-5 w-5 mr-2" />
+                                        View Your Certificates
+                                      </Button>
+                                    </Link>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3">
+                                    <Button 
+                                      onClick={handleGenerateCertificate}
+                                      disabled={isGeneratingCertificate || !courseId}
+                                      className="w-full bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white font-semibold disabled:opacity-50"
+                                    >
+                                      {isGeneratingCertificate ? (
+                                        <>
+                                          <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                                          Generating Certificate...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <GraduationCap className="h-5 w-5 mr-2" />
+                                          Get Your Certificate
+                                        </>
+                                      )}
+                                    </Button>
+                                    <p className="text-gray-500 text-xs text-center">
+                                      Or view all certificates in your{' '}
+                                      <Link href="/student/certificates" className="text-yellow-400 hover:underline">
+                                        profile
+                                      </Link>
+                                    </p>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           ) : (

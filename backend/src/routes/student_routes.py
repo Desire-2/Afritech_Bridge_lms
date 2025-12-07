@@ -1358,7 +1358,7 @@ def generate_certificate():
             Module.course_id == course_id
         ).count()
         
-        # Get module scores
+        # Get module scores using cumulative_score (the actual calculated score)
         module_scores = []
         modules = Module.query.filter_by(course_id=course_id).all()
         for module in modules:
@@ -1367,27 +1367,27 @@ def generate_certificate():
                 module_id=module.id
             ).first()
             if module_progress:
-                score = (
-                    module_progress.course_contribution_score * 0.10 +
-                    module_progress.quiz_score * 0.30 +
-                    module_progress.assignment_score * 0.40 +
-                    module_progress.final_assessment_score * 0.20
-                )
-                module_scores.append(score)
+                # Use cumulative_score which is the properly calculated module score
+                module_scores.append(module_progress.cumulative_score or 0)
         
         overall_score = sum(module_scores) / len(module_scores) if module_scores else 0
         
-        # Check eligibility
-        all_lessons_completed = completed_lessons >= total_lessons
-        passing_score = overall_score >= 80
+        # Check eligibility - require passing score (80%) for all modules
+        # Lessons completion is tracked per-module, not globally
+        all_modules_passing = all(score >= 80 for score in module_scores) if module_scores else False
+        passing_overall = overall_score >= 80
         
-        if not (all_lessons_completed and passing_score):
+        # For certificate eligibility, we check if the student has passed all modules
+        # (each module requires 80% to unlock the next one)
+        if not (all_modules_passing and passing_overall):
             return jsonify({
                 "success": False,
                 "message": "Course completion requirements not met",
                 "requirements": {
                     "lessons_completed": f"{completed_lessons}/{total_lessons}",
-                    "overall_score": f"{overall_score:.1f}/80.0",
+                    "overall_score": f"{overall_score:.1f}%",
+                    "all_modules_passing": all_modules_passing,
+                    "module_scores": [f"{score:.1f}%" for score in module_scores],
                     "eligible": False
                 }
             }), 400
@@ -1412,7 +1412,7 @@ def generate_certificate():
             enrollment_id=enrollment.id,
             overall_score=overall_score,
             grade="A" if overall_score >= 90 else "B" if overall_score >= 80 else "C",
-            skills_acquired=json.dumps([course.category, "Problem Solving", "Critical Thinking"]),
+            skills_acquired=json.dumps([course.title, "Problem Solving", "Critical Thinking"]),
             portfolio_items=json.dumps([])
         )
         certificate.generate_certificate_number()

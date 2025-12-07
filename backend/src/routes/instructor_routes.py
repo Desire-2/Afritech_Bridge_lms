@@ -173,11 +173,11 @@ def get_instructor_students():
         # Get enrollments for these courses
         enrollments = db.session.query(Enrollment).filter(
             Enrollment.course_id.in_(course_ids)
-        ).join(User).all()
+        ).join(User, Enrollment.student_id == User.id).all()
         
         students_data = []
         for enrollment in enrollments:
-            user = enrollment.user
+            user = enrollment.student  # Enrollment model uses 'student' relationship, not 'user'
             course = enrollment.course
             
             student_data = user.to_dict()

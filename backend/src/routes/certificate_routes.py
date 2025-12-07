@@ -73,6 +73,32 @@ def generate_certificate(course_id):
             "error": "Failed to generate certificate"
         }), 500
 
+@certificate_bp.route("/verify/<certificate_number>", methods=["GET"])
+def verify_certificate_by_number(certificate_number):
+    """Verify certificate authenticity by certificate number (public GET endpoint for QR codes)"""
+    try:
+        valid, message, cert_data = CertificateService.verify_certificate(
+            certificate_number
+        )
+        
+        if valid:
+            return jsonify({
+                "success": True,
+                "message": message,
+                "data": cert_data
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": message
+            }), 404 if "not found" in message.lower() else 400
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": "Failed to verify certificate"
+        }), 500
+
 @certificate_bp.route("/verify", methods=["POST"])
 def verify_certificate():
     """Verify certificate authenticity (public endpoint)"""

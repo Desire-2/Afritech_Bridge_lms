@@ -183,12 +183,23 @@ export interface AssessmentAttempt {
 
 export interface Certificate {
   id: number;
+  course_id?: number;
   course_title: string;
   student_name: string;
-  issued_date: string;
+  issued_date?: string;
+  issued_at?: string;
   certificate_number: string;
-  verification_url: string;
-  skills_demonstrated: string[];
+  verification_url?: string;
+  verification_hash?: string;
+  skills_demonstrated?: string[];
+  skills_acquired?: string[];
+  overall_score?: number;
+  grade?: string;
+  is_active?: boolean;
+  completion_status?: string;
+  completion_percentage?: number;
+  is_locked?: boolean;
+  course_completed?: boolean;
 }
 
 export interface SkillBadge {

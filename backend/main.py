@@ -34,6 +34,7 @@ from src.routes.content_assignment_routes import content_assignment_bp # Import 
 from src.routes.achievement_routes import achievement_bp # Import achievement blueprint
 from src.routes.grading_routes import grading_bp # Import grading blueprint
 from src.routes.progress_routes import progress_bp # Import progress blueprint
+from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -203,6 +204,7 @@ app.register_blueprint(content_assignment_bp) # Register content assignment blue
 app.register_blueprint(achievement_bp) # Register achievement blueprint
 app.register_blueprint(grading_bp) # Register grading blueprint
 app.register_blueprint(progress_bp) # Register progress blueprint
+app.register_blueprint(certificate_bp) # Register certificate blueprint
 
 with app.app_context():
     db.create_all()

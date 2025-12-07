@@ -161,7 +161,7 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
                 </div>
                 <div className="flex items-center text-muted-foreground">
                   <Calendar className="h-4 w-4 mr-2" />
-                  {new Date(certificate.issued_date).toLocaleDateString()}
+                  {new Date(certificate.issued_at || certificate.issued_date).toLocaleDateString()}
                 </div>
               </div>
 
@@ -187,14 +187,14 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
 
               {/* Skills */}
               <div className="flex flex-wrap gap-1">
-                {certificate.skills_demonstrated?.slice(0, 3).map((skill, index) => (
+                {(certificate.skills_acquired || certificate.skills_demonstrated || []).slice(0, 3).map((skill: string, index: number) => (
                   <Badge key={index} variant="secondary" className="text-xs">
                     {skill}
                   </Badge>
                 ))}
-                {certificate.skills_demonstrated && certificate.skills_demonstrated.length > 3 && (
+                {(certificate.skills_acquired || certificate.skills_demonstrated || []).length > 3 && (
                   <Badge variant="secondary" className="text-xs">
-                    +{certificate.skills_demonstrated.length - 3} more
+                    +{(certificate.skills_acquired || certificate.skills_demonstrated || []).length - 3} more
                   </Badge>
                 )}
               </div>
@@ -328,96 +328,224 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto bg-gray-900 border-gray-700">
         <DialogHeader>
-          <DialogTitle>Certificate of Completion</DialogTitle>
+          <DialogTitle className="text-white flex items-center gap-2">
+            <Award className="h-5 w-5 text-yellow-400" />
+            Certificate of Completion
+          </DialogTitle>
         </DialogHeader>
         
         <div className="space-y-6">
-          {/* Certificate Preview */}
+          {/* Certificate Preview - A4 Landscape Ratio */}
           <div 
             ref={certificateRef}
-            className="bg-gradient-to-br from-blue-50 via-white to-purple-50 p-12 border-8 border-yellow-400 relative"
-            style={{ aspectRatio: '16/11' }}
+            className="relative overflow-hidden rounded-lg shadow-2xl"
+            style={{ aspectRatio: '1.414/1', minHeight: '500px' }}
           >
-            {/* Decorative elements */}
-            <div className="absolute top-4 left-4 w-8 h-8 border-4 border-yellow-400 rounded-full" />
-            <div className="absolute top-4 right-4 w-8 h-8 border-4 border-yellow-400 rounded-full" />
-            <div className="absolute bottom-4 left-4 w-8 h-8 border-4 border-yellow-400 rounded-full" />
-            <div className="absolute bottom-4 right-4 w-8 h-8 border-4 border-yellow-400 rounded-full" />
+            {/* Multi-layer Background */}
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-600/20 via-transparent to-transparent" />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-purple-600/20 via-transparent to-transparent" />
             
-            <div className="text-center space-y-6 relative">
-              {/* Header */}
-              <div className="space-y-2">
-                <div className="flex justify-center">
-                  <div className="p-4 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full">
-                    <GraduationCap className="h-12 w-12 text-white" />
+            {/* Decorative Pattern Overlay */}
+            <div className="absolute inset-0 opacity-5">
+              <div className="absolute inset-0" style={{
+                backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
+              }} />
+            </div>
+            
+            {/* Golden Border Frame */}
+            <div className="absolute inset-2 border-2 border-yellow-500/50 rounded-lg" />
+            <div className="absolute inset-4 border border-yellow-400/30 rounded-lg" />
+            
+            {/* Corner Decorations - Smaller */}
+            <div className="absolute top-4 left-4">
+              <div className="w-10 h-10 border-l-3 border-t-3 border-yellow-400 rounded-tl-lg" />
+              <Star className="absolute top-1 left-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            </div>
+            <div className="absolute top-4 right-4">
+              <div className="w-10 h-10 border-r-3 border-t-3 border-yellow-400 rounded-tr-lg" />
+              <Star className="absolute top-1 right-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            </div>
+            <div className="absolute bottom-4 left-4">
+              <div className="w-10 h-10 border-l-3 border-b-3 border-yellow-400 rounded-bl-lg" />
+              <Star className="absolute bottom-1 left-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            </div>
+            <div className="absolute bottom-4 right-4">
+              <div className="w-10 h-10 border-r-3 border-b-3 border-yellow-400 rounded-br-lg" />
+              <Star className="absolute bottom-1 right-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            </div>
+            
+            {/* Main Content - Optimized Layout */}
+            <div className="relative z-10 h-full flex flex-col p-6">
+              {/* Header Section - Compact */}
+              <div className="flex items-center justify-center gap-4 mb-4">
+                {/* Logo with Glow Effect */}
+                <div className="relative">
+                  <div className="absolute inset-0 bg-yellow-400/30 blur-lg rounded-full scale-125" />
+                  <div className="relative p-0.5 bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-full">
+                    <Image 
+                      src="/logo.jpg" 
+                      alt="Afritec Bridge Logo" 
+                      width={50} 
+                      height={50}
+                      className="rounded-full"
+                    />
                   </div>
                 </div>
-                <h1 className="text-4xl font-bold text-gray-800">Certificate of Completion</h1>
-                <p className="text-lg text-gray-600">This certifies that</p>
-              </div>
-              
-              {/* Student Name */}
-              <div className="py-4 border-b-2 border-gray-300 mx-8">
-                <h2 className="text-3xl font-bold text-blue-800">{certificate.student_name}</h2>
-              </div>
-              
-              {/* Course Details */}
-              <div className="space-y-2">
-                <p className="text-lg text-gray-600">has successfully completed the course</p>
-                <h3 className="text-2xl font-bold text-gray-800">{certificate.course_title}</h3>
-                <p className="text-gray-600">demonstrating proficiency in:</p>
                 
-                <div className="flex flex-wrap justify-center gap-2 mt-4">
-                  {certificate.skills_demonstrated.map((skill, index) => (
-                    <Badge key={index} variant="secondary" className="text-sm">
-                      {skill}
-                    </Badge>
-                  ))}
+                {/* Title */}
+                <div className="text-left">
+                  <p className="text-yellow-400 text-xs font-medium tracking-[0.2em] uppercase">Afritec Bridge Academy</p>
+                  <h1 className="text-2xl font-bold bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-200 bg-clip-text text-transparent">
+                    Certificate of Completion
+                  </h1>
+                </div>
+                
+                {/* Decorative Element */}
+                <div className="flex items-center gap-2">
+                  <div className="h-px w-12 bg-gradient-to-r from-transparent via-yellow-400 to-transparent" />
+                  <Trophy className="w-5 h-5 text-yellow-400" />
+                  <div className="h-px w-12 bg-gradient-to-r from-transparent via-yellow-400 to-transparent" />
                 </div>
               </div>
               
-              {/* Footer */}
-              <div className="flex justify-between items-end mt-12 text-sm text-gray-600">
-                <div>
-                  <p>Date Issued:</p>
-                  <p className="font-semibold">{new Date(certificate.issued_date).toLocaleDateString()}</p>
+              {/* Middle Section - Student & Course */}
+              <div className="flex-1 flex flex-col justify-center text-center space-y-3">
+                <p className="text-blue-200 text-base">This is to certify that</p>
+                
+                {/* Student Name */}
+                <div className="relative py-2">
+                  <div className="absolute left-1/2 -translate-x-1/2 top-0 w-40 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
+                  <h2 className="text-2xl md:text-3xl font-bold text-white tracking-wide">
+                    {certificate.student_name}
+                  </h2>
+                  <div className="absolute left-1/2 -translate-x-1/2 bottom-0 w-40 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
                 </div>
-                <div className="text-center">
-                  <div className="w-32 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center mb-2">
-                    <span className="text-white font-bold">AFRITEC</span>
+                
+                <p className="text-blue-200 text-sm">has successfully completed the course</p>
+                
+                {/* Course Title - More Compact */}
+                <div className="inline-block mx-auto bg-white/10 backdrop-blur-sm rounded-lg px-5 py-2 border border-white/20">
+                  <h3 className="text-lg md:text-xl font-semibold text-yellow-300">
+                    {certificate.course_title}
+                  </h3>
+                </div>
+                
+                {/* Skills - Horizontal Compact Layout */}
+                <div className="space-y-1">
+                  <p className="text-blue-200 text-xs">Demonstrating proficiency in:</p>
+                  <div className="flex flex-wrap justify-center gap-1.5 max-w-lg mx-auto">
+                    {(certificate.skills_acquired || certificate.skills_demonstrated || []).slice(0, 6).map((skill: string, index: number) => (
+                      <span 
+                        key={index} 
+                        className="px-2 py-0.5 bg-gradient-to-r from-blue-600/50 to-purple-600/50 rounded-full text-[10px] text-white border border-white/20"
+                      >
+                        {skill}
+                      </span>
+                    ))}
                   </div>
-                  <p>Authorized Signature</p>
                 </div>
-                <div>
-                  <p>Certificate ID:</p>
-                  <p className="font-semibold text-xs">{certificate.certificate_number}</p>
+                
+                {/* Grade Badge - Smaller */}
+                {certificate.grade && (
+                  <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-yellow-500 to-orange-500 px-3 py-0.5 rounded-full mx-auto">
+                    <Medal className="w-3 h-3 text-white" />
+                    <span className="text-white font-bold text-sm">Grade: {certificate.grade}</span>
+                    {certificate.overall_score && (
+                      <span className="text-white/80 text-xs">({certificate.overall_score.toFixed(1)}%)</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              
+              {/* Footer Section - Compact */}
+              <div className="mt-auto pt-3 border-t border-white/10">
+                <div className="flex justify-between items-end">
+                  {/* Date */}
+                  <div className="text-left">
+                    <p className="text-blue-300 text-[10px] uppercase tracking-wider">Date Issued</p>
+                    <p className="text-white font-semibold text-sm">
+                      {new Date(certificate.issued_at || certificate.issued_date).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
+                      })}
+                    </p>
+                  </div>
+                  
+                  {/* Signature - Centered & Compact */}
+                  <div className="text-center">
+                    <div className="bg-white rounded p-1.5 shadow-md border border-gray-200 inline-block">
+                      <Image 
+                        src="/sign.jpg" 
+                        alt="CEO Signature" 
+                        width={80} 
+                        height={35}
+                        className="mx-auto"
+                        style={{ objectFit: 'contain' }}
+                      />
+                    </div>
+                    <div className="mt-1 pt-0.5 border-t border-yellow-400/50">
+                      <p className="font-semibold text-white text-xs">Desire Bikorimana</p>
+                      <p className="text-yellow-400 text-[10px]">Founder & CEO</p>
+                    </div>
+                  </div>
+                  
+                  {/* QR Code for Verification */}
+                  <div className="text-center">
+                    <div className="bg-white rounded p-1 shadow-md inline-block">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${encodeURIComponent(certificate.verification_url || `https://study.afritechbridge.online/verify/${certificate.certificate_number}`)}`}
+                        alt="QR Code"
+                        width={60}
+                        height={60}
+                        className="rounded"
+                      />
+                    </div>
+                    <p className="text-blue-300 text-[8px] mt-0.5">Scan to Verify</p>
+                  </div>
+                  
+                  {/* Certificate ID */}
+                  <div className="text-right">
+                    <p className="text-blue-300 text-[10px] uppercase tracking-wider">Certificate ID</p>
+                    <p className="text-white font-mono text-xs">{certificate.certificate_number}</p>
+                    <div className="flex items-center justify-end gap-0.5 mt-0.5">
+                      <Verified className="w-2.5 h-2.5 text-green-400" />
+                      <span className="text-green-400 text-[10px]">Verified</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
           
           {/* Actions */}
-          <div className="flex justify-center space-x-4">
-            <Button onClick={handleDownload}>
+          <div className="flex justify-center gap-3">
+            <Button onClick={handleDownload} className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white">
               <Download className="h-4 w-4 mr-2" />
               Download PDF
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-800">
               <ExternalLink className="h-4 w-4 mr-2" />
               Verify Online
             </Button>
-            <Button variant="outline">
+            <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-800">
               <Share2 className="h-4 w-4 mr-2" />
               Share
             </Button>
           </div>
           
           {/* Verification Info */}
-          <div className="bg-muted/50 p-4 rounded-lg text-center">
-            <p className="text-sm text-muted-foreground">
-              This certificate can be verified at: {certificate.verification_url}
+          <div className="bg-gray-800/50 p-4 rounded-lg text-center border border-gray-700">
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Shield className="w-4 h-4 text-green-400" />
+              <span className="text-green-400 text-sm font-medium">Blockchain Verified Certificate</span>
+            </div>
+            <p className="text-sm text-gray-400">
+              Verification Hash: <span className="font-mono text-gray-300">{certificate.verification_hash || certificate.certificate_number}</span>
             </p>
           </div>
         </div>
