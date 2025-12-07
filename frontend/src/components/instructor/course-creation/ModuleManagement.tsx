@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Course, EnhancedModule, EnhancedLesson, ModuleOrderUpdate, LessonOrderUpdate } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
@@ -45,7 +45,135 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   });
 
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const [splitView, setSplitView] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Keyboard shortcuts for markdown formatting
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check if textarea is focused
+      if (document.activeElement !== textareaRef.current) return;
+      
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const modifier = isMac ? e.metaKey : e.ctrlKey;
+      
+      if (!modifier) return;
+      
+      // Define keyboard shortcuts
+      const shortcuts: Record<string, { handler: () => void; preventDefault?: boolean }> = {
+        'b': { handler: () => insertMarkdown('bold'), preventDefault: true },
+        'i': { handler: () => insertMarkdown('italic'), preventDefault: true },
+        'k': { handler: () => insertMarkdown('link'), preventDefault: true },
+        'e': { handler: () => insertMarkdown('code'), preventDefault: true },
+        '1': { handler: () => insertMarkdown('h1'), preventDefault: true },
+        '2': { handler: () => insertMarkdown('h2'), preventDefault: true },
+        '3': { handler: () => insertMarkdown('h3'), preventDefault: true },
+        '/': { handler: () => insertMarkdown('quote'), preventDefault: true },
+      };
+      
+      // Handle Shift combinations
+      if (e.shiftKey) {
+        if (e.key === 'C') {
+          e.preventDefault();
+          insertMarkdown('codeblock');
+          return;
+        } else if (e.key === '8' || e.key === '*') {
+          e.preventDefault();
+          insertMarkdown('ul');
+          return;
+        } else if (e.key === '7' || e.key === '&') {
+          e.preventDefault();
+          insertMarkdown('ol');
+          return;
+        }
+      }
+      
+      // Handle Tab for indentation in lists
+      if (e.key === 'Tab' && !modifier) {
+        e.preventDefault();
+        handleIndentation(e.shiftKey);
+        return;
+      }
+      
+      const shortcut = shortcuts[e.key.toLowerCase()];
+      if (shortcut) {
+        if (shortcut.preventDefault) {
+          e.preventDefault();
+        }
+        shortcut.handler();
+      }
+    };
+    
+    const textarea = textareaRef.current;
+    textarea?.addEventListener('keydown', handleKeyDown as any);
+    
+    return () => textarea?.removeEventListener('keydown', handleKeyDown as any);
+  }, [lessonForm.content_data]);
+
+  // Helper function to convert selected text into markdown table
+  const convertToMarkdownTable = (text: string): string => {
+    // Split text into lines
+    const lines = text.trim().split('\n').filter(line => line.trim());
+    
+    if (lines.length === 0) {
+      // Return default template if no lines
+      return `| Header 1 | Header 2 | Header 3 |\n|----------|----------|----------|\n| Cell 1   | Cell 2   | Cell 3   |`;
+    }
+    
+    // Detect delimiter (comma, tab, or pipe)
+    const firstLine = lines[0];
+    let delimiter = ',';
+    if (firstLine.includes('\t')) {
+      delimiter = '\t';
+    } else if (firstLine.includes('|')) {
+      delimiter = '|';
+    } else if (firstLine.includes(',')) {
+      delimiter = ',';
+    } else {
+      // Single column - split by whitespace (2+ spaces)
+      delimiter = /\s{2,}/;
+    }
+    
+    // Parse all rows
+    const rows = lines.map(line => {
+      if (delimiter instanceof RegExp) {
+        return line.split(delimiter).map(cell => cell.trim());
+      }
+      return line.split(delimiter).map(cell => cell.trim());
+    });
+    
+    // Find max columns
+    const maxCols = Math.max(...rows.map(row => row.length));
+    
+    // Ensure all rows have same column count
+    const normalizedRows = rows.map(row => {
+      while (row.length < maxCols) {
+        row.push('');
+      }
+      return row;
+    });
+    
+    // Build markdown table
+    const headerRow = normalizedRows[0];
+    const dataRows = normalizedRows.slice(1);
+    
+    // Create header line
+    const headerLine = '| ' + headerRow.join(' | ') + ' |';
+    
+    // Create separator line (with proper width for each column)
+    const separatorCells = headerRow.map(header => {
+      const minWidth = Math.max(header.length, 3);
+      return '-'.repeat(minWidth);
+    });
+    const separatorLine = '|' + separatorCells.map(sep => sep.padEnd(sep.length + 2, '-')).join('|') + '|';
+    
+    // Create data lines
+    const dataLines = dataRows.length > 0 
+      ? dataRows.map(row => '| ' + row.join(' | ') + ' |')
+      : ['| ' + headerRow.map(() => '').join(' | ') + ' |']; // At least one empty data row
+    
+    return [headerLine, separatorLine, ...dataLines].join('\n');
+  };
 
   const resetModuleForm = () => {
     setModuleForm({
@@ -107,6 +235,53 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     }
   };
 
+  // Handle indentation for lists
+  const handleIndentation = (outdent: boolean = false) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const lines = lessonForm.content_data.split('\n');
+    
+    let currentPos = 0;
+    let startLine = 0;
+    let endLine = 0;
+    
+    // Find which lines are selected
+    for (let i = 0; i < lines.length; i++) {
+      const lineLength = lines[i].length + 1; // +1 for newline
+      if (currentPos <= start && start < currentPos + lineLength) {
+        startLine = i;
+      }
+      if (currentPos <= end && end <= currentPos + lineLength) {
+        endLine = i;
+        break;
+      }
+      currentPos += lineLength;
+    }
+    
+    // Apply indentation to selected lines
+    for (let i = startLine; i <= endLine; i++) {
+      if (outdent) {
+        // Remove leading spaces or tab
+        lines[i] = lines[i].replace(/^(\s{2}|\t)/, '');
+      } else {
+        // Add indentation
+        lines[i] = '  ' + lines[i];
+      }
+    }
+    
+    const newContent = lines.join('\n');
+    setLessonForm({ ...lessonForm, content_data: newContent });
+    
+    // Restore selection
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+    }, 0);
+  };
+
   // Markdown toolbar helper functions
   const insertMarkdown = (syntax: string, placeholder: string = '') => {
     const textarea = textareaRef.current;
@@ -116,6 +291,46 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     const end = textarea.selectionEnd;
     const selectedText = lessonForm.content_data.substring(start, end);
     const textToInsert = selectedText || placeholder;
+    
+    // Check if multi-line selection
+    const isMultiLine = selectedText.includes('\n');
+    const multiLineSyntaxes = ['ul', 'ol', 'h1', 'h2', 'h3', 'quote', 'task'];
+    
+    // Handle multi-line formatting
+    if (isMultiLine && multiLineSyntaxes.includes(syntax)) {
+      const lines = selectedText.split('\n');
+      const formattedLines = lines.map(line => {
+        if (!line.trim()) return line;
+        switch(syntax) {
+          case 'ul': return `- ${line}`;
+          case 'ol': {
+            const index = lines.indexOf(line) + 1;
+            return `${index}. ${line}`;
+          }
+          case 'h1': return `# ${line}`;
+          case 'h2': return `## ${line}`;
+          case 'h3': return `### ${line}`;
+          case 'quote': return `> ${line}`;
+          case 'task': return `- [ ] ${line}`;
+          default: return line;
+        }
+      });
+      
+      const newText = formattedLines.join('\n');
+      const newContent = 
+        lessonForm.content_data.substring(0, start) +
+        newText +
+        lessonForm.content_data.substring(end);
+      
+      setLessonForm({ ...lessonForm, content_data: newContent });
+      
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start, start + newText.length);
+      }, 0);
+      
+      return;
+    }
 
     let newText = '';
     let cursorOffset = 0;
@@ -171,7 +386,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         cursorOffset = selectedText ? textToInsert.length + 4 : 10;
         break;
       case 'table':
-        newText = `| Header 1 | Header 2 | Header 3 |\n|----------|----------|----------|\n| Cell 1   | Cell 2   | Cell 3   |\n| Cell 4   | Cell 5   | Cell 6   |`;
+        // Smart table generation from selected text
+        if (selectedText) {
+          newText = convertToMarkdownTable(selectedText);
+        } else {
+          // Default 3x3 table template
+          newText = `| Header 1 | Header 2 | Header 3 |\n|----------|----------|----------|\n| Cell 1   | Cell 2   | Cell 3   |\n| Cell 4   | Cell 5   | Cell 6   |`;
+        }
         cursorOffset = newText.length;
         break;
       case 'hr':
@@ -189,6 +410,38 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       case 'task':
         newText = `- [ ] ${textToInsert}`;
         cursorOffset = selectedText ? newText.length : 6;
+        break;
+      case 'superscript':
+        newText = `<sup>${textToInsert}</sup>`;
+        cursorOffset = selectedText ? newText.length : 5;
+        break;
+      case 'subscript':
+        newText = `<sub>${textToInsert}</sub>`;
+        cursorOffset = selectedText ? newText.length : 5;
+        break;
+      case 'kbd':
+        newText = `<kbd>${textToInsert}</kbd>`;
+        cursorOffset = selectedText ? newText.length : 5;
+        break;
+      case 'callout-note':
+        newText = `> [!NOTE]\n> ${textToInsert || 'Your note here'}`;
+        cursorOffset = newText.length;
+        break;
+      case 'callout-tip':
+        newText = `> [!TIP]\n> ${textToInsert || 'Your tip here'}`;
+        cursorOffset = newText.length;
+        break;
+      case 'callout-warning':
+        newText = `> [!WARNING]\n> ${textToInsert || 'Your warning here'}`;
+        cursorOffset = newText.length;
+        break;
+      case 'callout-important':
+        newText = `> [!IMPORTANT]\n> ${textToInsert || 'Important information'}`;
+        cursorOffset = newText.length;
+        break;
+      case 'details':
+        newText = `<details>\n<summary>${textToInsert || 'Click to expand'}</summary>\n\nContent here...\n</details>`;
+        cursorOffset = newText.length - 11;
         break;
       default:
         return;
@@ -256,6 +509,26 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     html = html.replace(/^\- \[ \] (.*$)/gim, '<li class="ml-4"><input type="checkbox" disabled class="mr-2" />$1</li>');
     html = html.replace(/^\- \[x\] (.*$)/gim, '<li class="ml-4"><input type="checkbox" disabled checked class="mr-2" />$1</li>');
     
+    // Callout boxes (GitHub-style)
+    html = html.replace(/^> \[!NOTE\]\n> (.*$)/gim, '<div class="callout callout-note bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500 p-4 my-4"><div class="callout-title font-semibold text-blue-800 dark:text-blue-300 mb-2">📝 Note</div><div class="callout-content text-blue-700 dark:text-blue-200">$1</div></div>');
+    html = html.replace(/^> \[!TIP\]\n> (.*$)/gim, '<div class="callout callout-tip bg-green-50 dark:bg-green-900/20 border-l-4 border-green-500 p-4 my-4"><div class="callout-title font-semibold text-green-800 dark:text-green-300 mb-2">💡 Tip</div><div class="callout-content text-green-700 dark:text-green-200">$1</div></div>');
+    html = html.replace(/^> \[!IMPORTANT\]\n> (.*$)/gim, '<div class="callout callout-important bg-purple-50 dark:bg-purple-900/20 border-l-4 border-purple-500 p-4 my-4"><div class="callout-title font-semibold text-purple-800 dark:text-purple-300 mb-2">⚡ Important</div><div class="callout-content text-purple-700 dark:text-purple-200">$1</div></div>');
+    html = html.replace(/^> \[!WARNING\]\n> (.*$)/gim, '<div class="callout callout-warning bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-500 p-4 my-4"><div class="callout-title font-semibold text-yellow-800 dark:text-yellow-300 mb-2">⚠️ Warning</div><div class="callout-content text-yellow-700 dark:text-yellow-200">$1</div></div>');
+    html = html.replace(/^> \[!CAUTION\]\n> (.*$)/gim, '<div class="callout callout-caution bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 p-4 my-4"><div class="callout-title font-semibold text-red-800 dark:text-red-300 mb-2">🚫 Caution</div><div class="callout-content text-red-700 dark:text-red-200">$1</div></div>');
+    
+    // Superscript and subscript
+    html = html.replace(/<sup>(.*?)<\/sup>/g, '<sup class="text-xs align-super">$1</sup>');
+    html = html.replace(/<sub>(.*?)<\/sub>/g, '<sub class="text-xs align-sub">$1</sub>');
+    
+    // Keyboard keys
+    html = html.replace(/<kbd>(.*?)<\/kbd>/g, '<kbd class="px-2 py-1 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-400 rounded-md shadow-sm dark:text-gray-200 dark:bg-gray-700 dark:border-gray-600">$1</kbd>');
+    
+    // Details/Summary (collapsible)
+    html = html.replace(/<details>([\s\S]*?)<\/details>/gi, (match, content) => {
+      return `<details class="my-4 p-4 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg">${content}</details>`;
+    });
+    html = html.replace(/<summary>(.*?)<\/summary>/gi, '<summary class="cursor-pointer font-semibold text-slate-800 dark:text-slate-200 hover:text-blue-600 dark:hover:text-blue-400">$1</summary>');
+    
     // Line breaks
     html = html.replace(/\n/g, '<br />');
     
@@ -304,6 +577,16 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
   const handleCreateLesson = async (moduleId: number) => {
     try {
+      console.log('Creating lesson for module:', moduleId);
+      console.log('Current modules:', modules);
+      
+      // Verify the module exists in our local state
+      const moduleExists = modules.find(m => m.id === moduleId);
+      if (!moduleExists) {
+        alert(`Module with ID ${moduleId} not found. Please refresh the page and try again.`);
+        return;
+      }
+      
       const durationMinutes = lessonForm.duration_minutes ? parseInt(lessonForm.duration_minutes) : undefined;
       const newLesson = await CourseCreationService.createLesson(course.id, moduleId, {
         ...lessonForm,
@@ -317,9 +600,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       ));
       setShowLessonForm({ moduleId: null });
       resetLessonForm();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating lesson:', error);
-      alert('Failed to create lesson');
+      const errorMessage = error.response?.data?.message || error.message || 'Failed to create lesson';
+      alert(errorMessage);
     }
   };
 
@@ -753,8 +1037,11 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         <div className="flex flex-wrap gap-1">
                                           {/* Text Formatting */}
                                           <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
-                                            <button type="button" onClick={() => insertMarkdown('bold', 'Bold text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Bold (Ctrl+B)">
+                                            <button type="button" onClick={() => insertMarkdown('bold', 'Bold text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors group relative" title="Bold">
                                               <span className="font-bold text-sm">B</span>
+                                              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 text-xs bg-slate-900 text-white rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+                                                Bold (Ctrl+B)
+                                              </span>
                                             </button>
                                             <button type="button" onClick={() => insertMarkdown('italic', 'Italic text')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Italic (Ctrl+I)">
                                               <span className="italic text-sm">I</span>

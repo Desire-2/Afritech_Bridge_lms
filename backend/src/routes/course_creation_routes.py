@@ -340,7 +340,13 @@ def create_lesson(course_id, module_id):
         print(f"DEBUG LESSON - Creating lesson for course_id: {course_id}, module_id: {module_id}")
         
         # Verify module belongs to course
-        module = Module.query.filter_by(id=module_id, course_id=course_id).first_or_404()
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            print(f"ERROR LESSON - Module not found: module_id={module_id}, course_id={course_id}")
+            return jsonify({
+                "message": f"Module with ID {module_id} not found in course {course_id}. Please create a module first before adding lessons.",
+                "error": "MODULE_NOT_FOUND"
+            }), 404
         print(f"DEBUG LESSON - Module found: {module}")
         
         data = request.get_json()

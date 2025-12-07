@@ -7,18 +7,22 @@ set -o errexit
 # Change to the backend directory
 cd "$(dirname "$0")"
 
-# Check if virtual environment exists
-if [ ! -d "venv" ]; then
+# Check if virtual environment exists (prefer venv-new over venv)
+if [ -d "venv-new" ]; then
+    VENV_DIR="venv-new"
+elif [ -d "venv" ]; then
+    VENV_DIR="venv"
+else
     echo "Virtual environment not found. Please run setup.sh first."
     exit 1
 fi
 
 # No need to activate the virtual environment if we use absolute paths
 # Check which Python executable is available in the virtual environment
-if [ -f "venv/bin/python" ]; then
-    PYTHON_CMD="./venv/bin/python"
-elif [ -f "venv/bin/python3" ]; then
-    PYTHON_CMD="./venv/bin/python3"
+if [ -f "$VENV_DIR/bin/python" ]; then
+    PYTHON_CMD="./$VENV_DIR/bin/python"
+elif [ -f "$VENV_DIR/bin/python3" ]; then
+    PYTHON_CMD="./$VENV_DIR/bin/python3"
 else
     echo "ERROR: No Python executable found in virtual environment."
     echo "Try running ./setup.sh again to recreate the virtual environment."

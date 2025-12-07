@@ -27,10 +27,10 @@ def create_instructor():
         
         # Define instructor details
         username = "instructor"
-        email = "instructor@afritecbridge.com"
-        password = "Instructor@123"  # Default password, should be changed after first login
-        first_name = "John"
-        last_name = "Doe"
+        email = "afritechbridge@yahoo.com"
+        password = "Desire@#1"  # Default password, should be changed after first login
+        first_name = "Desire"
+        last_name = "BIKORIMANA"
         
         # Check if user already exists
         existing_user = User.query.filter((User.username == username) | (User.email == email)).first()

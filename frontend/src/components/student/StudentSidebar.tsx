@@ -2,13 +2,14 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, Settings, HelpCircle, MessageSquare, Menu, X } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, Settings, HelpCircle, MessageSquare, Menu, X, LogOut } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
-  const { user } = useAuth();
+  const router = useRouter();
+  const { user, logout } = useAuth();
   const iconSize = 20;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
@@ -131,6 +132,12 @@ const StudentSidebar = () => {
     return 'S';
   };
 
+  // Handle logout
+  const handleLogout = () => {
+    logout();
+    router.push('/login');
+  };
+
   return (
     <>
       {/* Mobile Menu Button - Fixed at top */}
@@ -232,6 +239,13 @@ const StudentSidebar = () => {
 
       {/* Footer */}
       <div className="p-3 sm:p-4 border-t border-slate-800 flex-shrink-0">
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 mb-3 rounded-lg bg-red-600 hover:bg-red-700 text-white transition-colors duration-200 text-sm font-medium"
+        >
+          <LogOut size={18} />
+          <span>Logout</span>
+        </button>
         <p className="text-[10px] sm:text-xs text-slate-500 text-center">
           © {new Date().getFullYear()} Afritec Bridge
         </p>

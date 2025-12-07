@@ -122,13 +122,27 @@ if env == 'production':
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     logger.info("Using PostgreSQL database in production")
 else:
-    # Use SQLite for development and testing
+    # Use SQLite for development and testing (or PostgreSQL if configured)
     # Ensure we use an absolute path for the SQLite database
     db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
     db_uri = f"sqlite:///{db_path}"
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("SQLALCHEMY_DATABASE_URI", db_uri)
-    logger.info(f"Using SQLite database at {app.config['SQLALCHEMY_DATABASE_URI']}")
-    logger.info(f"Database file path: {db_path}")
+    database_url = os.getenv("SQLALCHEMY_DATABASE_URI", db_uri)
+    
+    # Fix for SQLAlchemy 2.0+ in development too
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql+psycopg2://', 1)
+        logger.info(f"Transformed development database URL from postgres:// to postgresql+psycopg2://")
+    elif database_url.startswith('postgresql://') and '+psycopg2' not in database_url:
+        database_url = database_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+        logger.info(f"Transformed development database URL from postgresql:// to postgresql+psycopg2://")
+    
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+    
+    if database_url.startswith('sqlite'):
+        logger.info(f"Using SQLite database at {app.config['SQLALCHEMY_DATABASE_URI']}")
+        logger.info(f"Database file path: {db_path}")
+    else:
+        logger.info(f"Using PostgreSQL database in development")
     
     # Ensure the instance directory exists
     instance_dir = os.path.dirname(db_path)
