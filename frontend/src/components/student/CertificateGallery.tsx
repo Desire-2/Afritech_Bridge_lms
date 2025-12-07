@@ -32,17 +32,20 @@ import {
   Shield,
   FileText,
   Target,
-  Lock
+  Lock,
+  Loader2
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { StudentApiService, Certificate, SkillBadge } from '@/services/studentApi';
 import Link from 'next/link';
 import Image from 'next/image';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -161,7 +164,7 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
                 </div>
                 <div className="flex items-center text-muted-foreground">
                   <Calendar className="h-4 w-4 mr-2" />
-                  {new Date(certificate.issued_at || certificate.issued_date).toLocaleDateString()}
+                  {new Date(certificate.issued_at || certificate.issued_date || new Date()).toLocaleDateString()}
                 </div>
               </div>
 
@@ -320,13 +323,156 @@ interface CertificateViewerProps {
 
 const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOpen, onClose }) => {
   const certificateRef = useRef<HTMLDivElement>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
-  const handleDownload = () => {
-    // In a real implementation, you would generate and download the PDF
-    console.log('Downloading certificate:', certificate.certificate_number);
+  const verificationUrl = certificate.verification_url || 
+    `https://study.afritechbridge.online/verify/${certificate.certificate_number}`;
+
+  const handleDownloadImage = async () => {
+    if (!certificateRef.current) return;
+    
+    setIsDownloading(true);
+    try {
+      // Wait for all images to fully load
+      const images = certificateRef.current.querySelectorAll('img');
+      await Promise.all(
+        Array.from(images).map((img) => {
+          if (img.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          });
+        })
+      );
+      
+      // Small delay to ensure rendering is complete
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Capture the certificate element as canvas
+      const canvas = await html2canvas(certificateRef.current, {
+        scale: 4, // Very high quality
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: null,
+        logging: false,
+        imageTimeout: 30000,
+        removeContainer: false,
+        foreignObjectRendering: false,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: certificateRef.current.scrollWidth,
+        windowHeight: certificateRef.current.scrollHeight,
+      });
+      
+      // Convert canvas to blob and download as PNG
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.png`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        }
+      }, 'image/png', 1.0);
+      
+    } catch (error) {
+      console.error('Error generating image:', error);
+      alert('Failed to generate image. Please try again.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!certificateRef.current) return;
+    
+    setIsDownloading(true);
+    try {
+      // Wait for all images to fully load
+      const images = certificateRef.current.querySelectorAll('img');
+      await Promise.all(
+        Array.from(images).map((img) => {
+          if (img.complete) return Promise.resolve();
+          return new Promise((resolve) => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          });
+        })
+      );
+      
+      // Small delay to ensure rendering is complete
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Capture the certificate element as canvas - exact appearance
+      const canvas = await html2canvas(certificateRef.current, {
+        scale: 4, // Very high quality for print
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: null, // Keep transparency/original background
+        logging: false,
+        imageTimeout: 30000,
+        removeContainer: false,
+        foreignObjectRendering: false,
+        scrollX: 0,
+        scrollY: 0,
+        windowWidth: certificateRef.current.scrollWidth,
+        windowHeight: certificateRef.current.scrollHeight,
+      });
+      
+      // Create PDF in landscape orientation - A4 size
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'mm',
+        format: 'a4'
+      });
+      
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      // Calculate dimensions to fit the page perfectly
+      const canvasRatio = canvas.width / canvas.height;
+      const pageRatio = pageWidth / pageHeight;
+      
+      let imgWidth, imgHeight, xOffset, yOffset;
+      
+      if (canvasRatio > pageRatio) {
+        // Canvas is wider - fit to width
+        imgWidth = pageWidth;
+        imgHeight = pageWidth / canvasRatio;
+        xOffset = 0;
+        yOffset = (pageHeight - imgHeight) / 2;
+      } else {
+        // Canvas is taller - fit to height
+        imgHeight = pageHeight;
+        imgWidth = pageHeight * canvasRatio;
+        xOffset = (pageWidth - imgWidth) / 2;
+        yOffset = 0;
+      }
+      
+      const imgData = canvas.toDataURL('image/png', 1.0);
+      pdf.addImage(imgData, 'PNG', xOffset, yOffset, imgWidth, imgHeight);
+      
+      // Download the PDF
+      const fileName = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
+      pdf.save(fileName);
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Failed to generate PDF. Please try again.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleVerifyOnline = () => {
+    window.open(verificationUrl, '_blank');
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto bg-gray-900 border-gray-700">
         <DialogHeader>
@@ -334,17 +480,20 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
             <Award className="h-5 w-5 text-yellow-400" />
             Certificate of Completion
           </DialogTitle>
+          <DialogDescription className="text-gray-400">
+            View, download, verify or share your certificate for {certificate.course_title}
+          </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-6">
           {/* Certificate Preview - A4 Landscape Ratio */}
           <div 
             ref={certificateRef}
-            className="relative overflow-hidden rounded-lg shadow-2xl"
+            className="relative overflow-hidden rounded-lg shadow-2xl border-4 border-yellow-500/30"
             style={{ aspectRatio: '1.414/1', minHeight: '500px' }}
           >
-            {/* Multi-layer Background */}
-            <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900" />
+            {/* Solid Background for better PDF export */}
+            <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-blue-900 to-slate-900" />
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-600/20 via-transparent to-transparent" />
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-purple-600/20 via-transparent to-transparent" />
             
@@ -380,34 +529,36 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
             {/* Main Content - Optimized Layout */}
             <div className="relative z-10 h-full flex flex-col p-6">
               {/* Header Section - Compact */}
-              <div className="flex items-center justify-center gap-4 mb-4">
+              <div className="flex items-center justify-center gap-6 mb-4">
                 {/* Logo with Glow Effect */}
-                <div className="relative">
+                <div className="relative flex-shrink-0">
                   <div className="absolute inset-0 bg-yellow-400/30 blur-lg rounded-full scale-125" />
-                  <div className="relative p-0.5 bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-full">
-                    <Image 
+                  <div className="relative p-1 bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-full">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
                       src="/logo.jpg" 
                       alt="Afritec Bridge Logo" 
-                      width={50} 
-                      height={50}
-                      className="rounded-full"
+                      width={60} 
+                      height={60}
+                      className="rounded-full block"
+                      crossOrigin="anonymous"
                     />
                   </div>
                 </div>
                 
                 {/* Title */}
-                <div className="text-left">
-                  <p className="text-yellow-400 text-xs font-medium tracking-[0.2em] uppercase">Afritec Bridge Academy</p>
-                  <h1 className="text-2xl font-bold bg-gradient-to-r from-yellow-200 via-yellow-400 to-yellow-200 bg-clip-text text-transparent">
+                <div className="text-center">
+                  <p className="text-yellow-400 text-sm font-medium tracking-[0.2em] uppercase">Afritec Bridge Academy</p>
+                  <h1 className="text-3xl font-bold text-yellow-400">
                     Certificate of Completion
                   </h1>
                 </div>
                 
                 {/* Decorative Element */}
-                <div className="flex items-center gap-2">
-                  <div className="h-px w-12 bg-gradient-to-r from-transparent via-yellow-400 to-transparent" />
-                  <Trophy className="w-5 h-5 text-yellow-400" />
-                  <div className="h-px w-12 bg-gradient-to-r from-transparent via-yellow-400 to-transparent" />
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <div className="h-px w-16 bg-yellow-400/50" />
+                  <Trophy className="w-6 h-6 text-yellow-400" />
+                  <div className="h-px w-16 bg-yellow-400/50" />
                 </div>
               </div>
               
@@ -460,61 +611,65 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                 )}
               </div>
               
-              {/* Footer Section - Compact */}
-              <div className="mt-auto pt-3 border-t border-white/10">
-                <div className="flex justify-between items-end">
-                  {/* Date */}
-                  <div className="text-left">
-                    <p className="text-blue-300 text-[10px] uppercase tracking-wider">Date Issued</p>
-                    <p className="text-white font-semibold text-sm">
-                      {new Date(certificate.issued_at || certificate.issued_date).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric'
-                      })}
-                    </p>
+              {/* Footer Section - Reorganized */}
+              <div className="mt-auto pt-4 border-t border-white/10">
+                <div className="grid grid-cols-3 gap-4 items-end">
+                  {/* Left Column - Date & Certificate ID */}
+                  <div className="text-left space-y-2">
+                    <div>
+                      <p className="text-blue-300 text-[10px] uppercase tracking-wider">Date Issued</p>
+                      <p className="text-white font-semibold text-sm">
+                        {new Date(certificate.issued_at || certificate.issued_date || new Date()).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric'
+                        })}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-blue-300 text-[10px] uppercase tracking-wider">Certificate ID</p>
+                      <p className="text-white font-mono text-xs">{certificate.certificate_number}</p>
+                      <div className="flex items-center gap-0.5 mt-0.5">
+                        <Verified className="w-2.5 h-2.5 text-green-400" />
+                        <span className="text-green-400 text-[10px]">Verified</span>
+                      </div>
+                    </div>
                   </div>
                   
-                  {/* Signature - Centered & Compact */}
-                  <div className="text-center">
-                    <div className="bg-white rounded p-1.5 shadow-md border border-gray-200 inline-block">
-                      <Image 
+                  {/* Center Column - Signature */}
+                  <div className="text-center flex flex-col items-center">
+                    <div className="inline-block mb-2">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img 
                         src="/sign.jpg" 
                         alt="CEO Signature" 
-                        width={80} 
-                        height={35}
-                        className="mx-auto"
-                        style={{ objectFit: 'contain' }}
+                        width={120} 
+                        height={50}
+                        className="object-contain"
+                        crossOrigin="anonymous"
                       />
                     </div>
-                    <div className="mt-1 pt-0.5 border-t border-yellow-400/50">
+                    <div className="border-t border-yellow-400/50 pt-1 w-32">
                       <p className="font-semibold text-white text-xs">Desire Bikorimana</p>
                       <p className="text-yellow-400 text-[10px]">Founder & CEO</p>
                     </div>
                   </div>
                   
-                  {/* QR Code for Verification */}
-                  <div className="text-center">
-                    <div className="bg-white rounded p-1 shadow-md inline-block">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img 
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${encodeURIComponent(certificate.verification_url || `https://study.afritechbridge.online/verify/${certificate.certificate_number}`)}`}
-                        alt="QR Code"
-                        width={60}
-                        height={60}
-                        className="rounded"
-                      />
-                    </div>
-                    <p className="text-blue-300 text-[8px] mt-0.5">Scan to Verify</p>
-                  </div>
-                  
-                  {/* Certificate ID */}
+                  {/* Right Column - QR Code */}
                   <div className="text-right">
-                    <p className="text-blue-300 text-[10px] uppercase tracking-wider">Certificate ID</p>
-                    <p className="text-white font-mono text-xs">{certificate.certificate_number}</p>
-                    <div className="flex items-center justify-end gap-0.5 mt-0.5">
-                      <Verified className="w-2.5 h-2.5 text-green-400" />
-                      <span className="text-green-400 text-[10px]">Verified</span>
+                    <div className="inline-block">
+                      <div className="bg-gray-800/30 backdrop-blur-sm rounded-lg p-2 border border-yellow-400/30 inline-block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=70x70&data=${encodeURIComponent(certificate.verification_url || `https://study.afritechbridge.online/verify/${certificate.certificate_number}`)}`}
+                          alt="QR Code"
+                          width={70}
+                          height={70}
+                          className="rounded block"
+                          crossOrigin="anonymous"
+                        />
+                      </div>
+                      <p className="text-blue-300 text-[9px] mt-1 text-center">Scan to Verify</p>
                     </div>
                   </div>
                 </div>
@@ -524,15 +679,54 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
           
           {/* Actions */}
           <div className="flex justify-center gap-3">
-            <Button onClick={handleDownload} className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white">
-              <Download className="h-4 w-4 mr-2" />
-              Download PDF
+            <Button 
+              onClick={handleDownload} 
+              disabled={isDownloading}
+              className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white"
+            >
+              {isDownloading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download PDF
+                </>
+              )}
             </Button>
-            <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-800">
+            <Button 
+              onClick={handleDownloadImage} 
+              disabled={isDownloading}
+              variant="outline"
+              className="border-yellow-500 text-yellow-400 hover:bg-yellow-500/10"
+            >
+              {isDownloading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download Image
+                </>
+              )}
+            </Button>
+            <Button 
+              onClick={handleVerifyOnline}
+              variant="outline" 
+              className="border-gray-600 text-gray-300 hover:bg-gray-800"
+            >
               <ExternalLink className="h-4 w-4 mr-2" />
               Verify Online
             </Button>
-            <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-800">
+            <Button 
+              onClick={() => setShareDialogOpen(true)}
+              variant="outline" 
+              className="border-gray-600 text-gray-300 hover:bg-gray-800"
+            >
               <Share2 className="h-4 w-4 mr-2" />
               Share
             </Button>
@@ -551,6 +745,14 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
         </div>
       </DialogContent>
     </Dialog>
+    
+    {/* Share Dialog */}
+    <ShareDialog 
+      certificate={{...certificate, verification_url: verificationUrl}} 
+      isOpen={shareDialogOpen} 
+      onClose={() => setShareDialogOpen(false)} 
+    />
+    </>
   );
 };
 
@@ -562,7 +764,10 @@ interface ShareDialogProps {
 
 const ShareDialog: React.FC<ShareDialogProps> = ({ certificate, isOpen, onClose }) => {
   const [copied, setCopied] = useState(false);
-  const shareUrl = certificate.verification_url;
+  const shareUrl = certificate.verification_url || 
+    `https://study.afritechbridge.online/verify/${certificate.certificate_number}`;
+  
+  const shareMessage = `🎓 I just earned a certificate in "${certificate.course_title}" from Afritec Bridge Academy! Check it out:`;
 
   const handleCopyLink = async () => {
     try {
@@ -584,19 +789,19 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ certificate, isOpen, onClose 
     {
       name: 'Twitter',
       icon: <Twitter className="h-5 w-5" />,
-      url: `https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(`I just earned a certificate in ${certificate.course_title}!`)}`,
+      url: `https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareMessage)}`,
       color: 'bg-sky-500 hover:bg-sky-600'
     },
     {
       name: 'Facebook',
       icon: <Facebook className="h-5 w-5" />,
-      url: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`,
+      url: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}&quote=${encodeURIComponent(shareMessage)}`,
       color: 'bg-blue-800 hover:bg-blue-900'
     },
     {
       name: 'Email',
       icon: <Mail className="h-5 w-5" />,
-      url: `mailto:?subject=${encodeURIComponent(`Certificate: ${certificate.course_title}`)}&body=${encodeURIComponent(`Check out my certificate: ${shareUrl}`)}`,
+      url: `mailto:?subject=${encodeURIComponent(`Certificate: ${certificate.course_title} - Afritec Bridge`)}&body=${encodeURIComponent(`${shareMessage}\n\n${shareUrl}`)}`,
       color: 'bg-gray-600 hover:bg-gray-700'
     }
   ];
@@ -606,6 +811,9 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ certificate, isOpen, onClose 
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Share Certificate</DialogTitle>
+          <DialogDescription>
+            Share your certificate on social media or copy the verification link
+          </DialogDescription>
         </DialogHeader>
         
         <div className="space-y-6">
