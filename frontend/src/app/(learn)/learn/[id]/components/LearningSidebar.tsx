@@ -248,11 +248,31 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   }, [modules, currentModuleId, currentLessonId, openModules, loadingProgress]);
 
   return (
-    <div className={`${sidebarOpen ? 'w-80' : 'w-0'} transition-all duration-300 overflow-hidden bg-gray-900/50 border-r border-gray-800 shadow-sm`}>
-      <div className="h-[calc(100vh-4rem)] overflow-y-auto">
-        <div className="p-4 border-b border-gray-800">
-          <h3 className="font-semibold text-white">Course Navigation</h3>
-          <p className="text-sm text-gray-400 mt-1">
+    <>
+      {/* Mobile overlay backdrop */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => {}} 
+        />
+      )}
+      
+      <div className={`
+        ${sidebarOpen ? 'w-80 md:w-80' : 'w-0'} 
+        transition-all duration-300 overflow-hidden 
+        bg-gray-900/95 lg:bg-gray-900/50 
+        border-r border-gray-800 shadow-sm
+        fixed lg:relative 
+        top-0 lg:top-auto
+        left-0 
+        h-screen lg:h-auto
+        z-50 lg:z-auto
+        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        <div className="h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)] overflow-y-auto">
+        <div className="p-3 sm:p-4 border-b border-gray-800">
+          <h3 className="text-base sm:text-lg font-semibold text-white">Course Navigation</h3>
+          <p className="text-xs sm:text-sm text-gray-400 mt-1">
             {modules?.length || 0} modules • {allLessons} lessons
           </p>
           {currentLessonId && (
@@ -262,7 +282,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
           )}
         </div>
         
-        <ScrollArea className="px-4 py-2">
+        <ScrollArea className="px-3 sm:px-4 py-2">
           {modules?.map((module: ModuleData, moduleIndex: number) => {
             const moduleStatus = getModuleStatus(module.id);
             const isCurrentModule = module.id === currentModuleId;
@@ -337,23 +357,23 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                     <Button
                       variant="ghost"
                       onClick={isLocked ? handleModuleClick : undefined}
-                      className={`w-full justify-between text-left p-3 h-auto hover:bg-gray-800/50 text-gray-200 ${
+                      className={`w-full justify-between text-left p-2 sm:p-3 h-auto hover:bg-gray-800/50 text-gray-200 ${
                         isLocked ? 'cursor-pointer opacity-70 hover:opacity-100' : ''
                       }`}
                     >
-                      <div className="flex items-center space-x-3 flex-1 min-w-0">
+                      <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
                         <div className="flex-shrink-0">
                           {moduleStatus === 'completed' ? (
-                            <CheckCircle className="h-5 w-5 text-green-400" />
+                            <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-400" />
                           ) : moduleStatus === 'in_progress' || moduleStatus === 'unlocked' ? (
-                            <Clock className="h-5 w-5 text-blue-400" />
+                            <Clock className="h-4 w-4 sm:h-5 sm:w-5 text-blue-400" />
                           ) : (
-                            <Lock className="h-5 w-5 text-gray-500" />
+                            <Lock className="h-4 w-4 sm:h-5 sm:w-5 text-gray-500" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center space-x-2">
-                            <p className="font-medium text-sm truncate text-white">
+                          <div className="flex items-center space-x-1 sm:space-x-2 flex-wrap">
+                            <p className="font-medium text-xs sm:text-sm truncate text-white">
                               Module {moduleIndex + 1}: {module.title}
                             </p>
                             {moduleStatus === 'completed' && (
@@ -389,7 +409,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                             )}
                           </div>
                           <div className="space-y-1 mt-1">
-                            <p className="text-xs text-gray-400">
+                            <p className="text-[10px] sm:text-xs text-gray-400">
                               {hasProgressData 
                                 ? `${moduleProgress.completedLessons}/${moduleProgress.totalLessons} lessons completed`
                                 : `${module.lessons?.length || 0} lessons`
@@ -401,9 +421,9 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                               <div className="space-y-0.5">
                                 <Progress 
                                   value={moduleProgress.progressPercentage} 
-                                  className="h-1.5 bg-gray-700"
+                                  className="h-1 sm:h-1.5 bg-gray-700"
                                 />
-                                <p className="text-xs text-gray-500">
+                                <p className="text-[9px] sm:text-xs text-gray-500">
                                   {moduleProgress.progressPercentage}% complete
                                 </p>
                               </div>
@@ -411,13 +431,13 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                           </div>
                         </div>
                       </div>
-                      <ChevronDown className={`h-4 w-4 text-gray-500 transition-transform duration-200 ${
+                      <ChevronDown className={`h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500 transition-transform duration-200 ${
                         isOpen && !isLocked ? 'rotate-180' : ''
                       } ${isLocked ? 'opacity-50' : ''}`} />
                     </Button>
                   </CollapsibleTrigger>
                   
-                  <CollapsibleContent className="ml-4 mt-1 space-y-2">
+                  <CollapsibleContent className="ml-2 sm:ml-3 md:ml-4 mt-1 space-y-2">
                     {module.lessons && module.lessons.length > 0 ? (
                       module.lessons.map((lesson: any, lessonIndex: number) => {
                       const isCurrentLesson = lesson.id === currentLessonId;
@@ -449,7 +469,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                               <TooltipTrigger asChild>
                                 <Button
                                   variant={isCurrentLesson ? "secondary" : "ghost"}
-                                  className={`w-full justify-start text-left p-2 h-auto text-sm transition-all duration-200 ${
+                                  className={`w-full justify-start text-left p-1.5 sm:p-2 h-auto text-xs sm:text-sm transition-all duration-200 ${
                                     isCurrentLesson ? 'bg-blue-900/50 text-white hover:bg-blue-900/60 shadow-md' : 'text-gray-300 hover:bg-gray-800/50'
                                   } ${
                                     isLessonCompleted ? 'ring-1 ring-green-500/50 bg-green-900/20 hover:bg-green-900/30' : ''
@@ -459,29 +479,29 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                   onClick={() => canAccessLesson && onLessonSelect(lesson.id, module.id)}
                                   disabled={!canAccessLesson}
                                 >
-                                  <div className="flex items-center space-x-2 flex-1 min-w-0">
-                                    <span className="text-xs text-gray-500 flex-shrink-0">
+                                  <div className="flex items-center space-x-1 sm:space-x-2 flex-1 min-w-0">
+                                    <span className="text-[10px] sm:text-xs text-gray-500 flex-shrink-0">
                                       {lessonIndex + 1}.
                                     </span>
-                                    <span className="truncate flex-1">{lesson.title}</span>
+                                    <span className="truncate flex-1 text-xs sm:text-sm">{lesson.title}</span>
                                     
                                     {/* Status indicators */}
                                     {isCurrentLesson && !isLessonCompleted && (
-                                      <Badge className="bg-blue-900/80 text-blue-200 text-xs px-1.5 py-0 flex-shrink-0 mr-1">
+                                      <Badge className="bg-blue-900/80 text-blue-200 text-[10px] sm:text-xs px-1 sm:px-1.5 py-0 flex-shrink-0 mr-1">
                                         Current
                                       </Badge>
                                     )}
                                     {isLessonCompleted ? (
-                                      <div className="flex items-center space-x-1 flex-shrink-0">
-                                        <CheckCircle className="h-4 w-4 text-green-400" />
-                                        <Badge className="bg-green-900/50 text-green-300 text-xs px-1.5 py-0">
+                                      <div className="flex items-center space-x-0.5 sm:space-x-1 flex-shrink-0">
+                                        <CheckCircle className="h-3 w-3 sm:h-4 sm:w-4 text-green-400" />
+                                        <Badge className="bg-green-900/50 text-green-300 text-[10px] sm:text-xs px-1 sm:px-1.5 py-0">
                                           Done
                                         </Badge>
                                       </div>
                                     ) : !canAccessLesson ? (
-                                      <Lock className="h-3 w-3 text-gray-500 flex-shrink-0" />
+                                      <Lock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-gray-500 flex-shrink-0" />
                                     ) : (
-                                      <Clock className="h-3 w-3 text-blue-400 flex-shrink-0" />
+                                      <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-blue-400 flex-shrink-0" />
                                     )}
                                   </div>
                                 </Button>
@@ -530,7 +550,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
 
                           {/* Display assessments for this lesson */}
                           {assessments.length > 0 && (
-                            <div className="ml-8 space-y-1">
+                            <div className="ml-4 sm:ml-6 md:ml-8 space-y-1">
                               {assessments.map((assessment: LessonAssessment) => {
                                 const isQuizCompleted = assessment.type === 'quiz' && quizCompletionStatus[assessment.id]?.completed;
                                 const quizScore = quizCompletionStatus[assessment.id]?.score;
@@ -554,35 +574,35 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     <TooltipTrigger asChild>
                                       <div
                                         onClick={handleAssessmentClick}
-                                        className={`flex items-center space-x-2 px-3 py-1.5 rounded border text-xs transition-all duration-200 ${getAssessmentColor(assessment.type)} ${
+                                        className={`flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded border text-[10px] sm:text-xs transition-all duration-200 ${getAssessmentColor(assessment.type)} ${
                                           assessment.type === 'quiz' && !canAccessQuiz ? 'opacity-50 cursor-not-allowed' : 
                                           assessment.type === 'quiz' && canAccessQuiz ? 'cursor-pointer hover:scale-105 hover:shadow-md' :
                                           !canAccessLesson ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105'
                                         } ${isQuizCompleted && quizPassed ? 'ring-1 ring-green-500/50' : ''}`}
                                       >
                                         <div className="flex-shrink-0">
-                                          {getAssessmentIcon(assessment.type, 'h-3.5 w-3.5')}
+                                          {getAssessmentIcon(assessment.type, 'h-3 w-3 sm:h-3.5 sm:w-3.5')}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                          <p className="truncate font-medium">
+                                          <p className="truncate font-medium text-[10px] sm:text-xs">
                                             {assessment.type.charAt(0).toUpperCase() + assessment.type.slice(1)}
                                           </p>
-                                          <p className="text-xs opacity-75 truncate">{assessment.title}</p>
+                                          <p className="text-[9px] sm:text-xs opacity-75 truncate">{assessment.title}</p>
                                           {isQuizCompleted && quizScore !== undefined && (
-                                            <p className={`text-xs font-semibold ${quizPassed ? 'text-green-400' : 'text-yellow-400'}`}>
+                                            <p className={`text-[9px] sm:text-xs font-semibold ${quizPassed ? 'text-green-400' : 'text-yellow-400'}`}>
                                               Score: {Math.round(quizScore)}%
                                             </p>
                                           )}
                                         </div>
                                         {isQuizCompleted ? (
-                                          <CheckCircle className="h-3 w-3 flex-shrink-0 text-green-400" />
+                                          <CheckCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-green-400" />
                                         ) : assessment.status === 'completed' ? (
-                                          <CheckCircle className="h-3 w-3 flex-shrink-0 text-green-400" />
+                                          <CheckCircle className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-green-400" />
                                         ) : assessment.status === 'in_progress' ? (
-                                          <Clock className="h-3 w-3 flex-shrink-0 text-yellow-400" />
+                                          <Clock className="h-2.5 w-2.5 sm:h-3 sm:w-3 flex-shrink-0 text-yellow-400" />
                                         ) : null}
                                         {!assessment.status && !isQuizCompleted && (
-                                          <span className="text-xs opacity-60">pending</span>
+                                          <span className="text-[9px] sm:text-xs opacity-60">pending</span>
                                         )}
                                       </div>
                                     </TooltipTrigger>
@@ -649,5 +669,6 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         </ScrollArea>
       </div>
     </div>
+    </>
   );
 };

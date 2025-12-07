@@ -6,6 +6,7 @@ import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { 
   Play,
   Clock,
@@ -17,7 +18,10 @@ import {
   FileText,
   Timer,
   Loader2,
-  ArrowLeft
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Grid
 } from 'lucide-react';
 import type { ContentQuiz, QuizQuestion } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
@@ -78,6 +82,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   const [submissionResult, setSubmissionResult] = useState<SubmissionResult | null>(null);
   const [shuffledQuestions, setShuffledQuestions] = useState<any[]>([]);
   const [shuffledAnswersMap, setShuffledAnswersMap] = useState<Record<number, any[]>>({});
+  const [showScoreModal, setShowScoreModal] = useState(false);
   
   // Shuffle utility function
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -297,85 +302,163 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               You have used all {maxAttempts} attempts for this quiz. 
               {quiz.best_score && ` Your best score: ${quiz.best_score}%`}
             </AlertDescription>
+            {quiz.best_score !== undefined && (
+              <div className="mt-4">
+                <Button
+                  onClick={() => setShowScoreModal(true)}
+                  variant="outline"
+                  className="bg-white/10 hover:bg-white/20 text-white border-white/30"
+                >
+                  <Trophy className="h-4 w-4 mr-2" />
+                  View Score Details
+                </Button>
+              </div>
+            )}
           </Alert>
         )}
         
-        <Card className="border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-2xl font-bold text-gray-900">{quiz.title}</h3>
-                <p className="text-gray-600 mt-2">{quiz.description}</p>
+        <Card className="border-2 border-blue-200 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-blue-950 dark:via-indigo-950 dark:to-purple-950 shadow-xl">
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge className="bg-blue-600 hover:bg-blue-700 text-white shadow-md">
+                    <FileText className="h-3 w-3 mr-1" />
+                    Quiz
+                  </Badge>
+                  {quiz.best_score && (
+                    <Badge variant="outline" className="bg-white/50 backdrop-blur-sm">
+                      Best: {quiz.best_score}%
+                    </Badge>
+                  )}
+                </div>
+                <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">{quiz.title}</h3>
+                <p className="text-gray-700 dark:text-gray-300 text-sm sm:text-base">{quiz.description}</p>
               </div>
-              <Badge className="bg-blue-600 text-white">
-                <FileText className="h-4 w-4 mr-1" />
-                Quiz
-              </Badge>
             </div>
           </CardHeader>
           
           <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="bg-white rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-blue-600">{questions.length}</div>
-                <div className="text-sm text-gray-600">Questions</div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center border border-blue-100 dark:border-blue-900 shadow-md hover:shadow-lg transition-all">
+                <div className="flex justify-center mb-2">
+                  <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                    <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-blue-600 dark:text-blue-400">{questions.length}</div>
+                <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Questions</div>
               </div>
               
               {quiz.time_limit ? (
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-orange-600">{quiz.time_limit}</div>
-                  <div className="text-sm text-gray-600">Minutes</div>
+                <div className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center border border-orange-100 dark:border-orange-900 shadow-md hover:shadow-lg transition-all">
+                  <div className="flex justify-center mb-2">
+                    <div className="p-2 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                      <Clock className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                    </div>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-bold text-orange-600 dark:text-orange-400">{quiz.time_limit}</div>
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Minutes</div>
                 </div>
               ) : (
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-green-600">∞</div>
-                  <div className="text-sm text-gray-600">No Time Limit</div>
+                <div className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center border border-green-100 dark:border-green-900 shadow-md hover:shadow-lg transition-all">
+                  <div className="flex justify-center mb-2">
+                    <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
+                      <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+                    </div>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400">∞</div>
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">No Time Limit</div>
                 </div>
               )}
               
-              <div className="bg-white rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-purple-600">{quiz.passing_score || 70}%</div>
-                <div className="text-sm text-gray-600">Passing Score</div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center border border-purple-100 dark:border-purple-900 shadow-md hover:shadow-lg transition-all">
+                <div className="flex justify-center mb-2">
+                  <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-lg">
+                    <Trophy className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-purple-600 dark:text-purple-400">{quiz.passing_score || 70}%</div>
+                <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Passing Score</div>
               </div>
               
               {quiz.max_attempts && quiz.max_attempts !== -1 ? (
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-indigo-600">{quiz.max_attempts}</div>
-                  <div className="text-sm text-gray-600">Max Attempts</div>
+                <div className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center border border-indigo-100 dark:border-indigo-900 shadow-md hover:shadow-lg transition-all">
+                  <div className="flex justify-center mb-2">
+                    <div className="p-2 bg-indigo-100 dark:bg-indigo-900 rounded-lg">
+                      <RefreshCw className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-bold text-indigo-600 dark:text-indigo-400">{quiz.max_attempts}</div>
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Max Attempts</div>
                 </div>
               ) : (
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <div className="text-2xl font-bold text-green-600">∞</div>
-                  <div className="text-sm text-gray-600">Unlimited Attempts</div>
+                <div className="bg-white dark:bg-gray-800 rounded-xl p-4 sm:p-5 text-center border border-green-100 dark:border-green-900 shadow-md hover:shadow-lg transition-all">
+                  <div className="flex justify-center mb-2">
+                    <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
+                      <RefreshCw className="h-5 w-5 text-green-600 dark:text-green-400" />
+                    </div>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-bold text-green-600 dark:text-green-400">∞</div>
+                  <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400 font-medium">Unlimited</div>
                 </div>
               )}
             </div>
             
-            <div className="bg-white rounded-lg p-4 mb-6">
-              <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
-                <AlertCircle className="h-4 w-4 mr-2 text-blue-600" />
-                Instructions:
+            <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 mb-6 border border-gray-200 dark:border-gray-700 shadow-md">
+              <h4 className="font-bold text-gray-900 dark:text-white text-base sm:text-lg mb-4 flex items-center">
+                <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded-lg mr-3">
+                  <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                Quiz Instructions
               </h4>
-              <ul className="list-disc list-inside space-y-2 text-gray-700 text-sm">
-                <li>Read each question carefully before answering</li>
+              <ul className="space-y-3 text-gray-700 dark:text-gray-300 text-sm sm:text-base">
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                  <span>Read each question carefully before answering</span>
+                </li>
                 {quiz.time_limit && (
-                  <li>You have {quiz.time_limit} minutes to complete the quiz</li>
+                  <li className="flex items-start gap-2">
+                    <Clock className="h-5 w-5 text-orange-500 flex-shrink-0 mt-0.5" />
+                    <span>You have <strong>{quiz.time_limit} minutes</strong> to complete the quiz</span>
+                  </li>
                 )}
                 {!quiz.time_limit && (
-                  <li>No time limit - take your time to answer thoughtfully</li>
+                  <li className="flex items-start gap-2">
+                    <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <span>No time limit - take your time to answer thoughtfully</span>
+                  </li>
                 )}
                 {quiz.max_attempts && quiz.max_attempts !== -1 ? (
-                  <li>You can attempt this quiz up to {quiz.max_attempts} times</li>
+                  <li className="flex items-start gap-2">
+                    <RefreshCw className="h-5 w-5 text-indigo-500 flex-shrink-0 mt-0.5" />
+                    <span>You can attempt this quiz up to <strong>{quiz.max_attempts} times</strong></span>
+                  </li>
                 ) : (
-                  <li>Unlimited attempts available</li>
+                  <li className="flex items-start gap-2">
+                    <RefreshCw className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                    <span>Unlimited attempts available</span>
+                  </li>
                 )}
-                <li>You need {quiz.passing_score || 70}% to pass this quiz</li>
-                <li>You can navigate between questions before submitting</li>
+                <li className="flex items-start gap-2">
+                  <Trophy className="h-5 w-5 text-purple-500 flex-shrink-0 mt-0.5" />
+                  <span>You need <strong>{quiz.passing_score || 70}%</strong> to pass this quiz</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <CheckCircle className="h-5 w-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <span>You can navigate between questions before submitting</span>
+                </li>
                 {quiz.shuffle_questions && (
-                  <li className="text-blue-600">Questions are presented in random order</li>
+                  <li className="flex items-start gap-2">
+                    <RefreshCw className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-blue-700 dark:text-blue-300 font-medium">Questions are presented in random order</span>
+                  </li>
                 )}
                 {quiz.shuffle_answers && (
-                  <li className="text-blue-600">Answer choices are randomized</li>
+                  <li className="flex items-start gap-2">
+                    <RefreshCw className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-blue-700 dark:text-blue-300 font-medium">Answer choices are randomized</span>
+                  </li>
                 )}
               </ul>
             </div>
@@ -383,9 +466,9 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             <Button 
               onClick={startQuiz}
               disabled={!canAttempt}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-6 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg"
             >
-              <Play className="h-5 w-5 mr-2" />
+              <Play className="h-6 w-6 mr-2" />
               {canAttempt ? 'Start Quiz' : 'Maximum Attempts Reached'}
             </Button>
             
@@ -397,6 +480,163 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             )}
           </CardContent>
         </Card>
+
+        {/* Score Details Modal */}
+        <Dialog open={showScoreModal} onOpenChange={setShowScoreModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Trophy className="h-5 w-5 text-purple-600" />
+                Quiz Score Details
+              </DialogTitle>
+              <DialogDescription>
+                Your performance on this quiz
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              {/* Score Display */}
+              <div className="text-center">
+                <div className={`inline-flex h-24 w-24 items-center justify-center rounded-full mb-4 ${
+                  quiz.best_score && quiz.best_score >= (quiz.passing_score || 70)
+                    ? 'bg-green-100 dark:bg-green-900'
+                    : 'bg-yellow-100 dark:bg-yellow-900'
+                }`}>
+                  {quiz.best_score && quiz.best_score >= (quiz.passing_score || 70) ? (
+                    <Trophy className="h-12 w-12 text-green-600 dark:text-green-400" />
+                  ) : (
+                    <AlertCircle className="h-12 w-12 text-yellow-600 dark:text-yellow-400" />
+                  )}
+                </div>
+                <div className={`text-5xl font-bold mb-2 ${
+                  quiz.best_score && quiz.best_score >= (quiz.passing_score || 70)
+                    ? 'text-green-600 dark:text-green-400'
+                    : 'text-yellow-600 dark:text-yellow-400'
+                }`}>
+                  {quiz.best_score !== undefined ? Math.round(quiz.best_score) : 0}%
+                </div>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {quiz.best_score && quiz.best_score >= (quiz.passing_score || 70)
+                    ? 'Passed! Great job!'
+                    : `Need ${quiz.passing_score || 70}% to pass`
+                  }
+                </p>
+              </div>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{maxAttempts}</div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">Total Attempts</div>
+                </div>
+                <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{quiz.passing_score || 70}%</div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400">Passing Score</div>
+                </div>
+              </div>
+
+              {/* Status Message */}
+              {quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || 70) && (
+                <>
+                  <Alert className="border-yellow-300 bg-yellow-50 dark:bg-yellow-950/30">
+                    <AlertCircle className="h-4 w-4 text-yellow-600" />
+                    <AlertDescription className="text-yellow-800 dark:text-yellow-300">
+                      You scored below the passing threshold of {quiz.passing_score || 70}%.
+                      {canAttempt && ' You still have attempts remaining to retake this quiz!'}
+                      {!canAttempt && ' Unfortunately, you\'ve used all available attempts.'}
+                    </AlertDescription>
+                  </Alert>
+
+                  {/* Warning about being dropped if no attempts remain */}
+                  {!canAttempt && (
+                    <Alert className="border-red-400 bg-red-50 dark:bg-red-950/30">
+                      <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                      <AlertTitle className="text-red-900 dark:text-red-300 font-bold">
+                        ⚠️ Important Notice
+                      </AlertTitle>
+                      <AlertDescription className="text-red-800 dark:text-red-300 space-y-2">
+                        <p className="font-semibold">
+                          You have reached the maximum number of attempts without passing this quiz.
+                        </p>
+                        <p>
+                          Please review the lesson content carefully and ensure you fully understand the material before moving forward. Failing to pass required assessments may result in being dropped from this course.
+                        </p>
+                        <p className="text-sm italic">
+                          💡 Tip: Re-read the lesson materials, take notes, and discuss any unclear topics with your instructor.
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Advice when attempts remain */}
+                  {canAttempt && (
+                    <Alert className="border-blue-300 bg-blue-50 dark:bg-blue-950/30">
+                      <CheckCircle className="h-4 w-4 text-blue-600" />
+                      <AlertTitle className="text-blue-900 dark:text-blue-300 font-semibold">
+                        📚 Study Recommendation
+                      </AlertTitle>
+                      <AlertDescription className="text-blue-800 dark:text-blue-300">
+                        <p>Before retaking this quiz, we recommend:</p>
+                        <ul className="list-disc ml-5 mt-2 space-y-1">
+                          <li>Review the lesson content thoroughly</li>
+                          <li>Take notes on key concepts</li>
+                          <li>Practice any examples provided</li>
+                          <li>Reach out to your instructor if you have questions</li>
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </>
+              )}
+
+              {quiz.best_score !== undefined && quiz.best_score >= (quiz.passing_score || 70) && (
+                <Alert className="border-green-300 bg-green-50 dark:bg-green-950/30">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-800 dark:text-green-300">
+                    Congratulations! You passed this quiz with a great score!
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              {/* Show Retake button if score is below passing and has remaining attempts */}
+              {quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || 70) && canAttempt && (
+                <Button
+                  onClick={() => {
+                    setShowScoreModal(false);
+                    // Reset quiz state for retake
+                    setQuizState({
+                      status: 'not-started',
+                      currentQuestionIndex: 0,
+                      answers: {},
+                      attemptNumber: attemptsUsed + 1
+                    });
+                    setSubmissionResult(null);
+                    setTimeElapsed(0);
+                    setError(null);
+                    toast.warning('Retake Quiz', {
+                      description: `You scored below passing. You have ${maxAttempts === -1 ? 'unlimited' : maxAttempts - attemptsUsed} attempts remaining.`,
+                      duration: 3000
+                    });
+                  }}
+                  className="flex-1 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white"
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Retake Quiz
+                </Button>
+              )}
+              
+              <Button
+                onClick={() => setShowScoreModal(false)}
+                variant="outline"
+                className={`${quiz.best_score !== undefined && quiz.best_score < (quiz.passing_score || 70) && canAttempt ? 'flex-1' : 'w-full'}`}
+              >
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -415,25 +655,25 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         )}
 
         {/* Quiz Header */}
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <Badge variant="outline" className="bg-blue-50">
+        <Card className="border-2 border-blue-100 dark:border-blue-900 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 shadow-md">
+          <CardContent className="p-4 sm:p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <Badge variant="outline" className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm shadow-sm">
                   Question {quizState.currentQuestionIndex + 1} of {questions.length}
                 </Badge>
-                <Badge variant={answeredCount === questions.length ? 'default' : 'secondary'}>
+                <Badge variant={answeredCount === questions.length ? 'default' : 'secondary'} className="shadow-sm bg-blue-600 text-white">
                   {answeredCount}/{questions.length} Answered
                 </Badge>
               </div>
               
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2 text-gray-600">
+              <div className="flex items-center space-x-3 sm:space-x-4">
+                <div className="flex items-center space-x-2 text-gray-700 dark:text-gray-300">
                   <Timer className="h-4 w-4" />
-                  <span className="font-mono">{formatTime(timeElapsed)}</span>
+                  <span className="font-mono font-semibold">{formatTime(timeElapsed)}</span>
                 </div>
                 {quiz.time_limit && (
-                  <Badge variant="destructive">
+                  <Badge variant="destructive" className="shadow-sm">
                     <Clock className="h-3 w-3 mr-1" />
                     {quiz.time_limit - Math.floor(timeElapsed / 60)} min left
                   </Badge>
@@ -441,30 +681,31 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               </div>
             </div>
             
-            <Progress value={progressPercentage} className="mt-4" />
+            <Progress value={progressPercentage} className="mt-4 h-2" />
           </CardContent>
         </Card>
 
         {/* Question Card */}
-        <Card className="border-2 border-blue-200">
-          <CardContent className="p-6">
+        <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-lg bg-gradient-to-br from-white to-blue-50/30 dark:from-gray-900 dark:to-blue-950/30">
+          <CardContent className="p-4 sm:p-6 md:p-8">
             <div className="mb-6">
-              <div className="flex items-start justify-between mb-4">
+              <div className="flex items-start justify-between mb-6">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Badge variant="secondary" className="text-xs">
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <Badge variant="secondary" className="text-xs shadow-sm">
                       Question {quizState.currentQuestionIndex + 1}
                     </Badge>
                     {currentQuestion.points && (
-                      <Badge variant="outline" className="text-xs">
+                      <Badge variant="outline" className="text-xs bg-purple-50 dark:bg-purple-950 border-purple-200 dark:border-purple-800 shadow-sm">
+                        <Trophy className="h-3 w-3 mr-1" />
                         {currentQuestion.points} {currentQuestion.points === 1 ? 'point' : 'points'}
                       </Badge>
                     )}
-                    <Badge variant="outline" className="text-xs">
+                    <Badge variant="outline" className="text-xs bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 shadow-sm">
                       {currentQuestion.question_type?.replace('_', ' ').toUpperCase()}
                     </Badge>
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900">
+                  <h3 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white leading-relaxed">
                     {currentQuestion.text}
                   </h3>
                 </div>
@@ -478,17 +719,17 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 <button
                   key={answer.id}
                   onClick={() => handleAnswerSelect(currentQuestion.id, answer.id.toString())}
-                  className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
+                  className={`w-full text-left p-4 sm:p-5 rounded-xl border-2 transition-all duration-200 ${
                     quizState.answers[currentQuestion.id] === answer.id.toString()
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
+                      ? 'border-blue-500 dark:border-blue-400 bg-blue-50 dark:bg-blue-900/30 shadow-md scale-[1.02]'
+                      : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 hover:shadow-md hover:scale-[1.01]'
                   }`}
                 >
                   <div className="flex items-start space-x-3">
-                    <div className={`min-w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold ${
+                    <div className={`min-w-[32px] h-8 rounded-full border-2 flex items-center justify-center font-bold text-sm transition-all duration-200 ${
                       quizState.answers[currentQuestion.id] === answer.id.toString()
-                        ? 'border-blue-500 bg-blue-500 text-white'
-                        : 'border-gray-300 text-gray-600'
+                        ? 'border-blue-500 dark:border-blue-400 bg-blue-500 dark:bg-blue-600 text-white shadow-md'
+                        : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 bg-white dark:bg-gray-800'
                     }`}>
                       {quizState.answers[currentQuestion.id] === answer.id.toString() ? (
                         <CheckCircle className="h-5 w-5" />
@@ -496,47 +737,52 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                         String.fromCharCode(65 + index)
                       )}
                     </div>
-                    <span className="text-gray-900 flex-1 pt-1">{answer.text}</span>
+                    <span className="text-gray-900 dark:text-gray-100 flex-1 pt-0.5 text-sm sm:text-base">{answer.text}</span>
                   </div>
                 </button>
               ))}
 
               {/* True/False Question */}
               {currentQuestion.question_type === 'true_false' && (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <Button
                     type="button"
                     variant={quizState.answers[currentQuestion.id] === 'true' ? 'default' : 'outline'}
-                    className={`h-20 text-lg ${
+                    className={`h-24 sm:h-28 text-base sm:text-lg font-bold transition-all duration-200 ${
                       quizState.answers[currentQuestion.id] === 'true'
-                        ? 'bg-green-600 hover:bg-green-700'
-                        : 'hover:border-green-400'
+                        ? 'bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg scale-[1.02]'
+                        : 'hover:border-green-400 dark:hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-950/20 hover:scale-[1.01]'
                     }`}
                     onClick={() => handleAnswerSelect(currentQuestion.id, 'true')}
                   >
-                    <CheckCircle className="h-6 w-6 mr-2" />
-                    True
+                    <div className="flex flex-col items-center gap-2">
+                      <CheckCircle className="h-8 w-8" />
+                      <span>True</span>
+                    </div>
                   </Button>
                   <Button
                     type="button"
                     variant={quizState.answers[currentQuestion.id] === 'false' ? 'default' : 'outline'}
-                    className={`h-20 text-lg ${
+                    className={`h-24 sm:h-28 text-base sm:text-lg font-bold transition-all duration-200 ${
                       quizState.answers[currentQuestion.id] === 'false'
-                        ? 'bg-red-600 hover:bg-red-700'
-                        : 'hover:border-red-400'
+                        ? 'bg-gradient-to-br from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 shadow-lg scale-[1.02]'
+                        : 'hover:border-red-400 dark:hover:border-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 hover:scale-[1.01]'
                     }`}
                     onClick={() => handleAnswerSelect(currentQuestion.id, 'false')}
                   >
-                    <XCircle className="h-6 w-6 mr-2" />
-                    False
+                    <div className="flex flex-col items-center gap-2">
+                      <XCircle className="h-8 w-8" />
+                      <span>False</span>
+                    </div>
                   </Button>
                 </div>
               )}
 
               {/* Short Answer Question */}
               {currentQuestion.question_type === 'short_answer' && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">
+                <div className="space-y-3">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
                     Your Answer:
                   </label>
                   <Input
@@ -544,9 +790,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     placeholder="Type your answer here..."
                     value={quizState.answers[currentQuestion.id] || ''}
                     onChange={(e) => handleAnswerSelect(currentQuestion.id, e.target.value)}
-                    className="w-full text-base"
+                    className="w-full text-base h-12 border-2 focus:border-blue-400 dark:focus:border-blue-500 transition-all"
                   />
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
                     Enter a concise answer to the question above.
                   </p>
                 </div>
@@ -554,20 +801,24 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
               {/* Essay Question */}
               {currentQuestion.question_type === 'essay' && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">
+                <div className="space-y-3">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
                     Your Answer:
                   </label>
                   <Textarea
                     placeholder="Write your detailed answer here..."
                     value={quizState.answers[currentQuestion.id] || ''}
                     onChange={(e) => handleAnswerSelect(currentQuestion.id, e.target.value)}
-                    className="w-full min-h-[200px] text-base"
+                    className="w-full min-h-[200px] text-base border-2 focus:border-blue-400 dark:focus:border-blue-500 transition-all"
                     rows={8}
                   />
-                  <div className="flex justify-between text-xs text-gray-500">
-                    <span>Provide a comprehensive, well-structured response.</span>
-                    <span>{(quizState.answers[currentQuestion.id] || '').length} characters</span>
+                  <div className="flex flex-col sm:flex-row justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <span className="flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3" />
+                      Provide a comprehensive, well-structured response.
+                    </span>
+                    <span className="font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">{(quizState.answers[currentQuestion.id] || '').length} characters</span>
                   </div>
                 </div>
               )}
@@ -584,33 +835,36 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             </div>
 
             {/* Navigation */}
-            <div className="flex justify-between items-center mt-6 pt-6 border-t">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-6 pt-6 border-t-2 border-gray-100 dark:border-gray-700">
               <Button
                 onClick={() => navigateQuestion('prev')}
                 disabled={quizState.currentQuestionIndex === 0}
                 variant="outline"
+                className="w-full sm:w-auto h-11 font-semibold border-2 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
               >
+                <ChevronLeft className="h-4 w-4 mr-2" />
                 Previous
               </Button>
               
-              <div className="text-sm text-gray-600">
+              <div className="text-sm font-semibold text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-4 py-2 rounded-full">
                 {quizState.currentQuestionIndex + 1} of {questions.length}
               </div>
               
               {quizState.currentQuestionIndex === questions.length - 1 ? (
                 <Button
                   onClick={submitQuiz}
-                  className="bg-green-600 hover:bg-green-700 disabled:opacity-50"
+                  className="w-full sm:w-auto h-11 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   disabled={!allQuestionsAnswered || submitting}
                   title={!allQuestionsAnswered ? `Answer all ${questions.length} questions to submit` : 'Submit your quiz'}
                 >
                   {submitting ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
                       Submitting...
                     </>
                   ) : (
                     <>
+                      <CheckCircle className="h-5 w-5 mr-2" />
                       Submit Quiz {!allQuestionsAnswered && `(${answeredCount}/${questions.length})`}
                     </>
                   )}
@@ -619,8 +873,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 <Button
                   onClick={() => navigateQuestion('next')}
                   disabled={quizState.currentQuestionIndex === questions.length - 1}
+                  className="w-full sm:w-auto h-11 bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-md hover:shadow-lg"
                 >
                   Next
+                  <ChevronRight className="h-4 w-4 ml-2" />
                 </Button>
               )}
             </div>
@@ -628,24 +884,43 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         </Card>
 
         {/* Question Navigator */}
-        <Card>
-          <CardContent className="p-4">
+        <Card className="border-2 border-gray-200 dark:border-gray-700 shadow-md">
+          <CardContent className="p-4 sm:p-5">
+            <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center gap-2">
+              <Grid className="h-4 w-4" />
+              Question Navigator
+            </h4>
             <div className="flex flex-wrap gap-2">
               {questions.map((q, index) => (
                 <button
                   key={q.id}
                   onClick={() => setQuizState({ ...quizState, currentQuestionIndex: index })}
-                  className={`w-10 h-10 rounded-lg font-semibold transition-all ${
+                  className={`w-10 h-10 sm:w-12 sm:h-12 rounded-lg font-bold text-sm sm:text-base transition-all duration-200 ${
                     index === quizState.currentQuestionIndex
-                      ? 'bg-blue-600 text-white'
+                      ? 'bg-blue-600 dark:bg-blue-500 text-white shadow-lg scale-110 ring-2 ring-blue-300 dark:ring-blue-700'
                       : quizState.answers[q.id]
-                      ? 'bg-green-100 text-green-700 border-2 border-green-300'
-                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 border-2 border-green-400 dark:border-green-600 hover:shadow-md hover:scale-105'
+                      : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:shadow-md hover:scale-105 border-2 border-gray-300 dark:border-gray-600'
                   }`}
+                  title={`Question ${index + 1}${quizState.answers[q.id] ? ' (Answered)' : ' (Not answered)'}`}
                 >
                   {index + 1}
                 </button>
               ))}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-4 text-xs text-gray-600 dark:text-gray-400">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-blue-600 rounded-lg"></div>
+                <span>Current</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-green-100 dark:bg-green-900 border-2 border-green-400 dark:border-green-600 rounded-lg"></div>
+                <span>Answered</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-gray-100 dark:bg-gray-800 border-2 border-gray-300 dark:border-gray-600 rounded-lg"></div>
+                <span>Not Answered</span>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -660,72 +935,98 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     
     return (
       <div className="space-y-6">
-        <Card className={`border-2 ${passed ? 'border-green-200 bg-gradient-to-r from-green-50 to-emerald-50' : 'border-yellow-200 bg-gradient-to-r from-yellow-50 to-orange-50'}`}>
-          <CardContent className="p-8 text-center">
-            <div className="mb-6">
-              <div className={`h-16 w-16 rounded-full flex items-center justify-center mx-auto mb-4 ${passed ? 'bg-green-500' : 'bg-yellow-500'}`}>
+        <Card className={`border-2 shadow-2xl ${passed ? 'border-green-300 dark:border-green-700 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 dark:from-green-950 dark:via-emerald-950 dark:to-teal-950' : 'border-yellow-300 dark:border-yellow-700 bg-gradient-to-br from-yellow-50 via-orange-50 to-amber-50 dark:from-yellow-950 dark:via-orange-950 dark:to-amber-950'}`}>
+          <CardContent className="p-6 sm:p-10 text-center">
+            <div className="mb-8">
+              <div className={`h-20 w-20 sm:h-24 sm:w-24 rounded-full flex items-center justify-center mx-auto mb-6 shadow-xl animate-bounce ${passed ? 'bg-gradient-to-br from-green-500 to-emerald-600' : 'bg-gradient-to-br from-yellow-500 to-orange-600'}`}>
                 {passed ? (
-                  <Trophy className="h-8 w-8 text-white" />
+                  <Trophy className="h-10 w-10 sm:h-12 sm:w-12 text-white" />
                 ) : (
-                  <AlertCircle className="h-8 w-8 text-white" />
+                  <AlertCircle className="h-10 w-10 sm:h-12 sm:w-12 text-white" />
                 )}
               </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">
-                {passed ? 'Quiz Passed! 🎉' : 'Quiz Completed'}
+              <h3 className="text-3xl sm:text-4xl font-extrabold text-gray-900 dark:text-white mb-3">
+                {passed ? 'Congratulations! 🎉' : 'Quiz Completed'}
               </h3>
-              <p className="text-gray-600 mb-4">
-                {quizState.feedback || 'Your answers have been submitted successfully.'}
+              <p className="text-gray-700 dark:text-gray-300 text-base sm:text-lg mb-6 max-w-2xl mx-auto">
+                {quizState.feedback || (passed ? 'You have successfully passed this quiz!' : 'Your answers have been submitted successfully.')}
               </p>
               {quizState.score !== undefined && (
-                <div className="text-5xl font-bold mb-2" style={{ color: passed ? '#10b981' : '#f59e0b' }}>
+                <div className={`text-6xl sm:text-7xl font-black mb-3 animate-pulse ${passed ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'}`}>
                   {Math.round(quizState.score)}%
                 </div>
               )}
               {quiz.passing_score && (
-                <p className="text-sm text-gray-500 mb-4">
+                <p className="text-sm sm:text-base text-gray-600 dark:text-gray-400 mb-4 flex items-center justify-center gap-2">
+                  <Trophy className="h-4 w-4" />
                   Passing Score: {quiz.passing_score}%
                 </p>
               )}
             </div>
             
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div className="bg-white rounded-lg p-4">
-                <div className="text-2xl font-bold text-blue-600">{questions.length}</div>
-                <div className="text-sm text-gray-600">Questions</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 shadow-lg border border-blue-100 dark:border-blue-900">
+                <div className="flex justify-center mb-2">
+                  <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                    <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">{questions.length}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">Questions</div>
               </div>
-              <div className="bg-white rounded-lg p-4">
-                <div className="text-2xl font-bold text-green-600">{answeredCount}</div>
-                <div className="text-sm text-gray-600">Answered</div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 shadow-lg border border-green-100 dark:border-green-900">
+                <div className="flex justify-center mb-2">
+                  <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
+                    <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-bold text-green-600 dark:text-green-400">{answeredCount}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">Answered</div>
               </div>
-              <div className="bg-white rounded-lg p-4">
-                <div className="text-2xl font-bold text-purple-600">{formatTime(timeElapsed)}</div>
-                <div className="text-sm text-gray-600">Time Taken</div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 shadow-lg border border-purple-100 dark:border-purple-900">
+                <div className="flex justify-center mb-2">
+                  <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-lg">
+                    <Timer className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                </div>
+                <div className="text-3xl font-bold text-purple-600 dark:text-purple-400 font-mono">{formatTime(timeElapsed)}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">Time Taken</div>
               </div>
             </div>
             
             {submissionResult && (
-              <div className="bg-white rounded-lg p-4 mb-6">
-                <div className="grid grid-cols-2 gap-4 text-left">
-                  <div>
-                    <p className="text-sm text-gray-600">Attempt Number</p>
-                    <p className="text-lg font-semibold text-gray-900">
-                      {submissionResult.attempt_number} / {submissionResult.total_attempts === submissionResult.attempt_number && submissionResult.remaining_attempts === -1 ? '∞' : submissionResult.total_attempts}
-                    </p>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 mb-8 shadow-lg border border-gray-200 dark:border-gray-700">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-left">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-indigo-100 dark:bg-indigo-900 rounded-lg">
+                      <RefreshCw className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">Attempt Number</p>
+                      <p className="text-xl font-bold text-gray-900 dark:text-white">
+                        {submissionResult.attempt_number} / {submissionResult.total_attempts === submissionResult.attempt_number && submissionResult.remaining_attempts === -1 ? '∞' : submissionResult.total_attempts}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Remaining Attempts</p>
-                    <p className="text-lg font-semibold text-gray-900">
-                      {submissionResult.remaining_attempts === -1 ? 'Unlimited' : submissionResult.remaining_attempts}
-                    </p>
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                      <Clock className="h-6 w-6 text-orange-600 dark:text-orange-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 font-medium">Remaining Attempts</p>
+                      <p className="text-xl font-bold text-gray-900 dark:text-white">
+                        {submissionResult.remaining_attempts === -1 ? 'Unlimited' : submissionResult.remaining_attempts}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
             )}
             
-            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button 
                 variant="outline" 
-                className="flex-1"
+                className="flex-1 h-12 sm:h-14 text-base font-semibold border-2 hover:bg-gray-50 dark:hover:bg-gray-800 shadow-md hover:shadow-lg"
                 onClick={() => {
                   setQuizState({
                     ...quizState,
@@ -733,13 +1034,40 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   });
                 }}
               >
-                <FileText className="h-4 w-4 mr-2" />
+                <FileText className="h-5 w-5 mr-2" />
                 View Quiz Feedback
               </Button>
               
-              {hasRemainingAttempts && (
+              {/* Show retake button if score is below passing and has remaining attempts */}
+              {!passed && hasRemainingAttempts && (
                 <Button 
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  className="flex-1 h-12 sm:h-14 text-base font-bold bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white shadow-md hover:shadow-lg transition-all"
+                  onClick={() => {
+                    // Reset quiz state for retake
+                    setQuizState({
+                      status: 'not-started',
+                      currentQuestionIndex: 0,
+                      answers: {},
+                      attemptNumber: (submissionResult?.attempt_number || 0) + 1
+                    });
+                    setSubmissionResult(null);
+                    setTimeElapsed(0);
+                    setError(null);
+                    toast.warning('Retake Quiz', {
+                      description: `You scored below passing. You have ${submissionResult?.remaining_attempts === -1 ? 'unlimited' : submissionResult?.remaining_attempts} attempts remaining.`,
+                      duration: 3000
+                    });
+                  }}
+                >
+                  <RefreshCw className="h-5 w-5 mr-2" />
+                  Retake Quiz (Below Passing)
+                </Button>
+              )}
+
+              {/* Show retake button if passed and has remaining attempts */}
+              {passed && hasRemainingAttempts && (
+                <Button 
+                  className="flex-1 h-12 sm:h-14 text-base font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-md hover:shadow-lg transition-all"
                   onClick={() => {
                     // Reset quiz state for retake
                     setQuizState({
@@ -752,20 +1080,20 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     setTimeElapsed(0);
                     setError(null);
                     toast.info('Ready to Retake', {
-                      description: `You have ${submissionResult?.remaining_attempts === -1 ? 'unlimited' : submissionResult?.remaining_attempts} attempts remaining.`,
+                      description: `Improve your score! You have ${submissionResult?.remaining_attempts === -1 ? 'unlimited' : submissionResult?.remaining_attempts} attempts remaining.`,
                       duration: 3000
                     });
                   }}
                 >
-                  <RefreshCw className="h-4 w-4 mr-2" />
+                  <RefreshCw className="h-5 w-5 mr-2" />
                   Retake Quiz
                 </Button>
               )}
             </div>
             
             {!hasRemainingAttempts && submissionResult && (
-              <Alert className="mt-4 border-orange-200 bg-orange-50">
-                <AlertCircle className="h-4 w-4 text-orange-600" />
+              <Alert className="mt-6 border-2 border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-950/30 shadow-md">
+                <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
                 <AlertDescription className="text-orange-800">
                   You have used all available attempts for this quiz.
                   {quiz.best_score && ` Your best score: ${quiz.best_score}%`}

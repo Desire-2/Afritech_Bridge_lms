@@ -1,0 +1,173 @@
+/* Enhanced Markdown Styles for Learning Content */
+
+/* Code block enhancements */
+.prose pre {
+  @apply bg-gray-900 rounded-lg overflow-x-auto;
+}
+
+.prose code {
+  @apply font-mono text-sm;
+}
+
+.prose pre code {
+  @apply bg-transparent p-0;
+}
+
+/* Inline code */
+.prose :not(pre) > code {
+  @apply bg-gray-800 text-blue-300 px-2 py-1 rounded text-sm;
+}
+
+/* Syntax highlighting adjustments for dark theme */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #818cf8;
+}
+
+.hljs-string {
+  color: #34d399;
+}
+
+.hljs-number,
+.hljs-regexp,
+.hljs-addition {
+  color: #fbbf24;
+}
+
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-class .hljs-title {
+  color: #60a5fa;
+}
+
+.hljs-function,
+.hljs-title {
+  color: #a78bfa;
+}
+
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: #f472b6;
+}
+
+.hljs-type,
+.hljs-params {
+  color: #fb923c;
+}
+
+.hljs-tag {
+  color: #818cf8;
+}
+
+.hljs-name {
+  color: #60a5fa;
+}
+
+.hljs-attr {
+  color: #a78bfa;
+}
+
+.hljs-symbol,
+.hljs-bullet,
+.hljs-subst,
+.hljs-meta,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: #e879f9;
+}
+
+.hljs-deletion {
+  color: #ef4444;
+}
+
+.hljs-formula {
+  background: #374151;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: bold;
+}
+
+/* Table enhancements */
+.prose table {
+  @apply w-full;
+}
+
+.prose thead {
+  @apply bg-gray-800;
+}
+
+.prose tbody tr {
+  @apply border-b border-gray-700;
+}
+
+.prose tbody tr:hover {
+  @apply bg-gray-800/50;
+}
+
+.prose th {
+  @apply px-4 py-3 text-left font-semibold text-gray-200;
+}
+
+.prose td {
+  @apply px-4 py-3 text-gray-300;
+}
+
+/* Blockquote styling */
+.prose blockquote {
+  @apply border-l-4 border-blue-500 bg-blue-900/20 pl-4 py-2 italic;
+}
+
+/* Link styling */
+.prose a {
+  @apply text-blue-400 hover:text-blue-300 underline decoration-blue-500/50 hover:decoration-blue-400;
+}
+
+/* List styling */
+.prose ul,
+.prose ol {
+  @apply space-y-2;
+}
+
+.prose li {
+  @apply text-gray-200;
+}
+
+/* Horizontal rule */
+.prose hr {
+  @apply border-gray-700 my-8;
+}
+
+/* Image styling */
+.prose img {
+  @apply rounded-lg shadow-lg;
+}
+
+/* Heading anchors (for linking) */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+  @apply scroll-mt-24;
+}

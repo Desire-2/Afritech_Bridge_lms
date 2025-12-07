@@ -62,6 +62,9 @@ interface LessonContentProps {
   isUnlockingModule?: boolean;
   // Course ID for certificate generation
   courseId?: number;
+  // Manual completion props
+  onManualComplete?: () => Promise<void>;
+  canManuallyComplete?: boolean;
 }
 
 export const LessonContent: React.FC<LessonContentProps> = ({
@@ -103,7 +106,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   onUnlockNextModule,
   isUnlockingModule = false,
   // Course ID for certificate generation
-  courseId
+  courseId,
+  // Manual completion props
+  onManualComplete,
+  canManuallyComplete = false
 }) => {
   const [isGeneratingCertificate, setIsGeneratingCertificate] = useState(false);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
@@ -175,10 +181,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   return (
     <div 
       ref={contentRef}
-      className="h-[calc(100vh-4rem)] overflow-y-auto"
+      className="flex-1 w-full h-[calc(100vh-4rem)] overflow-y-auto"
       onClick={() => onTrackInteraction('content_click')}
     >
-      <div className="w-full px-4 md:px-6 lg:px-8 py-6 max-w-7xl mx-auto">
+      <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 max-w-[1600px] mx-auto">
         <div className="space-y-6">
           {/* Completed Lesson Alert */}
           {isLessonCompleted && (
@@ -192,11 +198,11 @@ export const LessonContent: React.FC<LessonContentProps> = ({
           )}
 
           {/* Lesson Header */}
-          <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-6">
-            <div className="flex items-start justify-between">
-              <div className="flex-1">
-                <div className="flex items-center space-x-3 mb-2">
-                  <h2 className="text-2xl font-bold text-white">
+          <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-3 sm:p-4 md:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
+                  <h2 className="text-xl sm:text-2xl font-bold text-white break-words">
                     {currentLesson.title}
                   </h2>
                   {isLessonCompleted && (
@@ -209,8 +215,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 {currentLesson.description && (
                   <p className="text-gray-300 mb-4">{currentLesson.description}</p>
                 )}
-                <div className="flex items-center space-x-4">
-                  <Badge variant="secondary">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+                  <Badge variant="secondary" className="text-xs sm:text-sm">
                     Lesson {currentLessonIndex + 1} of {totalLessons}
                   </Badge>
                   <Badge variant={lessonScore >= 80 ? "default" : lessonScore >= 60 ? "secondary" : "destructive"}>
@@ -224,7 +230,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 </div>
               </div>
               
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center gap-2 sm:space-x-2">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -325,8 +331,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
           {/* Learning Interface Tabs */}
           <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700">
             <Tabs value={currentViewMode} onValueChange={(value: any) => setCurrentViewMode(value)}>
-              <div className="border-b px-6 py-3">
-                <TabsList className="grid w-full grid-cols-4 max-w-2xl">
+              <div className="border-b px-3 sm:px-6 py-2 sm:py-3 overflow-x-auto">
+                <TabsList className="grid w-full grid-cols-4 min-w-[320px] sm:min-w-0 sm:max-w-2xl">
                   <TabsTrigger value="content">Content</TabsTrigger>
                   <TabsTrigger value="quiz" className="flex items-center space-x-2">
                     <FileText className="h-4 w-4" />
@@ -340,7 +346,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 </TabsList>
               </div>
 
-              <TabsContent value="content" className="p-6 space-y-6">
+              <TabsContent value="content" className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
                 {/* Enhanced Content Viewer with Rich Media Support */}
                 <ContentRichPreview
                   lesson={{
@@ -367,7 +373,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           </p>
                         </div>
                       </div>
-                      <div className="mt-4 grid grid-cols-3 gap-4 text-center">
+                      <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-center">
                         <div className="bg-gray-800/50 rounded-lg p-3">
                           <div className="text-lg font-bold text-white">{Math.floor(timeSpent / 60)}m {timeSpent % 60}s</div>
                           <div className="text-xs text-gray-400">Time Spent</div>
@@ -557,11 +563,47 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           <div className="text-xs text-gray-400">Time</div>
                         </div>
                       </div>
+                      
+                      {/* Manual Completion Button */}
+                      {canManuallyComplete && onManualComplete && (
+                        <div className="mt-6 pt-4 border-t border-blue-700/50">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-center space-x-2 text-green-300">
+                              <CheckCircle className="h-5 w-5" />
+                              <span className="font-medium text-sm">All requirements met!</span>
+                            </div>
+                            <Button
+                              onClick={onManualComplete}
+                              className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-semibold py-3 shadow-lg"
+                              size="lg"
+                            >
+                              <CheckCircle className="mr-2 h-5 w-5" />
+                              Mark as Complete
+                            </Button>
+                            <p className="text-xs text-center text-gray-400">
+                              Score: {Math.round(lessonScore)}% • Reading: {Math.round(readingProgress)}% • Engagement: {Math.round(engagementScore)}%
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Requirements not met message */}
+                      {!canManuallyComplete && lessonScore >= 60 && (
+                        <div className="mt-6 pt-4 border-t border-yellow-700/50">
+                          <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-3">
+                            <p className="text-yellow-300 text-sm text-center">
+                              {lessonScore < 80 ? `Keep learning! Current score: ${Math.round(lessonScore)}% (need 80%)` : ''}
+                              {lessonQuiz && (lessonQuiz.best_score ?? 0) < (lessonQuiz.passing_score || 70) ? ` • Complete the quiz with ${lessonQuiz.passing_score || 70}%+` : ''}
+                              {lessonAssignments && lessonAssignments.length > 0 && lessonAssignments.some((a: any) => !a.submission_status?.score) ? ' • Submit and get graded on all assignments' : ''}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
               </TabsContent>
 
-              <TabsContent value="quiz" className="p-6">
+              <TabsContent value="quiz" className="p-3 sm:p-4 md:p-6">
                 {contentLoading ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
@@ -633,7 +675,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 )}
               </TabsContent>
 
-              <TabsContent value="assignments" className="p-6">
+              <TabsContent value="assignments" className="p-3 sm:p-4 md:p-6">
                 {contentLoading && lessonAssignments.length === 0 ? (
                   <div className="flex items-center justify-center py-12">
                     <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
@@ -682,7 +724,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 )}
               </TabsContent>
 
-              <TabsContent value="notes" className="p-6">
+              <TabsContent value="notes" className="p-3 sm:p-4 md:p-6">
                 <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-white">Lesson Notes</h3>
                   <p className="text-gray-300">

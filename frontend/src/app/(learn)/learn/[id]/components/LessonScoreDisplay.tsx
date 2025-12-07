@@ -131,8 +131,8 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
 
   return (
     <Card className="bg-gray-900/50 border-gray-800">
-      <CardHeader>
-        <CardTitle className="text-lg text-white flex items-center justify-between">
+      <CardHeader className="p-4 sm:p-6">
+        <CardTitle className="text-base sm:text-lg text-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
           <div className="flex flex-col">
             <span>Lesson Score</span>
             {!hasQuiz && !hasAssignment && (
@@ -182,7 +182,11 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
           </p>
         </div>
         
-        <div className={`grid gap-3 ${components.length === 2 ? 'grid-cols-2' : components.length === 3 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-4'}`}>
+        <div className={`grid gap-2 sm:gap-3 ${
+          components.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 
+          components.length === 3 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 
+          'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
+        }`}>
           {components.map((component) => {
             const Icon = component.icon;
             const weightedScore = (component.score * component.weight) / 100;

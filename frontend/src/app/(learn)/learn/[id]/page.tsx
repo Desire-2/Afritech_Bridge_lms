@@ -495,6 +495,103 @@ const LearningPage = () => {
     }
   }, [moduleScoring]);
 
+  // Handler for manual lesson completion (Mark as Complete button)
+  const handleManualCompletion = useCallback(async () => {
+    if (!currentLesson || !currentModuleId) {
+      console.error('❌ Cannot complete lesson: missing lesson or module data');
+      return;
+    }
+
+    try {
+      console.log('🎯 Manually marking lesson as complete...');
+      
+      // First, force save current progress
+      await forceSaveProgress();
+      
+      // Then mark lesson as complete via API
+      const timeSpentSeconds = Math.floor(timeSpent);
+      const result = await StudentApiService.completeLesson(currentLesson.id, {
+        time_spent: timeSpentSeconds,
+        reading_progress: readingProgress,
+        engagement_score: engagementScore,
+        scroll_progress: scrollProgress,
+        completion_method: 'manual'
+      });
+      
+      console.log('✅ Lesson marked as complete:', result);
+      
+      // Update local state
+      setLessonCompletionStatus(prev => ({
+        ...prev,
+        [currentLesson.id]: true
+      }));
+      
+      // Update quiz completion status for sidebar
+      setQuizCompletionStatus(prev => ({
+        ...prev,
+        [currentLesson.id]: {
+          score: lessonScore,
+          completed: true,
+          passed: lessonScore >= 70
+        }
+      }));
+      
+      // Recalculate module score
+      if (moduleScoring) {
+        await moduleScoring.recalculate();
+      }
+      
+      // Show celebration
+      setShowCelebration(true);
+      
+      // Check if module can be unlocked
+      setTimeout(() => {
+        if (checkAndUnlockNextModuleRef.current) {
+          checkAndUnlockNextModuleRef.current();
+        }
+      }, 1500);
+      
+    } catch (error: any) {
+      console.error('❌ Failed to complete lesson:', error);
+      
+      // Handle specific error cases
+      if (error?.response?.status === 402 && error?.response?.data?.quiz_required) {
+        alert(`Please complete the quiz first: ${error.response.data.quiz_info?.message || 'Quiz required'}`);
+      } else if (error?.response?.data?.message) {
+        alert(`Failed to complete lesson: ${error.response.data.message}`);
+      } else {
+        alert('Failed to complete lesson. Please try again.');
+      }
+    }
+  }, [currentLesson, currentModuleId, timeSpent, readingProgress, engagementScore, scrollProgress, lessonScore, moduleScoring, forceSaveProgress]);
+
+  // Helper function to check if lesson can be manually completed
+  const canManuallyComplete = useCallback(() => {
+    // Already completed
+    if (isLessonCompleted) return false;
+    
+    // Check if lesson score meets threshold (80%)
+    if (lessonScore < 80) return false;
+    
+    // Check quiz requirement if quiz exists
+    if (lessonQuiz) {
+      const quizScore = lessonQuiz.best_score ?? lessonQuiz.current_score ?? 0;
+      const passingScore = lessonQuiz.passing_score || 70;
+      if (quizScore < passingScore) return false;
+    }
+    
+    // Check assignment requirements if assignments exist
+    if (lessonAssignments && lessonAssignments.length > 0) {
+      const allAssignmentsGraded = lessonAssignments.every((assignment: any) => {
+        return assignment.submission_status?.score !== undefined && 
+               assignment.submission_status?.score !== null;
+      });
+      if (!allAssignmentsGraded) return false;
+    }
+    
+    return true;
+  }, [isLessonCompleted, lessonScore, lessonQuiz, lessonAssignments]);
+
   // Helper function to close celebration and check for module unlock
   const closeCelebration = useCallback(() => {
     setShowCelebration(false);
@@ -803,6 +900,7 @@ const LearningPage = () => {
     
     if (nextLesson) {
       handleLessonSelect(nextLesson.id, currentModuleId!);
+      // Scroll handled in handleLessonSelect
     } else {
       const moduleIndex = courseData.course.modules.findIndex((m: any) => m.id === currentModuleId);
       const nextModule = courseData.course.modules[moduleIndex + 1];
@@ -1113,7 +1211,21 @@ const LearningPage = () => {
         setVideoProgress(0);
         setVideoCompleted(false);
         
+        // Auto-close sidebar on small screens (mobile/tablet)
+        if (window.innerWidth < 1024) { // lg breakpoint
+          setSidebarOpen(false);
+          console.log('📱 Auto-closing sidebar on small screen');
+        }
+        
         // Content will be loaded by the useEffect that watches currentLesson.id
+        
+        // Scroll to top after state updates (use setTimeout to ensure DOM is ready)
+        setTimeout(() => {
+          if (contentRef.current) {
+            contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }, 0);
         
         // Save to localStorage for persistence within session
         saveLastLesson(courseId, lessonId, moduleId);
@@ -1141,11 +1253,25 @@ const LearningPage = () => {
         setCurrentLesson(lesson);
         setCurrentModuleId(moduleId);
         
+        // Auto-close sidebar on small screens (mobile/tablet)
+        if (window.innerWidth < 1024) { // lg breakpoint
+          setSidebarOpen(false);
+          console.log('📱 Auto-closing sidebar on small screen (quiz)');
+        }
+        
         // Load lesson content (which includes the quiz)
         loadLessonContent(lessonId).then(() => {
           // Switch to quiz view after content is loaded
           setCurrentViewMode('quiz');
           console.log('✅ Switched to quiz view');
+          
+          // Scroll to top after content loads
+          setTimeout(() => {
+            if (contentRef.current) {
+              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }, 100);
         });
         
         setInteractionHistory(prev => [...prev, {
@@ -1574,6 +1700,8 @@ const LearningPage = () => {
       isLessonCompleted,
       canUnlockNextModule
     );
+    
+    // Scroll after navigation (handleLessonSelect already handles this)
   };
 
   // State for unlock button loading
@@ -1771,6 +1899,8 @@ const LearningPage = () => {
             onUnlockNextModule={handleUnlockNextModuleClick}
             isUnlockingModule={isUnlockingModule}
             courseId={courseId}
+            onManualComplete={handleManualCompletion}
+            canManuallyComplete={canManuallyComplete()}
           />
         ) : (
           <div className="flex-1 min-w-0">

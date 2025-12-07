@@ -82,10 +82,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       case 'pdf':
         return {
           label: 'PDF File URL or Path',
-          placeholder: 'Enter PDF file URL or path (e.g., /uploads/documents/lesson.pdf or https://...)',
-          helperText: 'Provide a direct link to the PDF file or upload path.',
-          inputType: 'input' as const,
-          rows: 1
+          placeholder: 'Examples:\n• Google Drive: https://drive.google.com/file/d/YOUR_FILE_ID/view\n• Direct URL: https://example.com/document.pdf\n• Local: /uploads/documents/lesson.pdf',
+          helperText: 'Supports Google Drive links (set sharing to "Anyone with the link"), direct PDF URLs, or upload paths.',
+          inputType: 'textarea' as const,
+          rows: 3
         };
       case 'mixed':
         return {
@@ -858,6 +858,24 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                     <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                                       {config.helperText}
                                     </p>
+                                    
+                                    {/* Google Drive PDF Helper */}
+                                    {lessonForm.content_type === 'pdf' && (
+                                      <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+                                        <p className="text-xs font-semibold text-blue-800 dark:text-blue-300 mb-2">
+                                          📚 How to use Google Drive PDFs:
+                                        </p>
+                                        <ol className="text-xs text-blue-700 dark:text-blue-300 space-y-1 list-decimal list-inside">
+                                          <li>Upload your PDF to Google Drive</li>
+                                          <li>Right-click the file → Share → Get link</li>
+                                          <li>Change to "Anyone with the link" → Viewer</li>
+                                          <li>Copy and paste the link here</li>
+                                        </ol>
+                                        <p className="mt-2 text-xs text-blue-600 dark:text-blue-400">
+                                          ✓ Link format: <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">https://drive.google.com/file/d/YOUR_FILE_ID/view</code>
+                                        </p>
+                                      </div>
+                                    )}
                                   </>
                                 );
                               })()}

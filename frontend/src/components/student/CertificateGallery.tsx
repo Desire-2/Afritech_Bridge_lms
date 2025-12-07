@@ -47,6 +47,21 @@ import Image from 'next/image';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
+// Suppress jsPDF filesystem warnings globally (benign browser compatibility messages)
+if (typeof window !== 'undefined') {
+  const originalConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    // Filter out jsPDF filesystem warnings
+    if (typeof args[0] === 'string' && (
+      args[0].includes('filesystem') || 
+      args[0].includes('illegal path')
+    )) {
+      return; // Suppress these specific warnings
+    }
+    originalConsoleError.apply(console, args);
+  };
+}
+
 const containerVariants = {
   hidden: { opacity: 0 },
   visible: {
@@ -506,40 +521,36 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
             
             {/* Golden Border Frame */}
             <div className="absolute inset-2 border-2 border-yellow-500/50 rounded-lg" />
-            <div className="absolute inset-4 border border-yellow-400/30 rounded-lg" />
+            <div className="absolute inset-3 border border-yellow-400/30 rounded-lg" />
             
-            {/* Corner Decorations - Smaller */}
-            <div className="absolute top-4 left-4">
-              <div className="w-10 h-10 border-l-3 border-t-3 border-yellow-400 rounded-tl-lg" />
-              <Star className="absolute top-1 left-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            {/* Corner Decorations - Minimalist */}
+            <div className="absolute top-3 left-3">
+              <div className="w-8 h-8 border-l-2 border-t-2 border-yellow-400 rounded-tl-lg" />
             </div>
-            <div className="absolute top-4 right-4">
-              <div className="w-10 h-10 border-r-3 border-t-3 border-yellow-400 rounded-tr-lg" />
-              <Star className="absolute top-1 right-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            <div className="absolute top-3 right-3">
+              <div className="w-8 h-8 border-r-2 border-t-2 border-yellow-400 rounded-tr-lg" />
             </div>
-            <div className="absolute bottom-4 left-4">
-              <div className="w-10 h-10 border-l-3 border-b-3 border-yellow-400 rounded-bl-lg" />
-              <Star className="absolute bottom-1 left-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            <div className="absolute bottom-3 left-3">
+              <div className="w-8 h-8 border-l-2 border-b-2 border-yellow-400 rounded-bl-lg" />
             </div>
-            <div className="absolute bottom-4 right-4">
-              <div className="w-10 h-10 border-r-3 border-b-3 border-yellow-400 rounded-br-lg" />
-              <Star className="absolute bottom-1 right-1 w-3 h-3 text-yellow-400 fill-yellow-400" />
+            <div className="absolute bottom-3 right-3">
+              <div className="w-8 h-8 border-r-2 border-b-2 border-yellow-400 rounded-br-lg" />
             </div>
             
-            {/* Main Content - Optimized Layout */}
-            <div className="relative z-10 h-full flex flex-col p-6">
-              {/* Header Section - Compact */}
-              <div className="flex items-center justify-center gap-6 mb-4">
-                {/* Logo with Glow Effect */}
+            {/* Main Content - Optimized Spacing */}
+            <div className="relative z-10 h-full flex flex-col px-8 py-5">
+              {/* Header Section - Streamlined */}
+              <div className="flex items-center justify-between mb-3">
+                {/* Logo */}
                 <div className="relative flex-shrink-0">
-                  <div className="absolute inset-0 bg-yellow-400/30 blur-lg rounded-full scale-125" />
-                  <div className="relative p-1 bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-full">
+                  <div className="absolute inset-0 bg-yellow-400/20 blur-md rounded-full" />
+                  <div className="relative p-0.5 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img 
                       src="/logo.jpg" 
                       alt="Afritec Bridge Logo" 
-                      width={60} 
-                      height={60}
+                      width={50} 
+                      height={50}
                       className="rounded-full block"
                       crossOrigin="anonymous"
                     />
@@ -547,62 +558,85 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                 </div>
                 
                 {/* Title */}
-                <div className="text-center">
-                  <p className="text-yellow-400 text-sm font-medium tracking-[0.2em] uppercase">Afritec Bridge Academy</p>
-                  <h1 className="text-3xl font-bold text-yellow-400">
+                <div className="text-center flex-1">
+                  <p className="text-yellow-400 text-xs font-medium tracking-[0.25em] uppercase mb-0.5">Afritec Bridge Academy</p>
+                  <h1 className="text-2xl font-bold text-yellow-400">
                     Certificate of Completion
                   </h1>
                 </div>
                 
-                {/* Decorative Element */}
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <div className="h-px w-16 bg-yellow-400/50" />
-                  <Trophy className="w-6 h-6 text-yellow-400" />
-                  <div className="h-px w-16 bg-yellow-400/50" />
+                {/* Trophy Icon */}
+                <div className="flex-shrink-0">
+                  <Trophy className="w-12 h-12 text-yellow-400" />
                 </div>
               </div>
               
-              {/* Middle Section - Student & Course */}
-              <div className="flex-1 flex flex-col justify-center text-center space-y-3">
-                <p className="text-blue-200 text-base">This is to certify that</p>
+              {/* Divider */}
+              <div className="h-px bg-gradient-to-r from-transparent via-yellow-400/40 to-transparent mb-3" />
+              
+              {/* Middle Section - Compact & Organized */}
+              <div className="flex-1 flex flex-col justify-center text-center space-y-2">
+                <p className="text-blue-200 text-sm">This is to certify that</p>
                 
                 {/* Student Name */}
-                <div className="relative py-2">
-                  <div className="absolute left-1/2 -translate-x-1/2 top-0 w-40 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
-                  <h2 className="text-2xl md:text-3xl font-bold text-white tracking-wide">
+                <div className="relative py-1.5">
+                  <h2 className="text-2xl font-bold text-white tracking-wide">
                     {certificate.student_name}
                   </h2>
-                  <div className="absolute left-1/2 -translate-x-1/2 bottom-0 w-40 h-px bg-gradient-to-r from-transparent via-blue-400/50 to-transparent" />
+                  <div className="mx-auto mt-1 w-48 h-px bg-gradient-to-r from-transparent via-blue-400 to-transparent" />
                 </div>
                 
                 <p className="text-blue-200 text-sm">has successfully completed the course</p>
                 
-                {/* Course Title - More Compact */}
-                <div className="inline-block mx-auto bg-white/10 backdrop-blur-sm rounded-lg px-5 py-2 border border-white/20">
-                  <h3 className="text-lg md:text-xl font-semibold text-yellow-300">
+                {/* Course Title */}
+                <div className="inline-block mx-auto bg-white/10 backdrop-blur-sm rounded-lg px-4 py-1.5 border border-white/20 max-w-3xl">
+                  <h3 className="text-base font-semibold text-yellow-300 line-clamp-2">
                     {certificate.course_title}
                   </h3>
                 </div>
                 
-                {/* Skills - Horizontal Compact Layout */}
-                <div className="space-y-1">
-                  <p className="text-blue-200 text-xs">Demonstrating proficiency in:</p>
-                  <div className="flex flex-wrap justify-center gap-1.5 max-w-lg mx-auto">
+                {/* Skills Section - Optimized */}
+                <div className="space-y-1.5 py-2">
+                  <p className="text-blue-200 text-[11px] font-medium">Demonstrating proficiency in:</p>
+                  <div className="grid grid-cols-3 gap-2 max-w-3xl mx-auto px-2">
                     {(certificate.skills_acquired || certificate.skills_demonstrated || []).slice(0, 6).map((skill: string, index: number) => (
-                      <span 
+                      <div 
                         key={index} 
-                        className="px-2 py-0.5 bg-gradient-to-r from-blue-600/50 to-purple-600/50 rounded-full text-[10px] text-white border border-white/20"
+                        className="px-2 py-1.5 bg-gradient-to-r from-blue-600/40 to-purple-600/40 rounded-md border border-white/20"
+                        style={{ 
+                          minHeight: '2.2rem', 
+                          maxHeight: '3rem',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          overflow: 'hidden'
+                        }}
+                        title={skill}
                       >
-                        {skill}
-                      </span>
+                        <span 
+                          className="text-[9px] text-white text-center w-full"
+                          style={{
+                            display: '-webkit-box',
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: 'vertical',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            wordBreak: 'break-word',
+                            lineHeight: '1.2',
+                            padding: '0 2px'
+                          }}
+                        >
+                          {skill}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 </div>
                 
-                {/* Grade Badge - Smaller */}
+                {/* Grade Badge */}
                 {certificate.grade && (
-                  <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-yellow-500 to-orange-500 px-3 py-0.5 rounded-full mx-auto">
-                    <Medal className="w-3 h-3 text-white" />
+                  <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-yellow-500 to-orange-500 px-3 py-1 rounded-full mx-auto mt-1">
+                    <Medal className="w-3.5 h-3.5 text-white" />
                     <span className="text-white font-bold text-sm">Grade: {certificate.grade}</span>
                     {certificate.overall_score && (
                       <span className="text-white/80 text-xs">({certificate.overall_score.toFixed(1)}%)</span>
@@ -611,66 +645,67 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                 )}
               </div>
               
-              {/* Footer Section - Reorganized */}
-              <div className="mt-auto pt-4 border-t border-white/10">
-                <div className="grid grid-cols-3 gap-4 items-end">
-                  {/* Left Column - Date & Certificate ID */}
-                  <div className="text-left space-y-2">
-                    <div>
-                      <p className="text-blue-300 text-[10px] uppercase tracking-wider">Date Issued</p>
-                      <p className="text-white font-semibold text-sm">
-                        {new Date(certificate.issued_at || certificate.issued_date || new Date()).toLocaleDateString('en-US', {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric'
-                        })}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-blue-300 text-[10px] uppercase tracking-wider">Certificate ID</p>
-                      <p className="text-white font-mono text-xs">{certificate.certificate_number}</p>
-                      <div className="flex items-center gap-0.5 mt-0.5">
-                        <Verified className="w-2.5 h-2.5 text-green-400" />
-                        <span className="text-green-400 text-[10px]">Verified</span>
-                      </div>
+              {/* Divider */}
+              <div className="h-px bg-gradient-to-r from-transparent via-yellow-400/40 to-transparent mt-3 mb-2" />
+              
+              {/* Footer Section - Compact & Professional */}
+              <div className="grid grid-cols-3 gap-4 items-center">
+                {/* Left Column - Date & Certificate ID */}
+                <div className="text-left space-y-1">
+                  <div>
+                    <p className="text-blue-300 text-[9px] uppercase tracking-wide mb-0.5">Date Issued</p>
+                    <p className="text-white font-semibold text-xs">
+                      {new Date(certificate.issued_at || certificate.issued_date || new Date()).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric'
+                      })}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-blue-300 text-[9px] uppercase tracking-wide mb-0.5">Certificate ID</p>
+                    <p className="text-white font-mono text-[10px]">{certificate.certificate_number}</p>
+                    <div className="flex items-center gap-0.5 mt-0.5">
+                      <Verified className="w-2.5 h-2.5 text-green-400" />
+                      <span className="text-green-400 text-[9px]">Verified</span>
                     </div>
                   </div>
-                  
-                  {/* Center Column - Signature */}
-                  <div className="text-center flex flex-col items-center">
-                    <div className="inline-block mb-2">
+                </div>
+                
+                {/* Center Column - Signature */}
+                <div className="text-center flex flex-col items-center justify-end">
+                  <div className="inline-block mb-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                      src="/sign.jpg" 
+                      alt="CEO Signature" 
+                      width={100} 
+                      height={40}
+                      className="object-contain"
+                      crossOrigin="anonymous"
+                    />
+                  </div>
+                  <div className="border-t border-yellow-400/50 pt-0.5 w-28">
+                    <p className="font-semibold text-white text-[11px]">Desire Bikorimana</p>
+                    <p className="text-yellow-400 text-[9px]">Founder & CEO</p>
+                  </div>
+                </div>
+                
+                {/* Right Column - QR Code */}
+                <div className="text-right flex flex-col items-end justify-end">
+                  <div className="inline-block">
+                    <div className="bg-gray-800/30 backdrop-blur-sm rounded-md p-1.5 border border-yellow-400/30">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img 
-                        src="/sign.jpg" 
-                        alt="CEO Signature" 
-                        width={120} 
-                        height={50}
-                        className="object-contain"
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${encodeURIComponent(certificate.verification_url || `https://study.afritechbridge.online/verify/${certificate.certificate_number}`)}`}
+                        alt="QR Code"
+                        width={60}
+                        height={60}
+                        className="rounded block"
                         crossOrigin="anonymous"
                       />
                     </div>
-                    <div className="border-t border-yellow-400/50 pt-1 w-32">
-                      <p className="font-semibold text-white text-xs">Desire Bikorimana</p>
-                      <p className="text-yellow-400 text-[10px]">Founder & CEO</p>
-                    </div>
-                  </div>
-                  
-                  {/* Right Column - QR Code */}
-                  <div className="text-right">
-                    <div className="inline-block">
-                      <div className="bg-gray-800/30 backdrop-blur-sm rounded-lg p-2 border border-yellow-400/30 inline-block">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=70x70&data=${encodeURIComponent(certificate.verification_url || `https://study.afritechbridge.online/verify/${certificate.certificate_number}`)}`}
-                          alt="QR Code"
-                          width={70}
-                          height={70}
-                          className="rounded block"
-                          crossOrigin="anonymous"
-                        />
-                      </div>
-                      <p className="text-blue-300 text-[9px] mt-1 text-center">Scan to Verify</p>
-                    </div>
+                    <p className="text-blue-300 text-[8px] mt-0.5">Scan to Verify</p>
                   </div>
                 </div>
               </div>

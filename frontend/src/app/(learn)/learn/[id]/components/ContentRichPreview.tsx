@@ -1,4 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
+import './markdown-styles.css';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -316,11 +322,125 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
 
   const renderTextContent = (content: string) => {
     return (
-      <div className="prose prose-invert max-w-none">
-        <div 
-          className="text-gray-200 leading-relaxed whitespace-pre-wrap"
-          dangerouslySetInnerHTML={{ __html: content }}
-        />
+      <div className="prose prose-invert prose-lg max-w-none">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeRaw, rehypeHighlight]}
+          components={{
+            // Custom heading styles
+            h1: ({ node, ...props }) => (
+              <h1 className="text-3xl sm:text-4xl font-bold text-white mb-6 mt-8 border-b border-gray-700 pb-3" {...props} />
+            ),
+            h2: ({ node, ...props }) => (
+              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-5 mt-7 border-b border-gray-700/50 pb-2" {...props} />
+            ),
+            h3: ({ node, ...props }) => (
+              <h3 className="text-xl sm:text-2xl font-semibold text-white mb-4 mt-6" {...props} />
+            ),
+            h4: ({ node, ...props }) => (
+              <h4 className="text-lg sm:text-xl font-semibold text-gray-200 mb-3 mt-5" {...props} />
+            ),
+            h5: ({ node, ...props }) => (
+              <h5 className="text-base sm:text-lg font-semibold text-gray-300 mb-2 mt-4" {...props} />
+            ),
+            h6: ({ node, ...props }) => (
+              <h6 className="text-sm sm:text-base font-semibold text-gray-400 mb-2 mt-3" {...props} />
+            ),
+            // Paragraphs
+            p: ({ node, ...props }) => (
+              <p className="text-gray-200 leading-relaxed mb-4 text-base sm:text-lg" {...props} />
+            ),
+            // Lists
+            ul: ({ node, ...props }) => (
+              <ul className="list-disc list-inside space-y-2 mb-4 text-gray-200 ml-4" {...props} />
+            ),
+            ol: ({ node, ...props }) => (
+              <ol className="list-decimal list-inside space-y-2 mb-4 text-gray-200 ml-4" {...props} />
+            ),
+            li: ({ node, ...props }) => (
+              <li className="text-gray-200 leading-relaxed text-base sm:text-lg" {...props} />
+            ),
+            // Code blocks
+            code: ({ node, inline, className, children, ...props }: any) => {
+              const match = /language-(\w+)/.exec(className || '');
+              return !inline ? (
+                <div className="my-4 rounded-lg overflow-hidden border border-gray-700">
+                  <div className="bg-gray-800 px-4 py-2 border-b border-gray-700 flex items-center justify-between">
+                    <span className="text-xs text-gray-400 font-mono uppercase">
+                      {match ? match[1] : 'code'}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs text-gray-400 hover:text-white"
+                      onClick={() => {
+                        navigator.clipboard.writeText(String(children).replace(/\n$/, ''));
+                      }}
+                    >
+                      Copy
+                    </Button>
+                  </div>
+                  <pre className="bg-gray-900 p-4 overflow-x-auto">
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  </pre>
+                </div>
+              ) : (
+                <code className="bg-gray-800 text-blue-300 px-2 py-1 rounded text-sm font-mono" {...props}>
+                  {children}
+                </code>
+              );
+            },
+            // Blockquotes
+            blockquote: ({ node, ...props }) => (
+              <blockquote className="border-l-4 border-blue-500 bg-blue-900/20 pl-4 py-2 my-4 italic text-gray-300" {...props} />
+            ),
+            // Links
+            a: ({ node, ...props }) => (
+              <a className="text-blue-400 hover:text-blue-300 underline decoration-blue-500/50 hover:decoration-blue-400" target="_blank" rel="noopener noreferrer" {...props} />
+            ),
+            // Tables
+            table: ({ node, ...props }) => (
+              <div className="overflow-x-auto my-4">
+                <table className="min-w-full border border-gray-700 rounded-lg overflow-hidden" {...props} />
+              </div>
+            ),
+            thead: ({ node, ...props }) => (
+              <thead className="bg-gray-800" {...props} />
+            ),
+            tbody: ({ node, ...props }) => (
+              <tbody className="divide-y divide-gray-700" {...props} />
+            ),
+            tr: ({ node, ...props }) => (
+              <tr className="hover:bg-gray-800/50" {...props} />
+            ),
+            th: ({ node, ...props }) => (
+              <th className="px-4 py-3 text-left text-sm font-semibold text-gray-200 border-b border-gray-700" {...props} />
+            ),
+            td: ({ node, ...props }) => (
+              <td className="px-4 py-3 text-sm text-gray-300" {...props} />
+            ),
+            // Images
+            img: ({ node, ...props }) => (
+              <img className="rounded-lg my-4 max-w-full h-auto shadow-lg" {...props} alt={props.alt || ''} />
+            ),
+            // Strong/Bold
+            strong: ({ node, ...props }) => (
+              <strong className="font-bold text-white" {...props} />
+            ),
+            // Emphasis/Italic
+            em: ({ node, ...props }) => (
+              <em className="italic text-gray-200" {...props} />
+            ),
+            // Horizontal rule
+            hr: ({ node, ...props }) => (
+              <hr className="my-8 border-gray-700" {...props} />
+            ),
+          }}
+        >
+          {content}
+        </ReactMarkdown>
       </div>
     );
   };
@@ -542,48 +662,95 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     );
   };
 
+  // Helper function to convert Google Drive links to embeddable format
+  const convertToEmbeddablePdfUrl = (pdfUrl: string): string => {
+    // Check if it's a Google Drive link
+    const driveRegex = /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/;
+    const driveMatch = pdfUrl.match(driveRegex);
+    
+    if (driveMatch) {
+      const fileId = driveMatch[1];
+      // Convert to preview format for embedding
+      return `https://drive.google.com/file/d/${fileId}/preview`;
+    }
+    
+    // Check if it's already a Google Drive preview link
+    if (pdfUrl.includes('drive.google.com') && pdfUrl.includes('/preview')) {
+      return pdfUrl;
+    }
+    
+    // For other URLs, return as is
+    return pdfUrl;
+  };
+
   const renderPdfContent = (pdfUrl: string) => {
+    const embeddableUrl = convertToEmbeddablePdfUrl(pdfUrl);
+    const isGoogleDrive = pdfUrl.includes('drive.google.com');
+    const downloadUrl = isGoogleDrive 
+      ? pdfUrl.replace('/preview', '/view?usp=sharing') 
+      : pdfUrl;
+    
     return (
       <div className="space-y-4">
         <Card className="bg-gradient-to-r from-red-900/30 to-orange-900/30 border-red-800">
           <div className="p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div className="flex items-center space-x-4">
-                <div className="h-12 w-12 bg-red-600 rounded-lg flex items-center justify-center">
+                <div className="h-12 w-12 bg-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
                   <FileText className="h-6 w-6 text-white" />
                 </div>
                 <div>
                   <h4 className="font-semibold text-white">PDF Document</h4>
-                  <p className="text-sm text-gray-300">View or download the lesson material</p>
+                  <p className="text-sm text-gray-300">
+                    {isGoogleDrive ? 'Google Drive PDF' : 'View or download the lesson material'}
+                  </p>
                 </div>
               </div>
-              <div className="flex space-x-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
-                  onClick={() => window.open(pdfUrl, '_blank')}
-                  className="bg-red-600 hover:bg-red-700"
+                  onClick={() => window.open(downloadUrl, '_blank')}
+                  className="bg-red-600 hover:bg-red-700 text-sm"
+                  size="sm"
                 >
                   <Maximize2 className="h-4 w-4 mr-2" />
                   Open in New Tab
                 </Button>
-                <Button variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700" asChild>
-                  <a href={pdfUrl} download>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
-                  </a>
-                </Button>
+                {!isGoogleDrive && (
+                  <Button 
+                    variant="outline" 
+                    className="border-gray-600 text-gray-300 hover:bg-gray-700 text-sm" 
+                    size="sm"
+                    asChild
+                  >
+                    <a href={pdfUrl} download>
+                      <Download className="h-4 w-4 mr-2" />
+                      Download
+                    </a>
+                  </Button>
+                )}
               </div>
             </div>
           </div>
         </Card>
         
         {/* PDF Viewer */}
-        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900" style={{ height: '600px' }}>
+        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900" style={{ minHeight: '600px', height: '80vh' }}>
           <iframe
-            src={`${pdfUrl}#view=FitH`}
+            src={embeddableUrl}
             className="w-full h-full"
             title="PDF Viewer"
+            allow="autoplay"
           />
         </div>
+        
+        {/* Helper text for Google Drive PDFs */}
+        {isGoogleDrive && (
+          <div className="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4">
+            <p className="text-sm text-blue-300">
+              💡 <strong>Tip:</strong> If the PDF doesn't display, make sure the Google Drive file has proper sharing permissions set to "Anyone with the link can view".
+            </p>
+          </div>
+        )}
       </div>
     );
   };
@@ -597,8 +764,13 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           {parsed.sections?.map((section: any, index: number) => (
             <div key={index} className="space-y-4">
               {section.type === 'text' && (
-                <div className="prose max-w-none">
-                  <div dangerouslySetInnerHTML={{ __html: section.content }} />
+                <div className="prose prose-invert prose-lg max-w-none">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeRaw, rehypeHighlight]}
+                  >
+                    {section.content}
+                  </ReactMarkdown>
                 </div>
               )}
               {section.type === 'video' && (
@@ -660,8 +832,13 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               <BookOpen className="h-4 w-4 mr-2 text-blue-400" />
               Learning Objectives:
             </h4>
-            <div className="text-gray-300 text-sm">
-              <div dangerouslySetInnerHTML={{ __html: lesson.learning_objectives }} />
+            <div className="text-gray-300 text-sm prose prose-invert prose-sm max-w-none">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+              >
+                {lesson.learning_objectives}
+              </ReactMarkdown>
             </div>
           </div>
         )}
