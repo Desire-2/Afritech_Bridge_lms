@@ -38,16 +38,27 @@ export const useProgressiveLearning = (courseId: number): ProgressionState & Pro
     try {
       setState(prev => ({ ...prev, loading: true, error: null }));
       
-      const data = await CourseApiService.getCourseModules(courseId);
+      const response = await CourseApiService.getCourseModules(courseId);
+      
+      // Handle nested data structure from backend
+      // Backend returns: { success: true, data: { modules: [...], course: {...} } }
+      const data = (response as any).data || response;
+      const modules = data.modules || [];
+      
+      console.log('📦 loadCourseProgression: Loaded modules:', modules.map((m: any) => ({
+        id: m.module?.id,
+        title: m.module?.title,
+        status: m.progress?.status
+      })));
       
       // Find current active module
-      const currentModule = data.modules.find(
-        m => m.progress.status === 'in_progress' || m.progress.status === 'unlocked'
-      ) || data.modules[0];
+      const currentModule = modules.find(
+        (m: ModuleData) => m.progress.status === 'in_progress' || m.progress.status === 'unlocked'
+      ) || modules[0];
 
       setState({
         currentModule,
-        allModules: data.modules,
+        allModules: modules,
         courseProgress: data.course_progress,
         loading: false,
         error: null,
@@ -203,12 +214,24 @@ export interface ScoringState {
   passingThreshold: number;
   isPassing: boolean;
   breakdown: {
-    courseContribution: number; // 10%
-    quizzes: number; // 30%
-    assignments: number; // 40%
-    finalAssessment: number; // 20%
+    courseContribution: number; // Dynamic weight based on available assessments
+    quizzes: number; // Dynamic weight based on available assessments
+    assignments: number; // Dynamic weight based on available assessments
+    finalAssessment: number; // Dynamic weight based on available assessments
+  };
+  weights: {
+    courseContribution: number;
+    quizzes: number;
+    assignments: number;
+    finalAssessment: number;
   };
   missingPoints: number;
+  assessmentInfo?: {
+    hasQuizzes: boolean;
+    hasAssignments: boolean;
+    hasFinalAssessment: boolean;
+    isReadingOnly: boolean;
+  };
 }
 
 export const useModuleScoring = (moduleId: number) => {
@@ -221,6 +244,12 @@ export const useModuleScoring = (moduleId: number) => {
       quizzes: 0,
       assignments: 0,
       finalAssessment: 0,
+    },
+    weights: {
+      courseContribution: 10,
+      quizzes: 30,
+      assignments: 40,
+      finalAssessment: 20,
     },
     missingPoints: 80,
   });
@@ -244,6 +273,42 @@ export const useModuleScoring = (moduleId: number) => {
           // Continue anyway to fetch whatever data is available
         }
 
+        // Fetch detailed score breakdown with dynamic weights from backend
+        let scoreBreakdown = null;
+        try {
+          scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(moduleId);
+          console.log('📊 Module score breakdown fetched:', scoreBreakdown);
+        } catch (breakdownError) {
+          console.warn('Could not fetch score breakdown:', breakdownError);
+        }
+
+        // If we got the detailed breakdown, use it directly (has dynamic weights)
+        if (scoreBreakdown && scoreBreakdown.breakdown) {
+          const weights = {
+            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
+            quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
+            assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
+            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 20,
+          };
+
+          setScoringState({
+            cumulativeScore: scoreBreakdown.cumulative_score || 0,
+            passingThreshold: scoreBreakdown.passing_threshold || 80,
+            isPassing: scoreBreakdown.is_passing || false,
+            breakdown: {
+              courseContribution: scoreBreakdown.breakdown.course_contribution?.score || 0,
+              quizzes: scoreBreakdown.breakdown.quizzes?.score || 0,
+              assignments: scoreBreakdown.breakdown.assignments?.score || 0,
+              finalAssessment: scoreBreakdown.breakdown.final_assessment?.score || 0,
+            },
+            weights,
+            missingPoints: scoreBreakdown.points_needed || Math.max(0, 80 - (scoreBreakdown.cumulative_score || 0)),
+            assessmentInfo: scoreBreakdown.assessment_info,
+          });
+          return;
+        }
+
+        // Fallback: fetch from module progress API
         const moduleData = await ProgressApiService.getModuleProgress(moduleId);
         // Handle both response formats: data.data.progress and data.progress
         const progress = moduleData?.data?.progress || moduleData?.progress;
@@ -264,24 +329,34 @@ export const useModuleScoring = (moduleId: number) => {
               assignments: 0,
               finalAssessment: 0,
             },
+            weights: {
+              courseContribution: 10,
+              quizzes: 30,
+              assignments: 40,
+              finalAssessment: 20,
+            },
             missingPoints: 80,
           });
           return;
         }
 
-        // Calculate weighted cumulative score
-        const cumulative = 
+        // Use backend-calculated weighted_score if available (already uses dynamic weights)
+        // Otherwise fall back to static weights calculation
+        const cumulative = progress.weighted_score ?? progress.cumulative_score ?? (
           ((progress.course_contribution_score || 0) * 0.10) +
           ((progress.quiz_score || 0) * 0.30) +
           ((progress.assignment_score || 0) * 0.40) +
-          ((progress.final_assessment_score || 0) * 0.20);
+          ((progress.final_assessment_score || 0) * 0.20)
+        );
 
-        console.log('✅ Calculated cumulative score:', cumulative, 'from components:', {
+        console.log('✅ Using cumulative score:', cumulative, 'from components:', {
           courseContribution: progress.course_contribution_score,
           lessonsAverage: progress.lessons_average_score,
           quizzes: progress.quiz_score,
           assignments: progress.assignment_score,
-          finalAssessment: progress.final_assessment_score
+          finalAssessment: progress.final_assessment_score,
+          weightedScoreFromBackend: progress.weighted_score,
+          cumulativeFromBackend: progress.cumulative_score
         });
 
         setScoringState({
@@ -293,6 +368,12 @@ export const useModuleScoring = (moduleId: number) => {
             quizzes: progress.quiz_score || 0,
             assignments: progress.assignment_score || 0,
             finalAssessment: progress.final_assessment_score || 0,
+          },
+          weights: {
+            courseContribution: 10,
+            quizzes: 30,
+            assignments: 40,
+            finalAssessment: 20,
           },
           missingPoints: Math.max(0, 80 - cumulative),
         });
@@ -314,6 +395,50 @@ export const useModuleScoring = (moduleId: number) => {
 
     setLoading(true);
     try {
+      // Trigger backend recalculation
+      try {
+        await ProgressApiService.recalculateModuleScore(moduleId);
+        console.log('🔄 Backend module score recalculated');
+      } catch (recalcError) {
+        console.warn('Could not trigger backend recalculation:', recalcError);
+      }
+
+      // Fetch detailed score breakdown with dynamic weights
+      let scoreBreakdown = null;
+      try {
+        scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(moduleId);
+        console.log('🔄 Fetched fresh score breakdown:', scoreBreakdown);
+      } catch (breakdownError) {
+        console.warn('Could not fetch score breakdown:', breakdownError);
+      }
+
+      // If we got the detailed breakdown, use it directly (has dynamic weights)
+      if (scoreBreakdown && scoreBreakdown.breakdown) {
+        const weights = {
+          courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
+          quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
+          assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
+          finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 20,
+        };
+
+        setScoringState({
+          cumulativeScore: scoreBreakdown.cumulative_score || 0,
+          passingThreshold: scoreBreakdown.passing_threshold || 80,
+          isPassing: scoreBreakdown.is_passing || false,
+          breakdown: {
+            courseContribution: scoreBreakdown.breakdown.course_contribution?.score || 0,
+            quizzes: scoreBreakdown.breakdown.quizzes?.score || 0,
+            assignments: scoreBreakdown.breakdown.assignments?.score || 0,
+            finalAssessment: scoreBreakdown.breakdown.final_assessment?.score || 0,
+          },
+          weights,
+          missingPoints: scoreBreakdown.points_needed || Math.max(0, 80 - (scoreBreakdown.cumulative_score || 0)),
+          assessmentInfo: scoreBreakdown.assessment_info,
+        });
+        return;
+      }
+
+      // Fallback to module progress API
       const moduleData = await ProgressApiService.getModuleProgress(moduleId);
       // Handle both response formats: data.data.progress and data.progress
       const progress = moduleData?.data?.progress || moduleData?.progress;
@@ -333,16 +458,24 @@ export const useModuleScoring = (moduleId: number) => {
             assignments: 0,
             finalAssessment: 0,
           },
+          weights: {
+            courseContribution: 10,
+            quizzes: 30,
+            assignments: 40,
+            finalAssessment: 20,
+          },
           missingPoints: 80,
         });
         return;
       }
 
-      const cumulative = 
+      // Use backend-calculated weighted_score if available (already uses dynamic weights)
+      const cumulative = progress.weighted_score ?? progress.cumulative_score ?? (
         ((progress.course_contribution_score || 0) * 0.10) +
         ((progress.quiz_score || 0) * 0.30) +
         ((progress.assignment_score || 0) * 0.40) +
-        ((progress.final_assessment_score || 0) * 0.20);
+        ((progress.final_assessment_score || 0) * 0.20)
+      );
 
       console.log('✅ Recalculated cumulative score:', cumulative);
 
@@ -355,6 +488,12 @@ export const useModuleScoring = (moduleId: number) => {
           quizzes: progress.quiz_score || 0,
           assignments: progress.assignment_score || 0,
           finalAssessment: progress.final_assessment_score || 0,
+        },
+        weights: {
+          courseContribution: 10,
+          quizzes: 30,
+          assignments: 40,
+          finalAssessment: 20,
         },
         missingPoints: Math.max(0, 80 - cumulative),
       });

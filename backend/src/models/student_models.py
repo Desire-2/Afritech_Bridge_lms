@@ -27,24 +27,44 @@ class LessonCompletion(db.Model):
     
     __table_args__ = (db.UniqueConstraint('student_id', 'lesson_id', name='_student_lesson_completion_uc'),)
     
+    def has_quiz(self):
+        """Check if this lesson has an associated quiz"""
+        from ..models.course_models import Quiz
+        return Quiz.query.filter_by(lesson_id=self.lesson_id).first() is not None
+    
+    def has_assignment(self):
+        """Check if this lesson has an associated assignment"""
+        from ..models.course_models import Assignment
+        return Assignment.query.filter_by(lesson_id=self.lesson_id).first() is not None
+    
     def calculate_lesson_score(self):
         """
-        Calculate comprehensive lesson score from all components:
-        - Reading Progress (25%)
-        - Engagement Score (25%)
-        - Quiz Score (25%)
-        - Assignment Score (25%)
+        Calculate comprehensive lesson score with dynamic weights based on available assessments.
+        
+        Dynamic Scoring System:
+        - If lesson has BOTH quiz AND assignment: Reading 25%, Engagement 25%, Quiz 25%, Assignment 25%
+        - If lesson has ONLY quiz: Reading 35%, Engagement 35%, Quiz 30%, Assignment 0%
+        - If lesson has ONLY assignment: Reading 35%, Engagement 35%, Quiz 0%, Assignment 30%
+        - If lesson has NO assessments: Reading 50%, Engagement 50%
+        
         Returns a score from 0-100
         """
         reading = self.reading_progress or 0.0
         engagement = self.engagement_score or 0.0
         
-        # Get quiz score for this lesson
+        # Check what assessments exist for this lesson
         from ..models.quiz_progress_models import QuizAttempt
-        from ..models.course_models import Quiz
-        quiz_score = 0.0
+        from ..models.course_models import Quiz, Assignment, AssignmentSubmission
+        
         lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id).first()
-        if lesson_quiz:
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        
+        has_quiz = lesson_quiz is not None
+        has_assignment = lesson_assignment is not None
+        
+        # Get quiz score if quiz exists
+        quiz_score = 0.0
+        if has_quiz:
             best_attempt = QuizAttempt.query.filter_by(
                 user_id=self.student_id,
                 quiz_id=lesson_quiz.id
@@ -52,31 +72,114 @@ class LessonCompletion(db.Model):
             if best_attempt:
                 quiz_score = best_attempt.score_percentage or 0.0
         
-        # Get assignment score for this lesson
-        from ..models.course_models import Assignment, Submission
+        # Get assignment score if assignment exists
         assignment_score = 0.0
-        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
-        if lesson_assignment:
-            # Check for submissions linked to this lesson
-            best_submission = Submission.query.filter_by(
+        if has_assignment:
+            # Query AssignmentSubmission using the assignment_id
+            best_submission = AssignmentSubmission.query.filter_by(
                 student_id=self.student_id,
-                lesson_id=self.lesson_id
-            ).order_by(Submission.grade.desc()).first()
+                assignment_id=lesson_assignment.id
+            ).first()
             if best_submission and best_submission.grade is not None:
-                # Grade is already a percentage (0-100)
+                # Normalize grade to percentage (grade is stored as percentage 0-100)
                 assignment_score = best_submission.grade
         
-        # Calculate weighted average (25% each component)
-        lesson_score = (
-            (reading * 0.25) +
-            (engagement * 0.25) +
-            (quiz_score * 0.25) +
-            (assignment_score * 0.25)
-        )
+        # Calculate weighted score based on available assessments
+        if has_quiz and has_assignment:
+            # Full assessment: 25% each component
+            lesson_score = (
+                (reading * 0.25) +
+                (engagement * 0.25) +
+                (quiz_score * 0.25) +
+                (assignment_score * 0.25)
+            )
+        elif has_quiz:
+            # Quiz only: Reading 35%, Engagement 35%, Quiz 30%
+            lesson_score = (
+                (reading * 0.35) +
+                (engagement * 0.35) +
+                (quiz_score * 0.30)
+            )
+        elif has_assignment:
+            # Assignment only: Reading 35%, Engagement 35%, Assignment 30%
+            lesson_score = (
+                (reading * 0.35) +
+                (engagement * 0.35) +
+                (assignment_score * 0.30)
+            )
+        else:
+            # No assessments: Reading 50%, Engagement 50%
+            lesson_score = (
+                (reading * 0.50) +
+                (engagement * 0.50)
+            )
         
         return lesson_score
     
+    def get_score_breakdown(self):
+        """
+        Get detailed score breakdown with weights based on available assessments.
+        Returns a dictionary with component scores and their weights.
+        """
+        reading = self.reading_progress or 0.0
+        engagement = self.engagement_score or 0.0
+        
+        from ..models.quiz_progress_models import QuizAttempt
+        from ..models.course_models import Quiz, Assignment, AssignmentSubmission
+        
+        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id).first()
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        
+        has_quiz = lesson_quiz is not None
+        has_assignment = lesson_assignment is not None
+        
+        # Get quiz score if quiz exists
+        quiz_score = 0.0
+        if has_quiz:
+            best_attempt = QuizAttempt.query.filter_by(
+                user_id=self.student_id,
+                quiz_id=lesson_quiz.id
+            ).order_by(QuizAttempt.score.desc()).first()
+            if best_attempt:
+                quiz_score = best_attempt.score_percentage or 0.0
+        
+        # Get assignment score if assignment exists
+        assignment_score = 0.0
+        if has_assignment:
+            # Query AssignmentSubmission using the assignment_id
+            best_submission = AssignmentSubmission.query.filter_by(
+                student_id=self.student_id,
+                assignment_id=lesson_assignment.id
+            ).first()
+            if best_submission and best_submission.grade is not None:
+                # Normalize grade to percentage (grade is stored as percentage 0-100)
+                assignment_score = best_submission.grade
+        
+        # Determine weights based on available assessments
+        if has_quiz and has_assignment:
+            weights = {'reading': 25, 'engagement': 25, 'quiz': 25, 'assignment': 25}
+        elif has_quiz:
+            weights = {'reading': 35, 'engagement': 35, 'quiz': 30, 'assignment': 0}
+        elif has_assignment:
+            weights = {'reading': 35, 'engagement': 35, 'quiz': 0, 'assignment': 30}
+        else:
+            weights = {'reading': 50, 'engagement': 50, 'quiz': 0, 'assignment': 0}
+        
+        return {
+            'scores': {
+                'reading': reading,
+                'engagement': engagement,
+                'quiz': quiz_score,
+                'assignment': assignment_score
+            },
+            'weights': weights,
+            'has_quiz': has_quiz,
+            'has_assignment': has_assignment,
+            'total_score': self.calculate_lesson_score()
+        }
+    
     def to_dict(self):
+        score_breakdown = self.get_score_breakdown()
         return {
             'id': self.id,
             'student_id': self.student_id,
@@ -87,7 +190,10 @@ class LessonCompletion(db.Model):
             'reading_progress': self.reading_progress,
             'engagement_score': self.engagement_score,
             'scroll_progress': self.scroll_progress,
-            'lesson_score': self.calculate_lesson_score(),  # Comprehensive lesson score
+            'lesson_score': score_breakdown['total_score'],  # Comprehensive lesson score
+            'score_breakdown': score_breakdown,  # Detailed breakdown with weights
+            'has_quiz': score_breakdown['has_quiz'],
+            'has_assignment': score_breakdown['has_assignment'],
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None
         }
@@ -389,14 +495,17 @@ class ModuleProgress(db.Model):
     
     def calculate_module_weighted_score(self):
         """
-        Calculate the weighted module score for passing requirements:
-        - Course Contribution (lessons) (10%)
-        - Module Quizzes (30%)
-        - Module Assignments (40%)
-        - Final Assessment (20%)
-        This is used for determining if a student can proceed to the next module.
+        Calculate the weighted module score for passing requirements.
+        Uses DYNAMIC WEIGHTS based on available assessments:
+        - If no assessments: 100% Reading & Engagement
+        - If only quizzes: 30% Reading, 70% Quiz
+        - If only assignments: 30% Reading, 70% Assignments
+        - If all available: 10% Reading, 30% Quiz, 40% Assignment, 20% Final
+        
         Returns a score from 0-100.
         """
+        from .course_models import Quiz, Assignment
+        
         # Get the module score (average of all lesson scores)
         module_lessons_score = self.calculate_module_score()
         
@@ -406,12 +515,53 @@ class ModuleProgress(db.Model):
         assignment = self.assignment_score or 0.0
         final = self.final_assessment_score or 0.0
         
-        weighted_score = (
-            (course_contrib * 0.10) +
-            (quiz * 0.30) +
-            (assignment * 0.40) +
-            (final * 0.20)
-        )
+        # Check what assessments exist in this module
+        lesson_ids = [lesson.id for lesson in self.module.lessons] if self.module else []
+        
+        # Check for lesson-level quizzes (quizzes linked to lessons in this module)
+        has_quizzes = Quiz.query.filter(Quiz.lesson_id.in_(lesson_ids)).first() is not None if lesson_ids else False
+        
+        # Check for lesson-level assignments
+        has_assignments = Assignment.query.filter(Assignment.lesson_id.in_(lesson_ids)).first() is not None if lesson_ids else False
+        
+        # Check for module-level final assessment quiz (quiz with module_id but no lesson_id)
+        # This correctly identifies if a final assessment EXISTS, not just if one has been taken
+        has_final_assessment = Quiz.query.filter(
+            Quiz.module_id == self.module_id,
+            Quiz.lesson_id.is_(None),
+            Quiz.is_published == True
+        ).first() is not None if self.module else False
+        
+        # Calculate dynamic weights based on available assessments
+        if not has_quizzes and not has_assignments and not has_final_assessment:
+            # No assessments - Reading & Engagement is 100%
+            weighted_score = course_contrib
+        elif not has_quizzes and not has_assignments:
+            # Only final assessment exists
+            weighted_score = (course_contrib * 0.40) + (final * 0.60)
+        elif not has_quizzes and not has_final_assessment:
+            # Only assignments exist
+            weighted_score = (course_contrib * 0.30) + (assignment * 0.70)
+        elif not has_assignments and not has_final_assessment:
+            # Only quizzes exist
+            weighted_score = (course_contrib * 0.30) + (quiz * 0.70)
+        elif not has_quizzes:
+            # Assignments and final exist, no quizzes
+            weighted_score = (course_contrib * 0.15) + (assignment * 0.55) + (final * 0.30)
+        elif not has_assignments:
+            # Quizzes and final exist, no assignments
+            weighted_score = (course_contrib * 0.15) + (quiz * 0.55) + (final * 0.30)
+        elif not has_final_assessment:
+            # Quizzes and assignments exist, no final
+            weighted_score = (course_contrib * 0.15) + (quiz * 0.40) + (assignment * 0.45)
+        else:
+            # All components exist - use default weights
+            weighted_score = (
+                (course_contrib * 0.10) +
+                (quiz * 0.30) +
+                (assignment * 0.40) +
+                (final * 0.20)
+            )
         
         # Update the cached cumulative_score field
         self.cumulative_score = weighted_score

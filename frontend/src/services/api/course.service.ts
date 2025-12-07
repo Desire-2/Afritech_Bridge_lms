@@ -75,7 +75,7 @@ class CourseApiService extends BaseApiService {
     can_proceed: boolean;
     next_unlockable_module?: Module;
   }> {
-    return this.get(`/student/learning/${courseId}/modules`);
+    return this.get(`/student/learning/course/${courseId}/modules`);
   }
 
   /**

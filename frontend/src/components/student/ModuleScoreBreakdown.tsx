@@ -44,6 +44,12 @@ interface ScoreBreakdown {
   };
   status: string;
   can_proceed: boolean;
+  assessment_info?: {
+    has_quizzes: boolean;
+    has_assignments: boolean;
+    has_final_assessment: boolean;
+    is_reading_only: boolean;
+  };
 }
 
 interface ScoreComponent {
@@ -51,6 +57,7 @@ interface ScoreComponent {
   weight: number;
   weighted_score: number;
   description: string;
+  available?: boolean;
 }
 
 interface Recommendation {
@@ -195,6 +202,16 @@ const ModuleScoreBreakdown: React.FC<ModuleScoreBreakdownProps> = ({
             </Alert>
           )}
 
+          {/* Assessment Info Banner */}
+          {scoreData.assessment_info?.is_reading_only && (
+            <Alert className="bg-blue-50 border-blue-200">
+              <BookOpen className="h-4 w-4 text-blue-600" />
+              <AlertDescription className="text-blue-800">
+                This module focuses on reading and engagement. Complete lessons with high engagement to achieve a good score.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Attempt Information */}
           <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-2">
@@ -215,19 +232,29 @@ const ModuleScoreBreakdown: React.FC<ModuleScoreBreakdownProps> = ({
       {/* Score Breakdown */}
       <Card>
         <CardHeader>
-          <CardTitle>Score Breakdown</CardTitle>
+          <CardTitle className="flex items-center justify-between">
+            <span>Score Breakdown</span>
+            {scoreData.assessment_info?.is_reading_only && (
+              <Badge variant="secondary">Reading Only Module</Badge>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {Object.entries(scoreData.breakdown).map(([key, component]) => (
-            <div key={key} className="border rounded-lg p-4 space-y-3">
+          {Object.entries(scoreData.breakdown)
+            .filter(([key, component]) => component.weight > 0)
+            .map(([key, component]) => (
+            <div key={key} className={`border rounded-lg p-4 space-y-3 ${component.available === false ? 'opacity-50' : ''}`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-3">
                   <div className={`p-2 rounded-lg ${getScoreBgColor(component.score)}`}>
                     {getComponentIcon(key)}
                   </div>
                   <div>
-                    <h4 className="font-semibold capitalize">
-                      {key.replace('_', ' ')}
+                    <h4 className="font-semibold capitalize flex items-center gap-2">
+                      {key.replace(/_/g, ' ')}
+                      {component.available === false && (
+                        <Badge variant="outline" className="text-xs">Not Available</Badge>
+                      )}
                     </h4>
                     <p className="text-sm text-gray-600">{component.description}</p>
                   </div>
@@ -254,6 +281,22 @@ const ModuleScoreBreakdown: React.FC<ModuleScoreBreakdownProps> = ({
               </div>
             </div>
           ))}
+          
+          {/* Show unavailable components as informational */}
+          {Object.entries(scoreData.breakdown)
+            .filter(([key, component]) => component.weight === 0)
+            .length > 0 && (
+            <div className="text-sm text-gray-500 mt-4 p-3 bg-gray-50 rounded-lg">
+              <p className="font-medium mb-1">Components not in this module:</p>
+              <ul className="list-disc list-inside">
+                {Object.entries(scoreData.breakdown)
+                  .filter(([key, component]) => component.weight === 0)
+                  .map(([key, component]) => (
+                    <li key={key} className="capitalize">{key.replace(/_/g, ' ')}</li>
+                  ))}
+              </ul>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -270,7 +313,7 @@ const ModuleScoreBreakdown: React.FC<ModuleScoreBreakdownProps> = ({
               ) : (
                 <>
                   <TrendingDown className="h-5 w-5 text-yellow-600" />
-                  <span>Improvement Recommendations</span>
+                  <span>Areas to Improve</span>
                 </>
               )}
             </CardTitle>

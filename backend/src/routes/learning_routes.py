@@ -1,7 +1,8 @@
 # Learning Routes - My Learning page API endpoints
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from functools import wraps
+from flask_sqlalchemy import SQLAlchemy
 
 from ..models.user_models import User
 from ..models.course_models import Course, Module, Enrollment
@@ -9,6 +10,11 @@ from ..models.student_models import ModuleProgress, AssessmentAttempt
 from ..services.dashboard_service import DashboardService
 from ..services.progression_service import ProgressionService
 from ..services.enhanced_learning_service import EnhancedLearningService
+
+# Get db from the extensions - avoid circular import
+def get_db():
+    from main import db
+    return db
 
 # Helper decorator for student access
 def student_required(f):
@@ -269,11 +275,11 @@ def get_course_for_learning(course_id):
                         student_id, module.id, enrollment.id
                     )
             
-            db.session.commit()
+            get_db().session.commit()
         except Exception as init_error:
             current_app.logger.error(f"Error initializing module progress: {str(init_error)}")
             # Continue even if initialization fails
-            db.session.rollback()
+            get_db().session.rollback()
         
         # Get course progress data
         try:
@@ -500,9 +506,11 @@ def retake_module(module_id):
 @learning_bp.route("/module/<int:module_id>/check-completion", methods=["POST"])
 @student_required
 def check_module_completion(module_id):
-    """Check if module can be marked as completed"""
+    """Check if module can be marked as completed and auto-unlock next module"""
     try:
         student_id = int(get_jwt_identity())
+        
+        print(f"🔍 check_module_completion called for module_id={module_id}, student_id={student_id}")
         
         # Get module and enrollment
         module = Module.query.get(module_id)
@@ -517,28 +525,83 @@ def check_module_completion(module_id):
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
+        # Get module progress for score breakdown
+        from ..models.student_models import ModuleProgress
+        module_progress = ModuleProgress.query.filter_by(
+            student_id=student_id,
+            module_id=module_id,
+            enrollment_id=enrollment.id
+        ).first()
+        
+        # Calculate cumulative score first
+        cumulative_score = 0.0
+        breakdown = {
+            "course_contribution": 0.0,
+            "quizzes": 0.0,
+            "assignments": 0.0,
+            "final_assessment": 0.0
+        }
+        
+        if module_progress:
+            # Recalculate the score from lessons first
+            lessons_avg = module_progress.calculate_lessons_average_score()
+            module_progress.course_contribution_score = lessons_avg
+            cumulative_score = module_progress.calculate_cumulative_score()
+            
+            breakdown = {
+                "course_contribution": module_progress.course_contribution_score or 0.0,
+                "quizzes": module_progress.quiz_score or 0.0,
+                "assignments": module_progress.assignment_score or 0.0,
+                "final_assessment": module_progress.final_assessment_score or 0.0
+            }
+            
+            print(f"📊 Module {module_id} score breakdown: {breakdown}")
+            print(f"📊 Module {module_id} cumulative_score: {cumulative_score}")
+            
+            # Commit score updates
+            get_db().session.commit()
+        else:
+            print(f"⚠️ No module_progress found for module_id={module_id}, student_id={student_id}")
+        
         # Check completion
         can_complete, message = ProgressionService.check_module_completion(
             student_id, module_id, enrollment.id
         )
         
-        if can_complete:
-            return jsonify({
-                "success": True,
-                "message": message,
-                "module_completed": True
-            }), 200
-        else:
-            return jsonify({
-                "success": False,
-                "message": message,
-                "module_completed": False
-            }), 200  # Not an error, just didn't meet requirements
+        print(f"✅ check_module_completion result: can_complete={can_complete}, message={message}")
+        
+        # Find next module
+        next_module = module.course.modules.filter(
+            Module.order > module.order
+        ).order_by(Module.order).first()
+        
+        next_module_info = None
+        if next_module:
+            next_module_info = {
+                "id": next_module.id,
+                "title": next_module.title
+            }
+        
+        # Return frontend-compatible response
+        return jsonify({
+            "success": True,
+            "passed": can_complete,
+            "cumulative_score": cumulative_score,
+            "breakdown": breakdown,
+            "can_proceed": can_complete,
+            "next_module": next_module_info,
+            "message": message,
+            "module_completed": can_complete
+        }), 200
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "success": False,
-            "error": "Failed to check module completion"
+            "passed": False,
+            "can_proceed": False,
+            "error": f"Failed to check module completion: {str(e)}"
         }), 500
 
 @learning_bp.route("/course/<int:course_id>/suspension-status", methods=["GET"])

@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { 
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
-  PenTool, Loader2, AlertCircle, Lock
+  PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ViewMode } from '../types';
@@ -52,6 +52,12 @@ interface LessonContentProps {
   onAssignmentSubmit?: (assignmentId: number, score: number) => void;
   getModuleStatus: (moduleId: number) => string;
   allLessons: any[];
+  // New props for module unlock
+  isLastLessonInModule?: boolean;
+  isLastModule?: boolean;
+  nextModuleInfo?: { id: number; title: string } | null;
+  onUnlockNextModule?: () => Promise<void>;
+  isUnlockingModule?: boolean;
 }
 
 export const LessonContent: React.FC<LessonContentProps> = ({
@@ -85,8 +91,40 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   onQuizComplete,
   onAssignmentSubmit,
   getModuleStatus,
-  allLessons
+  allLessons,
+  // New props for module unlock
+  isLastLessonInModule = false,
+  isLastModule = false,
+  nextModuleInfo = null,
+  onUnlockNextModule,
+  isUnlockingModule = false
 }) => {
+  // Check if module score is passing (>= 80%)
+  // Handle cases where moduleScoring might be null/undefined or still loading
+  const cumulativeScore = moduleScoring?.cumulativeScore ?? 0;
+  const isModulePassing = cumulativeScore >= 80;
+  const isModuleScoringLoaded = moduleScoring !== null && moduleScoring !== undefined && !moduleScoring.loading;
+  const canUnlockNextModule = isLastLessonInModule && isLessonCompleted && isModulePassing && nextModuleInfo && isModuleScoringLoaded;
+  
+  // Check if this is the last lesson of the last module (course completion)
+  const isCourseComplete = isLastLessonInModule && isLastModule;
+  
+  // Debug logging for module unlock card
+  if (isLastLessonInModule) {
+    console.log('🎯 Last lesson in module - Unlock card check:', {
+      isLastLessonInModule,
+      isLastModule,
+      isCourseComplete,
+      nextModuleInfo,
+      isLessonCompleted,
+      cumulativeScore,
+      isModulePassing,
+      isModuleScoringLoaded,
+      canUnlockNextModule,
+      moduleScoring
+    });
+  }
+  
   return (
     <div 
       ref={contentRef}
@@ -233,6 +271,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             quizScore={currentLessonQuizScore}
             assignmentScore={currentLessonAssignmentScore}
             lessonScore={lessonScore}
+            hasQuiz={!!lessonQuiz}
+            hasAssignment={lessonAssignments && lessonAssignments.length > 0}
           />
 
           {/* Learning Interface Tabs */}
@@ -294,6 +334,103 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           <div className="text-xs text-gray-400">Completion</div>
                         </div>
                       </div>
+                      
+                      {/* Last Lesson in Module - Show Unlock Next Module Button */}
+                      {isLastLessonInModule && nextModuleInfo && (
+                        <div className="mt-6 pt-4 border-t border-green-700/50">
+                          {!isModuleScoringLoaded ? (
+                            // Module scoring is still loading
+                            <div className="flex items-center justify-center space-x-2 text-gray-400 py-2">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              <span className="text-sm">Calculating module score...</span>
+                            </div>
+                          ) : canUnlockNextModule ? (
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-center space-x-2 text-green-300">
+                                <Sparkles className="h-5 w-5" />
+                                <span className="font-semibold">Module Complete! Score: {cumulativeScore.toFixed(1)}%</span>
+                                <Sparkles className="h-5 w-5" />
+                              </div>
+                              <Button
+                                onClick={onUnlockNextModule}
+                                disabled={isUnlockingModule}
+                                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-semibold py-3 text-lg shadow-lg"
+                                size="lg"
+                              >
+                                {isUnlockingModule ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                                    Unlocking Module...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Unlock className="mr-2 h-5 w-5" />
+                                    Unlock Next Module: {nextModuleInfo.title}
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          ) : isLessonCompleted && !isModulePassing ? (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-center space-x-2 text-yellow-400">
+                                <AlertCircle className="h-5 w-5" />
+                                <span className="font-medium">Module Score: {cumulativeScore.toFixed(1)}% (Need 80% to unlock next)</span>
+                              </div>
+                              <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-3">
+                                <p className="text-yellow-300 text-sm text-center">
+                                  Complete quizzes and assignments to improve your module score and unlock the next module.
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            // Fallback: Show module status even if not passing
+                            <div className="flex items-center justify-center space-x-2 text-blue-400 py-2">
+                              <Target className="h-5 w-5" />
+                              <span className="text-sm">Module Score: {cumulativeScore.toFixed(1)}%</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Last Lesson of Last Module (Course Complete) */}
+                      {isLastLessonInModule && isLastModule && !nextModuleInfo && (
+                        <div className="mt-6 pt-4 border-t border-green-700/50">
+                          {!isModuleScoringLoaded ? (
+                            <div className="flex items-center justify-center space-x-2 text-gray-400 py-2">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              <span className="text-sm">Calculating final module score...</span>
+                            </div>
+                          ) : isModulePassing ? (
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-center space-x-2 text-yellow-300">
+                                <Trophy className="h-6 w-6 text-yellow-400" />
+                                <span className="font-bold text-lg">🎉 Course Complete!</span>
+                                <Trophy className="h-6 w-6 text-yellow-400" />
+                              </div>
+                              <div className="text-center space-y-2">
+                                <p className="text-green-300">
+                                  Final Module Score: <span className="font-bold">{cumulativeScore.toFixed(1)}%</span>
+                                </p>
+                                <p className="text-gray-400 text-sm">
+                                  Congratulations! You have completed all modules in this course.
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <div className="flex items-center justify-center space-x-2 text-yellow-400">
+                                <AlertCircle className="h-5 w-5" />
+                                <span className="font-medium">Final Module Score: {cumulativeScore.toFixed(1)}% (Need 80% to complete)</span>
+                              </div>
+                              <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-3">
+                                <p className="text-yellow-300 text-sm text-center">
+                                  Complete all quizzes and assignments to achieve a passing score and complete the course.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="bg-blue-900/30 border border-blue-700 rounded-xl p-6">

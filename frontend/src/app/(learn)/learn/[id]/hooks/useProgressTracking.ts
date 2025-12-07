@@ -25,8 +25,10 @@ export const useProgressTracking = ({
   const [timeSpent, setTimeSpent] = useState<number>(0);
   const [scrollProgress, setScrollProgress] = useState<number>(0);
   const [engagementScore, setEngagementScore] = useState<number>(0);
+  const [lessonScore, setLessonScore] = useState<number>(0);
   const [isLessonCompleted, setIsLessonCompleted] = useState<boolean>(false);
   const [completionInProgress, setCompletionInProgress] = useState<boolean>(false);
+  const [nextLessonInfo, setNextLessonInfo] = useState<any>(null);
 
   const startTimeRef = useRef<number>(Date.now());
   const lastInteractionRef = useRef<number>(Date.now());
@@ -34,6 +36,9 @@ export const useProgressTracking = ({
   const maxScrollProgressRef = useRef<number>(0); // Track maximum scroll progress reached
   const maxReadingProgressRef = useRef<number>(0); // Track maximum reading progress reached
   const [progressLoaded, setProgressLoaded] = useState<boolean>(false);
+  
+  // Completion threshold (80%)
+  const COMPLETION_THRESHOLD = 80;
 
   // Load existing progress from backend
   const loadExistingProgress = useCallback(async () => {
@@ -48,6 +53,7 @@ export const useProgressTracking = ({
         
         // Set progress from backend
         setReadingProgress(existingProgress.reading_progress || 0);
+        setLessonScore(existingProgress.lesson_score || 0);
         setScrollProgress(existingProgress.scroll_progress || 0);
         setEngagementScore(existingProgress.engagement_score || 0);
         setIsLessonCompleted(existingProgress.completed || false);
@@ -140,55 +146,153 @@ export const useProgressTracking = ({
     ) * 100;
     
     setEngagementScore(newEngagementScore);
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted]);
+    
+    // Calculate estimated lesson score (this will be confirmed by backend)
+    // For lessons without quiz/assignment: 50% reading + 50% engagement
+    // For lessons with quiz: 35% reading + 35% engagement + 30% quiz
+    // For lessons with assignment: 35% reading + 35% engagement + 30% assignment
+    // For both: 25% each
+    let estimatedScore = 0;
+    if (!hasQuiz && !hasAssignment) {
+      estimatedScore = (maxReadingProgressRef.current * 0.5) + (newEngagementScore * 0.5);
+    } else if (hasQuiz && !hasAssignment) {
+      estimatedScore = (maxReadingProgressRef.current * 0.35) + (newEngagementScore * 0.35);
+    } else if (!hasQuiz && hasAssignment) {
+      estimatedScore = (maxReadingProgressRef.current * 0.35) + (newEngagementScore * 0.35);
+    } else {
+      estimatedScore = (maxReadingProgressRef.current * 0.25) + (newEngagementScore * 0.25);
+    }
+    setLessonScore(estimatedScore);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment]);
 
-  // Check if lesson should auto-complete (for lessons without quiz/assignment)
+  // Check if lesson should auto-complete based on 80% lesson score
   const checkAutoCompletion = useCallback(() => {
     // Don't auto-complete if:
     // - Already completed
-    // - Lesson has quiz or assignment (they need to be completed separately)
     // - Completion already in progress
     // - Not loaded progress yet
-    if (isLessonCompleted || hasQuiz || hasAssignment || completionInProgress || !progressLoaded) {
+    if (isLessonCompleted || completionInProgress || !progressLoaded) {
       return false;
     }
 
-    // Auto-complete criteria:
-    // - Reading progress >= 80%
-    // - Engagement score >= 60%
-    const meetsReadingRequirement = readingProgress >= 80;
-    const meetsEngagementRequirement = engagementScore >= 60;
+    // Calculate the actual lesson score based on available components
+    let actualScore = 0;
+    if (!hasQuiz && !hasAssignment) {
+      // No assessments: Reading 50%, Engagement 50%
+      actualScore = (readingProgress * 0.5) + (engagementScore * 0.5);
+    } else if (hasQuiz && !hasAssignment) {
+      // Quiz only: Reading 35%, Engagement 35%, Quiz 30% (quiz not counted yet)
+      actualScore = (readingProgress * 0.35) + (engagementScore * 0.35);
+    } else if (!hasQuiz && hasAssignment) {
+      // Assignment only: Reading 35%, Engagement 35%, Assignment 30% (assignment not counted yet)
+      actualScore = (readingProgress * 0.35) + (engagementScore * 0.35);
+    } else {
+      // Both: Reading 25%, Engagement 25%, Quiz 25%, Assignment 25%
+      actualScore = (readingProgress * 0.25) + (engagementScore * 0.25);
+    }
 
-    if (meetsReadingRequirement && meetsEngagementRequirement) {
+    // ONLY auto-complete if the calculated lesson score meets the 80% threshold
+    // This prevents premature completion celebration
+    const meetsScoreThreshold = actualScore >= COMPLETION_THRESHOLD;
+
+    if (meetsScoreThreshold) {
       console.log('✅ Auto-completion criteria met:', {
+        actualScore: actualScore.toFixed(1),
         readingProgress: readingProgress.toFixed(1),
         engagementScore: engagementScore.toFixed(1),
+        threshold: COMPLETION_THRESHOLD,
         hasQuiz,
         hasAssignment
       });
       return true;
     }
 
+    console.log('📊 Auto-completion check - not yet met:', {
+      actualScore: actualScore.toFixed(1),
+      threshold: COMPLETION_THRESHOLD,
+      remaining: (COMPLETION_THRESHOLD - actualScore).toFixed(1)
+    });
     return false;
-  }, [isLessonCompleted, hasQuiz, hasAssignment, completionInProgress, progressLoaded, readingProgress, engagementScore]);
+  }, [isLessonCompleted, completionInProgress, progressLoaded, readingProgress, engagementScore, hasQuiz, hasAssignment]);
 
-  // Auto-save progress
-  const autoSaveProgress = useCallback(async () => {
-    if (!currentLesson || isLessonCompleted || !progressLoaded) return;
+  // Auto-save progress and check for auto-completion
+  // Only pushes to database when lesson score is above 80% threshold OR forceSave is true
+  const autoSaveProgress = useCallback(async (
+    onAutoComplete?: (data: any) => void,
+    forceSave: boolean = false
+  ) => {
+    if (!currentLesson || !progressLoaded) return;
+    
+    // Skip if already completed (unless forcing save)
+    if (isLessonCompleted && !forceSave) return;
+    
+    // Determine if we should save:
+    // 1. forceSave is true (manual trigger like unlock button)
+    // 2. lessonScore is above the completion threshold (80%)
+    // 3. readingProgress is at 100% (user has read entire content)
+    const shouldSave = forceSave || lessonScore >= COMPLETION_THRESHOLD || readingProgress >= 100;
+    
+    if (!shouldSave) {
+      console.log(`📊 Progress not saved - score ${lessonScore.toFixed(1)}%, reading ${readingProgress.toFixed(1)}% (need ${COMPLETION_THRESHOLD}% score or 100% reading)`);
+      return;
+    }
     
     try {
-      await StudentApiService.updateLessonProgress(currentLesson.id, {
+      const saveReason = forceSave ? 'FORCED SAVE' : 
+        (readingProgress >= 100 ? 'reading complete (100%)' : `score ${lessonScore.toFixed(1)}% meets threshold`);
+      console.log(`📤 Saving progress to database - ${saveReason}`);
+      
+      const response = await StudentApiService.updateLessonProgress(currentLesson.id, {
         reading_progress: readingProgress,
         engagement_score: engagementScore,
         scroll_progress: scrollProgress,
         time_spent: Math.floor((Date.now() - startTimeRef.current) / 1000),
-        auto_saved: true
+        auto_saved: !forceSave
       });
-      console.log('Progress auto-saved successfully');
+      
+      console.log('Progress saved successfully', response);
+      
+      // Check if backend auto-completed the lesson
+      if (response.auto_completed) {
+        console.log('🎉 Lesson auto-completed by backend!', response.completion_message);
+        setIsLessonCompleted(true);
+        setLessonScore(response.progress?.lesson_score || lessonScore);
+        
+        // Store next lesson info if available
+        if (response.next_lesson_unlocked && response.next_lesson) {
+          setNextLessonInfo(response.next_lesson);
+          console.log('🔓 Next lesson unlocked:', response.next_lesson);
+        }
+        
+        // Trigger completion callback
+        if (onAutoComplete) {
+          onAutoComplete({
+            type: 'auto_completed',
+            lessonId: currentLesson.id,
+            moduleId: currentModuleId,
+            lessonScore: response.progress?.lesson_score,
+            nextLesson: response.next_lesson,
+            message: response.completion_message
+          });
+        }
+      } else if (response.progress?.lesson_score) {
+        // Update lesson score from backend
+        setLessonScore(response.progress.lesson_score);
+      }
+      
+      return response;
     } catch (error) {
-      console.error('Auto-save failed:', error);
+      console.error('Save failed:', error);
+      throw error;
     }
-  }, [currentLesson, readingProgress, engagementScore, scrollProgress, isLessonCompleted]);
+  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, isLessonCompleted, lessonScore, progressLoaded]);
+
+  // Force save progress regardless of score threshold
+  // Used when user manually triggers actions like unlocking next module
+  const forceSaveProgress = useCallback(async () => {
+    console.log('💾 Force saving lesson progress...');
+    return autoSaveProgress(undefined, true);
+  }, [autoSaveProgress]);
 
   // Handle automatic lesson completion
   const handleAutoLessonCompletion = useCallback(async (
@@ -299,10 +403,10 @@ export const useProgressTracking = ({
     return () => clearInterval(timer);
   }, [updateReadingProgress, showCelebration]);
 
-  // Auto-save timer
+  // Auto-save timer with auto-completion check
   useEffect(() => {
     if (currentLesson && !isLessonCompleted) {
-      const timer = setInterval(autoSaveProgress, 30000);
+      const timer = setInterval(() => autoSaveProgress(), 30000);
       return () => clearInterval(timer);
     }
   }, [currentLesson, autoSaveProgress, isLessonCompleted]);
@@ -312,15 +416,21 @@ export const useProgressTracking = ({
     timeSpent,
     scrollProgress,
     engagementScore,
+    lessonScore,
     isLessonCompleted,
     completionInProgress,
     progressLoaded,
+    nextLessonInfo,
+    completionThreshold: COMPLETION_THRESHOLD,
     updateReadingProgress,
     autoSaveProgress,
+    forceSaveProgress,
     handleAutoLessonCompletion,
     setIsLessonCompleted,
     setCompletionInProgress,
     loadExistingProgress,
-    checkAutoCompletion
+    checkAutoCompletion,
+    setNextLessonInfo
   };
 };
+

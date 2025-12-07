@@ -186,12 +186,12 @@ def get_course_analytics(course_id):
 @progress_bp.route("/module/<int:module_id>/score-breakdown", methods=["GET"])
 @student_required
 def get_module_score_breakdown(module_id):
-    """Get detailed score breakdown with requirements and recommendations"""
+    """Get detailed score breakdown with dynamic weights based on available assessments"""
     try:
         student_id = int(get_jwt_identity())
         
-        from ..models.student_models import ModuleProgress
-        from ..models.course_models import Module, Enrollment
+        from ..models.student_models import ModuleProgress, LessonCompletion
+        from ..models.course_models import Module, Enrollment, Lesson, Quiz, Assignment
         
         # Get module and enrollment
         module = Module.query.get(module_id)
@@ -218,35 +218,148 @@ def get_module_score_breakdown(module_id):
             )
             db.session.commit()
         
-        # Recalculate cumulative score
-        cumulative_score = module_progress.calculate_cumulative_score()
+        # Check what assessments exist in this module
+        lesson_ids = [lesson.id for lesson in module.lessons]
+        
+        # Check for lesson-level quizzes
+        has_quizzes = Quiz.query.filter(Quiz.lesson_id.in_(lesson_ids)).first() is not None if lesson_ids else False
+        
+        # Check for lesson-level assignments
+        has_assignments = Assignment.query.filter(Assignment.lesson_id.in_(lesson_ids)).first() is not None if lesson_ids else False
+        
+        # Check for module-level final assessment quiz (quiz with module_id but no lesson_id)
+        # This correctly identifies if a final assessment EXISTS, not just if one has been taken
+        has_final_assessment = Quiz.query.filter(
+            Quiz.module_id == module_id,
+            Quiz.lesson_id.is_(None),
+            Quiz.is_published == True
+        ).first() is not None
+        
+        # Calculate dynamic weights based on available assessments
+        # Base weights: Reading & Engagement 10%, Quizzes 30%, Assignments 40%, Final 20%
+        # If component is missing, redistribute its weight proportionally to others
+        
+        available_components = []
+        if True:  # Reading & Engagement is always available
+            available_components.append('course_contribution')
+        if has_quizzes:
+            available_components.append('quizzes')
+        if has_assignments:
+            available_components.append('assignments')
+        if has_final_assessment:
+            available_components.append('final_assessment')
+        
+        # Default weights
+        base_weights = {
+            'course_contribution': 10.0,
+            'quizzes': 30.0,
+            'assignments': 40.0,
+            'final_assessment': 20.0
+        }
+        
+        # Calculate dynamic weights
+        if not has_quizzes and not has_assignments and not has_final_assessment:
+            # No assessments - Reading & Engagement is 100%
+            weights = {
+                'course_contribution': 100.0,
+                'quizzes': 0.0,
+                'assignments': 0.0,
+                'final_assessment': 0.0
+            }
+        elif not has_quizzes and not has_assignments:
+            # Only final assessment exists
+            weights = {
+                'course_contribution': 40.0,
+                'quizzes': 0.0,
+                'assignments': 0.0,
+                'final_assessment': 60.0
+            }
+        elif not has_quizzes and not has_final_assessment:
+            # Only assignments exist
+            weights = {
+                'course_contribution': 30.0,
+                'quizzes': 0.0,
+                'assignments': 70.0,
+                'final_assessment': 0.0
+            }
+        elif not has_assignments and not has_final_assessment:
+            # Only quizzes exist
+            weights = {
+                'course_contribution': 30.0,
+                'quizzes': 70.0,
+                'assignments': 0.0,
+                'final_assessment': 0.0
+            }
+        elif not has_quizzes:
+            # Assignments and final exist, no quizzes
+            weights = {
+                'course_contribution': 15.0,
+                'quizzes': 0.0,
+                'assignments': 55.0,
+                'final_assessment': 30.0
+            }
+        elif not has_assignments:
+            # Quizzes and final exist, no assignments
+            weights = {
+                'course_contribution': 15.0,
+                'quizzes': 55.0,
+                'assignments': 0.0,
+                'final_assessment': 30.0
+            }
+        elif not has_final_assessment:
+            # Quizzes and assignments exist, no final
+            weights = {
+                'course_contribution': 15.0,
+                'quizzes': 40.0,
+                'assignments': 45.0,
+                'final_assessment': 0.0
+            }
+        else:
+            # All components exist - use default weights
+            weights = base_weights.copy()
+        
+        # Calculate weighted scores with dynamic weights
+        course_contribution_weighted = (module_progress.course_contribution_score or 0.0) * (weights['course_contribution'] / 100)
+        quiz_weighted = (module_progress.quiz_score or 0.0) * (weights['quizzes'] / 100)
+        assignment_weighted = (module_progress.assignment_score or 0.0) * (weights['assignments'] / 100)
+        final_weighted = (module_progress.final_assessment_score or 0.0) * (weights['final_assessment'] / 100)
+        
+        # Calculate cumulative score with dynamic weights
+        cumulative_score = course_contribution_weighted + quiz_weighted + assignment_weighted + final_weighted
+        
+        # Update module progress with recalculated score
+        module_progress.cumulative_score = cumulative_score
         db.session.commit()
         
-        # Calculate detailed breakdown
+        # Build breakdown with dynamic weights
         breakdown = {
             "course_contribution": {
                 "score": module_progress.course_contribution_score or 0.0,
-                "weight": 10.0,
-                "weighted_score": (module_progress.course_contribution_score or 0.0) * 0.10,
-                "description": "Lesson completion and course engagement"
+                "weight": weights['course_contribution'],
+                "weighted_score": course_contribution_weighted,
+                "description": "Lesson completion and engagement" if weights['course_contribution'] == 100 else "Reading & engagement score",
+                "available": True
             },
             "quizzes": {
                 "score": module_progress.quiz_score or 0.0,
-                "weight": 30.0,
-                "weighted_score": (module_progress.quiz_score or 0.0) * 0.30,
-                "description": "Best quiz performance"
+                "weight": weights['quizzes'],
+                "weighted_score": quiz_weighted,
+                "description": "Best quiz performance" if has_quizzes else "No quizzes in this module",
+                "available": has_quizzes
             },
             "assignments": {
                 "score": module_progress.assignment_score or 0.0,
-                "weight": 40.0,
-                "weighted_score": (module_progress.assignment_score or 0.0) * 0.40,
-                "description": "Best assignment quality"
+                "weight": weights['assignments'],
+                "weighted_score": assignment_weighted,
+                "description": "Assignment completion & quality" if has_assignments else "No assignments in this module",
+                "available": has_assignments
             },
             "final_assessment": {
                 "score": module_progress.final_assessment_score or 0.0,
-                "weight": 20.0,
-                "weighted_score": (module_progress.final_assessment_score or 0.0) * 0.20,
-                "description": "Final module assessment"
+                "weight": weights['final_assessment'],
+                "weighted_score": final_weighted,
+                "description": "Final module assessment" if weights['final_assessment'] > 0 else "No final assessment for this module",
+                "available": weights['final_assessment'] > 0
             }
         }
         
@@ -254,31 +367,32 @@ def get_module_score_breakdown(module_id):
         passing_threshold = 80.0
         points_needed = max(0, passing_threshold - cumulative_score)
         
-        # Generate recommendations
+        # Generate dynamic recommendations based on available components
         recommendations = []
-        if module_progress.assignment_score < 70:
+        
+        if weights['assignments'] > 0 and (module_progress.assignment_score or 0) < 70:
             recommendations.append({
                 "priority": "high",
                 "area": "assignments",
-                "message": "Focus on improving assignment quality (40% of total grade)"
+                "message": f"Focus on improving assignment quality ({weights['assignments']:.0f}% of total grade)"
             })
-        if module_progress.quiz_score < 70:
+        if weights['quizzes'] > 0 and (module_progress.quiz_score or 0) < 70:
             recommendations.append({
                 "priority": "medium",
                 "area": "quizzes",
-                "message": "Review quiz material and retake if possible (30% of total grade)"
+                "message": f"Review quiz material and retake if possible ({weights['quizzes']:.0f}% of total grade)"
             })
-        if module_progress.final_assessment_score < 70:
+        if weights['final_assessment'] > 0 and (module_progress.final_assessment_score or 0) < 70:
             recommendations.append({
                 "priority": "high",
                 "area": "final_assessment",
-                "message": "Prepare thoroughly for final assessment (20% of total grade)"
+                "message": f"Prepare thoroughly for final assessment ({weights['final_assessment']:.0f}% of total grade)"
             })
-        if module_progress.course_contribution_score < 90:
+        if (module_progress.course_contribution_score or 0) < 90:
             recommendations.append({
-                "priority": "low",
+                "priority": "low" if weights['course_contribution'] <= 15 else "high",
                 "area": "course_contribution",
-                "message": "Complete all lessons to maximize contribution score (10% of total grade)"
+                "message": f"Complete all lessons with high engagement ({weights['course_contribution']:.0f}% of total grade)"
             })
         
         # Attempt tracking
@@ -301,7 +415,13 @@ def get_module_score_breakdown(module_id):
                     "is_last_attempt": is_last_attempt
                 },
                 "status": module_progress.status,
-                "can_proceed": cumulative_score >= passing_threshold and module_progress.status == 'completed'
+                "can_proceed": cumulative_score >= passing_threshold and module_progress.status == 'completed',
+                "assessment_info": {
+                    "has_quizzes": has_quizzes,
+                    "has_assignments": has_assignments,
+                    "has_final_assessment": weights['final_assessment'] > 0,
+                    "is_reading_only": not has_quizzes and not has_assignments and weights['final_assessment'] == 0
+                }
             }
         }), 200
         

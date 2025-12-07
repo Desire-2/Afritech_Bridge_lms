@@ -269,6 +269,9 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
             const moduleProgress = moduleProgressData[module.id];
             const hasProgressData = moduleProgress !== undefined;
             
+            // Debug logging for module status
+            console.log(`📊 Module ${module.id} (${module.title}): status from getModuleStatus = "${moduleStatus}", internal progress status = "${moduleProgress?.status}"`);
+            
             // FIXED: First module (index 0) should ALWAYS be accessible
             // Also treat current module as accessible regardless of status
             // This prevents all modules from appearing locked while data loads

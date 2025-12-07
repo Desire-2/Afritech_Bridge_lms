@@ -217,7 +217,7 @@ def get_course_progress(course_id):
 @student_bp.route("/lessons/<int:lesson_id>/progress", methods=["POST"])
 @student_required
 def update_lesson_progress(lesson_id):
-    """Update lesson reading progress"""
+    """Update lesson reading progress with auto-completion at 80% score"""
     current_user_id = int(get_jwt_identity())
     data = request.get_json() or {}
     
@@ -237,6 +237,8 @@ def update_lesson_progress(lesson_id):
         student_id=current_user_id,
         lesson_id=lesson_id
     ).first()
+    
+    was_already_completed = lesson_completion.completed if lesson_completion else False
     
     if not lesson_completion:
         lesson_completion = LessonCompletion(
@@ -261,26 +263,139 @@ def update_lesson_progress(lesson_id):
     if data.get('auto_saved'):
         lesson_completion.last_accessed = datetime.utcnow()
     
+    # Calculate lesson score and auto-complete if >= 80%
+    lesson_score = lesson_completion.calculate_lesson_score()
+    auto_completed = False
+    next_lesson_unlocked = False
+    next_lesson_info = None
+    
+    # Auto-complete lesson if score >= 80% and not already completed
+    COMPLETION_THRESHOLD = 80.0
+    if lesson_score >= COMPLETION_THRESHOLD and not was_already_completed:
+        lesson_completion.completed = True
+        lesson_completion.completed_at = datetime.utcnow()
+        auto_completed = True
+        
+        # Update user progress
+        user_progress = UserProgress.query.filter_by(
+            user_id=current_user_id,
+            course_id=lesson.module.course_id
+        ).first()
+        
+        if user_progress:
+            # Update last accessed time (lessons_completed is tracked via LessonCompletion table)
+            user_progress.last_accessed = datetime.utcnow()
+        
+        # Update enrollment progress
+        total_lessons = db.session.query(Lesson).join(Module).filter(
+            Module.course_id == lesson.module.course_id
+        ).count()
+        
+        completed_lessons = db.session.query(LessonCompletion).join(Lesson).join(Module).filter(
+            Module.course_id == lesson.module.course_id,
+            LessonCompletion.student_id == current_user_id,
+            LessonCompletion.completed == True
+        ).count()
+        
+        if total_lessons > 0:
+            enrollment.progress = completed_lessons / total_lessons
+            if enrollment.progress >= 1.0:
+                enrollment.completed_at = datetime.utcnow()
+        
+        # Unlock next lesson in the module
+        next_lesson_info = _unlock_next_lesson(lesson, current_user_id, enrollment.id)
+        if next_lesson_info:
+            next_lesson_unlocked = True
+    
     try:
         db.session.commit()
-        return jsonify({
+        
+        response_data = {
             "message": "Lesson progress updated successfully",
             "progress": {
                 "reading_progress": lesson_completion.reading_progress,
                 "engagement_score": lesson_completion.engagement_score,
                 "scroll_progress": lesson_completion.scroll_progress,
                 "time_spent": lesson_completion.time_spent,
+                "lesson_score": lesson_score,
+                "completed": lesson_completion.completed,
                 "last_updated": lesson_completion.updated_at.isoformat()
-            }
-        }), 200
+            },
+            "auto_completed": auto_completed,
+            "completion_threshold": COMPLETION_THRESHOLD
+        }
+        
+        if auto_completed:
+            response_data["completion_message"] = f"🎉 Lesson auto-completed! Score: {lesson_score:.1f}%"
+        
+        if next_lesson_unlocked and next_lesson_info:
+            response_data["next_lesson_unlocked"] = True
+            response_data["next_lesson"] = next_lesson_info
+        
+        return jsonify(response_data), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": f"Failed to update progress: {str(e)}"}), 500
 
+
+def _unlock_next_lesson(current_lesson, student_id, enrollment_id):
+    """
+    Unlock the next lesson after completing the current one.
+    Returns info about the next lesson if unlocked, None otherwise.
+    """
+    module = current_lesson.module
+    
+    # Get all lessons in the current module ordered by their position
+    module_lessons = Lesson.query.filter_by(module_id=module.id).order_by(Lesson.order).all()
+    
+    # Find the current lesson's index
+    current_index = None
+    for i, lesson in enumerate(module_lessons):
+        if lesson.id == current_lesson.id:
+            current_index = i
+            break
+    
+    if current_index is None:
+        return None
+    
+    # Check if there's a next lesson in the same module
+    if current_index < len(module_lessons) - 1:
+        next_lesson = module_lessons[current_index + 1]
+        return {
+            "id": next_lesson.id,
+            "title": next_lesson.title,
+            "module_id": module.id,
+            "module_title": module.title,
+            "same_module": True
+        }
+    
+    # If this was the last lesson in the module, check for next module
+    course = module.course
+    next_module = Module.query.filter(
+        Module.course_id == course.id,
+        Module.order > module.order
+    ).order_by(Module.order).first()
+    
+    if next_module:
+        # Get first lesson of next module
+        first_lesson = Lesson.query.filter_by(module_id=next_module.id).order_by(Lesson.order).first()
+        if first_lesson:
+            return {
+                "id": first_lesson.id,
+                "title": first_lesson.title,
+                "module_id": next_module.id,
+                "module_title": next_module.title,
+                "same_module": False,
+                "new_module": True
+            }
+    
+    # No more lessons
+    return None
+
 @student_bp.route("/lessons/<int:lesson_id>/progress", methods=["GET"])
 @student_required
 def get_lesson_progress(lesson_id):
-    """Get lesson reading progress"""
+    """Get lesson reading progress with dynamic score breakdown"""
     current_user_id = int(get_jwt_identity())
     
     lesson = Lesson.query.get_or_404(lesson_id)
@@ -294,6 +409,11 @@ def get_lesson_progress(lesson_id):
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
     
+    # Check if lesson has quiz or assignment for score calculation
+    from ..models.course_models import Quiz, Assignment
+    has_quiz = Quiz.query.filter_by(lesson_id=lesson_id).first() is not None
+    has_assignment = Assignment.query.filter_by(lesson_id=lesson_id).first() is not None
+    
     # Get lesson completion record
     lesson_completion = LessonCompletion.query.filter_by(
         student_id=current_user_id,
@@ -301,6 +421,7 @@ def get_lesson_progress(lesson_id):
     ).first()
     
     if lesson_completion:
+        score_breakdown = lesson_completion.get_score_breakdown()
         return jsonify({
             "lesson_id": lesson_id,
             "progress": {
@@ -309,7 +430,11 @@ def get_lesson_progress(lesson_id):
                 "scroll_progress": lesson_completion.scroll_progress or 0,
                 "time_spent": lesson_completion.time_spent or 0,
                 "completed": lesson_completion.completed,
-                "last_updated": lesson_completion.updated_at.isoformat() if lesson_completion.updated_at else None
+                "last_updated": lesson_completion.updated_at.isoformat() if lesson_completion.updated_at else None,
+                "lesson_score": score_breakdown['total_score'],
+                "score_breakdown": score_breakdown,
+                "has_quiz": has_quiz,
+                "has_assignment": has_assignment
             }
         }), 200
     else:
@@ -321,7 +446,20 @@ def get_lesson_progress(lesson_id):
                 "scroll_progress": 0,
                 "time_spent": 0,
                 "completed": False,
-                "last_updated": None
+                "last_updated": None,
+                "lesson_score": 0,
+                "score_breakdown": {
+                    'scores': {'reading': 0, 'engagement': 0, 'quiz': 0, 'assignment': 0},
+                    'weights': {'reading': 50 if not has_quiz and not has_assignment else 25, 
+                               'engagement': 50 if not has_quiz and not has_assignment else 25, 
+                               'quiz': 30 if has_quiz and not has_assignment else (25 if has_quiz else 0), 
+                               'assignment': 30 if has_assignment and not has_quiz else (25 if has_assignment else 0)},
+                    'has_quiz': has_quiz,
+                    'has_assignment': has_assignment,
+                    'total_score': 0
+                },
+                "has_quiz": has_quiz,
+                "has_assignment": has_assignment
             }
         }), 200
 

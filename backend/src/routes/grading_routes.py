@@ -13,7 +13,7 @@ from ..models.course_models import (
     Course, Module, Assignment, AssignmentSubmission, 
     Project, ProjectSubmission, Quiz, Submission, Enrollment, Lesson
 )
-from ..models.student_models import AssessmentAttempt
+from ..models.student_models import AssessmentAttempt, LessonCompletion
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,45 @@ def grade_assignment_submission(submission_id):
             # Don't fail the whole request, just log the error
         # ===== END FIX =====
         
+        # ===== FIX: Create/Update LessonCompletion for assignment score =====
+        try:
+            assignment = submission.assignment
+            student_id = submission.student_id
+            lesson_id = assignment.lesson_id if hasattr(assignment, 'lesson_id') else None
+            
+            if lesson_id:
+                lesson_completion = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=lesson_id
+                ).first()
+                
+                if not lesson_completion:
+                    # Create a new LessonCompletion record
+                    lesson_completion = LessonCompletion(
+                        student_id=student_id,
+                        lesson_id=lesson_id,
+                        completed=True,
+                        reading_progress=0.0,  # Assignment completed without reading
+                        engagement_score=0.0,
+                        scroll_progress=0.0,
+                        time_spent=0,
+                        completed_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow(),
+                        last_accessed=datetime.utcnow()
+                    )
+                    db.session.add(lesson_completion)
+                    db.session.commit()
+                    logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {student_id} (assignment graded)")
+                else:
+                    # LessonCompletion exists, just update timestamp
+                    lesson_completion.updated_at = datetime.utcnow()
+                    db.session.commit()
+                    logger.info(f"Updated LessonCompletion for lesson {lesson_id}, student {student_id} (assignment graded)")
+        except Exception as lc_error:
+            logger.warning(f"Error creating/updating LessonCompletion: {str(lc_error)}")
+            # Don't fail the whole request, just log the error
+        # ===== END LessonCompletion FIX =====
+        
         # TODO: Send notification to student about grade
         
         logger.info(f"Assignment submission {submission_id} graded by instructor {current_user_id}")
@@ -335,6 +374,35 @@ def bulk_grade_assignments():
                 submission.feedback = feedback
                 submission.graded_at = datetime.utcnow()
                 submission.graded_by = current_user_id
+                
+                # Create/Update LessonCompletion for this assignment
+                try:
+                    assignment = submission.assignment
+                    lesson_id = assignment.lesson_id if hasattr(assignment, 'lesson_id') else None
+                    
+                    if lesson_id:
+                        lesson_completion = LessonCompletion.query.filter_by(
+                            student_id=submission.student_id,
+                            lesson_id=lesson_id
+                        ).first()
+                        
+                        if not lesson_completion:
+                            lesson_completion = LessonCompletion(
+                                student_id=submission.student_id,
+                                lesson_id=lesson_id,
+                                completed=True,
+                                reading_progress=0.0,
+                                engagement_score=0.0,
+                                scroll_progress=0.0,
+                                time_spent=0,
+                                completed_at=datetime.utcnow(),
+                                updated_at=datetime.utcnow(),
+                                last_accessed=datetime.utcnow()
+                            )
+                            db.session.add(lesson_completion)
+                            logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {submission.student_id} (bulk grading)")
+                except Exception as lc_error:
+                    logger.warning(f"Error creating LessonCompletion for submission {submission_id}: {str(lc_error)}")
                 
                 graded_count += 1
                 

@@ -1,11 +1,25 @@
 import { ModuleData, ModuleProgress } from './studentApi';
 
 export interface ProgressionRequirements {
-  courseContribution: number; // 10%
-  quizzes: number; // 30%
-  assignments: number; // 40%
-  finalAssessment: number; // 20%
+  courseContribution: number; // Default 10% (varies based on available assessments)
+  quizzes: number; // Default 30% (varies based on available assessments)
+  assignments: number; // Default 40% (varies based on available assessments)
+  finalAssessment: number; // Default 20% (varies based on available assessments)
   passingThreshold: number; // 80%
+}
+
+export interface DynamicWeights {
+  courseContribution: number;
+  quizzes: number;
+  assignments: number;
+  finalAssessment: number;
+}
+
+export interface AssessmentAvailability {
+  hasQuizzes: boolean;
+  hasAssignments: boolean;
+  hasFinalAssessment: boolean;
+  isReadingOnly: boolean;
 }
 
 export interface ProgressionValidation {
@@ -40,7 +54,7 @@ export interface SuspensionRisk {
 }
 
 export class ProgressionService {
-  private static readonly REQUIREMENTS: ProgressionRequirements = {
+  private static readonly DEFAULT_REQUIREMENTS: ProgressionRequirements = {
     courseContribution: 10,
     quizzes: 30,
     assignments: 40,
@@ -48,15 +62,71 @@ export class ProgressionService {
     passingThreshold: 80
   };
 
+  // Alias for backwards compatibility
+  private static readonly REQUIREMENTS = ProgressionService.DEFAULT_REQUIREMENTS;
+
+  /**
+   * Calculate dynamic weights based on available assessments in the module
+   * This matches the backend logic in student_models.py calculate_module_weighted_score()
+   */
+  static calculateDynamicWeights(assessmentAvailability: AssessmentAvailability): DynamicWeights {
+    const { hasQuizzes, hasAssignments, hasFinalAssessment } = assessmentAvailability;
+
+    // Match backend logic exactly
+    if (!hasQuizzes && !hasAssignments && !hasFinalAssessment) {
+      // No assessments - Reading & Engagement is 100%
+      return { courseContribution: 100, quizzes: 0, assignments: 0, finalAssessment: 0 };
+    } else if (!hasQuizzes && !hasAssignments) {
+      // Only final assessment exists
+      return { courseContribution: 40, quizzes: 0, assignments: 0, finalAssessment: 60 };
+    } else if (!hasQuizzes && !hasFinalAssessment) {
+      // Only assignments exist
+      return { courseContribution: 30, quizzes: 0, assignments: 70, finalAssessment: 0 };
+    } else if (!hasAssignments && !hasFinalAssessment) {
+      // Only quizzes exist
+      return { courseContribution: 30, quizzes: 70, assignments: 0, finalAssessment: 0 };
+    } else if (!hasQuizzes) {
+      // Assignments and final exist, no quizzes
+      return { courseContribution: 15, quizzes: 0, assignments: 55, finalAssessment: 30 };
+    } else if (!hasAssignments) {
+      // Quizzes and final exist, no assignments
+      return { courseContribution: 15, quizzes: 55, assignments: 0, finalAssessment: 30 };
+    } else if (!hasFinalAssessment) {
+      // Quizzes and assignments exist, no final
+      return { courseContribution: 15, quizzes: 40, assignments: 45, finalAssessment: 0 };
+    } else {
+      // All components exist - use default weights
+      return {
+        courseContribution: 10,
+        quizzes: 30,
+        assignments: 40,
+        finalAssessment: 20
+      };
+    }
+  }
+
   /**
    * Calculate weighted cumulative score for a module
+   * Prefers backend-calculated weighted_score if available (which uses dynamic weights)
+   * Falls back to client-side calculation with default weights for backwards compatibility
    */
-  static calculateCumulativeScore(progress: ModuleProgress): number {
+  static calculateCumulativeScore(progress: ModuleProgress, dynamicWeights?: DynamicWeights): number {
     if (!progress) {
       return 0;
     }
     
-    const weights = this.REQUIREMENTS;
+    // Prefer backend-calculated weighted_score if available (uses dynamic weights)
+    if (progress.weighted_score !== undefined && progress.weighted_score !== null) {
+      return Math.round(progress.weighted_score * 100) / 100;
+    }
+    
+    // Also accept cumulative_score from backend
+    if (progress.cumulative_score !== undefined && progress.cumulative_score !== null) {
+      return Math.round(progress.cumulative_score * 100) / 100;
+    }
+    
+    // Fallback: Calculate with provided dynamic weights or defaults
+    const weights = dynamicWeights || this.DEFAULT_REQUIREMENTS;
     
     const score = (
       ((progress.course_contribution_score || 0) * weights.courseContribution / 100) +
@@ -70,32 +140,38 @@ export class ProgressionService {
 
   /**
    * Validate if student can proceed to next module
+   * Now supports dynamic weights based on available assessments
    */
-  static validateProgression(progress: ModuleProgress): ProgressionValidation {
-    const currentScore = this.calculateCumulativeScore(progress);
-    const requiredScore = this.REQUIREMENTS.passingThreshold;
+  static validateProgression(progress: ModuleProgress, assessmentAvailability?: AssessmentAvailability): ProgressionValidation {
+    // Use dynamic weights if assessment availability is provided
+    const weights = assessmentAvailability 
+      ? this.calculateDynamicWeights(assessmentAvailability)
+      : this.DEFAULT_REQUIREMENTS;
+    
+    const currentScore = this.calculateCumulativeScore(progress, weights);
+    const requiredScore = this.DEFAULT_REQUIREMENTS.passingThreshold;
     const missingPoints = Math.max(0, requiredScore - currentScore);
     
     const breakdown = {
       courseContribution: {
         current: progress?.course_contribution_score || 0,
         max: 100,
-        percentage: this.REQUIREMENTS.courseContribution
+        percentage: weights.courseContribution
       },
       quizzes: {
         current: progress?.quiz_score || 0,
         max: 100,
-        percentage: this.REQUIREMENTS.quizzes
+        percentage: weights.quizzes
       },
       assignments: {
         current: progress?.assignment_score || 0,
         max: 100,
-        percentage: this.REQUIREMENTS.assignments
+        percentage: weights.assignments
       },
       finalAssessment: {
         current: progress?.final_assessment_score || 0,
         max: 100,
-        percentage: this.REQUIREMENTS.finalAssessment
+        percentage: weights.finalAssessment
       }
     };
 

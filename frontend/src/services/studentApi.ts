@@ -229,11 +229,14 @@ export interface ModuleProgress {
   student_id: number;
   module_id: number;
   enrollment_id: number;
+  module_score?: number;  // Average of all lesson scores (0-100)
   course_contribution_score: number;
+  lessons_average_score?: number;  // Backwards compatibility
   quiz_score: number;
   assignment_score: number;
   final_assessment_score: number;
-  cumulative_score: number;
+  weighted_score?: number;  // Weighted score for passing (0-100), uses dynamic weights
+  cumulative_score: number;  // Backwards compatibility (same as weighted_score)
   attempts_count: number;
   max_attempts: number;
   status: 'locked' | 'unlocked' | 'in_progress' | 'completed' | 'failed';

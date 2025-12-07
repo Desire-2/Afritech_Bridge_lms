@@ -2,15 +2,15 @@
 
 import { useAuth } from '@/contexts/AuthContext';
 import { useParams } from 'next/navigation';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { StudentApiService } from '@/services/studentApi';
-import { AssessmentApiService } from '@/services/api';
+import { AssessmentApiService, ProgressApiService } from '@/services/api';
 import ContentAssignmentService, { type ContentQuiz, type ContentAssignment } from '@/services/contentAssignmentApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight } from 'lucide-react';
+import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock } from 'lucide-react';
 import Link from 'next/link';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -138,6 +138,18 @@ const LearningPage = () => {
       assignments: number;
       finalAssessment: number;
     };
+    weights?: {
+      courseContribution: number;
+      quizzes: number;
+      assignments: number;
+      finalAssessment: number;
+    };
+    assessmentInfo?: {
+      hasQuizzes: boolean;
+      hasAssignments: boolean;
+      hasFinalAssessment: boolean;
+      isReadingOnly: boolean;
+    };
   } | null>(null);
   
   // Locked module requirements modal state
@@ -196,10 +208,16 @@ const LearningPage = () => {
     timeSpent,
     scrollProgress,
     engagementScore,
+    lessonScore: hookLessonScore,
     isLessonCompleted,
+    nextLessonInfo,
+    completionThreshold,
     updateReadingProgress,
     handleAutoLessonCompletion,
-    checkAutoCompletion
+    checkAutoCompletion,
+    autoSaveProgress,
+    forceSaveProgress,
+    setNextLessonInfo
   } = useProgressTracking({
     currentLesson,
     currentModuleId,
@@ -210,85 +228,124 @@ const LearningPage = () => {
     hasAssignment: lessonAssignments.length > 0
   });
 
-  // Calculate comprehensive lesson score (Reading 25% + Engagement 25% + Quiz 25% + Assignment 25%)
+  // Handle auto-completion event (lesson reached 80% score)
+  const handleAutoCompletionEvent = useCallback((data: any) => {
+    console.log('🎉 Auto-completion event received:', data);
+    setShowCelebration(true);
+    
+    // Update lesson completion status
+    if (currentLesson?.id) {
+      setLessonCompletionStatus(prev => ({
+        ...prev,
+        [currentLesson.id]: true
+      }));
+    }
+    
+    // Show toast notification
+    if (data.message) {
+      console.log(data.message);
+    }
+    
+    // If next lesson is available, offer to navigate
+    if (data.nextLesson) {
+      console.log('🔓 Next lesson available:', data.nextLesson);
+    }
+  }, [currentLesson?.id]);
+
+  // Auto-save with completion callback
   useEffect(() => {
-    const calculatedScore = (
-      (readingProgress * 0.25) +
-      (engagementScore * 0.25) +
-      (currentLessonQuizScore * 0.25) +
-      (currentLessonAssignmentScore * 0.25)
+    if (currentLesson && !isLessonCompleted) {
+      const timer = setInterval(() => {
+        autoSaveProgress(handleAutoCompletionEvent);
+      }, 15000); // Check every 15 seconds
+      return () => clearInterval(timer);
+    }
+  }, [currentLesson, isLessonCompleted, autoSaveProgress, handleAutoCompletionEvent]);
+
+  // Calculate comprehensive lesson score with dynamic weights based on available assessments
+  useEffect(() => {
+    const hasQuiz = !!lessonQuiz;
+    const hasAssignment = lessonAssignments && lessonAssignments.length > 0;
+    
+    let calculatedScore: number;
+    let weights: { reading: number; engagement: number; quiz: number; assignment: number };
+    
+    if (hasQuiz && hasAssignment) {
+      // Full assessment: 25% each
+      weights = { reading: 0.25, engagement: 0.25, quiz: 0.25, assignment: 0.25 };
+    } else if (hasQuiz) {
+      // Quiz only: Reading 35%, Engagement 35%, Quiz 30%
+      weights = { reading: 0.35, engagement: 0.35, quiz: 0.30, assignment: 0 };
+    } else if (hasAssignment) {
+      // Assignment only: Reading 35%, Engagement 35%, Assignment 30%
+      weights = { reading: 0.35, engagement: 0.35, quiz: 0, assignment: 0.30 };
+    } else {
+      // No assessments: Reading 50%, Engagement 50%
+      weights = { reading: 0.50, engagement: 0.50, quiz: 0, assignment: 0 };
+    }
+    
+    calculatedScore = (
+      (readingProgress * weights.reading) +
+      (engagementScore * weights.engagement) +
+      (currentLessonQuizScore * weights.quiz) +
+      (currentLessonAssignmentScore * weights.assignment)
     );
-    setLessonScore(calculatedScore);
-    console.log('📊 Lesson Score calculated:', {
+    
+    // Round to whole number for consistent display
+    setLessonScore(Math.round(calculatedScore));
+    console.log('📊 Lesson Score calculated (dynamic weights):', {
       reading: readingProgress,
       engagement: engagementScore,
       quiz: currentLessonQuizScore,
       assignment: currentLessonAssignmentScore,
-      total: calculatedScore
+      weights,
+      hasQuiz,
+      hasAssignment,
+      total: Math.round(calculatedScore)
     });
-  }, [readingProgress, engagementScore, currentLessonQuizScore, currentLessonAssignmentScore]);
+  }, [readingProgress, engagementScore, currentLessonQuizScore, currentLessonAssignmentScore, lessonQuiz, lessonAssignments]);
 
-  // Fetch existing quiz and assignment scores when lesson changes
+  // Update quiz and assignment scores when lesson data changes
+  // The quiz score is already loaded with the lessonQuiz object from get_lesson_quiz endpoint
   useEffect(() => {
-    const fetchLessonScores = async () => {
-      if (!currentLesson?.id) return;
+    if (!currentLesson?.id) return;
+    
+    // Use quiz score directly from lessonQuiz (already enriched by get_lesson_quiz endpoint)
+    if (lessonQuiz) {
+      // The backend get_lesson_quiz endpoint returns best_score/current_score from QuizAttempt
+      const quizBestScore = lessonQuiz.best_score ?? lessonQuiz.current_score ?? 0;
+      setCurrentLessonQuizScore(quizBestScore);
+      console.log(`📊 Using quiz score from lesson data: ${quizBestScore}%`, {
+        lessonId: currentLesson.id,
+        quizId: lessonQuiz.id,
+        best_score: lessonQuiz.best_score,
+        current_score: lessonQuiz.current_score
+      });
+    } else {
+      setCurrentLessonQuizScore(0);
+    }
+
+    // Use assignment scores from lessonAssignments (submission_status already included)
+    if (lessonAssignments && lessonAssignments.length > 0) {
+      const scores = lessonAssignments.map((assignment: any) => {
+        // Check if assignment has submission status with score
+        if (assignment.submission_status?.score !== undefined && assignment.submission_status?.score !== null) {
+          const score = assignment.submission_status.score;
+          const total = assignment.points_possible || 100;
+          return (score / total) * 100;
+        }
+        return 0;
+      });
       
-      try {
-        // Fetch quiz score if quiz exists
-        if (lessonQuiz?.id) {
-          try {
-            const quizAttempts = await StudentApiService.getQuizAttempts(lessonQuiz.id);
-            if (quizAttempts && quizAttempts.length > 0) {
-              // Get best score from all attempts
-              const bestScore = Math.max(...quizAttempts.map((a: any) => a.score || a.score_percentage || 0));
-              setCurrentLessonQuizScore(bestScore);
-              console.log(`📊 Loaded quiz score for lesson ${currentLesson.id}: ${bestScore}%`);
-            } else {
-              setCurrentLessonQuizScore(0);
-            }
-          } catch (error: any) {
-            if (error?.response?.status !== 404) {
-              console.error('Error fetching quiz attempts:', error);
-            }
-            setCurrentLessonQuizScore(0);
-          }
-        } else {
-          setCurrentLessonQuizScore(0);
-        }
-
-        // Fetch assignment score if assignments exist
-        // Note: Assignment scores are loaded from the submission_status field in the assignment object
-        if (lessonAssignments && lessonAssignments.length > 0) {
-          try {
-            const scores = lessonAssignments.map((assignment: any) => {
-              // Check if assignment has submission status with score
-              if (assignment.submission_status?.score !== undefined && assignment.submission_status?.score !== null) {
-                const score = assignment.submission_status.score;
-                const total = assignment.points_possible || 100;
-                return (score / total) * 100;
-              }
-              return 0;
-            });
-            
-            const avgAssignmentScore = scores.length > 0 
-              ? scores.reduce((sum, score) => sum + score, 0) / scores.length 
-              : 0;
-            setCurrentLessonAssignmentScore(avgAssignmentScore);
-            console.log(`📊 Loaded assignment score for lesson ${currentLesson.id}: ${avgAssignmentScore}%`);
-          } catch (error) {
-            console.error('Error fetching assignment scores:', error);
-            setCurrentLessonAssignmentScore(0);
-          }
-        } else {
-          setCurrentLessonAssignmentScore(0);
-        }
-      } catch (error) {
-        console.error('Error fetching lesson scores:', error);
-      }
-    };
-
-    fetchLessonScores();
-  }, [currentLesson?.id, lessonQuiz?.id, lessonAssignments]);
+      const avgAssignmentScore = scores.length > 0 
+        ? scores.reduce((sum, score) => sum + score, 0) / scores.length 
+        : 0;
+      setCurrentLessonAssignmentScore(avgAssignmentScore);
+      console.log(`📊 Using assignment score from lesson data: ${avgAssignmentScore}%`);
+    } else {
+      setCurrentLessonAssignmentScore(0);
+    }
+  }, [currentLesson?.id, lessonQuiz, lessonAssignments]);
 
   // Auto-complete lessons without quiz/assignment when criteria are met
   useEffect(() => {
@@ -356,22 +413,48 @@ const LearningPage = () => {
     }
   }, [currentLesson?.id, isLessonCompleted]);
 
-  // Calculate lesson score based on reading (40%), engagement (30%), quiz (30%)
+  // Auto-trigger module unlock when all conditions are met
+  // This watches for changes in module score and lesson completion status
   useEffect(() => {
-    if (currentLesson?.id) {
-      const quizScore = lessonQuiz?.id && quizCompletionStatus[lessonQuiz.id]?.completed 
-        ? quizCompletionStatus[lessonQuiz.id].score 
-        : 0;
+    // Skip if no module scoring data or checkAndUnlockNextModuleRef is not set
+    if (!moduleScoring?.cumulativeScore || !checkAndUnlockNextModuleRef.current) return;
+    if (!courseData?.course?.modules || !currentModuleId) return;
+    
+    const passingThreshold = 80;
+    const currentScore = moduleScoring.cumulativeScore;
+    
+    // Check if passing
+    if (currentScore >= passingThreshold) {
+      // Check if all lessons are completed
+      const currentModule = courseData.course.modules.find((m: any) => m.id === currentModuleId);
+      if (!currentModule?.lessons) return;
       
-      const calculatedScore = (
-        (readingProgress * 0.4) +
-        (engagementScore * 0.3) +
-        (quizScore * 0.3)
-      );
+      const moduleLessons = currentModule.lessons || [];
+      const completedCount = moduleLessons.filter((lesson: any) => 
+        lessonCompletionStatus[lesson.id] === true
+      ).length;
       
-      setLessonScore(Math.round(calculatedScore));
+      const allLessonsCompleted = completedCount === moduleLessons.length && moduleLessons.length > 0;
+      
+      if (allLessonsCompleted) {
+        console.log(`🎯 Auto-triggering module unlock: Score ${currentScore.toFixed(1)}% >= ${passingThreshold}%, All ${completedCount}/${moduleLessons.length} lessons completed`);
+        
+        // Trigger module unlock check with debounce to prevent multiple calls
+        const timeoutId = setTimeout(() => {
+          if (checkAndUnlockNextModuleRef.current) {
+            checkAndUnlockNextModuleRef.current();
+          }
+        }, 500);
+        
+        return () => clearTimeout(timeoutId);
+      }
     }
-  }, [currentLesson?.id, readingProgress, engagementScore, lessonQuiz?.id, quizCompletionStatus]);
+  }, [moduleScoring?.cumulativeScore, lessonCompletionStatus, courseData?.course?.modules, currentModuleId]);
+
+  // NOTE: Lesson score calculation is now done in the useEffect above (lines 265-305)
+  // with dynamic weights based on available assessments. The old fixed-weight 
+  // calculation (40% reading, 30% engagement, 30% quiz) has been removed to avoid
+  // conflicting values.
 
   // Handler for quiz completion
   const handleQuizComplete = useCallback((score: number, passed: boolean) => {
@@ -1140,6 +1223,32 @@ const LearningPage = () => {
     if (!isPassing) {
       console.log(`⚠️ Module score ${currentScore.toFixed(1)}% is below passing threshold ${passingThreshold}%`);
       
+      // Fetch detailed score breakdown with dynamic weights from API
+      let weights = { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 };
+      let assessmentInfo = { hasQuizzes: true, hasAssignments: true, hasFinalAssessment: true, isReadingOnly: false };
+      
+      try {
+        const scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(currentModuleId);
+        if (scoreBreakdown?.breakdown) {
+          weights = {
+            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
+            quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
+            assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
+            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 20
+          };
+        }
+        if (scoreBreakdown?.assessment_info) {
+          assessmentInfo = {
+            hasQuizzes: scoreBreakdown.assessment_info.has_quizzes,
+            hasAssignments: scoreBreakdown.assessment_info.has_assignments,
+            hasFinalAssessment: scoreBreakdown.assessment_info.has_final_assessment,
+            isReadingOnly: scoreBreakdown.assessment_info.is_reading_only
+          };
+        }
+      } catch (err) {
+        console.warn('Could not fetch dynamic weights, using defaults');
+      }
+      
       // Show what's missing to reach the passing score
       const missingItems: string[] = [];
       const breakdown = moduleScoring?.breakdown || {
@@ -1149,24 +1258,20 @@ const LearningPage = () => {
         finalAssessment: 0
       };
       
-      // Check each component and suggest improvements
-      // Course contribution is 10% of total
-      if (breakdown.courseContribution < 80) {
+      // Check each component and suggest improvements (only for available components)
+      if (weights.courseContribution > 0 && breakdown.courseContribution < 80) {
         missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for 80%+)`);
       }
       
-      // Quiz score is 30% of total
-      if (breakdown.quizzes < 80) {
+      if (weights.quizzes > 0 && breakdown.quizzes < 80) {
         missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for 80%+)`);
       }
       
-      // Assignment score is 40% of total
-      if (breakdown.assignments < 80) {
+      if (weights.assignments > 0 && breakdown.assignments < 80) {
         missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for 80%+)`);
       }
       
-      // Final assessment is 20% of total
-      if (breakdown.finalAssessment < 80) {
+      if (weights.finalAssessment > 0 && breakdown.finalAssessment < 80) {
         missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for 80%+)`);
       }
       
@@ -1178,12 +1283,32 @@ const LearningPage = () => {
           currentScore,
           requiredScore: passingThreshold,
           missingItems,
-          breakdown
+          breakdown,
+          weights,
+          assessmentInfo
         });
         setShowModuleProgressModal(true);
       }
       
       return;
+    }
+    
+    // Always call the module completion API to mark the module as completed in the database
+    // This is crucial for both:
+    // 1. The last module which has no next module to trigger completion
+    // 2. Non-last modules to unlock the next module
+    let moduleCompletionResult: any = null;
+    try {
+      console.log(`✅ Marking module ${currentModuleId} as completed via API`);
+      moduleCompletionResult = await AssessmentApiService.submitModuleCompletion(currentModuleId);
+      console.log('📊 Module completion result:', moduleCompletionResult);
+      
+      // Refresh progress data to update the sidebar status
+      await progressiveLearning.refreshProgress();
+    } catch (error: any) {
+      console.warn('Module completion API call:', error?.response?.data?.message || error?.message);
+      // Still refresh progress to try and get updated status
+      await progressiveLearning.refreshProgress();
     }
     
     if (!nextModule) {
@@ -1193,30 +1318,11 @@ const LearningPage = () => {
       return;
     }
     
-    // Try to unlock next module via API
-    try {
-      console.log(`🔓 Attempting to unlock next module: ${nextModule.title || nextModule.id}`);
-      
-      // Call module completion API to trigger backend unlock
-      const result = await AssessmentApiService.submitModuleCompletion(currentModuleId);
-      
-      console.log('🔓 Module completion result:', result);
-      
-      if (result.passed && result.can_proceed) {
-        // Refresh progress data to get updated module statuses
-        await progressiveLearning.refreshProgress();
-        
-        // Show unlock animation
-        handleModuleUnlock(nextModule.title || 'Next Module');
-        
-        console.log(`✅ Successfully unlocked module: ${nextModule.title}`);
-      }
-    } catch (error: any) {
-      // Module might already be unlocked or not ready
-      console.warn('Module unlock attempt:', error?.response?.data?.message || error?.message);
-      
-      // Still try to refresh progress in case module was already unlocked
-      await progressiveLearning.refreshProgress();
+    // For non-last modules, show unlock animation if passed
+    if (moduleCompletionResult?.passed && moduleCompletionResult?.can_proceed) {
+      // Show unlock animation
+      handleModuleUnlock(nextModule.title || 'Next Module');
+      console.log(`✅ Successfully unlocked module: ${nextModule.title}`);
     }
   }, [courseData?.course?.modules, currentModuleId, checkModuleCompletion, moduleScoring, progressiveLearning, checkCourseCompletion, handleModuleUnlock]);
 
@@ -1326,9 +1432,13 @@ const LearningPage = () => {
 
   // Get module status
   const getModuleStatus = (moduleId: number): ModuleStatus => {
-    if (progressiveLearning && progressiveLearning.canAccessModule(moduleId)) {
-      const status = progressiveLearning.getModuleStatus(moduleId);
-      return (status?.status as ModuleStatus) || 'locked';
+    const canAccess = progressiveLearning?.canAccessModule(moduleId);
+    const progressStatus = progressiveLearning?.getModuleStatus(moduleId);
+    
+    console.log(`🔍 getModuleStatus(${moduleId}): canAccess=${canAccess}, progressStatus?.status="${progressStatus?.status}"`);
+    
+    if (progressiveLearning && canAccess) {
+      return (progressStatus?.status as ModuleStatus) || 'locked';
     }
     return 'locked';
   };
@@ -1337,26 +1447,6 @@ const LearningPage = () => {
   const courseModules = courseData?.course?.modules || courseData?.modules || [];
   const allLessons = NavUtils.getAllLessons(courseModules);
   const currentLessonIndex = NavUtils.getCurrentLessonIndex(currentLesson, courseModules);
-  
-  const navigateToLesson = (direction: 'prev' | 'next') => {
-    NavUtils.navigateToLesson(
-      direction,
-      currentLesson,
-      courseModules,
-      currentModuleId,
-      getModuleStatus,
-      handleLessonSelect,
-      lessonCompletionStatus
-    );
-  };
-
-  const hasNextLesson = NavUtils.hasNextLesson(
-    currentLessonIndex,
-    allLessons,
-    currentModuleId,
-    getModuleStatus,
-    lessonCompletionStatus
-  );
 
   const hasPrevLesson = NavUtils.hasPrevLesson(
     currentLessonIndex,
@@ -1364,6 +1454,169 @@ const LearningPage = () => {
     getModuleStatus,
     lessonCompletionStatus
   );
+
+  // Check if current lesson is the last lesson in the current module
+  const isLastLessonInModule = useMemo(() => {
+    if (!courseData?.course?.modules || !currentModuleId || !currentLesson) return false;
+    
+    const currentModule = courseData.course.modules.find((m: any) => m.id === currentModuleId);
+    if (!currentModule?.lessons || currentModule.lessons.length === 0) return false;
+    
+    const moduleLessons = currentModule.lessons;
+    const lessonIndex = moduleLessons.findIndex((l: any) => l.id === currentLesson.id);
+    
+    const isLast = lessonIndex === moduleLessons.length - 1;
+    
+    // Debug logging
+    if (isLast) {
+      console.log('📍 Last lesson detected:', {
+        currentLessonId: currentLesson.id,
+        currentLessonTitle: currentLesson.title,
+        moduleId: currentModuleId,
+        lessonIndex,
+        totalLessons: moduleLessons.length
+      });
+    }
+    
+    return isLast;
+  }, [courseData?.course?.modules, currentModuleId, currentLesson]);
+
+  // Get next module info
+  const nextModuleInfo = useMemo(() => {
+    if (!courseData?.course?.modules || !currentModuleId) return null;
+    
+    const modules = courseData.course.modules;
+    const currentModuleIndex = modules.findIndex((m: any) => m.id === currentModuleId);
+    
+    if (currentModuleIndex < 0 || currentModuleIndex >= modules.length - 1) return null;
+    
+    const nextModule = modules[currentModuleIndex + 1];
+    
+    // Debug logging
+    if (nextModule) {
+      console.log('📍 Next module info:', {
+        currentModuleIndex,
+        totalModules: modules.length,
+        nextModuleId: nextModule.id,
+        nextModuleTitle: nextModule.title
+      });
+    }
+    
+    return nextModule ? { id: nextModule.id, title: nextModule.title } : null;
+  }, [courseData?.course?.modules, currentModuleId]);
+
+  // Check if current module is the last module in the course
+  const isLastModule = useMemo(() => {
+    if (!courseData?.course?.modules || !currentModuleId) return false;
+    
+    const modules = courseData.course.modules;
+    const currentModuleIndex = modules.findIndex((m: any) => m.id === currentModuleId);
+    
+    const isLast = currentModuleIndex === modules.length - 1;
+    
+    // Debug logging
+    if (isLast) {
+      console.log('📍 Last module detected:', {
+        currentModuleId,
+        currentModuleIndex,
+        totalModules: modules.length
+      });
+    }
+    
+    return isLast;
+  }, [courseData?.course?.modules, currentModuleId]);
+
+  // Check if user can unlock next module (last lesson completed + score >= 80%)
+  const canUnlockNextModule = useMemo(() => {
+    if (!isLastLessonInModule || !nextModuleInfo) return false;
+    const score = moduleScoring?.cumulativeScore ?? 0;
+    return isLessonCompleted && score >= 80;
+  }, [isLastLessonInModule, nextModuleInfo, moduleScoring?.cumulativeScore, isLessonCompleted]);
+
+  // Calculate hasNextLesson after canUnlockNextModule is defined
+  const hasNextLesson = NavUtils.hasNextLesson(
+    currentLessonIndex,
+    allLessons,
+    currentModuleId,
+    getModuleStatus,
+    lessonCompletionStatus,
+    isLessonCompleted,
+    canUnlockNextModule
+  );
+
+  // Navigation function - defined after canUnlockNextModule
+  // This wrapper handles unlock logic before navigation
+  const navigateToLesson = async (direction: 'prev' | 'next') => {
+    // If navigating next and we can unlock the next module, trigger unlock first
+    if (direction === 'next' && canUnlockNextModule && isLastLessonInModule && nextModuleInfo) {
+      console.log('🔓 Auto-triggering module unlock before navigation');
+      try {
+        // Call the unlock API
+        const result = await AssessmentApiService.submitModuleCompletion(currentModuleId!);
+        if (result.passed && result.can_proceed) {
+          console.log('✅ Module unlocked successfully');
+          // Refresh progress to update module statuses
+          await progressiveLearning.refreshProgress();
+        }
+      } catch (error) {
+        console.warn('Module unlock failed, attempting navigation anyway:', error);
+      }
+    }
+    
+    NavUtils.navigateToLesson(
+      direction,
+      currentLesson,
+      courseModules,
+      currentModuleId,
+      getModuleStatus,
+      handleLessonSelect,
+      lessonCompletionStatus,
+      isLessonCompleted,
+      canUnlockNextModule
+    );
+  };
+
+  // State for unlock button loading
+  const [isUnlockingModule, setIsUnlockingModule] = useState(false);
+
+  // Handle unlock next module button click
+  const handleUnlockNextModuleClick = useCallback(async () => {
+    if (!currentModuleId || !nextModuleInfo) return;
+    
+    setIsUnlockingModule(true);
+    try {
+      console.log(`🔓 Manual unlock triggered for next module: ${nextModuleInfo.title}`);
+      
+      // IMPORTANT: Force save the current lesson progress first
+      // This ensures the last lesson's score is saved to the database
+      console.log('💾 Saving current lesson progress before module unlock...');
+      try {
+        await forceSaveProgress();
+        console.log('✅ Lesson progress saved successfully');
+      } catch (saveError) {
+        console.warn('⚠️ Could not save lesson progress:', saveError);
+        // Continue with unlock anyway - the progress might already be saved
+      }
+      
+      // Recalculate module score to ensure it reflects latest progress
+      if (moduleScoring?.recalculate) {
+        await moduleScoring.recalculate();
+      }
+      
+      // Call the existing checkAndUnlockNextModule function
+      if (checkAndUnlockNextModuleRef.current) {
+        await checkAndUnlockNextModuleRef.current();
+      }
+      
+      // Refresh progress to get updated module statuses
+      await progressiveLearning.refreshProgress();
+      
+    } catch (error) {
+      console.error('Failed to unlock next module:', error);
+    } finally {
+      setIsUnlockingModule(false);
+    }
+  }, [currentModuleId, nextModuleInfo, progressiveLearning, forceSaveProgress, moduleScoring]);
 
   // Prevent hydration issues by not rendering until mounted on client
   if (!mounted) {
@@ -1512,6 +1765,11 @@ const LearningPage = () => {
             onAssignmentSubmit={handleAssignmentSubmit}
             getModuleStatus={getModuleStatus}
             allLessons={allLessons}
+            isLastLessonInModule={isLastLessonInModule}
+            isLastModule={isLastModule}
+            nextModuleInfo={nextModuleInfo}
+            onUnlockNextModule={handleUnlockNextModuleClick}
+            isUnlockingModule={isUnlockingModule}
           />
         ) : (
           <div className="flex-1 min-w-0">
@@ -1613,34 +1871,54 @@ const LearningPage = () => {
                 </div>
               </div>
 
-              {/* Score Breakdown */}
+              {/* Score Breakdown - Dynamic weights */}
               <div className="mb-4">
-                <h4 className="text-white font-medium text-sm mb-3">📊 Score Breakdown</h4>
+                <h4 className="text-white font-medium text-sm mb-3 flex items-center gap-2">
+                  📊 Score Breakdown
+                  {moduleProgressInfo.assessmentInfo?.isReadingOnly && (
+                    <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Reading Only</span>
+                  )}
+                </h4>
                 <div className="space-y-2">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-400">📖 Reading & Engagement (10%)</span>
-                    <span className={`font-medium ${moduleProgressInfo.breakdown.courseContribution >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                      {moduleProgressInfo.breakdown.courseContribution.toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-400">📝 Quiz Score (30%)</span>
-                    <span className={`font-medium ${moduleProgressInfo.breakdown.quizzes >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                      {moduleProgressInfo.breakdown.quizzes.toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-400">📋 Assignments (40%)</span>
-                    <span className={`font-medium ${moduleProgressInfo.breakdown.assignments >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                      {moduleProgressInfo.breakdown.assignments.toFixed(0)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-400">🎯 Final Assessment (20%)</span>
-                    <span className={`font-medium ${moduleProgressInfo.breakdown.finalAssessment >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                      {moduleProgressInfo.breakdown.finalAssessment.toFixed(0)}%
-                    </span>
-                  </div>
+                  {/* Reading & Engagement - Always shown */}
+                  {(moduleProgressInfo.weights?.courseContribution || 0) > 0 && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-400">📖 Reading & Engagement ({moduleProgressInfo.weights?.courseContribution || 10}%)</span>
+                      <span className={`font-medium ${moduleProgressInfo.breakdown.courseContribution >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {moduleProgressInfo.breakdown.courseContribution.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* Quiz Score - Only shown if available */}
+                  {(moduleProgressInfo.weights?.quizzes || 0) > 0 && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-400">📝 Quiz Score ({moduleProgressInfo.weights?.quizzes || 30}%)</span>
+                      <span className={`font-medium ${moduleProgressInfo.breakdown.quizzes >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {moduleProgressInfo.breakdown.quizzes.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* Assignments - Only shown if available */}
+                  {(moduleProgressInfo.weights?.assignments || 0) > 0 && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-400">📋 Assignments ({moduleProgressInfo.weights?.assignments || 40}%)</span>
+                      <span className={`font-medium ${moduleProgressInfo.breakdown.assignments >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {moduleProgressInfo.breakdown.assignments.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                  
+                  {/* Final Assessment - Only shown if available */}
+                  {(moduleProgressInfo.weights?.finalAssessment || 0) > 0 && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-400">🎯 Final Assessment ({moduleProgressInfo.weights?.finalAssessment || 20}%)</span>
+                      <span className={`font-medium ${moduleProgressInfo.breakdown.finalAssessment >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {moduleProgressInfo.breakdown.finalAssessment.toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1657,6 +1935,7 @@ const LearningPage = () => {
                   </div>
                 </div>
               )}
+
 
               {/* Tips */}
               <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
@@ -1816,28 +2095,76 @@ const LearningPage = () => {
                 </ul>
               </div>
 
-              {/* Action Button */}
-              <Button
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={() => {
-                  setShowLockedModuleModal(false);
-                  // Navigate to the previous module's first incomplete lesson
-                  if (lockedModuleInfo.previousModuleId) {
-                    const previousModule = courseModules.find((m: any) => m.id === lockedModuleInfo.previousModuleId);
-                    const previousModuleLessons = previousModule?.lessons || [];
-                    if (previousModuleLessons.length > 0) {
-                      // Find first incomplete lesson or first lesson
-                      const firstIncompleteLesson = previousModuleLessons.find(
-                        (l: any) => !lessonCompletionStatus[l.id]
-                      ) || previousModuleLessons[0];
-                      handleLessonSelect(firstIncompleteLesson.id, lockedModuleInfo.previousModuleId);
+              {/* Action Buttons */}
+              <div className="space-y-2">
+                {/* Unlock Button - Show only when all requirements are met */}
+                {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
+                 lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
+                  <Button
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-medium"
+                    onClick={async () => {
+                      try {
+                        // Call API to unlock the next module
+                        console.log(`🔓 Manually unlocking module from modal: previous module ${lockedModuleInfo.previousModuleId}`);
+                        const result = await AssessmentApiService.submitModuleCompletion(lockedModuleInfo.previousModuleId);
+                        console.log('🔓 Unlock result:', result);
+                        
+                        // Refresh progress data
+                        await progressiveLearning.refreshProgress();
+                        
+                        // Close modal
+                        setShowLockedModuleModal(false);
+                        
+                        // Show success toast or navigate to the unlocked module
+                        if (result.passed && result.can_proceed) {
+                          // Navigate to the newly unlocked module's first lesson
+                          const unlockedModule = courseModules.find((m: any) => m.id === lockedModuleInfo.moduleId);
+                          const unlockedModuleLessons = unlockedModule?.lessons || [];
+                          if (unlockedModuleLessons.length > 0) {
+                            handleLessonSelect(unlockedModuleLessons[0].id, lockedModuleInfo.moduleId);
+                            handleModuleUnlock(lockedModuleInfo.moduleTitle);
+                          }
+                        }
+                      } catch (error: any) {
+                        console.error('Failed to unlock module:', error);
+                        // Still try to refresh and check if it was already unlocked
+                        await progressiveLearning.refreshProgress();
+                      }
+                    }}
+                  >
+                    <Unlock className="h-4 w-4 mr-2" />
+                    Unlock Module {lockedModuleInfo.moduleIndex + 1}: {lockedModuleInfo.moduleTitle}
+                  </Button>
+                )}
+
+                {/* Go to Previous Module Button */}
+                <Button
+                  className={`w-full ${
+                    lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
+                    lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore
+                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                  }`}
+                  onClick={() => {
+                    setShowLockedModuleModal(false);
+                    // Navigate to the previous module's first incomplete lesson
+                    if (lockedModuleInfo.previousModuleId) {
+                      const previousModule = courseModules.find((m: any) => m.id === lockedModuleInfo.previousModuleId);
+                      const previousModuleLessons = previousModule?.lessons || [];
+                      if (previousModuleLessons.length > 0) {
+                        // Find first incomplete lesson or first lesson
+                        const firstIncompleteLesson = previousModuleLessons.find(
+                          (l: any) => !lessonCompletionStatus[l.id]
+                        ) || previousModuleLessons[0];
+                        handleLessonSelect(firstIncompleteLesson.id, lockedModuleInfo.previousModuleId);
+                      }
                     }
-                  }
-                }}
-              >
-                <ArrowRight className="h-4 w-4 mr-2" />
-                Go to Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}
-              </Button>
+                  }}
+                >
+                  <ArrowRight className="h-4 w-4 mr-2" />
+                  Go to Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

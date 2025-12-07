@@ -194,6 +194,7 @@ class AssessmentApiService extends BaseApiService {
 
   /**
    * Calculate and submit module completion score
+   * This triggers backend check and auto-unlocks next module if passing
    */
   async submitModuleCompletion(moduleId: number): Promise<{
     passed: boolean;
@@ -210,7 +211,8 @@ class AssessmentApiService extends BaseApiService {
       title: string;
     };
   }> {
-    return this.post(`/assessments/module-completion/${moduleId}`);
+    // Use the correct backend endpoint for module completion check
+    return this.post(`/student/learning/module/${moduleId}/check-completion`);
   }
 
   /**

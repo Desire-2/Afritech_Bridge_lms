@@ -10,14 +10,18 @@ export interface NavigationHelpers {
     currentModuleId: number | null,
     getModuleStatus: (moduleId: number) => ModuleStatus,
     handleLessonSelect: (lessonId: number, moduleId: number) => void,
-    lessonCompletionStatus?: { [lessonId: number]: boolean }
+    lessonCompletionStatus?: { [lessonId: number]: boolean },
+    isCurrentLessonCompleted?: boolean,
+    canUnlockNextModule?: boolean
   ) => void;
   hasNextLesson: (
     currentLessonIndex: number,
     allLessons: Array<LessonData & { moduleId: number }>,
     currentModuleId: number | null,
     getModuleStatus: (moduleId: number) => ModuleStatus,
-    lessonCompletionStatus?: { [lessonId: number]: boolean }
+    lessonCompletionStatus?: { [lessonId: number]: boolean },
+    isCurrentLessonCompleted?: boolean,
+    canUnlockNextModule?: boolean
   ) => boolean;
   hasPrevLesson: (
     currentLessonIndex: number,
@@ -47,7 +51,9 @@ export const navigateToLesson = (
   currentModuleId: number | null,
   getModuleStatus: (moduleId: number) => ModuleStatus,
   handleLessonSelect: (lessonId: number, moduleId: number) => void,
-  lessonCompletionStatus?: { [lessonId: number]: boolean }
+  lessonCompletionStatus?: { [lessonId: number]: boolean },
+  isCurrentLessonCompleted?: boolean,
+  canUnlockNextModule?: boolean
 ): void => {
   const allLessons = getAllLessons(courseModules);
   const currentIndex = getCurrentLessonIndex(currentLesson, courseModules);
@@ -71,6 +77,20 @@ export const navigateToLesson = (
     
     if (nextLessonModule && nextLessonModule.id !== currentModuleId) {
       const nextModuleStatus = getModuleStatus(nextLessonModule.id);
+      
+      // Allow navigation if:
+      // 1. Next module is already unlocked, OR
+      // 2. Current lesson is completed and user can unlock next module
+      if (nextModuleStatus !== 'locked') {
+        handleLessonSelect(nextLesson.id, nextLesson.moduleId);
+        return;
+      }
+      
+      if (isCurrentLessonCompleted && canUnlockNextModule) {
+        handleLessonSelect(nextLesson.id, nextLesson.moduleId);
+        return;
+      }
+      
       // Block only if module is locked AND lesson is not completed
       if (nextModuleStatus === 'locked' && !isNextLessonCompleted) {
         console.log('Cannot access next module - it is locked');
@@ -87,7 +107,9 @@ export const hasNextLesson = (
   allLessons: Array<LessonData & { moduleId: number }>,
   currentModuleId: number | null,
   getModuleStatus: (moduleId: number) => ModuleStatus,
-  lessonCompletionStatus?: { [lessonId: number]: boolean }
+  lessonCompletionStatus?: { [lessonId: number]: boolean },
+  isCurrentLessonCompleted?: boolean,
+  canUnlockNextModule?: boolean
 ): boolean => {
   if (currentLessonIndex >= allLessons.length - 1) return false;
   
@@ -98,6 +120,18 @@ export const hasNextLesson = (
   
   if (nextLesson.moduleId !== currentModuleId) {
     const nextModuleStatus = getModuleStatus(nextLesson.moduleId);
+    
+    // If the next module is already unlocked, allow navigation
+    if (nextModuleStatus !== 'locked') {
+      return true;
+    }
+    
+    // If current lesson is completed and user can unlock next module, allow navigation
+    // This handles the case where user just completed the last lesson of a passing module
+    if (isCurrentLessonCompleted && canUnlockNextModule) {
+      return true;
+    }
+    
     // Block only if module is locked AND lesson is not completed
     if (nextModuleStatus === 'locked' && !isNextLessonCompleted) {
       return false;

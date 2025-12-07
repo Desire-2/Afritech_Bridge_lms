@@ -48,24 +48,28 @@ class ProgressApiService extends BaseApiService {
         weight: number;
         weighted_score: number;
         description: string;
+        available?: boolean;
       };
       quizzes: {
         score: number;
         weight: number;
         weighted_score: number;
         description: string;
+        available?: boolean;
       };
       assignments: {
         score: number;
         weight: number;
         weighted_score: number;
         description: string;
+        available?: boolean;
       };
       final_assessment: {
         score: number;
         weight: number;
         weighted_score: number;
         description: string;
+        available?: boolean;
       };
     };
     recommendations: Array<{
@@ -81,8 +85,16 @@ class ProgressApiService extends BaseApiService {
     };
     status: string;
     can_proceed: boolean;
+    assessment_info?: {
+      has_quizzes: boolean;
+      has_assignments: boolean;
+      has_final_assessment: boolean;
+      is_reading_only: boolean;
+    };
   }> {
-    return this.get(`/student/progress/module/${moduleId}/score-breakdown`);
+    const response = await this.get<{ success: boolean; data: any }>(`/student/progress/module/${moduleId}/score-breakdown`);
+    // Extract data from API wrapper { success: true, data: { ... } }
+    return response.data;
   }
 
   /**

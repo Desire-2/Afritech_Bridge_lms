@@ -312,13 +312,16 @@ class ProgressionService:
             ).first()
             
             if not module_progress:
+                current_app.logger.warning(f"Module progress not found for student={student_id}, module={module_id}")
                 return False, "Module progress not found"
             
             # Calculate cumulative score
             cumulative_score = module_progress.calculate_cumulative_score()
+            current_app.logger.info(f"Module {module_id} cumulative_score={cumulative_score:.2f}% for student {student_id}")
             
             # Check if meets passing requirement (80%)
             if cumulative_score >= 80.0:
+                current_app.logger.info(f"Module {module_id} PASSED with {cumulative_score:.2f}% - unlocking next module")
                 # Mark module as completed
                 module_progress.status = 'completed'
                 module_progress.completed_at = datetime.utcnow()
@@ -500,6 +503,10 @@ class ProgressionService:
     def _unlock_next_module(student_id: int, completed_module_id: int, enrollment_id: int):
         """Unlock the next module after completing current one"""
         completed_module = Module.query.get(completed_module_id)
+        if not completed_module:
+            current_app.logger.error(f"Could not find completed module {completed_module_id}")
+            return
+            
         course = completed_module.course
         
         # Find next module
@@ -508,16 +515,36 @@ class ProgressionService:
         ).order_by('order').first()
         
         if next_module:
+            current_app.logger.info(f"Attempting to unlock next module {next_module.id} ({next_module.title}) for student {student_id}")
+            
             next_progress = ModuleProgress.query.filter_by(
                 student_id=student_id,
                 module_id=next_module.id,
                 enrollment_id=enrollment_id
             ).first()
             
-            if next_progress and next_progress.status == 'locked':
+            if not next_progress:
+                # Create the progress record if it doesn't exist
+                current_app.logger.info(f"Creating new ModuleProgress for module {next_module.id}")
+                next_progress = ModuleProgress(
+                    student_id=student_id,
+                    module_id=next_module.id,
+                    enrollment_id=enrollment_id,
+                    status='unlocked',
+                    unlocked_at=datetime.utcnow(),
+                    prerequisites_met=True
+                )
+                db.session.add(next_progress)
+            elif next_progress.status in ('locked', 'not_started', None):
+                # Unlock if currently locked or not started
+                current_app.logger.info(f"Unlocking existing ModuleProgress for module {next_module.id} (was: {next_progress.status})")
                 next_progress.status = 'unlocked'
                 next_progress.unlocked_at = datetime.utcnow()
                 next_progress.prerequisites_met = True
+            else:
+                current_app.logger.info(f"Module {next_module.id} already has status: {next_progress.status}, not changing")
+        else:
+            current_app.logger.info(f"No next module found after module {completed_module_id} - this may be the last module")
     
     @staticmethod
     def _update_course_contribution_score(student_id: int, module_id: int, enrollment_id: int):

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Test the new three-tier scoring system:
-1. Lesson Score = reading + engagement + quiz + assignment
+Test the new three-tier scoring system with dynamic weights:
+1. Lesson Score = reading + engagement + quiz + assignment (dynamic weights based on available assessments)
 2. Module Score = average of all lesson scores
 3. Course Score = average of all module scores
+
+Dynamic Scoring:
+- If lesson has BOTH quiz AND assignment: Reading 25%, Engagement 25%, Quiz 25%, Assignment 25%
+- If lesson has ONLY quiz: Reading 35%, Engagement 35%, Quiz 30%
+- If lesson has ONLY assignment: Reading 35%, Engagement 35%, Assignment 30%
+- If lesson has NO assessments: Reading 50%, Engagement 50%
 """
 
 import sys
@@ -15,13 +21,13 @@ sys.path.insert(0, str(project_root))
 
 from main import app, db
 from src.models.student_models import LessonCompletion, ModuleProgress
-from src.models.course_models import Module, Lesson, Enrollment
+from src.models.course_models import Module, Lesson, Enrollment, Quiz, Assignment
 
 def test_scoring_system():
-    """Test the three-tier scoring system."""
+    """Test the three-tier scoring system with dynamic weights."""
     with app.app_context():
         print("\n" + "="*80)
-        print("THREE-TIER SCORING SYSTEM TEST")
+        print("THREE-TIER SCORING SYSTEM TEST (Dynamic Weights)")
         print("="*80)
         
         # Get a sample lesson completion
@@ -32,19 +38,41 @@ def test_scoring_system():
         
         lesson = db.session.get(Lesson, completion.lesson_id)
         
+        # Check what assessments exist for this lesson
+        has_quiz = Quiz.query.filter_by(lesson_id=completion.lesson_id).first() is not None
+        has_assignment = Assignment.query.filter_by(lesson_id=completion.lesson_id).first() is not None
+        
         print("\n" + "-"*80)
         print("1. LESSON SCORE (Individual Lesson)")
         print("-"*80)
         print(f"Lesson: {lesson.title if lesson else 'Unknown'}")
         print(f"Student ID: {completion.student_id}")
-        print(f"\nComponents:")
-        print(f"  - Reading Progress: {completion.reading_progress:.2f}%")
-        print(f"  - Engagement Score: {completion.engagement_score:.2f}%")
+        print(f"\nAssessment Status:")
+        print(f"  - Has Quiz: {has_quiz}")
+        print(f"  - Has Assignment: {has_assignment}")
+        
+        # Get score breakdown
+        breakdown = completion.get_score_breakdown()
+        print(f"\nComponents (with dynamic weights):")
+        print(f"  - Reading Progress: {breakdown['scores']['reading']:.2f}% (weight: {breakdown['weights']['reading']}%)")
+        print(f"  - Engagement Score: {breakdown['scores']['engagement']:.2f}% (weight: {breakdown['weights']['engagement']}%)")
+        if has_quiz:
+            print(f"  - Quiz Score: {breakdown['scores']['quiz']:.2f}% (weight: {breakdown['weights']['quiz']}%)")
+        if has_assignment:
+            print(f"  - Assignment Score: {breakdown['scores']['assignment']:.2f}% (weight: {breakdown['weights']['assignment']}%)")
         
         # Calculate lesson score
         lesson_score = completion.calculate_lesson_score()
         print(f"\n📊 LESSON SCORE: {lesson_score:.2f}%")
-        print(f"   Formula: (reading×25%) + (engagement×25%) + (quiz×25%) + (assignment×25%)")
+        
+        if has_quiz and has_assignment:
+            print(f"   Formula: (reading×25%) + (engagement×25%) + (quiz×25%) + (assignment×25%)")
+        elif has_quiz:
+            print(f"   Formula: (reading×35%) + (engagement×35%) + (quiz×30%)")
+        elif has_assignment:
+            print(f"   Formula: (reading×35%) + (engagement×35%) + (assignment×30%)")
+        else:
+            print(f"   Formula: (reading×50%) + (engagement×50%)")
         
         # Get module progress
         if lesson:
@@ -75,7 +103,14 @@ def test_scoring_system():
                     ).first()
                     if lc:
                         ls = lc.calculate_lesson_score()
-                        print(f"  - {l.title}: {ls:.2f}%")
+                        lb = lc.get_score_breakdown()
+                        assessment_status = []
+                        if lb['has_quiz']:
+                            assessment_status.append("Quiz")
+                        if lb['has_assignment']:
+                            assessment_status.append("Assignment")
+                        status_str = f" [{', '.join(assessment_status)}]" if assessment_status else " [Reading Only]"
+                        print(f"  - {l.title}: {ls:.2f}%{status_str}")
                         total += ls
                         count += 1
                     else:

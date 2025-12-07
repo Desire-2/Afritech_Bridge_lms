@@ -372,6 +372,7 @@ def get_lesson_assignments(lesson_id):
                     if submission.grade is not None:
                         submission_status['status'] = 'graded'
                         submission_status['grade'] = submission.grade
+                        submission_status['score'] = submission.grade  # Frontend expects 'score' field
                         submission_status['feedback'] = submission.feedback
                         submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
                         # Safely get grader name
