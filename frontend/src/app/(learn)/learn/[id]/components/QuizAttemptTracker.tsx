@@ -26,6 +26,7 @@ import {
 import type { ContentQuiz, QuizQuestion } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
 import { toast } from 'sonner';
+import { useSidebar } from '@/contexts/SidebarContext';
 
 interface ExtendedQuiz extends ContentQuiz {
   time_limit?: number;
@@ -69,6 +70,16 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   onSubmitQuiz,
   onQuizComplete
 }) => {
+  // Optional sidebar context - may not be available in all routes
+  let closeSidebar: (() => void) | undefined;
+  try {
+    const sidebar = useSidebar();
+    closeSidebar = sidebar.closeSidebar;
+  } catch (error) {
+    // SidebarProvider not available in this route
+    closeSidebar = undefined;
+  }
+  
   const [quizState, setQuizState] = useState<QuizState>({
     status: 'not-started',
     currentQuestionIndex: 0,
@@ -83,6 +94,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   const [shuffledQuestions, setShuffledQuestions] = useState<any[]>([]);
   const [shuffledAnswersMap, setShuffledAnswersMap] = useState<Record<number, any[]>>({});
   const [showScoreModal, setShowScoreModal] = useState(false);
+  const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [securityViolation, setSecurityViolation] = useState(false);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
+  const [isQuizActive, setIsQuizActive] = useState(false);
   
   // Shuffle utility function
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -126,16 +141,183 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     }
   }, [quiz.questions, quiz.shuffle_questions, quiz.shuffle_answers]);
 
-  // Timer effect
+  // Timer effect with countdown and auto-submit
   useEffect(() => {
     if (quizState.status === 'in-progress') {
       const interval = setInterval(() => {
         setTimeElapsed(prev => prev + 1);
+        
+        // Update countdown timer
+        if (quiz.time_limit) {
+          const remaining = (quiz.time_limit * 60) - timeElapsed - 1;
+          setTimeRemaining(remaining);
+          
+          // Auto-submit when time expires
+          if (remaining <= 0) {
+            clearInterval(interval);
+            toast.error('Time Expired!', {
+              description: 'Your quiz has been automatically submitted.',
+              duration: 5000
+            });
+            // Auto-submit without validation - submit current answers
+            handleTimeExpiredSubmit();
+          }
+          
+          // Warning at 1 minute remaining
+          if (remaining === 60) {
+            toast.warning('1 Minute Remaining!', {
+              description: 'Please complete your quiz soon.',
+              duration: 5000
+            });
+          }
+        }
       }, 1000);
       
       return () => clearInterval(interval);
     }
-  }, [quizState.status]);
+  }, [quizState.status, timeElapsed]);
+
+  // Security monitoring: tab switching, screenshots, content selection
+  useEffect(() => {
+    if (quizState.status === 'in-progress' && !submitting) {
+      // Detect tab/window switching
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          setTabSwitchCount(prev => {
+            const newCount = prev + 1;
+            
+            toast.error(`Tab Switch Detected (${newCount}/3)`, {
+              description: 'Switching tabs during the quiz is not allowed. 3 violations will result in automatic submission with 0 score.',
+              duration: 5000
+            });
+            
+            if (newCount >= 3 && !securityViolation) {
+              setSecurityViolation(true);
+              toast.error('Maximum Violations Reached', {
+                description: 'Quiz will be submitted with 0 score due to multiple security violations.',
+                duration: 5000
+              });
+              
+              setTimeout(() => {
+                submitQuizWithViolation();
+              }, 2000);
+            }
+            
+            return newCount;
+          });
+        }
+      };
+
+      // Detect window blur (switching windows)
+      const handleWindowBlur = () => {
+        if (!document.hidden) {
+          setTabSwitchCount(prev => {
+            const newCount = prev + 1;
+            
+            toast.error(`Window Change Detected (${newCount}/3)`, {
+              description: 'Changing windows during the quiz is not allowed.',
+              duration: 5000
+            });
+            
+            if (newCount >= 3 && !securityViolation) {
+              setSecurityViolation(true);
+              
+              setTimeout(() => {
+                submitQuizWithViolation();
+              }, 2000);
+            }
+            
+            return newCount;
+          });
+        }
+      };
+
+      // Prevent screenshots
+      const handleKeyDown = (e: KeyboardEvent) => {
+        // Prevent PrintScreen, Ctrl+P, Cmd+Shift+3/4/5 (Mac screenshots)
+        if (
+          e.key === 'PrintScreen' ||
+          (e.ctrlKey && e.key === 'p') ||
+          (e.metaKey && e.shiftKey && ['3', '4', '5'].includes(e.key))
+        ) {
+          e.preventDefault();
+          toast.warning('Screenshots Disabled', {
+            description: 'Taking screenshots during the quiz is not allowed.',
+            duration: 3000
+          });
+        }
+      };
+
+      // Prevent right-click context menu
+      const handleContextMenu = (e: MouseEvent) => {
+        e.preventDefault();
+        toast.warning('Right-click Disabled', {
+          description: 'Right-click is disabled during the quiz.',
+          duration: 2000
+        });
+      };
+
+      // Disable text selection
+      const disableSelection = () => {
+        document.body.style.userSelect = 'none';
+        document.body.style.webkitUserSelect = 'none';
+      };
+
+      const enableSelection = () => {
+        document.body.style.userSelect = '';
+        document.body.style.webkitUserSelect = '';
+      };
+
+      // Monitor fullscreen exit as a violation
+      const handleFullscreenChange = () => {
+        if (!document.fullscreenElement && isQuizActive && !securityViolation) {
+          setTabSwitchCount(prev => {
+            const newCount = prev + 1;
+            
+            toast.error(`Fullscreen Exit Detected (${newCount}/3)`, {
+              description: 'Exiting fullscreen during the quiz is not allowed.',
+              duration: 5000
+            });
+            
+            if (newCount >= 3 && !securityViolation) {
+              setSecurityViolation(true);
+              toast.error('Maximum Violations Reached', {
+                description: 'Quiz will be submitted with 0 score due to multiple security violations.',
+                duration: 5000
+              });
+              
+              setTimeout(() => {
+                submitQuizWithViolation();
+              }, 2000);
+            } else {
+              // Try to re-enter fullscreen
+              enterFullscreen();
+            }
+            
+            return newCount;
+          });
+        }
+      };
+
+      // Add event listeners
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('blur', handleWindowBlur);
+      document.addEventListener('keydown', handleKeyDown);
+      document.addEventListener('contextmenu', handleContextMenu);
+      document.addEventListener('fullscreenchange', handleFullscreenChange);
+      disableSelection();
+
+      // Cleanup
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('blur', handleWindowBlur);
+        document.removeEventListener('keydown', handleKeyDown);
+        document.removeEventListener('contextmenu', handleContextMenu);
+        document.removeEventListener('fullscreenchange', handleFullscreenChange);
+        enableSelection();
+      };
+    }
+  }, [quizState.status, isQuizActive, securityViolation]);
 
   const startQuiz = () => {
     setQuizState({
@@ -145,7 +327,51 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       answers: {}
     });
     setTimeElapsed(0);
+    setTabSwitchCount(0);
+    setSecurityViolation(false);
+    setIsQuizActive(true);
+    
+    // Initialize countdown timer
+    if (quiz.time_limit) {
+      setTimeRemaining(quiz.time_limit * 60);
+    }
+    
+    // Close sidebar for distraction-free quiz taking (if available)
+    if (closeSidebar) {
+      closeSidebar();
+    }
+    
+    // Enter fullscreen mode
+    enterFullscreen();
+    
+    // Show security warning
+    toast.info('Quiz Started - Fullscreen Mode', {
+      description: 'Tab switching, screenshots, and window changes are monitored. Exiting fullscreen will count as a violation. Violations will result in automatic submission with 0 score.',
+      duration: 10000
+    });
+    
     onStartQuiz();
+  };
+
+  const enterFullscreen = () => {
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen().catch(err => {
+        console.error('Error attempting to enable fullscreen:', err);
+        toast.warning('Fullscreen Not Available', {
+          description: 'Please manually enter fullscreen mode (F11) for better focus.',
+          duration: 5000
+        });
+      });
+    }
+  };
+
+  const exitFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(err => {
+        console.error('Error attempting to exit fullscreen:', err);
+      });
+    }
   };
 
   const handleAnswerSelect = (questionId: number, answer: string) => {
@@ -173,7 +399,102 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     }
   };
 
+  // Submit quiz with 0 score due to security violation
+  const submitQuizWithViolation = async () => {
+    if (submitting || quizState.status !== 'in-progress') return;
+    
+    setSubmitting(true);
+    setError(null);
+    setIsQuizActive(false);
+    exitFullscreen();
+
+    try {
+      // Submit with empty answers to get 0 score
+      const emptyAnswers = questions.reduce((acc, q) => {
+        acc[q.id] = '';
+        return acc;
+      }, {} as Record<number, string>);
+      
+      const result = await ContentAssignmentService.submitQuiz(quiz.id, emptyAnswers);
+      
+      setQuizState({
+        ...quizState,
+        status: 'completed',
+        score: 0,
+        feedback: 'Quiz submitted due to security violation. Score: 0%'
+      });
+      setSubmissionResult(result);
+      onQuizComplete(result);
+      
+      toast.error('Quiz Submitted - Security Violation', {
+        description: 'Your quiz has been submitted with a score of 0% due to security policy violation.',
+        duration: 10000
+      });
+    } catch (err: any) {
+      console.error('Error submitting quiz with violation:', err);
+      setError(err.response?.data?.message || 'Failed to submit quiz');
+      toast.error('Submission Error', {
+        description: err.response?.data?.message || 'Failed to submit quiz',
+        duration: 5000
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleTimeExpiredSubmit = async () => {
+    // Guard against duplicate submissions
+    if (submitting || quizState.status !== 'in-progress') return;
+    
+    setSubmitting(true);
+    setError(null);
+    setIsQuizActive(false);
+    exitFullscreen();
+
+    try {
+      console.log('Time expired - auto-submitting quiz with current answers');
+      const result = await ContentAssignmentService.submitQuiz(quiz.id, quizState.answers);
+      
+      const scoreRounded = Math.round(result.score);
+      
+      const submissionData: SubmissionResult = {
+        score: scoreRounded,
+        passed: result.passed,
+        attempt_number: result.attempt_number || 1,
+        total_attempts: result.total_attempts || result.attempt_number || 1,
+        remaining_attempts: result.remaining_attempts ?? -1
+      };
+      setSubmissionResult(submissionData);
+      
+      setQuizState(prev => ({
+        ...prev,
+        status: 'completed',
+        score: scoreRounded,
+        feedback: result.feedback || `Quiz submitted. Score: ${scoreRounded}%`
+      }));
+
+      toast.success('Quiz Submitted', {
+        description: `Time expired. Your quiz has been submitted. Score: ${scoreRounded}%`,
+        duration: 5000
+      });
+
+      onQuizComplete?.(scoreRounded);
+    } catch (err: any) {
+      console.error('Time expired submission error:', err);
+      setError(err.response?.data?.message || 'Failed to submit quiz');
+      toast.error('Submission Error', {
+        description: err.response?.data?.message || 'Failed to submit quiz',
+        duration: 5000
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submitQuiz = async () => {
+    // Guard against duplicate submissions
+    if (submitting || quizState.status !== 'in-progress') return;
+    
     // Validate all questions are answered
     if (!allQuestionsAnswered) {
       const unanswered = questions.length - answeredCount;
@@ -191,6 +512,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
     setSubmitting(true);
     setError(null);
+    setIsQuizActive(false);
+    exitFullscreen();
 
     try {
       console.log('Submitting quiz:', { quizId: quiz.id, answersCount: answeredCount, answers: quizState.answers });
@@ -462,14 +785,50 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 )}
               </ul>
             </div>
+
+            {/* Security Warning */}
+            <Alert className="bg-orange-50 dark:bg-orange-950/30 border-orange-300 dark:border-orange-700">
+              <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+              <AlertTitle className="text-orange-900 dark:text-orange-300 font-bold">
+                🔒 Security Policy
+              </AlertTitle>
+              <AlertDescription className="text-orange-800 dark:text-orange-300">
+                <p className="mb-2 font-semibold">This quiz is monitored for academic integrity:</p>
+                <ul className="list-disc ml-5 space-y-1 text-sm">
+                  <li><strong>No tab switching</strong> - Stay on this page</li>
+                  <li><strong>No window changes</strong> - Keep this window active</li>
+                  <li><strong>Screenshots disabled</strong> - Cannot capture quiz content</li>
+                  <li><strong>Content selection disabled</strong> - Cannot copy text</li>
+                  <li className="text-red-700 dark:text-red-400 font-bold">⚠️ Any violation = Automatic 0 score and submission</li>
+                </ul>
+              </AlertDescription>
+            </Alert>
             
             <Button 
               onClick={startQuiz}
               disabled={!canAttempt}
               className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-lg"
             >
-              <Play className="h-6 w-6 mr-2" />
-              {canAttempt ? 'Start Quiz' : 'Maximum Attempts Reached'}
+              {canAttempt ? (
+                <>
+                  {attemptsUsed > 0 ? (
+                    <>
+                      <RefreshCw className="h-6 w-6 mr-2" />
+                      Retake Quiz
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-6 w-6 mr-2" />
+                      Start Quiz
+                    </>
+                  )}
+                </>
+              ) : (
+                <>
+                  <XCircle className="h-6 w-6 mr-2" />
+                  Maximum Attempts Reached
+                </>
+              )}
             </Button>
             
             {maxAttempts !== -1 && (
@@ -654,6 +1013,22 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
           </Alert>
         )}
 
+        {/* Security Warning Banner */}
+        <Alert className="border-orange-400 bg-orange-50 dark:bg-orange-950/30">
+          <AlertCircle className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+          <AlertTitle className="text-orange-900 dark:text-orange-300 font-bold">
+            🔒 Security Monitoring Active
+          </AlertTitle>
+          <AlertDescription className="text-orange-800 dark:text-orange-300 text-sm">
+            <ul className="list-disc ml-5 space-y-1">
+              <li>Tab switching and window changes are being monitored</li>
+              <li>Screenshots and content copying are disabled</li>
+              <li>Any violation will result in automatic submission with 0 score</li>
+              <li>Stay focused on this page until quiz completion</li>
+            </ul>
+          </AlertDescription>
+        </Alert>
+
         {/* Quiz Header */}
         <Card className="border-2 border-blue-100 dark:border-blue-900 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 shadow-md">
           <CardContent className="p-4 sm:p-5">
@@ -672,10 +1047,15 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                   <Timer className="h-4 w-4" />
                   <span className="font-mono font-semibold">{formatTime(timeElapsed)}</span>
                 </div>
-                {quiz.time_limit && (
-                  <Badge variant="destructive" className="shadow-sm">
-                    <Clock className="h-3 w-3 mr-1" />
-                    {quiz.time_limit - Math.floor(timeElapsed / 60)} min left
+                {quiz.time_limit && timeRemaining !== null && (
+                  <Badge 
+                    variant="destructive" 
+                    className={`shadow-sm text-base font-bold ${
+                      timeRemaining <= 60 ? 'animate-pulse bg-red-600' : ''
+                    }`}
+                  >
+                    <Clock className="h-4 w-4 mr-1" />
+                    {Math.floor(timeRemaining / 60)}:{String(timeRemaining % 60).padStart(2, '0')}
                   </Badge>
                 )}
               </div>
@@ -686,7 +1066,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         </Card>
 
         {/* Question Card */}
-        <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-lg bg-gradient-to-br from-white to-blue-50/30 dark:from-gray-900 dark:to-blue-950/30">
+        <Card className="border-2 border-blue-200 dark:border-blue-800 shadow-lg bg-gradient-to-br from-white to-blue-50/30 dark:from-gray-900 dark:to-blue-950/30" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
           <CardContent className="p-4 sm:p-6 md:p-8">
             <div className="mb-6">
               <div className="flex items-start justify-between mb-6">
