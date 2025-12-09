@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeHighlight from 'rehype-highlight';
-import 'highlight.js/styles/github-dark.css';
+import 'highlight.js/styles/atom-one-dark.css';
 import './markdown-styles.css';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -363,31 +363,73 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             // Code blocks
             code: ({ node, inline, className, children, ...props }: any) => {
               const match = /language-(\w+)/.exec(className || '');
+              const [copied, setCopied] = useState(false);
+              
+              const handleCopy = () => {
+                navigator.clipboard.writeText(String(children).replace(/\n$/, ''));
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              };
+              
               return !inline ? (
-                <div className="my-4 rounded-lg overflow-hidden border border-gray-700">
-                  <div className="bg-gray-800 px-4 py-2 border-b border-gray-700 flex items-center justify-between">
-                    <span className="text-xs text-gray-400 font-mono uppercase">
-                      {match ? match[1] : 'code'}
-                    </span>
+                <div className="my-6 rounded-xl overflow-hidden border border-gray-700/50 shadow-2xl bg-gradient-to-br from-gray-900 to-gray-800">
+                  {/* Code header with language badge */}
+                  <div className="bg-gradient-to-r from-gray-800 to-gray-750 px-4 py-3 border-b border-gray-700/70 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      {/* Color-coded language indicator */}
+                      <div className="flex items-center space-x-2">
+                        <div className={`h-3 w-3 rounded-full ${
+                          match?.[1] === 'python' ? 'bg-blue-500' :
+                          match?.[1] === 'javascript' || match?.[1] === 'js' ? 'bg-yellow-500' :
+                          match?.[1] === 'typescript' || match?.[1] === 'ts' ? 'bg-blue-600' :
+                          match?.[1] === 'html' ? 'bg-orange-500' :
+                          match?.[1] === 'css' ? 'bg-blue-400' :
+                          match?.[1] === 'java' ? 'bg-red-500' :
+                          match?.[1] === 'cpp' || match?.[1] === 'c' ? 'bg-purple-500' :
+                          match?.[1] === 'bash' || match?.[1] === 'sh' ? 'bg-green-500' :
+                          match?.[1] === 'sql' ? 'bg-orange-600' :
+                          match?.[1] === 'json' ? 'bg-yellow-400' :
+                          'bg-gray-500'
+                        }`} />
+                        <span className="text-sm font-semibold text-gray-300 font-mono tracking-wide">
+                          {match ? match[1].toUpperCase() : 'CODE'}
+                        </span>
+                      </div>
+                    </div>
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-6 text-xs text-gray-400 hover:text-white"
-                      onClick={() => {
-                        navigator.clipboard.writeText(String(children).replace(/\n$/, ''));
-                      }}
+                      className="h-8 px-3 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 transition-all duration-200"
+                      onClick={handleCopy}
                     >
-                      Copy
+                      {copied ? (
+                        <>
+                          <CheckCircle className="h-3.5 w-3.5 mr-1.5 text-green-400" />
+                          <span className="text-green-400">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg className="h-3.5 w-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          Copy Code
+                        </>
+                      )}
                     </Button>
                   </div>
-                  <pre className="bg-gray-900 p-4 overflow-x-auto">
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  </pre>
+                  {/* Code content with line numbers */}
+                  <div className="relative">
+                    <pre className="bg-[#0d1117] p-6 overflow-x-auto text-sm leading-relaxed font-mono">
+                      <code className={className} {...props}>
+                        {children}
+                      </code>
+                    </pre>
+                    {/* Subtle gradient overlay for depth */}
+                    <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-transparent to-gray-900/10" />
+                  </div>
                 </div>
               ) : (
-                <code className="bg-gray-800 text-blue-300 px-2 py-1 rounded text-sm font-mono" {...props}>
+                <code className="bg-gray-800/80 text-blue-300 px-2.5 py-1 rounded-md text-[0.9em] font-mono border border-gray-700/50 shadow-sm" {...props}>
                   {children}
                 </code>
               );

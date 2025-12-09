@@ -108,6 +108,23 @@ def create_quiz():
         logger.info(f"Quiz settings: time_limit={data.get('time_limit')}, max_attempts={data.get('max_attempts')}, passing_score={data.get('passing_score')}")
         logger.info("="*80)
         
+        # Test database connection before proceeding
+        try:
+            db.session.execute(db.text('SELECT 1'))
+        except Exception as db_err:
+            logger.error(f"Database connection error: {db_err}")
+            db.session.rollback()
+            # Try to reconnect
+            try:
+                db.session.remove()
+                db.session.execute(db.text('SELECT 1'))
+            except Exception as reconnect_err:
+                logger.error(f"Database reconnection failed: {reconnect_err}")
+                return jsonify({
+                    "message": "Database connection error. Please try again.",
+                    "error": "DATABASE_CONNECTION_ERROR"
+                }), 500
+        
         if not data or 'course_id' not in data:
             return jsonify({"message": "Course ID is required"}), 400
         
@@ -230,7 +247,16 @@ def create_quiz():
         
     except Exception as e:
         db.session.rollback()
-        return jsonify({"message": "Failed to create quiz", "error": str(e)}), 500
+        logger.error(f"ERROR creating quiz: {str(e)}")
+        logger.exception(e)  # This will log the full stack trace
+        print(f"\nERROR creating quiz: {str(e)}", flush=True)
+        import traceback
+        print(traceback.format_exc(), flush=True)
+        return jsonify({
+            "message": "Failed to create quiz", 
+            "error": str(e),
+            "error_type": type(e).__name__
+        }), 500
 
 @instructor_assessment_bp.route("/quizzes/<int:quiz_id>", methods=["PUT"])
 @instructor_required

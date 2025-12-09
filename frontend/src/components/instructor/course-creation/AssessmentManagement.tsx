@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { Course, Assignment, Project, Quiz, EnhancedModule, Question, Answer, QuizQuestionPayload } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
+import aiAgentService from '@/services/ai-agent.service';
+import AIAssessmentModal from './AIAssessmentModal';
 
 interface AssessmentManagementProps {
   course: Course;
@@ -58,6 +60,18 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // AI Modal states
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiContentType, setAIContentType] = useState<'lesson' | 'module'>('lesson');
+  const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null);
+  const [selectedLessonId, setSelectedLessonId] = useState<number | null>(null);
+  const [aiNumQuestions, setAINumQuestions] = useState(10);
+  const [aiDifficulty, setAIDifficulty] = useState<'easy' | 'medium' | 'hard' | 'mixed'>('mixed');
+  const [aiAssignmentType, setAIAssignmentType] = useState<'practical' | 'theoretical' | 'project' | 'mixed'>('practical');
+  const [aiGenerating, setAIGenerating] = useState(false);
+  const [modules, setModules] = useState<EnhancedModule[]>([]);
+  const [lessons, setLessons] = useState<any[]>([]);
+
   // Monitor assessments prop changes for debugging
   useEffect(() => {
     if (assessments?.quizzes) {
@@ -79,6 +93,43 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       console.log('[AssessmentManagement] No quizzes in assessments prop');
     }
   }, [assessments]);
+
+  // Fetch modules for AI modal
+  useEffect(() => {
+    const fetchModules = async () => {
+      try {
+        const courseDetails = await CourseCreationService.getCourseDetails(course.id);
+        if (courseDetails.modules) {
+          setModules(courseDetails.modules as EnhancedModule[]);
+        }
+      } catch (error) {
+        console.error('Error fetching modules:', error);
+      }
+    };
+
+    if (course?.id && showAIModal) {
+      // First try to use modules from course prop
+      if (course.modules && course.modules.length > 0) {
+        setModules(course.modules as EnhancedModule[]);
+      } else {
+        // Otherwise fetch them
+        fetchModules();
+      }
+    }
+  }, [course?.id, course.modules, showAIModal]);
+
+  // Fetch lessons when module is selected
+  useEffect(() => {
+    if (selectedModuleId && modules.length > 0) {
+      const selectedModule = modules.find(m => m.id === selectedModuleId);
+      if (selectedModule?.lessons) {
+        setLessons(selectedModule.lessons);
+      }
+    } else {
+      setLessons([]);
+      setSelectedLessonId(null);
+    }
+  }, [selectedModuleId, modules]);
 
   const isAnswerBasedQuestion = (type: QuizQuestionForm['question_type']) =>
     type === 'multiple_choice' || type === 'true_false';
@@ -337,6 +388,142 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       due_date: ''
     });
     setCurrentQuestions([]);
+  };
+
+  // AI Generation Handlers
+  const handleOpenAIModal = () => {
+    setShowAIModal(true);
+    setSelectedModuleId(null);
+    setSelectedLessonId(null);
+    setAIContentType('lesson');
+  };
+
+  const handleAIGenerate = async () => {
+    console.log('handleAIGenerate called');
+    setAIGenerating(true);
+    setErrorMessage(null);
+    
+    try {
+      console.log('Validating inputs...', { selectedModuleId, aiContentType, selectedLessonId });
+      
+      if (!selectedModuleId) {
+        setErrorMessage('Please select a module');
+        setAIGenerating(false);
+        return;
+      }
+
+      if (aiContentType === 'lesson' && !selectedLessonId) {
+        setErrorMessage('Please select a lesson');
+        setAIGenerating(false);
+        return;
+      }
+
+      console.log('Starting AI generation for tab:', activeTab);
+
+      // Generate based on active tab
+      if (activeTab === 'quizzes') {
+        console.log('Calling generateQuizFromContent API...');
+        const response = await aiAgentService.generateQuizFromContent({
+          course_id: course.id,
+          content_type: aiContentType,
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+          module_id: selectedModuleId,
+          num_questions: aiNumQuestions,
+          difficulty: aiDifficulty
+        });
+        console.log('Quiz generation response:', response);
+
+        // Populate quiz form with AI-generated data
+        setQuizForm({
+          ...quizForm,
+          title: response.quiz.title,
+          description: response.quiz.description || '',
+          module_id: selectedModuleId.toString(),
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId?.toString() || '' : '',
+          time_limit: response.quiz.time_limit || 30,
+          passing_score: response.quiz.passing_score || 70,
+          max_attempts: 3,
+          shuffle_questions: true,
+          shuffle_answers: true
+        });
+
+        // Convert questions to the format expected by the form
+        const formattedQuestions = response.quiz.questions.map((q, idx) => ({
+          id: idx + 1,
+          question_text: q.question_text,
+          question_type: 'multiple_choice' as const,
+          points: q.points,
+          answers: q.answers.map((a, aIdx) => ({
+            id: aIdx + 1,
+            answer_text: a.answer_text,
+            is_correct: a.is_correct,
+            explanation: a.explanation || ''
+          }))
+        }));
+
+        setCurrentQuestions(formattedQuestions);
+        setSuccessMessage(`AI generated ${response.quiz.questions.length} questions! Review and save when ready.`);
+        
+      } else if (activeTab === 'assignments') {
+        const response = await aiAgentService.generateAssignmentFromContent({
+          course_id: course.id,
+          content_type: aiContentType,
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+          module_id: selectedModuleId,
+          assignment_type: aiAssignmentType
+        });
+
+        // Populate assignment form
+        setAssignmentForm({
+          ...assignmentForm,
+          title: response.assignment.title,
+          description: response.assignment.description,
+          module_id: selectedModuleId.toString(),
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId?.toString() || '' : '',
+          rubric_criteria: response.assignment.rubric_criteria || '',
+          submission_format: response.assignment.submission_format || 'text',
+          points_possible: response.assignment.points_possible || 100,
+          due_date: ''
+        });
+
+        setSuccessMessage('AI generated assignment! Review and save when ready.');
+        
+      } else if (activeTab === 'projects') {
+        const response = await aiAgentService.generateProjectFromContent({
+          course_id: course.id,
+          module_id: selectedModuleId
+        });
+
+        // Populate project form
+        setProjectForm({
+          ...projectForm,
+          title: response.project.title,
+          description: response.project.description,
+          module_id: selectedModuleId.toString(),
+          requirements: response.project.requirements || '',
+          rubric_criteria: response.project.rubric_criteria || '',
+          resources: response.project.resources || '',
+          submission_format: response.project.submission_format || 'file',
+          points_possible: response.project.points_possible || 100,
+          timeline_weeks: response.project.timeline_weeks || 4,
+          team_size_min: response.project.team_size_min || 1,
+          team_size_max: response.project.team_size_max || 1,
+          due_date: ''
+        });
+
+        setSuccessMessage('AI generated project! Review and save when ready.');
+      }
+
+      console.log('AI generation successful, closing modal');
+      setShowAIModal(false);
+      
+    } catch (error: any) {
+      console.error('AI generation error:', error);
+      setErrorMessage(error.response?.data?.message || error.message || 'Failed to generate with AI');
+    } finally {
+      console.log('AI generation complete, resetting loading state');
+      setAIGenerating(false);
+    }
   };
 
   const handleCreateAssignment = async () => {
@@ -1234,29 +1421,44 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
 
       {/* Tabs */}
       <div className="border-b border-slate-200 dark:border-slate-700">
-        <nav className="flex space-x-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`py-3 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
-              }`}
-            >
-              <span className="text-lg">{tab.icon}</span>
-              <span>{tab.label}</span>
-              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                activeTab === tab.id
-                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                  : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
-              }`}>
-                {tab.count}
-              </span>
-            </button>
-          ))}
-        </nav>
+        <div className="flex justify-between items-center">
+          <nav className="flex space-x-8">
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`py-3 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
+                  activeTab === tab.id
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+                }`}
+              >
+                <span className="text-lg">{tab.icon}</span>
+                <span>{tab.label}</span>
+                <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                  activeTab === tab.id
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400'
+                }`}>
+                  {tab.count}
+                </span>
+              </button>
+            ))}
+          </nav>
+          
+          {/* AI Assistant Button for active tab */}
+          <button
+            onClick={handleOpenAIModal}
+            className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+            title={`Generate ${activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'} with AI`}
+          >
+            <span className="text-lg">🤖</span>
+            <span className="font-medium">AI Assistant</span>
+            <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
+              {activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Search and Filter Controls */}
@@ -2869,6 +3071,29 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           </div>
         )}
       </div>
+
+      {/* AI Assessment Generation Modal */}
+      <AIAssessmentModal
+        isOpen={showAIModal}
+        onClose={() => setShowAIModal(false)}
+        onGenerate={handleAIGenerate}
+        assessmentType={activeTab === 'quizzes' ? 'quiz' : activeTab === 'assignments' ? 'assignment' : 'project'}
+        contentType={aiContentType}
+        setContentType={setAIContentType}
+        modules={modules}
+        selectedModuleId={selectedModuleId}
+        setSelectedModuleId={setSelectedModuleId}
+        lessons={lessons}
+        selectedLessonId={selectedLessonId}
+        setSelectedLessonId={setSelectedLessonId}
+        numQuestions={aiNumQuestions}
+        setNumQuestions={setAINumQuestions}
+        difficulty={aiDifficulty}
+        setDifficulty={setAIDifficulty}
+        assignmentType={aiAssignmentType}
+        setAssignmentType={setAIAssignmentType}
+        isGenerating={aiGenerating}
+      />
     </div>
   );
 };

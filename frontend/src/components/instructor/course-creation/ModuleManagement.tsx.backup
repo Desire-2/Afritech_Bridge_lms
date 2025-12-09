@@ -4,10 +4,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Course, EnhancedModule, EnhancedLesson, ModuleOrderUpdate, LessonOrderUpdate } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { Sparkles } from 'lucide-react';
-import { AIContentGenerator } from '@/components/instructor/ai-agent';
-import { aiAgentService } from '@/services/ai-agent.service';
-import { AIContentButton } from './AIContentButton';
 
 interface ModuleManagementProps {
   course: Course;
@@ -30,11 +26,6 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const [expandedModules, setExpandedModules] = useState<Set<number>>(new Set());
   const [showLessonForm, setShowLessonForm] = useState<{ moduleId: number | null }>({ moduleId: null });
   const [editingLesson, setEditingLesson] = useState<{ moduleId: number; lesson: EnhancedLesson } | null>(null);
-  const [showModuleAI, setShowModuleAI] = useState(false);
-  const [showLessonAI, setShowLessonAI] = useState<{ moduleId: number | null; batchMode?: boolean }>({ moduleId: null, batchMode: false });
-  const [isCreatingLessons, setIsCreatingLessons] = useState(false);
-  const [showContentAI, setShowContentAI] = useState(false);
-  const [isGeneratingContent, setIsGeneratingContent] = useState(false);
   
   const [moduleForm, setModuleForm] = useState({
     title: '',
@@ -864,192 +855,6 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     }
   };
 
-  // AI handlers for module
-  const handleModuleAIGenerate = async (data: any) => {
-    if (data.modules && Array.isArray(data.modules)) {
-      // Multiple modules generated - create them all
-      try {
-        for (const moduleData of data.modules) {
-          const newModule = await CourseCreationService.createModule(course.id, {
-            title: moduleData.title,
-            description: moduleData.description || '',
-            learning_objectives: moduleData.learning_objectives || '',
-            is_published: false
-          });
-          
-          // If suggested lessons exist, create them too
-          if (moduleData.suggested_lessons && Array.isArray(moduleData.suggested_lessons)) {
-            for (const lessonData of moduleData.suggested_lessons) {
-              await CourseCreationService.createLesson(course.id, newModule.id, {
-                title: lessonData.title,
-                description: lessonData.description || '',
-                content_type: 'text',
-                content_data: `# ${lessonData.title}\n\nContent to be developed...`,
-                duration_minutes: lessonData.duration_minutes || 30,
-                is_published: false
-              });
-            }
-          }
-        }
-        
-        // Refresh course data
-        const updatedCourse = await CourseCreationService.getCourseWithModules(course.id);
-        onCourseUpdate(updatedCourse);
-        setModules(updatedCourse.modules as EnhancedModule[] || []);
-        alert(`Successfully created ${data.modules.length} modules with lessons!`);
-      } catch (error) {
-        console.error('Error creating modules:', error);
-        alert('Failed to create some modules. Please try again.');
-      }
-    } else {
-      // Single module generated - just fill the form
-      setModuleForm(prev => ({
-        ...prev,
-        title: data.title || prev.title,
-        description: data.description || prev.description,
-        learning_objectives: data.learning_objectives || prev.learning_objectives
-      }));
-    }
-    setShowModuleAI(false);
-  };
-
-  // AI handlers for lesson
-  const handleLessonAIGenerate = async (data: any) => {
-    console.log('AI Generate Response:', data);
-    console.log('showLessonAI:', showLessonAI);
-    console.log('modules:', modules);
-    
-    // Check if we got multiple lessons (batch mode)
-    if (data.lessons && Array.isArray(data.lessons)) {
-      console.log(`Batch mode: Creating ${data.lessons.length} lessons`);
-      
-      // Batch mode: create all lessons
-      const currentModule = modules.find(m => m.id === showLessonAI.moduleId);
-      console.log('currentModule found:', currentModule);
-      console.log('currentModule.id:', currentModule?.id);
-      
-      if (!currentModule) {
-        console.error('Current module not found');
-        alert('❌ Error: Module not found');
-        return;
-      }
-
-      setIsCreatingLessons(true);
-      
-      try {
-        let successCount = 0;
-        for (const lessonData of data.lessons) {
-          console.log(`Creating lesson: ${lessonData.title}`);
-          console.log(`Using module ID: ${currentModule.id} (type: ${typeof currentModule.id})`);
-          
-          const lessonPayload = {
-            title: lessonData.title,
-            description: lessonData.description || '',
-            content_type: lessonData.content_type || 'text',
-            content_data: lessonData.content_data || '',
-            learning_objectives: lessonData.learning_objectives || '',
-            duration_minutes: lessonData.duration_minutes || 30,
-            order: lessonData.order || 1
-          };
-
-          console.log('Calling createLesson with courseId:', course.id, 'moduleId:', currentModule.id, 'payload:', lessonPayload);
-          const createdLesson = await CourseCreationService.createLesson(course.id, currentModule.id, lessonPayload);
-          console.log('Created lesson:', createdLesson);
-          successCount++;
-          
-          // Update local state
-          setModules(prevModules => prevModules.map(mod => {
-            if (mod.id === currentModule.id) {
-              return {
-                ...mod,
-                lessons: [...(mod.lessons || []), createdLesson]
-              };
-            }
-            return mod;
-          }));
-        }
-
-        console.log(`Successfully created ${successCount} lessons`);
-        alert(`✅ Successfully created ${successCount} lessons!`);
-        setShowLessonAI({ moduleId: null, batchMode: false });
-      } catch (error) {
-        console.error('Error creating lessons:', error);
-        alert('❌ Failed to create some lessons. Please check console for details.');
-      } finally {
-        setIsCreatingLessons(false);
-      }
-    } else {
-      console.log('Single lesson mode: Updating form');
-      
-      // Single lesson mode: update form
-      setLessonForm(prev => ({
-        ...prev,
-        title: data.title || prev.title,
-        content_data: data.content_data || prev.content_data,
-        description: data.description || prev.description,
-        learning_objectives: data.learning_objectives || prev.learning_objectives,
-        duration_minutes: data.duration_minutes || prev.duration_minutes
-      }));
-      setShowLessonAI({ moduleId: null, batchMode: false });
-    }
-  };
-
-  // Handler for AI content enhancement
-  const handleContentAIGenerate = async () => {
-    // Both Add and Edit modes use lessonForm state
-    if (!lessonForm.title) {
-      alert('⚠️ Please enter a lesson title first');
-      return;
-    }
-
-    setIsGeneratingContent(true);
-    setShowContentAI(false);
-
-    try {
-      // Get module ID based on mode (editingLesson if editing, showLessonForm if adding)
-      const currentModuleId = editingLesson?.moduleId || showLessonForm.moduleId;
-      const currentModule = modules.find(m => m.id === currentModuleId);
-      
-      if (!currentModule) {
-        alert('❌ Module not found');
-        return;
-      }
-
-      console.log('Generating content with AI for:', lessonForm.title);
-      console.log('Mode:', editingLesson ? 'Edit' : 'Add');
-      console.log('Module:', currentModule.title);
-      
-      const response = await aiAgentService.generateLessonContent({
-        course_id: course.id,
-        module_id: currentModule.id,
-        lesson_title: lessonForm.title,
-        lesson_description: lessonForm.description
-      });
-
-      if (response.success && response.data) {
-        console.log('AI generated content:', response.data);
-        
-        // Update lessonForm state (used by both Add and Edit forms)
-        setLessonForm(prev => ({
-          ...prev,
-          content_data: response.data.content_data || prev.content_data,
-          description: response.data.description || prev.description,
-          learning_objectives: response.data.learning_objectives || prev.learning_objectives,
-          duration_minutes: response.data.duration_minutes || prev.duration_minutes
-        }));
-        
-        alert('✅ Content generated successfully!');
-      } else {
-        alert('❌ Failed to generate content: ' + (response.message || 'Unknown error'));
-      }
-    } catch (error) {
-      console.error('Error generating content:', error);
-      alert('❌ Failed to generate content. Please try again.');
-    } finally {
-      setIsGeneratingContent(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1057,78 +862,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
           Course Modules & Lessons
         </h3>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowModuleAI(!showModuleAI)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
-          >
-            <Sparkles className="w-4 h-4" />
-            AI Assistant
-          </button>
-          <button
-            onClick={() => setShowModuleForm(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Add Module
-          </button>
-        </div>
+        <button
+          onClick={() => setShowModuleForm(true)}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          Add Module
+        </button>
       </div>
-
-      {/* AI Module Assistant */}
-      {showModuleAI && (
-        <div className="bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 rounded-lg border-2 border-purple-200 dark:border-purple-800 p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h4 className="text-lg font-semibold text-purple-900 dark:text-purple-300">AI Module Assistant</h4>
-            <button
-              onClick={() => setShowModuleAI(false)}
-              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            >
-              ✕
-            </button>
-          </div>
-          
-          {/* Course Context Info */}
-          <div className="mb-4 p-4 bg-white/50 dark:bg-slate-800/50 rounded-lg border border-purple-200 dark:border-purple-700">
-            <h5 className="text-sm font-semibold text-purple-800 dark:text-purple-300 mb-2">
-              📚 Course Context
-            </h5>
-            <div className="text-sm text-slate-700 dark:text-slate-300 space-y-1">
-              <p><span className="font-medium">Course:</span> {course.title}</p>
-              {modules.length > 0 && (
-                <div>
-                  <p className="font-medium mt-2">Existing Modules ({modules.length}):</p>
-                  <ul className="ml-4 mt-1 space-y-1 list-disc list-inside">
-                    {modules.map((module, idx) => (
-                      <li key={module.id} className="text-xs">
-                        Module {idx + 1}: {module.title}
-                        {module.description && (
-                          <span className="text-slate-500 dark:text-slate-400 ml-1">
-                            - {module.description.substring(0, 60)}{module.description.length > 60 ? '...' : ''}
-                          </span>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-2 text-xs text-purple-700 dark:text-purple-400 italic">
-                    💡 The AI will generate Module {modules.length + 1} that builds upon these existing modules
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-          
-          <AIContentGenerator
-            type="module"
-            courseId={course.id}
-            batchMode={true}
-            onGenerate={handleModuleAIGenerate}
-            context={{
-              courseTitle: course.title,
-              moduleTitle: moduleForm.title
-            }}
-          />
-        </div>
-      )}
 
       {/* Module Form */}
       {(showModuleForm || editingModule) && (
@@ -1259,13 +999,6 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                               {module.is_published ? 'Published' : 'Draft'}
                             </span>
                             <button
-                              onClick={() => setShowLessonAI({ moduleId: module.id })}
-                              className="flex items-center gap-1 text-sm px-3 py-1 bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-700 hover:from-purple-200 hover:to-indigo-200 dark:from-purple-900/20 dark:to-indigo-900/20 dark:text-purple-400 rounded transition-colors"
-                            >
-                              <Sparkles className="w-3 h-3" />
-                              AI Lesson
-                            </button>
-                            <button
                               onClick={() => setShowLessonForm({ moduleId: module.id })}
                               className="text-sm px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded transition-colors"
                             >
@@ -1302,45 +1035,6 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                           </p>
                         )}
                       </div>
-
-                      {/* AI Lesson Assistant */}
-                      {showLessonAI.moduleId === module.id && (
-                        <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20">
-                          <div className="flex justify-between items-center mb-4">
-                            <div className="flex items-center gap-3">
-                              <h5 className="font-semibold text-purple-900 dark:text-purple-300">AI Lesson Assistant</h5>
-                              <button
-                                onClick={() => setShowLessonAI({ moduleId: module.id, batchMode: !showLessonAI.batchMode })}
-                                className={`text-xs px-3 py-1 rounded-full transition-colors ${
-                                  showLessonAI.batchMode 
-                                    ? 'bg-purple-600 text-white' 
-                                    : 'bg-white dark:bg-slate-700 text-purple-600 dark:text-purple-300 border border-purple-300 dark:border-purple-700'
-                                }`}
-                              >
-                                {showLessonAI.batchMode ? '🎯 Batch Mode' : '📝 Single Mode'}
-                              </button>
-                            </div>
-                            <button
-                              onClick={() => setShowLessonAI({ moduleId: null, batchMode: false })}
-                              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                          <AIContentGenerator
-                            type="lesson"
-                            courseId={course.id}
-                            moduleId={module.id}
-                            onGenerate={handleLessonAIGenerate}
-                            batchMode={showLessonAI.batchMode}
-                            context={{
-                              courseTitle: course.title,
-                              moduleTitle: module.title,
-                              lessonTitle: lessonForm.title
-                            }}
-                          />
-                        </div>
-                      )}
 
                       {/* Lesson Form */}
                       {showLessonForm.moduleId === module.id && (
@@ -1399,25 +1093,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         {config.label} *
                                       </label>
                                       {isTextContent && (
-                                        <div className="flex gap-2">
-                                          <AIContentButton
-                                            lessonTitle={lessonForm.title}
-                                            courseTitle={course.title}
-                                            moduleTitle={modules.find(m => m.id === showLessonForm.moduleId)?.title}
-                                            existingContent={lessonForm.content_data}
-                                            isGenerating={isGeneratingContent}
-                                            showDialog={showContentAI}
-                                            onToggleDialog={() => setShowContentAI(!showContentAI)}
-                                            onGenerate={handleContentAIGenerate}
-                                          />
-                                          <button
-                                            type="button"
-                                            onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
-                                            className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                                          >
-                                            {showMarkdownPreview ? '✏️ Edit' : '👁️ Preview'}
-                                          </button>
-                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
+                                          className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                        >
+                                          {showMarkdownPreview ? '✏️ Edit' : '👁️ Preview'}
+                                        </button>
                                       )}
                                     </div>
 
@@ -1485,22 +1167,9 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             <button type="button" onClick={() => insertMarkdown('link')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Link">
                                               <span className="text-sm">🔗</span>
                                             </button>
-                                            <button 
-                                              type="button" 
-                                              onClick={() => imageInputRef.current?.click()} 
-                                              disabled={uploadingImage}
-                                              className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" 
-                                              title="Insert Image"
-                                            >
-                                              <span className="text-sm">{uploadingImage ? '⏳' : '🖼️'}</span>
+                                            <button type="button" onClick={() => insertMarkdown('image')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Image">
+                                              <span className="text-sm">🖼️</span>
                                             </button>
-                                            <input
-                                              ref={imageInputRef}
-                                              type="file"
-                                              accept="image/*"
-                                              onChange={handleImageUpload}
-                                              className="hidden"
-                                            />
                                           </div>
 
                                           {/* Other */}
@@ -1760,25 +1429,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         {config.label} *
                                       </label>
                                       {isTextContent && (
-                                        <div className="flex gap-2">
-                                          <AIContentButton
-                                            lessonTitle={lessonForm.title}
-                                            courseTitle={course.title}
-                                            moduleTitle={modules.find(m => m.id === editingLesson.module_id)?.title}
-                                            existingContent={lessonForm.content_data}
-                                            isGenerating={isGeneratingContent}
-                                            showDialog={showContentAI}
-                                            onToggleDialog={() => setShowContentAI(!showContentAI)}
-                                            onGenerate={handleContentAIGenerate}
-                                          />
-                                          <button
-                                            type="button"
-                                            onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
-                                            className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
-                                          >
-                                            {showMarkdownPreview ? '✏️ Edit' : '👁️ Preview'}
-                                          </button>
-                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => setShowMarkdownPreview(!showMarkdownPreview)}
+                                          className="text-xs px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                                        >
+                                          {showMarkdownPreview ? '✏️ Edit' : '👁️ Preview'}
+                                        </button>
                                       )}
                                     </div>
 
@@ -1843,14 +1500,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             <button type="button" onClick={() => insertMarkdown('link')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Link">
                                               <span className="text-sm">🔗</span>
                                             </button>
-                                            <button 
-                                              type="button" 
-                                              onClick={() => imageInputRef.current?.click()} 
-                                              disabled={uploadingImage}
-                                              className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed" 
-                                              title="Insert Image"
-                                            >
-                                              <span className="text-sm">{uploadingImage ? '⏳' : '🖼️'}</span>
+                                            <button type="button" onClick={() => insertMarkdown('image')} className="p-1.5 hover:bg-slate-200 dark:hover:bg-slate-600 rounded transition-colors" title="Insert Image">
+                                              <span className="text-sm">🖼️</span>
                                             </button>
                                           </div>
 

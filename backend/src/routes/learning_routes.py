@@ -163,7 +163,10 @@ def complete_lesson(lesson_id):
             student_id, lesson_id, time_spent
         )
         
+        # Expire session to ensure fresh data on subsequent queries
         if success:
+            get_db().session.expire_all()
+            
             # Check for celebration milestone
             celebration = EnhancedLearningService.create_celebration_milestone(
                 student_id, "lesson_complete", {"lesson_id": lesson_id}
@@ -231,18 +234,19 @@ def get_next_lessons():
 @learning_bp.route("/courses/<int:course_id>", methods=["GET"])
 @student_required
 def get_course_for_learning(course_id):
-    """Get course details with student-specific learning data"""
+    """Get course details with student-specific learning data (optimized)"""
     try:
         student_id = int(get_jwt_identity())
         
         # Import course models here to avoid circular imports
-        from ..models.course_models import Course, Enrollment
+        from ..models.course_models import Course, Enrollment, Module, Lesson
         from ..models.student_models import ModuleProgress, LessonCompletion
         from ..models.user_models import db
         from flask import current_app
         
-        # Get course and check enrollment
+        # Get course (simple query, then load related data separately)
         course = Course.query.get(course_id)
+        
         if not course:
             return jsonify({"error": "Course not found"}), 404
         
@@ -258,70 +262,130 @@ def get_course_for_learning(course_id):
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
-        # ENHANCED: Ensure all modules have progress records initialized
-        # This fixes the issue where modules lose their unlock status
+        # OPTIMIZED: Load modules and lessons in efficient batch queries
+        modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+        module_ids = [m.id for m in modules]
+        
+        # Batch load all lessons for these modules
+        if module_ids:
+            lessons_by_module = {}
+            all_lessons = Lesson.query.filter(
+                Lesson.module_id.in_(module_ids)
+            ).order_by(Lesson.module_id, Lesson.order).all()
+            
+            for lesson in all_lessons:
+                if lesson.module_id not in lessons_by_module:
+                    lessons_by_module[lesson.module_id] = []
+                lessons_by_module[lesson.module_id].append(lesson)
+        else:
+            lessons_by_module = {}
+        
+        # OPTIMIZED: Batch query for all module progress
+        if module_ids:
+            existing_progress_map = {
+                mp.module_id: mp for mp in ModuleProgress.query.filter(
+                    ModuleProgress.student_id == student_id,
+                    ModuleProgress.module_id.in_(module_ids),
+                    ModuleProgress.enrollment_id == enrollment.id
+                ).all()
+            }
+        else:
+            existing_progress_map = {}
+        
+        # Initialize missing progress records (only if needed)
         try:
-            modules = course.modules.order_by('order').all()
-            for module in modules:
-                existing_progress = ModuleProgress.query.filter_by(
-                    student_id=student_id,
-                    module_id=module.id,
-                    enrollment_id=enrollment.id
-                ).first()
-                
-                if not existing_progress:
-                    current_app.logger.info(f"Initializing missing module progress for module {module.id}")
+            missing_modules = [m for m in modules if m.id not in existing_progress_map]
+            if missing_modules:
+                current_app.logger.info(f"Initializing {len(missing_modules)} missing module progress records")
+                for module in missing_modules:
                     ProgressionService._initialize_module_progress(
                         student_id, module.id, enrollment.id
                     )
-            
-            get_db().session.commit()
+                db.session.commit()
         except Exception as init_error:
             current_app.logger.error(f"Error initializing module progress: {str(init_error)}")
-            # Continue even if initialization fails
-            get_db().session.rollback()
+            db.session.rollback()
+        finally:
+            # Ensure session is cleaned up
+            db.session.close()
         
-        # Get course progress data
+        # OPTIMIZED: Get lightweight progress data (skip if too slow)
         try:
-            progress_data = ProgressionService.get_student_course_progress(student_id, course_id)
+            # Quick progress calculation without full ProgressionService
+            completed_modules = ModuleProgress.query.filter(
+                ModuleProgress.student_id == student_id,
+                ModuleProgress.enrollment_id == enrollment.id,
+                ModuleProgress.status == 'completed'
+            ).count()
             
-            if "error" in progress_data:
-                # If progression service fails, create basic progress data
-                progress_data = {
-                    "overall_progress": 0,
-                    "current_module": None,
-                    "modules": []
-                }
+            overall_progress = (completed_modules / len(modules) * 100) if modules else 0
+            
+            progress_data = {
+                "overall_progress": overall_progress,
+                "completed_modules": completed_modules,
+                "total_modules": len(modules)
+            }
         except Exception as e:
-            current_app.logger.error(f"ProgressionService error: {str(e)}")
+            current_app.logger.error(f"Progress calculation error: {str(e)}")
             progress_data = {
                 "overall_progress": 0,
-                "current_module": None,
-                "modules": []
+                "completed_modules": 0,
+                "total_modules": len(modules)
             }
         
-        # Format course data for learning interface
-        try:
-            course_data = course.to_dict(include_modules=True)
-        except Exception as e:
-            print(f"Error converting course to dict: {str(e)}")
-            # Fallback to basic course data
-            course_data = {
-                "id": course.id,
-                "title": course.title,
-                "description": course.description,
-                "modules": []
-            }
+        # OPTIMIZED: Build lightweight course data
+        course_data = {
+            "id": course.id,
+            "title": course.title,
+            "description": course.description,
+            "instructor_id": course.instructor_id,
+            "modules": [{
+                "id": m.id,
+                "title": m.title,
+                "description": m.description,
+                "order": m.order,
+                "lessons": [{
+                    "id": l.id,
+                    "title": l.title,
+                    "description": l.description or "",
+                    "content_type": l.content_type,
+                    "content_data": l.content_data or "",
+                    "learning_objectives": l.learning_objectives or "",
+                    "order": l.order,
+                    "duration_minutes": l.duration_minutes,
+                    "is_published": l.is_published
+                } for l in lessons_by_module.get(m.id, [])]
+            } for m in modules]
+        }
         
-        # Find current lesson based on progress
+        # Find first incomplete lesson as current lesson
         current_lesson = None
-        if progress_data.get("current_module") and progress_data["current_module"].get("current_lesson"):
-            current_lesson = progress_data["current_module"]["current_lesson"]
-        elif course_data.get("modules") and len(course_data["modules"]) > 0:
-            # Fallback to first lesson of first module
-            first_module = course_data["modules"][0]
-            if first_module.get("lessons") and len(first_module["lessons"]) > 0:
-                current_lesson = first_module["lessons"][0]
+        for module in modules:
+            for lesson in lessons_by_module.get(module.id, []):
+                completion = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=lesson.id
+                ).first()
+                if not completion:
+                    current_lesson = {
+                        "id": lesson.id,
+                        "title": lesson.title,
+                        "module_id": module.id,
+                        "module_title": module.title
+                    }
+                    break
+            if current_lesson:
+                break
+        
+        # If all complete, default to first lesson
+        if not current_lesson and course_data["modules"] and course_data["modules"][0]["lessons"]:
+            first_lesson = course_data["modules"][0]["lessons"][0]
+            current_lesson = {
+                "id": first_lesson["id"],
+                "title": first_lesson["title"],
+                "module_id": course_data["modules"][0]["id"],
+                "module_title": course_data["modules"][0]["title"]
+            }
         
         return jsonify({
             "success": True,
@@ -336,7 +400,9 @@ def get_course_for_learning(course_id):
         }), 200
         
     except Exception as e:
-        print(f"Error in get_course_for_learning: {str(e)}")
+        current_app.logger.error(f"Error in get_course_for_learning: {str(e)}")
+        import traceback
+        current_app.logger.error(traceback.format_exc())
         return jsonify({
             "success": False,
             "error": "Failed to load course for learning"
@@ -558,15 +624,21 @@ def check_module_completion(module_id):
             print(f"📊 Module {module_id} score breakdown: {breakdown}")
             print(f"📊 Module {module_id} cumulative_score: {cumulative_score}")
             
-            # Commit score updates
+            # Commit score updates and expire session to ensure fresh data
             get_db().session.commit()
+            get_db().session.expire_all()
         else:
             print(f"⚠️ No module_progress found for module_id={module_id}, student_id={student_id}")
         
-        # Check completion
+        # Check completion (this will read fresh data from DB)
         can_complete, message = ProgressionService.check_module_completion(
             student_id, module_id, enrollment.id
         )
+        
+        # Refresh module_progress after check_module_completion
+        if module_progress:
+            get_db().session.refresh(module_progress)
+            cumulative_score = module_progress.cumulative_score or cumulative_score
         
         print(f"✅ check_module_completion result: can_complete={can_complete}, message={message}")
         

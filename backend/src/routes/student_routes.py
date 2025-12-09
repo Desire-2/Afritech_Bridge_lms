@@ -310,6 +310,12 @@ def update_lesson_progress(lesson_id):
     try:
         db.session.commit()
         
+        # Refresh lesson completion to ensure we return fresh data
+        db.session.refresh(lesson_completion)
+        
+        # Recalculate score after refresh to ensure accuracy
+        lesson_score = lesson_completion.calculate_lesson_score()
+        
         response_data = {
             "message": "Lesson progress updated successfully",
             "progress": {
@@ -327,6 +333,8 @@ def update_lesson_progress(lesson_id):
         
         if auto_completed:
             response_data["completion_message"] = f"🎉 Lesson auto-completed! Score: {lesson_score:.1f}%"
+            from flask import current_app
+            current_app.logger.info(f"✅ Lesson {lesson_id} auto-completed with score {lesson_score:.1f}%")
         
         if next_lesson_unlocked and next_lesson_info:
             response_data["next_lesson_unlocked"] = True
@@ -420,7 +428,11 @@ def get_lesson_progress(lesson_id):
         lesson_id=lesson_id
     ).first()
     
+    # Refresh to get latest data from database
     if lesson_completion:
+        from flask import current_app
+        db.session.refresh(lesson_completion)
+        current_app.logger.info(f"📚 GET lesson progress: lesson_id={lesson_id}, completed={lesson_completion.completed}, reading_progress={lesson_completion.reading_progress}, engagement_score={lesson_completion.engagement_score}")
         score_breakdown = lesson_completion.get_score_breakdown()
         return jsonify({
             "lesson_id": lesson_id,

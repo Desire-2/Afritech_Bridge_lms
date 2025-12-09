@@ -28,7 +28,7 @@ class ProgressionService:
         """
         try:
             enrollment = Enrollment.query.filter_by(
-                user_id=student_id, course_id=course_id
+                student_id=student_id, course_id=course_id
             ).first()
             
             if not enrollment:
@@ -164,7 +164,7 @@ class ProgressionService:
             
             # Get best attempt
             attempts = QuizAttempt.query.filter_by(
-                user_id=student_id,
+                student_id=student_id,
                 quiz_id=quiz_id
             ).order_by(QuizAttempt.created_at.desc()).all()
             
@@ -204,7 +204,7 @@ class ProgressionService:
             
             # Check if student is enrolled
             enrollment = Enrollment.query.filter_by(
-                user_id=student_id, course_id=course.id
+                student_id=student_id, course_id=course.id
             ).first()
             
             if not enrollment:
@@ -270,6 +270,8 @@ class ProgressionService:
                 engagement_score=100.0  # Default to 100% for completed lessons
             )
             
+            current_app.logger.info(f"📚 Creating lesson completion: lesson_id={lesson_id}, student_id={student_id}, completed=True, reading_progress=100.0, engagement_score=100.0")
+            
             db.session.add(completion)
             
             # Update module progress if needed
@@ -282,7 +284,11 @@ class ProgressionService:
                 student_id, module.id, enrollment.id
             )
             
+            # Commit and ensure data is fresh
             db.session.commit()
+            db.session.refresh(completion)
+            
+            current_app.logger.info(f"✅ Lesson {lesson_id} completion committed to database")
             
             return True, "Lesson completed successfully", completion.to_dict()
             
@@ -322,14 +328,18 @@ class ProgressionService:
             # Check if meets passing requirement (80%)
             if cumulative_score >= 80.0:
                 current_app.logger.info(f"Module {module_id} PASSED with {cumulative_score:.2f}% - unlocking next module")
-                # Mark module as completed
+                # Mark module as completed and save cumulative score
                 module_progress.status = 'completed'
                 module_progress.completed_at = datetime.utcnow()
+                module_progress.cumulative_score = cumulative_score  # Save the calculated score
+                
+                current_app.logger.info(f"🎯 Setting module {module_id} status='completed', completed_at={module_progress.completed_at}, cumulative_score={cumulative_score}")
                 
                 # Unlock next module
                 ProgressionService._unlock_next_module(student_id, module_id, enrollment_id)
                 
                 db.session.commit()
+                current_app.logger.info(f"✅ Module {module_id} completion committed to database")
                 return True, f"Module completed with score: {cumulative_score:.1f}%"
             else:
                 # Check if this is a final attempt that fails
@@ -418,6 +428,16 @@ class ProgressionService:
     @staticmethod
     def _initialize_module_progress(student_id: int, module_id: int, enrollment_id: int) -> ModuleProgress:
         """Initialize module progress for a student"""
+        # Check if progress already exists to prevent duplicates
+        existing_progress = ModuleProgress.query.filter_by(
+            student_id=student_id,
+            module_id=module_id,
+            enrollment_id=enrollment_id
+        ).first()
+        
+        if existing_progress:
+            return existing_progress
+        
         # Check if this is the first module in course
         module = Module.query.get(module_id)
         first_module = module.course.modules.order_by('order').first()

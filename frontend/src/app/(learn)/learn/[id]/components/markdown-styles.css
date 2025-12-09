@@ -1,110 +1,175 @@
 /* Enhanced Markdown Styles for Learning Content */
 
-/* Code block enhancements */
+/* Code block enhancements with VS Code-like styling */
 .prose pre {
-  @apply bg-gray-900 rounded-lg overflow-x-auto;
+  @apply bg-[#0d1117] rounded-xl overflow-x-auto shadow-2xl;
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
 }
 
 .prose code {
   @apply font-mono text-sm;
+  font-family: 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  line-height: 1.7;
 }
 
 .prose pre code {
   @apply bg-transparent p-0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* Inline code */
+/* Inline code with better contrast */
 .prose :not(pre) > code {
-  @apply bg-gray-800 text-blue-300 px-2 py-1 rounded text-sm;
+  @apply bg-gray-800/80 text-blue-300 px-2.5 py-1 rounded-md text-[0.9em] border border-gray-700/50 shadow-sm;
+  font-weight: 500;
 }
 
-/* Syntax highlighting adjustments for dark theme */
+/* Enhanced syntax highlighting for dark theme (VS Code inspired) */
 .hljs {
   background: transparent !important;
   padding: 0 !important;
+  color: #e6edf3;
 }
 
+/* Comments - muted gray with italic */
 .hljs-comment,
 .hljs-quote {
-  color: #6b7280;
+  color: #8b949e;
   font-style: italic;
 }
 
+/* Keywords - purple/violet */
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-literal,
 .hljs-section,
 .hljs-link {
-  color: #818cf8;
+  color: #ff7b72;
+  font-weight: 600;
 }
 
+/* Strings - green */
 .hljs-string {
-  color: #34d399;
+  color: #a5d6ff;
 }
 
+/* Numbers - orange/yellow */
 .hljs-number,
 .hljs-regexp,
 .hljs-addition {
-  color: #fbbf24;
+  color: #79c0ff;
 }
 
+/* Built-ins and class names - cyan */
 .hljs-built_in,
 .hljs-builtin-name,
 .hljs-class .hljs-title {
-  color: #60a5fa;
+  color: #ffa657;
 }
 
+/* Functions - purple */
 .hljs-function,
 .hljs-title {
-  color: #a78bfa;
+  color: #d2a8ff;
+  font-weight: 600;
 }
 
+/* Attributes and variables - pink */
 .hljs-attribute,
 .hljs-variable,
 .hljs-template-variable {
-  color: #f472b6;
+  color: #ffa198;
 }
 
+/* Types and params - orange */
 .hljs-type,
 .hljs-params {
-  color: #fb923c;
+  color: #ff9b76;
 }
 
+/* HTML/XML tags - green */
 .hljs-tag {
-  color: #818cf8;
+  color: #7ee787;
 }
 
+/* Tag names - green */
 .hljs-name {
-  color: #60a5fa;
+  color: #7ee787;
 }
 
+/* Attributes - purple */
 .hljs-attr {
-  color: #a78bfa;
+  color: #79c0ff;
 }
 
+/* Symbols and meta - magenta */
 .hljs-symbol,
 .hljs-bullet,
 .hljs-subst,
 .hljs-meta,
 .hljs-selector-attr,
 .hljs-selector-pseudo {
-  color: #e879f9;
+  color: #f69d50;
 }
 
+/* Deletions - red */
 .hljs-deletion {
-  color: #ef4444;
+  color: #ffa198;
+  background-color: rgba(255, 129, 130, 0.15);
 }
 
+/* Additions - green */
+.hljs-addition {
+  color: #7ee787;
+  background-color: rgba(87, 171, 90, 0.15);
+}
+
+/* Formula */
 .hljs-formula {
-  background: #374151;
+  background: rgba(110, 118, 129, 0.4);
+  padding: 2px 4px;
+  border-radius: 3px;
 }
 
+/* Emphasis */
 .hljs-emphasis {
   font-style: italic;
+  color: #ffa657;
 }
 
 .hljs-strong {
   font-weight: bold;
+  color: #ff7b72;
+}
+
+/* Selector class, id, pseudo */
+.hljs-selector-class {
+  color: #ffa657;
+}
+
+.hljs-selector-id {
+  color: #79c0ff;
+  font-weight: 700;
+}
+
+/* Doctag */
+.hljs-doctag {
+  color: #8b949e;
+  font-weight: 600;
+}
+
+/* Python decorators */
+.hljs-meta {
+  color: #79c0ff;
+}
+
+/* Operator */
+.hljs-operator {
+  color: #ff7b72;
+}
+
+/* Code block line highlighting on hover */
+.prose pre:hover {
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
 }
 
 /* Table enhancements */

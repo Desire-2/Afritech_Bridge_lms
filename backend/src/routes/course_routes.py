@@ -48,19 +48,48 @@ announcement_bp = Blueprint("announcement_bp", __name__, url_prefix="/api/v1/ann
 @course_bp.route("", methods=["POST"])
 @role_required(["admin", "instructor"])
 def create_course():
-    data = request.get_json()
-    current_user_id = get_user_id()  # Ensure integer
-    user = User.query.get(current_user_id)
-
-    # Ensure instructor_id is the current user if they are an instructor, or allow admin to set it
-    instructor_id_to_set = current_user_id
-    if user.role.name == "admin" and data.get("instructor_id"):
-        if User.query.get(int(data.get("instructor_id"))):  # Ensure integer
-             instructor_id_to_set = int(data.get("instructor_id"))
-        else:
-            return jsonify({"message": "Specified instructor_id not found"}), 400
-
     try:
+        data = request.get_json()
+        logger.info(f"[CREATE_COURSE] Received data: {data}")
+        
+        current_user_id = get_user_id()  # Ensure integer
+        logger.info(f"[CREATE_COURSE] Current user ID: {current_user_id}")
+        
+        user = User.query.get(current_user_id)
+        if not user:
+            logger.error(f"[CREATE_COURSE] User not found for ID: {current_user_id}")
+            return jsonify({"message": "User not found"}), 404
+        
+        logger.info(f"[CREATE_COURSE] User role: {user.role.name}")
+
+        # Ensure instructor_id is the current user if they are an instructor, or allow admin to set it
+        instructor_id_to_set = current_user_id
+        if user.role.name == "admin" and data.get("instructor_id"):
+            if User.query.get(int(data.get("instructor_id"))):  # Ensure integer
+                instructor_id_to_set = int(data.get("instructor_id"))
+            else:
+                logger.error(f"[CREATE_COURSE] Specified instructor_id not found: {data.get('instructor_id')}")
+                return jsonify({"message": "Specified instructor_id not found"}), 400
+
+        logger.info(f"[CREATE_COURSE] Creating course with instructor_id: {instructor_id_to_set}")
+        
+        # Validate required fields
+        if not data.get("title"):
+            logger.error("[CREATE_COURSE] Missing required field: title")
+            return jsonify({"message": "Missing required field: title"}), 400
+        if not data.get("description"):
+            logger.error("[CREATE_COURSE] Missing required field: description")
+            return jsonify({"message": "Missing required field: description"}), 400
+        
+        # Check for duplicate title
+        existing_course = Course.query.filter_by(title=data["title"]).first()
+        if existing_course:
+            logger.error(f"[CREATE_COURSE] Course with title '{data['title']}' already exists")
+            return jsonify({
+                "message": "A course with this title already exists. Please choose a different title.",
+                "existing_course_id": existing_course.id
+            }), 409  # 409 Conflict
+        
         new_course = Course(
             title=data["title"],
             description=data["description"],
@@ -70,13 +99,34 @@ def create_course():
             instructor_id=instructor_id_to_set,
             is_published=data.get("is_published", False)
         )
+        logger.info(f"[CREATE_COURSE] Course object created: {new_course.title}")
+        
         db.session.add(new_course)
+        logger.info("[CREATE_COURSE] Course added to session")
+        
         db.session.commit()
+        logger.info(f"[CREATE_COURSE] Course committed with ID: {new_course.id}")
+        
         return jsonify(new_course.to_dict()), 201
+        
     except KeyError as e:
+        logger.error(f"[CREATE_COURSE] KeyError - Missing field: {e}")
         return jsonify({"message": f"Missing field: {e}"}), 400
     except Exception as e:
         db.session.rollback()
+        logger.error(f"[CREATE_COURSE] Exception occurred: {str(e)}")
+        logger.error(f"[CREATE_COURSE] Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"[CREATE_COURSE] Traceback: {traceback.format_exc()}")
+        
+        # Handle specific database errors
+        error_message = str(e)
+        if "duplicate key value violates unique constraint" in error_message.lower():
+            if "courses_title_key" in error_message:
+                return jsonify({
+                    "message": "A course with this title already exists. Please choose a different title."
+                }), 409
+        
         return jsonify({"message": "Could not create course", "error": str(e)}), 500
 
 @course_bp.route("", methods=["GET"])

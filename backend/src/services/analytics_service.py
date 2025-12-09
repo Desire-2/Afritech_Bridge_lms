@@ -33,7 +33,7 @@ class AnalyticsService:
                 return {"error": "Student not found"}
             
             # Get basic enrollment stats
-            enrollments = Enrollment.query.filter_by(user_id=student_id).all()
+            enrollments = Enrollment.query.filter_by(student_id=student_id).all()
             completed_courses = len([e for e in enrollments if e.completed])
             
             # Calculate learning time this week
@@ -190,7 +190,7 @@ class AnalyticsService:
                 report_data["overall_progress"] = transcript.to_dict()
             
             # Course-specific progress
-            enrollments_query = Enrollment.query.filter_by(user_id=student_id)
+            enrollments_query = Enrollment.query.filter_by(student_id=student_id)
             if course_id:
                 enrollments_query = enrollments_query.filter_by(course_id=course_id)
             

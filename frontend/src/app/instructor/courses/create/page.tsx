@@ -5,12 +5,15 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { CourseService } from '@/services/course.service';
 import { CreateCourseRequest } from '@/types/api';
+import { Sparkles } from 'lucide-react';
+import { AICourseGenerator } from '@/components/instructor/ai-agent';
 
 const CreateCoursePage = () => {
   const router = useRouter();
   const { token } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAIAssistant, setShowAIAssistant] = useState(false);
   
   const [formData, setFormData] = useState<CreateCourseRequest>({
     title: '',
@@ -28,6 +31,19 @@ const CreateCoursePage = () => {
     }));
   };
 
+  const handleAIGenerate = (aiData: any) => {
+    setFormData(prev => ({
+      ...prev,
+      title: aiData.title || prev.title,
+      description: aiData.description || prev.description,
+      learning_objectives: aiData.learning_objectives || prev.learning_objectives,
+      target_audience: aiData.target_audience || prev.target_audience,
+      estimated_duration: aiData.estimated_duration || prev.estimated_duration
+    }));
+    setShowAIAssistant(false);
+    setError(null);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!token) return;
@@ -40,7 +56,18 @@ const CreateCoursePage = () => {
       router.push(`/instructor/courses/${course.id}`);
     } catch (err: any) {
       console.error('Create course error:', err);
-      setError(err.message || 'Failed to create course');
+      
+      // Handle specific error cases
+      if (err.response?.status === 409) {
+        // Duplicate title error
+        setError('A course with this title already exists. Please choose a different title.');
+      } else if (err.response?.data?.message) {
+        // Use backend error message if available
+        setError(err.response.data.message);
+      } else {
+        // Generic error
+        setError(err.message || 'Failed to create course');
+      }
     } finally {
       setLoading(false);
     }
@@ -49,11 +76,29 @@ const CreateCoursePage = () => {
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Create New Course</h1>
-        <p className="text-slate-600 dark:text-slate-400 mt-2">
-          Create a new course to share your knowledge with students.
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Create New Course</h1>
+            <p className="text-slate-600 dark:text-slate-400 mt-2">
+              Create a new course to share your knowledge with students.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowAIAssistant(!showAIAssistant)}
+            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+          >
+            <Sparkles className="w-5 h-5" />
+            {showAIAssistant ? 'Hide' : 'AI'} Assistant
+          </button>
+        </div>
       </div>
+
+      {showAIAssistant && (
+        <div className="mb-6">
+          <AICourseGenerator onGenerate={handleAIGenerate} />
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 rounded-lg mb-6">

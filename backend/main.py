@@ -4,7 +4,7 @@ import sys
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from flask import Flask, send_from_directory, jsonify
+from flask import Flask, send_from_directory, jsonify, request
 from flask_jwt_extended import JWTManager
 from datetime import timedelta
 import logging
@@ -36,6 +36,8 @@ from src.routes.grading_routes import grading_bp # Import grading blueprint
 from src.routes.progress_routes import progress_bp # Import progress blueprint
 from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
 from src.routes.forum_routes import forum_bp # Import forum blueprint
+from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
+from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from dotenv import load_dotenv
 from flask_cors import CORS
 
@@ -158,6 +160,37 @@ else:
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# SQLAlchemy Engine Options for better connection handling
+# Detect database type to apply appropriate configuration
+is_postgresql = app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql')
+
+if is_postgresql:
+    # Highly optimized for free tier PostgreSQL with VERY limited connections
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,  # Test connections before using them
+        'pool_recycle': 120,  # Aggressively recycle connections after 2 minutes
+        'pool_size': 2,  # CRITICAL: Only 2 persistent connections (free tier limit)
+        'max_overflow': 3,  # CRITICAL: Only 3 overflow connections (total max = 5)
+        'pool_timeout': 20,  # Reduced timeout - fail fast if pool exhausted
+        'pool_reset_on_return': 'rollback',  # Always rollback on return to prevent locks
+        'echo_pool': False,  # Disable pool logging in production
+        'connect_args': {
+            'connect_timeout': 10,  # Connection timeout in seconds (PostgreSQL specific)
+            'options': '-c statement_timeout=25000'  # 25 second query timeout
+        }
+    }
+    logger.info("SQLAlchemy configured for FREE TIER PostgreSQL (pool_size=2, max_overflow=3, TOTAL=5)")
+else:
+    # SQLite configuration - simpler pool settings
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,  # Test connections before using them
+        'pool_size': 5,  # SQLite can handle more local connections
+        'max_overflow': 10,  # More overflow for development
+        'pool_timeout': 30,
+        'pool_reset_on_return': 'rollback',
+    }
+    logger.info("SQLAlchemy configured for SQLite development (pool_size=5, max_overflow=10)")
+
 # JWT Configuration
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY')
 if not app.config['JWT_SECRET_KEY']:
@@ -225,6 +258,7 @@ app.register_blueprint(grading_bp) # Register grading blueprint
 app.register_blueprint(progress_bp) # Register progress blueprint
 app.register_blueprint(certificate_bp) # Register certificate blueprint
 app.register_blueprint(forum_bp) # Register forum blueprint
+app.register_blueprint(ai_agent_bp) # Register AI agent blueprint
 
 with app.app_context():
     db.create_all()
@@ -235,6 +269,36 @@ with app.app_context():
     if not Role.query.filter_by(name='admin').first():
         db.session.add(Role(name='admin'))
     db.session.commit()
+
+# Request lifecycle hooks for connection management
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    """
+    Ensure database sessions are properly closed after each request
+    This prevents connection leaks and pool exhaustion
+    """
+    db.session.remove()
+
+@app.after_request
+def after_request(response):
+    """
+    Cleanup after each request to prevent connection leaks
+    CRITICAL: Always remove session to return connection to pool
+    """
+    try:
+        # Only commit if response is successful (2xx status)
+        if 200 <= response.status_code < 300:
+            db.session.commit()
+        else:
+            # Rollback on error to prevent partial commits
+            db.session.rollback()
+    except Exception as e:
+        logger.error(f"Error in after_request commit: {e}")
+        db.session.rollback()
+    finally:
+        # CRITICAL: Remove session to return connection to pool
+        db.session.remove()
+    return response
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -253,6 +317,60 @@ def serve(path):
             if path == "":
                 return jsonify({"message": "Welcome to Afritec Bridge LMS API"}), 200
             return jsonify({"error": "File not found"}), 404
+
+
+# =====================
+# DATABASE HEALTH MONITORING ENDPOINTS
+# =====================
+
+@app.route('/api/v1/health/db', methods=['GET'])
+def health_check():
+    """Database health check endpoint"""
+    try:
+        is_healthy = check_database_health(db)
+        pool_status = get_pool_status(db)
+        
+        return jsonify({
+            "status": "healthy" if is_healthy else "unhealthy",
+            "database": "connected" if is_healthy else "disconnected",
+            "pool": pool_status,
+            "timestamp": os.environ.get('RENDER_GIT_COMMIT', 'development')
+        }), 200 if is_healthy else 503
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "error": str(e)
+        }), 500
+
+
+@app.route('/api/v1/health/db/pool-status', methods=['GET'])
+def pool_status_endpoint():
+    """Get detailed connection pool status"""
+    try:
+        pool_status = get_pool_status(db)
+        return jsonify(pool_status), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/v1/health/db/force-cleanup', methods=['POST'])
+def force_cleanup_endpoint():
+    """
+    EMERGENCY ONLY: Force cleanup of connection pool
+    Use when pool is exhausted and needs reset
+    """
+    try:
+        # Simple authentication check (in production, use proper auth)
+        auth_key = request.headers.get('X-Admin-Key')
+        expected_key = os.environ.get('ADMIN_KEY', 'dev-admin-key')
+        
+        if auth_key != expected_key:
+            return jsonify({"error": "Unauthorized"}), 401
+        
+        result = force_pool_cleanup(db)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     # In development, run with debug mode

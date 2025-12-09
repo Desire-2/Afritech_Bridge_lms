@@ -402,7 +402,7 @@ class EnrollmentService:
     @staticmethod
     def get_student_enrollments(student_id: int) -> List[Dict]:
         """Get all enrollments for a student"""
-        enrollments = Enrollment.query.filter_by(user_id=student_id).all()
+        enrollments = Enrollment.query.filter_by(student_id=student_id).all()
         
         result = []
         for enrollment in enrollments:

@@ -113,6 +113,11 @@ def get_module_progress(module_id):
                 student_id, module_id, enrollment.id
             )
             db.session.commit()
+        else:
+            # Refresh the module progress to ensure we get the latest data
+            db.session.refresh(module_progress)
+            from flask import current_app
+            current_app.logger.info(f"📊 GET module progress: module_id={module_id}, status={module_progress.status}, cumulative_score={module_progress.cumulative_score}, completed_at={module_progress.completed_at}")
         
         # Get time analytics for module
         time_analytics = AnalyticsService._get_module_time_analytics(student_id, module_id)

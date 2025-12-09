@@ -5,7 +5,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/a
 // Create axios instance with default config
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 30000, // 30 seconds timeout for better reliability
   headers: {
     'Content-Type': 'application/json',
   },
@@ -386,8 +386,21 @@ export class StudentApiService {
   }
 
   static async completeLesson(lessonId: number, data: any): Promise<any> {
-    const response = await api.post(`/student/lessons/${lessonId}/complete`, data);
-    return response.data;
+    try {
+      console.log(`📤 Calling completeLesson API: /student/lessons/${lessonId}/complete`, data);
+      const response = await api.post(`/student/lessons/${lessonId}/complete`, data);
+      console.log(`✅ completeLesson API success:`, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error(`❌ completeLesson API error:`, {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        code: error.code
+      });
+      throw error;
+    }
   }
 
   static async updateLessonProgress(lessonId: number, progressData: {

@@ -495,7 +495,7 @@ class CertificateService:
             student = User.query.get(student_id)
             
             # Get all enrollments and certificates
-            enrollments = Enrollment.query.filter_by(user_id=student_id).all()
+            enrollments = Enrollment.query.filter_by(student_id=student_id).all()
             certificates = Certificate.query.filter_by(student_id=student_id, is_active=True).all()
             badges = StudentSkillBadge.query.filter_by(student_id=student_id).all()
             
