@@ -346,9 +346,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     AuthService.logout().catch(console.error);
     
     // Force navigation to login page
-    setTimeout(() => {
-      window.location.href = '/auth/login';
-    }, 100);
+    window.location.href = '/auth/login';
   };
 
   /**

@@ -71,6 +71,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [aiGenerating, setAIGenerating] = useState(false);
   const [modules, setModules] = useState<EnhancedModule[]>([]);
   const [lessons, setLessons] = useState<any[]>([]);
+  const [lastAIGeneration, setLastAIGeneration] = useState<{
+    type: 'quiz' | 'assignment' | 'project';
+    params: any;
+  } | null>(null);
+
+  // AI Preview states
+  const [showAIPreview, setShowAIPreview] = useState(false);
+  const [aiPreviewData, setAIPreviewData] = useState<any>(null);
+  const [aiPreviewType, setAIPreviewType] = useState<'quiz' | 'assignment' | 'project' | null>(null);
 
   // Monitor assessments prop changes for debugging
   useEffect(() => {
@@ -404,9 +413,10 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     setErrorMessage(null);
     
     try {
-      console.log('Validating inputs...', { selectedModuleId, aiContentType, selectedLessonId });
+      console.log('Validating inputs...', { selectedModuleId, aiContentType, selectedLessonId, activeTab });
       
-      if (!selectedModuleId) {
+      // Module is required for quizzes and assignments, but optional for projects (whole course project)
+      if (activeTab !== 'project' && !selectedModuleId) {
         setErrorMessage('Please select a module');
         setAIGenerating(false);
         return;
@@ -418,11 +428,34 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         return;
       }
 
+      // Validate that selected lesson/module has content
+      if (aiContentType === 'lesson') {
+        const selectedLesson = lessons.find(l => l.id === selectedLessonId);
+        if (!selectedLesson?.content_data || selectedLesson.content_data.trim().length < 100) {
+          setErrorMessage('Selected lesson has insufficient content. Please add lesson content first before generating assessments.');
+          setAIGenerating(false);
+          return;
+        }
+      }
+
       console.log('Starting AI generation for tab:', activeTab);
+      console.log('Active tab type:', typeof activeTab, 'Value:', activeTab);
+      
+      // Don't set success message here - wait for actual success
+      // setSuccessMessage('⏳ AI is analyzing content... This may take up to 2 minutes.');
 
       // Generate based on active tab
-      if (activeTab === 'quizzes') {
+      if (activeTab === 'quiz') {
         console.log('Calling generateQuizFromContent API...');
+        console.log('API params:', {
+          course_id: course.id,
+          content_type: aiContentType,
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+          module_id: selectedModuleId,
+          num_questions: aiNumQuestions,
+          difficulty: aiDifficulty
+        });
+        
         const response = await aiAgentService.generateQuizFromContent({
           course_id: course.id,
           content_type: aiContentType,
@@ -432,39 +465,128 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           difficulty: aiDifficulty
         });
         console.log('Quiz generation response:', response);
+        console.log('Response type:', typeof response);
+        console.log('Response keys:', Object.keys(response || {}));
+
+        // Handle both response.data (correct) and response.quiz (legacy) formats
+        const quizData = response.data || response.quiz || response;
+        console.log('Extracted quizData:', quizData);
+        console.log('QuizData keys:', Object.keys(quizData || {}));
+        console.log('Questions count:', quizData?.questions?.length);
+        
+        if (!quizData || !quizData.questions || quizData.questions.length === 0) {
+          console.error('Empty quiz data detected:', { quizData, hasQuestions: !!quizData?.questions });
+          throw new Error('AI generated an empty quiz. Please try again or check lesson content.');
+        }
 
         // Populate quiz form with AI-generated data
         setQuizForm({
           ...quizForm,
-          title: response.quiz.title,
-          description: response.quiz.description || '',
+          title: quizData.title || 'AI Generated Quiz',
+          description: quizData.description || '',
           module_id: selectedModuleId.toString(),
           lesson_id: aiContentType === 'lesson' ? selectedLessonId?.toString() || '' : '',
-          time_limit: response.quiz.time_limit || 30,
-          passing_score: response.quiz.passing_score || 70,
+          time_limit: quizData.time_limit || 30,
+          passing_score: quizData.passing_score || 70,
           max_attempts: 3,
           shuffle_questions: true,
           shuffle_answers: true
         });
 
         // Convert questions to the format expected by the form
-        const formattedQuestions = response.quiz.questions.map((q, idx) => ({
-          id: idx + 1,
-          question_text: q.question_text,
-          question_type: 'multiple_choice' as const,
-          points: q.points,
-          answers: q.answers.map((a, aIdx) => ({
-            id: aIdx + 1,
-            answer_text: a.answer_text,
-            is_correct: a.is_correct,
-            explanation: a.explanation || ''
-          }))
-        }));
+        // Handle both 'options' (AI format) and 'answers' (form format)
+        const formattedQuestions = quizData.questions.map((q: any, idx: number) => {
+          let answersArray = [];
+          
+          // If AI returned 'options' array, convert to 'answers' format
+          if (q.options && Array.isArray(q.options)) {
+            answersArray = q.options.map((opt: any, aIdx: number) => ({
+              id: aIdx + 1,
+              answer_text: opt.text || opt.answer_text || '',
+              is_correct: q.correct_answer === opt.key || opt.is_correct || false,
+              explanation: q.explanation || ''
+            }));
+          } 
+          // Otherwise use answers array directly
+          else if (q.answers && Array.isArray(q.answers)) {
+            answersArray = q.answers.map((a: any, aIdx: number) => ({
+              id: aIdx + 1,
+              answer_text: a.answer_text || a.text || '',
+              is_correct: a.is_correct || false,
+              explanation: a.explanation || q.explanation || ''
+            }));
+          }
+          
+          return {
+            id: idx + 1,
+            question_text: q.question_text || q.text || '',
+            question_type: 'multiple_choice' as const,
+            points: q.points || 10,
+            answers: answersArray,
+            explanation: q.explanation || ''
+          };
+        });
 
-        setCurrentQuestions(formattedQuestions);
-        setSuccessMessage(`AI generated ${response.quiz.questions.length} questions! Review and save when ready.`);
+        console.log('Setting currentQuestions:', formattedQuestions.length, 'questions');
         
-      } else if (activeTab === 'assignments') {
+        // Generate contextual title and description
+        const selectedModule = modules.find(m => m.id === selectedModuleId);
+        const selectedLesson = aiContentType === 'lesson' ? lessons.find(l => l.id === selectedLessonId) : null;
+        
+        let contextualTitle = quizData.title;
+        let contextualDescription = quizData.description;
+        
+        // If AI didn't generate title, create one based on context
+        if (!contextualTitle || contextualTitle === 'Quiz') {
+          if (selectedLesson) {
+            contextualTitle = `${selectedLesson.title} - Quiz`;
+          } else if (selectedModule) {
+            contextualTitle = `${selectedModule.title} - Quiz`;
+          } else {
+            contextualTitle = `${course.title} - Quiz`;
+          }
+        }
+        
+        // Enhance description with context
+        if (!contextualDescription) {
+          if (selectedLesson) {
+            contextualDescription = `Assessment quiz for lesson: ${selectedLesson.title}`;
+          } else if (selectedModule) {
+            contextualDescription = `Comprehensive quiz covering ${selectedModule.title} module content`;
+          } else {
+            contextualDescription = `Quiz for ${course.title}`;
+          }
+        }
+        
+        // Store for preview instead of directly setting
+        setAIPreviewData({
+          quizForm: {
+            title: contextualTitle,
+            description: contextualDescription,
+            time_limit: quizData.time_limit || 30,
+            passing_score: quizData.passing_score || 70,
+          },
+          questions: formattedQuestions
+        });
+        setAIPreviewType('quiz');
+        
+        console.log('Setting success message...');
+        setSuccessMessage(`✅ AI generated ${quizData.questions.length} questions! Review in preview.`);
+        
+        // Store generation params for regeneration
+        setLastAIGeneration({
+          type: 'quiz',
+          params: {
+            course_id: course.id,
+            content_type: aiContentType,
+            lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+            module_id: selectedModuleId,
+            num_questions: aiNumQuestions,
+            difficulty: aiDifficulty
+          }
+        });
+        
+      } else if (activeTab === 'assignment') {
         const response = await aiAgentService.generateAssignmentFromContent({
           course_id: course.id,
           content_type: aiContentType,
@@ -473,57 +595,444 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           assignment_type: aiAssignmentType
         });
 
-        // Populate assignment form
-        setAssignmentForm({
-          ...assignmentForm,
-          title: response.assignment.title,
-          description: response.assignment.description,
-          module_id: selectedModuleId.toString(),
-          lesson_id: aiContentType === 'lesson' ? selectedLessonId?.toString() || '' : '',
-          rubric_criteria: response.assignment.rubric_criteria || '',
-          submission_format: response.assignment.submission_format || 'text',
-          points_possible: response.assignment.points_possible || 100,
-          due_date: ''
-        });
-
-        setSuccessMessage('AI generated assignment! Review and save when ready.');
+        // Handle both response.data and response.assignment formats
+        const assignmentData = response.data || response.assignment || response;
         
-      } else if (activeTab === 'projects') {
-        const response = await aiAgentService.generateProjectFromContent({
-          course_id: course.id,
-          module_id: selectedModuleId
-        });
+        if (!assignmentData || !assignmentData.title) {
+          throw new Error('AI generated incomplete assignment data. Please try again.');
+        }
 
-        // Populate project form
-        setProjectForm({
-          ...projectForm,
-          title: response.project.title,
-          description: response.project.description,
-          module_id: selectedModuleId.toString(),
-          requirements: response.project.requirements || '',
-          rubric_criteria: response.project.rubric_criteria || '',
-          resources: response.project.resources || '',
-          submission_format: response.project.submission_format || 'file',
-          points_possible: response.project.points_possible || 100,
-          timeline_weeks: response.project.timeline_weeks || 4,
-          team_size_min: response.project.team_size_min || 1,
-          team_size_max: response.project.team_size_max || 1,
-          due_date: ''
-        });
+        // Generate contextual title and description
+        const selectedModule = modules.find(m => m.id === selectedModuleId);
+        const selectedLesson = aiContentType === 'lesson' ? lessons.find(l => l.id === selectedLessonId) : null;
+        
+        let contextualTitle = assignmentData.title;
+        let contextualDescription = assignmentData.description;
+        
+        // If AI didn't generate a good title, create one based on context
+        if (!contextualTitle || contextualTitle === 'Assignment' || contextualTitle.toLowerCase().includes('generated')) {
+          if (selectedLesson) {
+            contextualTitle = `${selectedLesson.title} - Assignment`;
+          } else if (selectedModule) {
+            contextualTitle = `${selectedModule.title} - Assignment`;
+          } else {
+            contextualTitle = `${course.title} - Assignment`;
+          }
+        }
+        
+        // Enhance description with context if needed
+        if (!contextualDescription || contextualDescription.length < 20) {
+          if (selectedLesson) {
+            contextualDescription = `Assignment for lesson: ${selectedLesson.title}`;
+          } else if (selectedModule) {
+            contextualDescription = `Assignment covering ${selectedModule.title} module content`;
+          } else {
+            contextualDescription = `Assignment for ${course.title}`;
+          }
+        }
 
-        setSuccessMessage('AI generated project! Review and save when ready.');
+        // Parse rubric_criteria if it's a string
+        let rubricCriteria = assignmentData.grading_rubric || assignmentData.rubric_criteria || [];
+        if (typeof rubricCriteria === 'string') {
+          try {
+            rubricCriteria = JSON.parse(rubricCriteria);
+          } catch (e) {
+            rubricCriteria = [];
+          }
+        }
+        if (!Array.isArray(rubricCriteria)) {
+          rubricCriteria = [];
+        }
+
+        // Store for preview instead of directly setting
+        setAIPreviewData({
+          assignmentForm: {
+            title: contextualTitle,
+            description: contextualDescription,
+            instructions: assignmentData.instructions || assignmentData.description || '',
+            rubric_criteria: rubricCriteria,
+            submission_format: assignmentData.submission_format || 'text',
+            points_possible: assignmentData.max_points || assignmentData.points_possible || 100,
+          }
+        });
+        setAIPreviewType('assignment');
+
+        setSuccessMessage('✅ AI generated assignment! Review in preview.');
+        
+        // Store generation params for regeneration
+        setLastAIGeneration({
+          type: 'assignment',
+          params: {
+            course_id: course.id,
+            content_type: aiContentType,
+            lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+            module_id: selectedModuleId,
+            assignment_type: aiAssignmentType
+          }
+        });
+        
+      } else if (activeTab === 'project') {
+        // For projects, support whole course or specific modules
+        const projectParams: any = {
+          course_id: course.id
+        };
+        
+        // If module selected, use it; otherwise project covers whole course
+        if (selectedModuleId) {
+          projectParams.module_id = selectedModuleId;
+        }
+        
+        const response = await aiAgentService.generateProjectFromContent(projectParams);
+
+        // Handle both response.data and response.project formats
+        const projectData = response.data || response.project || response;
+        
+        if (!projectData || !projectData.title) {
+          throw new Error('AI generated incomplete project data. Please try again.');
+        }
+
+        // Generate contextual title and description
+        const selectedModule = modules.find(m => m.id === selectedModuleId);
+        
+        let contextualTitle = projectData.title;
+        let contextualDescription = projectData.description;
+        
+        // If AI didn't generate a good title, create one based on context
+        if (!contextualTitle || contextualTitle === 'Project' || contextualTitle.toLowerCase().includes('generated')) {
+          if (selectedModule) {
+            contextualTitle = `${selectedModule.title} - Capstone Project`;
+          } else {
+            contextualTitle = `${course.title} - Capstone Project`;
+          }
+        }
+        
+        // Enhance description with context if needed
+        if (!contextualDescription || contextualDescription.length < 20) {
+          if (selectedModule) {
+            contextualDescription = `Comprehensive project to demonstrate mastery of ${selectedModule.title} concepts`;
+          } else {
+            contextualDescription = `Capstone project for ${course.title}`;
+          }
+        }
+
+        // Parse array fields if they're strings
+        const parseArrayField = (field: any) => {
+          if (Array.isArray(field)) return field;
+          if (typeof field === 'string' && field) {
+            try {
+              return JSON.parse(field);
+            } catch (e) {
+              return [];
+            }
+          }
+          return [];
+        };
+
+        // Store for preview instead of directly setting
+        setAIPreviewData({
+          projectForm: {
+            title: contextualTitle,
+            description: contextualDescription,
+            objectives: parseArrayField(projectData.objectives || projectData.requirements),
+            requirements: parseArrayField(projectData.requirements),
+            rubric_criteria: parseArrayField(projectData.grading_rubric || projectData.rubric_criteria),
+            resources: parseArrayField(projectData.resources),
+            points_possible: projectData.max_points || projectData.points_possible || 150,
+            timeline_weeks: Math.ceil((projectData.due_date_days || 14) / 7) || 4,
+          }
+        });
+        setAIPreviewType('project');
+
+        setSuccessMessage('✅ AI generated project! Review in preview.');
+        
+        // Store generation params for regeneration
+        setLastAIGeneration({
+          type: 'project',
+          params: {
+            course_id: course.id,
+            module_id: selectedModuleId || null
+          }
+        });
+      } else {
+        // This should never happen but catch it if it does
+        console.error('No matching activeTab condition!');
+        console.error('activeTab value:', activeTab);
+        console.error('activeTab type:', typeof activeTab);
+        console.error('activeTab === "quiz":', activeTab === 'quiz');
+        console.error('activeTab === "assignment":', activeTab === 'assignment');
+        console.error('activeTab === "project":', activeTab === 'project');
+        throw new Error(`Invalid active tab: ${activeTab}. Expected 'quiz', 'assignment', or 'project'.`);
       }
 
-      console.log('AI generation successful, closing modal');
+      console.log('AI generation successful, opening preview');
       setShowAIModal(false);
+      setShowAIPreview(true);
       
     } catch (error: any) {
       console.error('AI generation error:', error);
-      setErrorMessage(error.response?.data?.message || error.message || 'Failed to generate with AI');
+      
+      // Provide more specific error messages
+      let errorMsg = 'Failed to generate with AI';
+      
+      if (error.response?.status === 404) {
+        errorMsg = 'Content not found. Please ensure the lesson/module exists and has content.';
+      } else if (error.response?.status === 400) {
+        errorMsg = error.response?.data?.message || 'Invalid request. Please check your selections.';
+      } else if (error.response?.status === 429) {
+        errorMsg = 'AI service rate limit reached. Please wait a moment and try again.';
+      } else if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
+        errorMsg = 'AI generation timed out. The content may be too long. Try selecting a shorter lesson or fewer questions.';
+      } else if (error.response?.data?.message) {
+        errorMsg = error.response.data.message;
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
+      setErrorMessage(errorMsg);
     } finally {
       console.log('AI generation complete, resetting loading state');
       setAIGenerating(false);
     }
+  };
+
+  // Regenerate with AI using last params
+  const handleRegenerate = async () => {
+    if (!lastAIGeneration) return;
+    
+    setSuccessMessage('🔄 Regenerating with AI...');
+    setAIGenerating(true);
+    
+    try {
+      if (lastAIGeneration.type === 'quiz') {
+        const response = await aiAgentService.generateQuizFromContent(lastAIGeneration.params);
+        const quizData = response.data || response.quiz || response;
+        
+        if (!quizData || !quizData.questions || quizData.questions.length === 0) {
+          throw new Error('AI generated an empty quiz. Please try again or check lesson content.');
+        }
+
+        setQuizForm({
+          ...quizForm,
+          title: quizData.title || 'AI Generated Quiz',
+          description: quizData.description || '',
+        });
+
+        const formattedQuestions = quizData.questions.map((q: any, idx: number) => {
+          let answersArray = [];
+          
+          if (q.options && Array.isArray(q.options)) {
+            answersArray = q.options.map((opt: any, aIdx: number) => ({
+              id: aIdx + 1,
+              answer_text: opt.text || opt.answer_text || '',
+              is_correct: q.correct_answer === opt.key || opt.is_correct || false,
+              explanation: q.explanation || ''
+            }));
+          } else if (q.answers && Array.isArray(q.answers)) {
+            answersArray = q.answers.map((a: any, aIdx: number) => ({
+              id: aIdx + 1,
+              answer_text: a.answer_text || a.text || '',
+              is_correct: a.is_correct || false,
+              explanation: a.explanation || q.explanation || ''
+            }));
+          }
+          
+          return {
+            id: idx + 1,
+            question_text: q.question_text || q.text || '',
+            question_type: 'multiple_choice' as const,
+            points: q.points || 10,
+            answers: answersArray,
+            explanation: q.explanation || ''
+          };
+        });
+
+        setCurrentQuestions(formattedQuestions);
+        setSuccessMessage(`✅ Regenerated ${quizData.questions.length} new questions!`);
+      } else if (lastAIGeneration.type === 'assignment') {
+        const response = await aiAgentService.generateAssignmentFromContent(lastAIGeneration.params);
+        const assignmentData = response.data || response.assignment || response;
+        
+        if (!assignmentData || !assignmentData.title) {
+          throw new Error('AI generated incomplete assignment data.');
+        }
+
+        setAssignmentForm({
+          ...assignmentForm,
+          title: assignmentData.title || 'AI Generated Assignment',
+          description: assignmentData.description || '',
+          instructions: assignmentData.instructions || assignmentData.description || '',
+        });
+
+        setSuccessMessage('✅ Regenerated assignment!');
+      } else if (lastAIGeneration.type === 'project') {
+        const response = await aiAgentService.generateProjectFromContent(lastAIGeneration.params);
+        const projectData = response.data || response.project || response;
+        
+        if (!projectData || !projectData.title) {
+          throw new Error('AI generated incomplete project data.');
+        }
+
+        setProjectForm({
+          ...projectForm,
+          title: projectData.title || 'AI Generated Project',
+          description: projectData.description || '',
+        });
+
+        setSuccessMessage('✅ Regenerated project!');
+      }
+    } catch (error: any) {
+      console.error('Regeneration error:', error);
+      setErrorMessage('Failed to regenerate. ' + (error.message || 'Please try again.'));
+    } finally {
+      setAIGenerating(false);
+    }
+  };
+
+  // Preview handlers - Auto-save to database
+  const handleAcceptPreview = async () => {
+    if (!aiPreviewData || !aiPreviewType || !lastAIGeneration) return;
+
+    setIsLoading(true);
+    setErrorMessage(null);
+    setShowAIPreview(false);
+
+    try {
+      if (aiPreviewType === 'quiz') {
+        console.log('=== AUTO-SAVING AI QUIZ TO DATABASE ===');
+        
+        // Prepare questions
+        const preparedQuestions = aiPreviewData.questions || [];
+        const questionPayloads = preparedQuestions.map((question: any, index: number) => 
+          mapQuestionFormToPayload(question, index)
+        );
+
+        // Create quiz data with all required fields
+        const quizData = {
+          title: aiPreviewData.quizForm?.title || aiPreviewData.title || 'Quiz',
+          description: aiPreviewData.quizForm?.description || aiPreviewData.description || '',
+          course_id: course.id,
+          module_id: lastAIGeneration.params.module_id ? parseInt(lastAIGeneration.params.module_id) : undefined,
+          lesson_id: lastAIGeneration.params.lesson_id ? parseInt(lastAIGeneration.params.lesson_id) : undefined,
+          is_published: false, // Save as draft initially
+          time_limit: 30, // Default 30 minutes
+          max_attempts: 3, // Default 3 attempts
+          passing_score: 70, // Default 70%
+          points_possible: preparedQuestions.length * 10, // 10 points per question
+          shuffle_questions: true,
+          shuffle_answers: true,
+          show_correct_answers: true,
+          questions: questionPayloads
+        };
+
+        console.log('Quiz data being saved:', JSON.stringify(quizData, null, 2));
+        const createdQuiz = await CourseCreationService.createQuiz(quizData);
+        console.log('Quiz saved successfully:', createdQuiz);
+        
+        setSuccessMessage(`✅ Quiz saved to database with ${preparedQuestions.length} questions!`);
+        onAssessmentUpdate();
+        resetQuizForm();
+        setCurrentQuestions([]);
+        
+      } else if (aiPreviewType === 'assignment') {
+        console.log('=== AUTO-SAVING AI ASSIGNMENT TO DATABASE ===');
+        
+        const assignmentData = {
+          title: aiPreviewData.assignmentForm?.title || aiPreviewData.title || 'Assignment',
+          description: aiPreviewData.assignmentForm?.description || aiPreviewData.description || '',
+          instructions: aiPreviewData.assignmentForm?.instructions || aiPreviewData.instructions || '',
+          rubric_criteria: aiPreviewData.assignmentForm?.rubric_criteria || aiPreviewData.rubric_criteria || [],
+          submission_format: aiPreviewData.assignmentForm?.submission_format || aiPreviewData.submission_format || 'file',
+          points_possible: aiPreviewData.assignmentForm?.points_possible || aiPreviewData.points_possible || 100,
+          course_id: course.id,
+          module_id: lastAIGeneration.params.module_id ? parseInt(lastAIGeneration.params.module_id) : undefined,
+          lesson_id: lastAIGeneration.params.lesson_id ? parseInt(lastAIGeneration.params.lesson_id) : undefined,
+          is_published: false, // Save as draft
+          due_date: undefined
+        };
+
+        console.log('Assignment data being saved:', assignmentData);
+        await CourseCreationService.createAssignment(assignmentData);
+        
+        setSuccessMessage('✅ Assignment saved to database!');
+        onAssessmentUpdate();
+        resetAssignmentForm();
+        
+      } else if (aiPreviewType === 'project') {
+        console.log('=== AUTO-SAVING AI PROJECT TO DATABASE ===');
+        
+        // Convert arrays to formatted strings for database storage
+        const formatArrayToString = (arr: any[]) => {
+          if (!Array.isArray(arr) || arr.length === 0) return '';
+          return arr.map((item, idx) => `${idx + 1}. ${item}`).join('\n');
+        };
+        
+        const objectives = aiPreviewData.projectForm?.objectives || aiPreviewData.objectives || [];
+        const requirements = aiPreviewData.projectForm?.requirements || aiPreviewData.requirements || [];
+        const resources = aiPreviewData.projectForm?.resources || aiPreviewData.resources || [];
+        
+        // Combine objectives, requirements, and resources into description sections
+        let fullDescription = aiPreviewData.projectForm?.description || aiPreviewData.description || '';
+        
+        if (Array.isArray(requirements) && requirements.length > 0) {
+          fullDescription += '\n\n**Requirements:**\n' + formatArrayToString(requirements);
+        }
+        
+        if (Array.isArray(resources) && resources.length > 0) {
+          fullDescription += '\n\n**Resources:**\n' + formatArrayToString(resources);
+        }
+        
+        const projectData = {
+          title: aiPreviewData.projectForm?.title || aiPreviewData.title || 'Project',
+          description: fullDescription,
+          objectives: Array.isArray(objectives) ? formatArrayToString(objectives) : objectives,
+          course_id: course.id,
+          module_ids: lastAIGeneration.params.module_id ? [parseInt(lastAIGeneration.params.module_id)] : [],
+          points_possible: aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100,
+          is_published: false, // Save as draft
+          submission_format: 'file_upload',
+          due_date: undefined
+        };
+
+        console.log('Project data being saved:', projectData);
+        await CourseCreationService.createProject(projectData);
+        
+        setSuccessMessage('✅ Project saved to database!');
+        onAssessmentUpdate();
+        resetProjectForm();
+      }
+
+      // Clear preview state
+      setAIPreviewData(null);
+      setAIPreviewType(null);
+      
+      // Show success message longer for auto-save
+      setTimeout(() => setSuccessMessage(null), 5000);
+      
+    } catch (error: any) {
+      console.error('Error saving AI-generated content:', error);
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to save to database';
+      setErrorMessage(`❌ ${errorMsg}`);
+      
+      // Reopen preview on error so user can try again
+      setShowAIPreview(true);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRejectPreview = () => {
+    setShowAIPreview(false);
+    setAIPreviewData(null);
+    setAIPreviewType(null);
+    setSuccessMessage(null);
+  };
+
+  const handleRegeneratePreview = async () => {
+    setShowAIPreview(false);
+    setAIPreviewData(null);
+    setAIPreviewType(null);
+    setShowAIModal(true);
+    setSuccessMessage('🔄 Adjust parameters and generate again');
   };
 
   const handleCreateAssignment = async () => {
@@ -1372,12 +1881,28 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             <span className="text-xl">✅</span>
             <span className="font-medium">{successMessage}</span>
           </div>
-          <button
-            onClick={() => setSuccessMessage(null)}
-            className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200"
-          >
-            ✕
-          </button>
+          <div className="flex items-center space-x-2">
+            {lastAIGeneration && successMessage.includes('AI generated') && (
+              <button
+                onClick={handleRegenerate}
+                disabled={aiGenerating}
+                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                title="Generate new content with different variations"
+              >
+                <span>🔄</span>
+                <span>Regenerate</span>
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setSuccessMessage(null);
+                setLastAIGeneration(null);
+              }}
+              className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-200"
+            >
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -1411,6 +1936,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           onClick={() => {
             setShowForm(true);
             setEditingItem(null);
+            // Reset forms and switch to appropriate tab's form
+            if (activeTab === 'assignment') {
+              resetAssignmentForm();
+            } else if (activeTab === 'quiz') {
+              resetQuizForm();
+              setCurrentQuestions([]);
+            } else if (activeTab === 'project') {
+              resetProjectForm();
+            }
           }}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2 shadow-sm"
         >
@@ -1426,7 +1960,13 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  // Close form when switching tabs unless editing
+                  if (!editingItem) {
+                    setShowForm(false);
+                  }
+                }}
                 className={`py-3 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600 dark:text-blue-400'
@@ -1450,7 +1990,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           <button
             onClick={handleOpenAIModal}
             className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
-            title={`Generate ${activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'} with AI`}
+            title={`Generate ${activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'} with AI - Analyzes your lesson/module content to create aligned assessments automatically`}
           >
             <span className="text-lg">🤖</span>
             <span className="font-medium">AI Assistant</span>
@@ -1589,9 +2129,28 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       {/* Assessment Forms */}
       {showForm && (
         <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-          <h4 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-            Create New {activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'}
-          </h4>
+          <div className="flex items-center justify-between mb-6">
+            <h4 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center space-x-2">
+              <span className="text-2xl">
+                {activeTab === 'assignment' ? '📝' : activeTab === 'quiz' ? '❓' : '🎯'}
+              </span>
+              <span>
+                {editingItem ? 'Edit' : 'Create New'} {activeTab === 'assignment' ? 'Assignment' : activeTab === 'quiz' ? 'Quiz' : 'Project'}
+              </span>
+            </h4>
+            <button
+              onClick={() => {
+                setShowForm(false);
+                setEditingItem(null);
+                if (activeTab === 'assignment') resetAssignmentForm();
+                else if (activeTab === 'quiz') resetQuizForm();
+                else resetProjectForm();
+              }}
+              className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            >
+              ✕
+            </button>
+          </div>
 
           {/* Assignment Form */}
           {activeTab === 'assignment' && (
@@ -3077,7 +3636,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         isOpen={showAIModal}
         onClose={() => setShowAIModal(false)}
         onGenerate={handleAIGenerate}
-        assessmentType={activeTab === 'quizzes' ? 'quiz' : activeTab === 'assignments' ? 'assignment' : 'project'}
+        assessmentType={activeTab === 'quiz' ? 'quiz' : activeTab === 'assignment' ? 'assignment' : 'project'}
         contentType={aiContentType}
         setContentType={setAIContentType}
         modules={modules}
@@ -3094,6 +3653,247 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         setAssignmentType={setAIAssignmentType}
         isGenerating={aiGenerating}
       />
+
+      {/* AI Preview Modal */}
+      {showAIPreview && aiPreviewData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-purple-50">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xl font-semibold text-gray-900">
+                  🤖 AI Generated {aiPreviewType === 'quiz' ? 'Quiz' : aiPreviewType === 'assignment' ? 'Assignment' : 'Project'} Preview
+                </h2>
+                <button
+                  onClick={handleRejectPreview}
+                  disabled={isLoading}
+                  className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-sm text-gray-600">
+                💡 Review the content below. Clicking <strong>"Accept & Save to DB"</strong> will automatically save this {aiPreviewType} to the database as a draft.
+              </p>
+            </div>
+
+            {/* Content - Scrollable */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {/* Quiz Preview */}
+              {aiPreviewType === 'quiz' && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      {aiPreviewData.quizForm?.title || aiPreviewData.title}
+                    </h3>
+                    <p className="text-gray-600">{aiPreviewData.quizForm?.description || aiPreviewData.description}</p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <h4 className="font-semibold text-gray-800">
+                      Questions ({aiPreviewData.questions?.length || 0})
+                    </h4>
+                    {aiPreviewData.questions?.map((q: any, idx: number) => (
+                      <div key={idx} className="border rounded-lg p-4 bg-gray-50">
+                        <p className="font-medium text-gray-900 mb-3">
+                          {idx + 1}. {q.question_text}
+                        </p>
+                        <div className="space-y-2">
+                          {q.answers?.map((a: any, aIdx: number) => (
+                            <div
+                              key={aIdx}
+                              className={`p-2 rounded ${
+                                a.is_correct
+                                  ? 'bg-green-100 border border-green-300'
+                                  : 'bg-white border border-gray-200'
+                              }`}
+                            >
+                              <span className={a.is_correct ? 'font-semibold text-green-800' : 'text-gray-700'}>
+                                {String.fromCharCode(65 + aIdx)}. {a.answer_text}
+                                {a.is_correct && ' ✓'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        {q.answers?.find((a: any) => a.explanation) && (
+                          <p className="mt-2 text-sm text-gray-600 italic">
+                            💡 {q.answers.find((a: any) => a.explanation)?.explanation}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Assignment Preview */}
+              {aiPreviewType === 'assignment' && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      {aiPreviewData.assignmentForm?.title || aiPreviewData.title}
+                    </h3>
+                    <p className="text-gray-600 mb-4">{aiPreviewData.assignmentForm?.description || aiPreviewData.description}</p>
+                    
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                      <h4 className="font-semibold text-blue-900 mb-2">Instructions</h4>
+                      <p className="text-blue-800 whitespace-pre-wrap">{aiPreviewData.assignmentForm?.instructions || aiPreviewData.instructions}</p>
+                    </div>
+
+                    {(() => {
+                      const rubric = aiPreviewData.assignmentForm?.rubric_criteria || aiPreviewData.rubric_criteria;
+                      return Array.isArray(rubric) && rubric.length > 0 && (
+                        <div className="border rounded-lg p-4">
+                          <h4 className="font-semibold text-gray-800 mb-3">Rubric Criteria</h4>
+                          <div className="space-y-2">
+                            {rubric.map((criterion: any, idx: number) => (
+                            <div key={idx} className="bg-gray-50 p-3 rounded">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <p className="font-medium text-gray-900">{criterion.criterion}</p>
+                                  <p className="text-sm text-gray-600 mt-1">{criterion.description}</p>
+                                </div>
+                                <span className="ml-4 px-2 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded">
+                                  {criterion.max_points} pts
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="flex items-center gap-4 mt-4 text-sm text-gray-600">
+                      <span>📎 Submission: {aiPreviewData.assignmentForm?.submission_format || aiPreviewData.submission_format || 'file'}</span>
+                      <span>📊 Total Points: {aiPreviewData.assignmentForm?.points_possible || aiPreviewData.points_possible || 100}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Project Preview */}
+              {aiPreviewType === 'project' && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      {aiPreviewData.projectForm?.title || aiPreviewData.title}
+                    </h3>
+                    <p className="text-gray-600 mb-4">{aiPreviewData.projectForm?.description || aiPreviewData.description}</p>
+
+                    {(() => {
+                      const objectives = aiPreviewData.projectForm?.objectives || aiPreviewData.objectives;
+                      return Array.isArray(objectives) && objectives.length > 0 && (
+                        <div className="mb-4">
+                          <h4 className="font-semibold text-gray-800 mb-2">🎯 Objectives</h4>
+                          <ul className="list-disc list-inside space-y-1 text-gray-700">
+                            {objectives.map((obj: string, idx: number) => (
+                              <li key={idx}>{obj}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+
+                    {(() => {
+                      const requirements = aiPreviewData.projectForm?.requirements || aiPreviewData.requirements;
+                      return Array.isArray(requirements) && requirements.length > 0 && (
+                        <div className="mb-4">
+                          <h4 className="font-semibold text-gray-800 mb-2">✅ Requirements</h4>
+                          <ul className="list-disc list-inside space-y-1 text-gray-700">
+                            {requirements.map((req: string, idx: number) => (
+                              <li key={idx}>{req}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+
+                    {(() => {
+                      const rubric = aiPreviewData.projectForm?.rubric_criteria || aiPreviewData.rubric_criteria;
+                      return Array.isArray(rubric) && rubric.length > 0 && (
+                        <div className="border rounded-lg p-4 mb-4">
+                          <h4 className="font-semibold text-gray-800 mb-3">📋 Rubric</h4>
+                          <div className="space-y-2">
+                            {rubric.map((criterion: any, idx: number) => (
+                            <div key={idx} className="bg-gray-50 p-3 rounded">
+                              <div className="flex justify-between items-start">
+                                <div className="flex-1">
+                                  <p className="font-medium text-gray-900">{criterion.criterion}</p>
+                                  <p className="text-sm text-gray-600 mt-1">{criterion.description}</p>
+                                </div>
+                                <span className="ml-4 px-2 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded">
+                                  {criterion.max_points} pts
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      );
+                    })()}
+
+                    {(() => {
+                      const resources = aiPreviewData.projectForm?.resources || aiPreviewData.resources;
+                      return Array.isArray(resources) && resources.length > 0 && (
+                        <div className="mb-4">
+                          <h4 className="font-semibold text-gray-800 mb-2">📚 Resources</h4>
+                          <ul className="list-disc list-inside space-y-1 text-gray-700">
+                            {resources.map((res: string, idx: number) => (
+                              <li key={idx}>{res}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="flex items-center gap-4 mt-4 text-sm text-gray-600">
+                      <span>⏱️ Timeline: {aiPreviewData.projectForm?.timeline_weeks || aiPreviewData.timeline_weeks || 1} week(s)</span>
+                      <span>📊 Total Points: {aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-between p-6 border-t bg-gray-50">
+              <button
+                onClick={handleRegeneratePreview}
+                disabled={isLoading}
+                className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                🔄 Regenerate
+              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleRejectPreview}
+                  disabled={isLoading}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  ✕ Reject
+                </button>
+                <button
+                  onClick={handleAcceptPreview}
+                  disabled={isLoading}
+                  className="px-6 py-2 bg-green-600 text-white hover:bg-green-700 rounded-lg transition-colors font-medium flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? (
+                    <>
+                      <span className="animate-spin">⏳</span>
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      💾 Accept & Save to DB
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

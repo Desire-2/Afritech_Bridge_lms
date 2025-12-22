@@ -130,7 +130,7 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
           {/* Module Selection */}
           <div>
             <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-              Select Module *
+              {assessmentType === 'project' ? 'Select Module (Optional for whole course project)' : 'Select Module *'}
             </label>
             <select
               value={selectedModuleId || ''}
@@ -138,13 +138,23 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
               className="w-full px-4 py-3 border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-slate-700 dark:text-white"
               disabled={isGenerating}
             >
-              <option value="">Select a module...</option>
+              <option value="">{assessmentType === 'project' ? 'Whole Course Project' : 'Select a module...'}</option>
               {modules.map((module) => (
                 <option key={module.id} value={module.id}>
                   {module.title} ({module.lessons?.length || 0} lessons)
                 </option>
               ))}
             </select>
+            {assessmentType === 'project' && !selectedModuleId && (
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                💡 No module selected - will generate a comprehensive capstone project covering the entire course
+              </p>
+            )}
+            {assessmentType === 'project' && selectedModuleId && (
+              <p className="text-xs text-purple-600 dark:text-purple-400 mt-1">
+                📋 Will generate a project focused on the selected module
+              </p>
+            )}
           </div>
 
           {/* Lesson Selection (if content type is lesson) */}
@@ -250,6 +260,34 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Time Warning Box */}
+          {isGenerating && (
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <div className="animate-spin h-5 w-5 border-2 border-amber-600 border-t-transparent rounded-full mt-0.5"></div>
+                <div className="text-sm text-amber-900 dark:text-amber-100">
+                  <p className="font-semibold mb-1">⏳ AI is working...</p>
+                  <p>
+                    Generation typically takes 30-120 seconds depending on content length. Please don't close this window.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Content Validation Warning */}
+          {!isGenerating && contentType === 'lesson' && selectedModuleId && selectedLessonId && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+              <div className="flex items-start space-x-2">
+                <span className="text-lg">⚠️</span>
+                <div className="text-xs text-yellow-900 dark:text-yellow-100">
+                  <p className="font-semibold">Important:</p>
+                  <p>Make sure the selected lesson has substantial content (at least 100 characters). AI cannot generate quality assessments from empty or very short lessons.</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -268,13 +306,24 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
               e.stopPropagation();
               onGenerate();
             }}
-            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all font-medium flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isGenerating || !selectedModuleId || (contentType === 'lesson' && !selectedLessonId)}
+            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 transition-all font-medium flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
+            disabled={
+              isGenerating || 
+              (assessmentType !== 'project' && !selectedModuleId) || 
+              (contentType === 'lesson' && !selectedLessonId)
+            }
+            title={
+              (assessmentType !== 'project' && !selectedModuleId) 
+                ? 'Please select a module' 
+                : (contentType === 'lesson' && !selectedLessonId) 
+                ? 'Please select a lesson' 
+                : 'Generate assessment with AI'
+            }
           >
             {isGenerating ? (
               <>
                 <div className="animate-spin h-5 w-5 border-2 border-white border-t-transparent rounded-full"></div>
-                <span>Generating...</span>
+                <span>Generating... Please wait</span>
               </>
             ) : (
               <>
