@@ -1,43 +1,28 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import RootRedirect from './root-redirect';
 
-// Company Logo Component
+// Company Logo Component (uses public/logo.jpg)
 const CompanyLogo = () => (
   <div className="mb-12 animate-fade-in">
-    <div className="flex items-center justify-center gap-3">
-      <svg 
-        className="w-16 h-16 text-sky-400"
-        viewBox="0 0 64 64" 
-        fill="none" 
-        xmlns="http://www.w3.org/2000/svg"
-      >
-        <path 
-          d="M32 0L38.9282 24H25.0718L32 0ZM50.954 18L57.8822 42H44.0258L50.954 18ZM13.046 18L19.9742 42H6.11783L13.046 18ZM32 48L38.9282 72H25.0718L32 48Z" 
-          fill="currentColor"
+    <div className="flex flex-col items-center justify-center gap-3">
+      <div className="relative w-40 h-40 rounded-full overflow-hidden shadow-2xl ring-4 ring-sky-500/30 transform transition-all duration-500 hover:scale-105 hover:rotate-3">
+        <Image
+          src="/logo.jpg"
+          alt="Afritec Bridge logo"
+          fill
+          sizes="160px"
+          className="object-cover"
         />
-        <path 
-          d="M32 8L40 32H24L32 8ZM48 24L56 48H40L48 24ZM16 24L24 48H8L16 24ZM32 40L40 64H24L32 40Z" 
-          fill="url(#logo-gradient)"
-        />
-        <defs>
-          <linearGradient 
-            id="logo-gradient" 
-            x1="32" 
-            y1="0" 
-            x2="32" 
-            y2="64" 
-            gradientUnits="userSpaceOnUse"
-          >
-            <stop stopColor="#7DD3FC" />
-            <stop offset="1" stopColor="#0EA5E9" />
-          </linearGradient>
-        </defs>
-      </svg>
-      <span className="text-4xl font-bold bg-gradient-to-r from-sky-400 to-blue-500 bg-clip-text text-transparent">
+        <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent mix-blend-overlay" />
+      </div>
+
+      <span className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-blue-400 to-indigo-500 bg-clip-text text-transparent drop-shadow-sm">
         Afritec Bridge
       </span>
+      <div className="mt-2 text-sm text-slate-300">Learn. Build. Connect.</div>
     </div>
   </div>
 );
