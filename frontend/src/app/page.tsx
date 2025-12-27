@@ -47,7 +47,7 @@ export default function HomePage() {
     <>
       <RootRedirect />
       <main className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-8 relative overflow-hidden">
-        {/* Animated background elements */}
+        {/* Background */}
         <div className="absolute inset-0 opacity-10 bg-[url('/grid-pattern.svg')] bg-cover" />
         <div className="absolute inset-0 bg-gradient-radial from-sky-400/10 to-transparent" />
 
@@ -55,65 +55,61 @@ export default function HomePage() {
           <CompanyLogo />
 
           <div className="text-center max-w-3xl space-y-8">
-            <h1 className="text-5xl md:text-7xl font-bold mb-6 animate-slide-up">
+            <h1 className="text-5xl md:text-7xl font-bold animate-slide-up">
               Empower Your Tech Journey
               <span className="block mt-4 text-3xl md:text-4xl font-normal text-slate-300">
                 From Learning to Opportunity
               </span>
             </h1>
 
-            <p className="text-xl md:text-2xl text-slate-300 mb-10 max-w-2xl mx-auto leading-relaxed">
-              Join a community-driven platform where African talent meets global tech opportunities. 
-              Master in-demand skills and accelerate your career.
+            <p className="text-xl md:text-2xl text-slate-300 max-w-2xl mx-auto leading-relaxed">
+              Apply to practical tech training programs designed for African youth, 
+              including learners from rural and underserved communities.
             </p>
 
-            <div className="flex flex-col sm:flex-row justify-center gap-6 animate-fade-in-up">
-              <Link 
-                href="/courses"
-                className="px-8 py-4 bg-sky-500 hover:bg-sky-600 text-white font-semibold rounded-xl shadow-lg 
-                         transition-all duration-300 hover:shadow-2xl hover:shadow-sky-500/20 text-lg
-                         flex items-center justify-center gap-2"
+            {/* APPLY BUTTON */}
+            <div className="flex justify-center animate-fade-in-up">
+              <Link
+                href="https://form.jotform.com/253592779063570"
+                className="px-10 py-5 bg-sky-500 hover:bg-sky-600 text-white font-bold rounded-2xl shadow-xl 
+                           transition-all duration-300 hover:shadow-2xl hover:shadow-sky-500/30 text-xl
+                           flex items-center justify-center gap-3"
               >
-                <span className="text-2xl">🎓</span>
-                Explore Courses
-              </Link>
-              <Link 
-                href="/opportunities"
-                className="px-8 py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl shadow-lg 
-                         transition-all duration-300 hover:shadow-2xl hover:shadow-emerald-500/20 text-lg
-                         flex items-center justify-center gap-2"
-              >
-                <span className="text-2xl">🌍</span>
-                Find Opportunities
+                <span className="text-3xl">📝</span>
+                Apply for a Course
               </Link>
             </div>
 
+            {/* STATS */}
             <div className="mt-16 grid grid-cols-3 gap-8 text-center animate-stagger">
               <div className="p-4 bg-white/5 rounded-xl backdrop-blur-sm hover:bg-white/10 transition-all">
                 <div className="text-3xl font-bold text-sky-400">10K+</div>
-                <div className="text-slate-400">Students Empowered</div>
+                <div className="text-slate-400">Learners Trained</div>
               </div>
               <div className="p-4 bg-white/5 rounded-xl backdrop-blur-sm hover:bg-white/10 transition-all">
-                <div className="text-3xl font-bold text-emerald-400">150+</div>
-                <div className="text-slate-400">Courses Available</div>
+                <div className="text-3xl font-bold text-emerald-400">Rural</div>
+                <div className="text-slate-400">Friendly Programs</div>
               </div>
               <div className="p-4 bg-white/5 rounded-xl backdrop-blur-sm hover:bg-white/10 transition-all">
-                <div className="text-3xl font-bold text-purple-400">500+</div>
-                <div className="text-slate-400">Opportunities Posted</div>
+                <div className="text-3xl font-bold text-purple-400">AI</div>
+                <div className="text-slate-400">Fair Selection</div>
               </div>
             </div>
 
+            {/* LOGIN 
             <div className="mt-12 animate-fade-in">
               <p className="text-slate-400">
-                Already part of our community?{' '}
+                Already admitted?{' '}
                 <Link 
                   href="/auth/login" 
                   className="text-sky-400 hover:text-sky-300 font-medium underline-offset-4 hover:underline"
                 >
-                  Sign In Now
+                  Sign In
                 </Link>
               </p>
             </div>
+            */}
+
           </div>
         </div>
       </main>
