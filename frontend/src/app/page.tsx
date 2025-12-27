@@ -20,7 +20,7 @@ const CompanyLogo = () => (
       </div>
 
       <span className="text-4xl font-extrabold tracking-tight bg-gradient-to-r from-sky-300 via-blue-400 to-indigo-500 bg-clip-text text-transparent drop-shadow-sm">
-        Afritec Bridge
+        AfriTech Bridge
       </span>
       <div className="mt-2 text-sm text-slate-300">Learn. Build. Connect.</div>
     </div>
