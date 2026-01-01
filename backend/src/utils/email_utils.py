@@ -3,13 +3,21 @@ from flask import current_app
 from flask_mail import Mail, Message
 import logging
 import time
+import threading
 
 logger = logging.getLogger(__name__)
 
 # This will be initialized in main.py
 mail = Mail()
 
-def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2):
+def send_email_async(app, to, subject, template=None, body=None, retries=3, retry_delay=2):
+    """
+    Send email in a separate thread to avoid blocking the main request
+    """
+    with app.app_context():
+        _send_email_sync(to, subject, template, body, retries, retry_delay)
+
+def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2, async_send=True):
     """
     Send an email with the given subject and content to the recipient
     
@@ -20,9 +28,10 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2):
         body: Plain text content (fallback)
         retries: Number of retry attempts (default: 3)
         retry_delay: Seconds to wait between retries (default: 2)
+        async_send: Send email asynchronously to avoid blocking (default: True)
     
     Returns:
-        bool: True if email was sent successfully, False otherwise
+        bool: True if email send was initiated successfully, False otherwise
     """
     try:
         # Check if email configuration is available
@@ -38,6 +47,34 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2):
         if not recipients or not any(recipients):
             logger.error("No valid email recipients provided")
             return False
+        
+        # Send email asynchronously to avoid blocking the request
+        if async_send:
+            app = current_app._get_current_object()
+            thread = threading.Thread(
+                target=send_email_async,
+                args=(app, to, subject, template, body, retries, retry_delay)
+            )
+            thread.daemon = True
+            thread.start()
+            logger.info(f"📧 Email queued for async delivery to {', '.join(recipients)}")
+            logger.info(f"   Subject: {subject}")
+            return True
+        else:
+            # Synchronous send for critical emails
+            return _send_email_sync(to, subject, template, body, retries, retry_delay)
+            
+    except Exception as e:
+        logger.error(f"❌ Unexpected error queueing email to {to}: {str(e)}")
+        return False
+
+def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_delay=2):
+    """
+    Internal synchronous email sending function
+    """
+    try:
+        # Convert to list if single email
+        recipients = [to] if isinstance(to, str) else to
             
         sender = current_app.config['MAIL_DEFAULT_SENDER']
         
@@ -60,7 +97,7 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2):
                 # Set a shorter timeout for email sending to prevent worker timeouts
                 import socket
                 original_timeout = socket.getdefaulttimeout()
-                socket.setdefaulttimeout(30)  # 30 second timeout for email
+                socket.setdefaulttimeout(10)  # Reduced to 10 seconds to prevent worker timeout
                 
                 try:
                     mail.send(msg)
