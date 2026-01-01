@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle, User, Mail, Phone, Globe, GraduationCap, Briefcase, Monitor, Target, Clock, Award, Sparkles, TrendingUp, Shield, Zap } from 'lucide-react';
 
 interface CourseApplicationFormProps {
   courseId: number;
@@ -262,95 +262,174 @@ export default function CourseApplicationForm({
 
   if (success) {
     return (
-      <Card className="max-w-2xl mx-auto shadow-xl border-green-200">
-        <CardContent className="pt-6">
-          <div className="text-center space-y-6">
-            <div className="flex justify-center">
-              <div className="p-4 bg-green-100 rounded-full">
-                <CheckCircle2 className="w-16 h-16 text-green-600" />
+      <div className="max-w-4xl mx-auto">
+        <Card className="shadow-2xl border border-gray-200 bg-white overflow-hidden">
+          <CardContent className="pt-12 pb-8">
+            <div className="text-center space-y-8">
+              {/* Animated Success Icon */}
+              <div className="flex justify-center">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-emerald-200 rounded-full blur-xl animate-pulse opacity-50"></div>
+                  <div className="relative p-6 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-full shadow-lg transform hover:scale-110 transition-transform duration-300">
+                    <CheckCircle2 className="w-20 h-20 text-white" />
+                  </div>
+                  <div className="absolute -top-2 -right-2">
+                    <Sparkles className="w-8 h-8 text-amber-500 animate-bounce" />
+                  </div>
+                </div>
               </div>
-            </div>
-            <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-2">Application Submitted Successfully!</h2>
-              <p className="text-gray-600 text-lg">
-                Thank you for applying to <strong className="text-sky-600">{courseTitle || 'the course'}</strong>
-              </p>
-            </div>
+              
+              {/* Success Message */}
+              <div className="space-y-3">
+                <h2 className="text-4xl font-bold text-gray-900">
+                  Application Submitted Successfully!
+                </h2>
+                <p className="text-gray-700 text-xl max-w-2xl mx-auto">
+                  Thank you for applying to{' '}
+                  <span className="font-bold text-emerald-600">
+                    {courseTitle || 'the course'}
+                  </span>
+                </p>
+              </div>
             
             {applicationId && (
-              <div className="bg-gradient-to-br from-sky-50 to-blue-50 border border-sky-200 p-6 rounded-xl">
-                <p className="text-gray-700 mb-2">
-                  <strong className="text-lg">Application ID:</strong>
-                  <span className="ml-2 text-2xl font-mono font-bold text-sky-700">#{applicationId}</span>
-                </p>
-                <p className="text-sm text-gray-500">
-                  💡 Save this ID to track your application status
-                </p>
-              </div>
-            )}
-
-            {scores && (
-              <div>
-                <h3 className="text-lg font-semibold text-gray-800 mb-4">Your Application Scores</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 p-4 rounded-xl">
-                    <p className="text-sm text-blue-700 font-semibold mb-1">Application Score</p>
-                    <p className="text-3xl font-bold text-blue-800">{scores.application_score}<span className="text-lg">/100</span></p>
+              <div className="relative">
+                <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-200 p-8 rounded-2xl shadow-md">
+                  <div className="flex items-center justify-center gap-3 mb-3">
+                    <Shield className="w-6 h-6 text-emerald-600" />
+                    <strong className="text-lg text-gray-900">Application ID</strong>
                   </div>
-                  <div className="bg-gradient-to-br from-green-50 to-green-100 border border-green-200 p-4 rounded-xl">
-                    <p className="text-sm text-green-700 font-semibold mb-1">Readiness Score</p>
-                    <p className="text-3xl font-bold text-green-800">{scores.readiness_score}<span className="text-lg">/100</span></p>
+                  <div className="flex items-center justify-center gap-2 mb-4">
+                    <span className="text-4xl font-mono font-bold text-emerald-600">
+                      #{applicationId}
+                    </span>
                   </div>
-                  <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 p-4 rounded-xl">
-                    <p className="text-sm text-purple-700 font-semibold mb-1">Commitment Score</p>
-                    <p className="text-3xl font-bold text-purple-800">{scores.commitment_score}<span className="text-lg">/100</span></p>
-                  </div>
-                  <div className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 p-4 rounded-xl">
-                    <p className="text-sm text-amber-700 font-semibold mb-1">Final Rank</p>
-                    <p className="text-3xl font-bold text-amber-800">{scores.final_rank}<span className="text-lg">/100</span></p>
+                  <div className="flex items-center justify-center gap-2 text-sm text-gray-700">
+                    <Sparkles className="w-4 h-4 text-amber-500" />
+                    <span>Save this ID to track your application status</span>
                   </div>
                 </div>
               </div>
             )}
 
-            <div className="bg-gray-50 border border-gray-200 p-6 rounded-xl text-left">
-              <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                <CheckCircle2 className="w-5 h-5 text-green-600" />
-                What Happens Next?
-              </h4>
-              <ul className="space-y-2 text-sm text-gray-700">
-                <li className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>Confirmation email sent to <strong>{formData.email}</strong></span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>Our team will review your application within 2-3 business days</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>You'll receive an email notification once your application is processed</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-green-600 mt-1">✓</span>
-                  <span>Check your spam folder if you don't see our email</span>
-                </li>
-              </ul>
+            {scores && (
+              <div className="space-y-6">
+                <div className="flex items-center justify-center gap-2">
+                  <TrendingUp className="w-6 h-6 text-gray-700" />
+                  <h3 className="text-2xl font-bold text-gray-900">Your Application Scores</h3>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Application Score */}
+                  <div className="relative">
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 p-6 rounded-2xl shadow-md hover:shadow-lg transition-all duration-300">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm text-gray-800 font-bold uppercase tracking-wide">Application Score</p>
+                        <Target className="w-5 h-5 text-blue-600" />
+                      </div>
+                      <p className="text-5xl font-bold text-blue-600">{scores.application_score}<span className="text-2xl text-gray-600">/100</span></p>
+                      <div className="mt-3 h-2.5 bg-blue-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-600 rounded-full" style={{ width: `${scores.application_score}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Readiness Score */}
+                  <div className="relative">
+                    <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 border-2 border-emerald-300 p-6 rounded-2xl shadow-md hover:shadow-lg transition-all duration-300">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm text-gray-800 font-bold uppercase tracking-wide">Readiness Score</p>
+                        <Zap className="w-5 h-5 text-emerald-600" />
+                      </div>
+                      <p className="text-5xl font-bold text-emerald-600">{scores.readiness_score}<span className="text-2xl text-gray-600">/100</span></p>
+                      <div className="mt-3 h-2.5 bg-emerald-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${scores.readiness_score}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Commitment Score */}
+                  <div className="relative">
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-300 p-6 rounded-2xl shadow-md hover:shadow-lg transition-all duration-300">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm text-gray-800 font-bold uppercase tracking-wide">Commitment Score</p>
+                        <Award className="w-5 h-5 text-purple-600" />
+                      </div>
+                      <p className="text-5xl font-bold text-purple-600">{scores.commitment_score}<span className="text-2xl text-gray-600">/100</span></p>
+                      <div className="mt-3 h-2.5 bg-purple-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-purple-600 rounded-full" style={{ width: `${scores.commitment_score}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Final Rank */}
+                  <div className="relative">
+                    <div className="bg-gradient-to-br from-amber-50 to-amber-100 border-2 border-amber-300 p-6 rounded-2xl shadow-md hover:shadow-lg transition-all duration-300">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-sm text-gray-800 font-bold uppercase tracking-wide">Final Rank</p>
+                        <Sparkles className="w-5 h-5 text-amber-600" />
+                      </div>
+                      <p className="text-5xl font-bold text-amber-600">{scores.final_rank}<span className="text-2xl text-gray-600">/100</span></p>
+                      <div className="mt-3 h-2.5 bg-amber-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-amber-600 rounded-full" style={{ width: `${scores.final_rank}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="relative">
+              <div className="bg-gray-50 border-2 border-gray-300 p-8 rounded-2xl shadow-sm text-left">
+                <h4 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+                  <div className="p-2 bg-emerald-100 rounded-lg">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                  </div>
+                  What Happens Next?
+                </h4>
+                <ul className="space-y-4 text-base text-gray-800">
+                  <li className="flex items-start gap-4 group">
+                    <div className="flex-shrink-0 w-8 h-8 bg-emerald-100 rounded-full flex items-center justify-center group-hover:bg-emerald-200 transition-colors">
+                      <Mail className="w-4 h-4 text-emerald-600" />
+                    </div>
+                    <span>Confirmation email sent to <strong className="text-emerald-700">{formData.email}</strong></span>
+                  </li>
+                  <li className="flex items-start gap-4 group">
+                    <div className="flex-shrink-0 w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                      <Clock className="w-4 h-4 text-blue-600" />
+                    </div>
+                    <span>Our team will review your application within <strong className="text-blue-700">2-3 business days</strong></span>
+                  </li>
+                  <li className="flex items-start gap-4 group">
+                    <div className="flex-shrink-0 w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center group-hover:bg-purple-200 transition-colors">
+                      <Sparkles className="w-4 h-4 text-purple-600" />
+                    </div>
+                    <span>You'll receive an email notification once your application is processed</span>
+                  </li>
+                  <li className="flex items-start gap-4 group">
+                    <div className="flex-shrink-0 w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center group-hover:bg-amber-200 transition-colors">
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                    </div>
+                    <span>Check your spam folder if you don't see our email</span>
+                  </li>
+                </ul>
+              </div>
             </div>
 
-            <div className="flex gap-3 justify-center">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button
                 onClick={() => window.location.href = '/courses'}
-                className="bg-sky-600 hover:bg-sky-700 text-white px-8"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-10 py-6 text-lg font-semibold shadow-md hover:shadow-lg transition-all duration-300 rounded-xl"
               >
+                <Sparkles className="w-5 h-5 mr-2" />
                 Browse More Courses
               </Button>
               {onCancel && (
                 <Button
                   variant="outline"
                   onClick={onCancel}
-                  className="px-8"
+                  className="px-10 py-6 text-lg border-2 border-gray-300 hover:bg-gray-50 rounded-xl transition-all duration-300"
                 >
+                  <ChevronLeft className="w-5 h-5 mr-2" />
                   Go Back
                 </Button>
               )}
@@ -358,6 +437,7 @@ export default function CourseApplicationForm({
           </div>
         </CardContent>
       </Card>
+      </div>
     );
   }
 
@@ -381,35 +461,39 @@ export default function CourseApplicationForm({
   };
 
   const renderApplicantInfo = () => (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Duplicate Application Warning */}
       {existingApplication && (
-        <Alert className="border-amber-300 bg-amber-50 dark:bg-amber-950">
-          <AlertTriangle className="h-5 w-5 text-amber-600" />
+        <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 shadow-lg rounded-xl">
+          <AlertTriangle className="h-6 w-6 text-amber-600" />
           <AlertDescription className="ml-2">
-            <div className="space-y-2">
-              <p className="font-semibold text-amber-900 dark:text-amber-200">
+            <div className="space-y-3">
+              <p className="font-bold text-amber-900 dark:text-amber-200 text-lg">
                 You have already applied for this course!
               </p>
-              <div className="text-sm text-amber-800 dark:text-amber-300 space-y-1">
-                <p>
+              <div className="text-sm text-amber-800 dark:text-amber-300 space-y-2 bg-white/50 p-4 rounded-lg">
+                <p className="flex items-center gap-2">
+                  <Shield className="w-4 h-4" />
                   <strong>Application ID:</strong> #{existingApplication.id}
                 </p>
-                <p>
-                  <strong>Status:</strong> <span className="capitalize">{existingApplication.status}</span>
+                <p className="flex items-center gap-2">
+                  <Award className="w-4 h-4" />
+                  <strong>Status:</strong> <span className="capitalize font-semibold">{existingApplication.status}</span>
                 </p>
                 {existingApplication.submitted_at && (
-                  <p>
+                  <p className="flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
                     <strong>Submitted:</strong> {new Date(existingApplication.submitted_at).toLocaleDateString()}
                   </p>
                 )}
                 {existingApplication.final_rank && (
-                  <p>
+                  <p className="flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" />
                     <strong>Final Rank:</strong> {existingApplication.final_rank}/100
                   </p>
                 )}
               </div>
-              <p className="text-sm text-amber-700 dark:text-amber-400 pt-2">
+              <p className="text-sm text-amber-700 dark:text-amber-400 pt-2 bg-white/50 p-3 rounded-lg">
                 Please check your email ({formData.email}) for updates on your application status.
                 You cannot submit multiple applications for the same course.
               </p>
@@ -420,31 +504,47 @@ export default function CourseApplicationForm({
 
       {/* Email checking indicator */}
       {checkingDuplicate && (
-        <div className="flex items-center gap-2 text-sm text-gray-600 bg-blue-50 border border-blue-200 p-3 rounded-lg">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>Checking if you've already applied...</span>
+        <div className="flex items-center gap-3 text-base text-blue-700 bg-gradient-to-r from-blue-50 to-sky-50 border-2 border-blue-200 p-4 rounded-xl shadow-sm">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="font-semibold">Checking if you've already applied...</span>
         </div>
       )}
 
-      <div>
-        <Label htmlFor="full_name">Full Name <span className="text-red-500">*</span></Label>
+      {/* Full Name Input */}
+      <div className="relative group">
+        <Label htmlFor="full_name" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <User className="w-5 h-5 text-emerald-600" />
+          Full Name <span className="text-red-600">*</span>
+        </Label>
         <Input
           id="full_name"
           value={formData.full_name}
           onChange={(e) => handleInputChange('full_name', e.target.value)}
-          placeholder="Your full legal name"
-          className={validationErrors.full_name ? 'border-red-500' : ''}
+          placeholder="Enter your full legal name"
+          className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
+            validationErrors.full_name 
+              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200' 
+              : 'border-gray-300 bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-200'
+          }`}
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-600 mt-2 ml-1 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4" />
           Please ensure this matches your official identification.
         </p>
         {validationErrors.full_name && (
-          <p className="text-xs text-red-500 mt-1">{validationErrors.full_name}</p>
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.full_name}
+          </p>
         )}
       </div>
 
-      <div>
-        <Label htmlFor="email">Email Address <span className="text-red-500">*</span></Label>
+      {/* Email Input */}
+      <div className="relative group">
+        <Label htmlFor="email" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Mail className="w-5 h-5 text-emerald-600" />
+          Email Address <span className="text-red-600">*</span>
+        </Label>
         <Input
           id="email"
           type="email"
@@ -452,123 +552,172 @@ export default function CourseApplicationForm({
           onChange={(e) => handleInputChange('email', e.target.value)}
           onBlur={handleEmailBlur}
           placeholder="your.email@example.com"
-          className={validationErrors.email ? 'border-red-500' : ''}
           disabled={checkingDuplicate}
+          className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
+            validationErrors.email 
+              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200' 
+              : 'border-gray-300 bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-200'
+          } ${checkingDuplicate ? 'opacity-50 cursor-not-allowed' : ''}`}
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-700 mt-2 ml-1 flex items-center gap-2">
+          <Sparkles className="w-4 h-4" />
           We will use this for all official communication and check for duplicate applications.
         </p>
         {validationErrors.email && (
-          <p className="text-xs text-red-500 mt-1">{validationErrors.email}</p>
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.email}
+          </p>
         )}
       </div>
 
-      <div>
-        <Label htmlFor="phone">Phone Number <span className="text-red-500">*</span></Label>
+      {/* Phone Input */}
+      <div className="relative group">
+        <Label htmlFor="phone" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Phone className="w-5 h-5 text-emerald-600" />
+          Phone Number <span className="text-red-600">*</span>
+        </Label>
         <Input
           id="phone"
           value={formData.phone}
           onChange={(e) => handleInputChange('phone', e.target.value)}
           placeholder="+234-801-234-5678"
-          className={validationErrors.phone ? 'border-red-500' : ''}
+          className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
+            validationErrors.phone 
+              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200' 
+              : 'border-gray-300 bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-200'
+          }`}
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-700 mt-2 ml-1">
           Include country code (e.g., +234).
         </p>
         {validationErrors.phone && (
-          <p className="text-xs text-red-500 mt-1">{validationErrors.phone}</p>
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.phone}
+          </p>
         )}
       </div>
 
-      <div>
-        <Label htmlFor="whatsapp">WhatsApp Contact Number</Label>
+      {/* WhatsApp Input */}
+      <div className="relative group">
+        <Label htmlFor="whatsapp" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Phone className="w-5 h-5 text-green-600" />
+          WhatsApp Contact Number
+        </Label>
         <Input
           id="whatsapp"
           value={formData.whatsapp_number}
           onChange={(e) => handleInputChange('whatsapp_number', e.target.value)}
           placeholder="Same as phone or different"
+          className="py-6 text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-green-500 focus-visible:ring-green-200 transition-all duration-300"
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-700 mt-2 ml-1">
           We may use WhatsApp for quick updates.
         </p>
       </div>
 
-      <div>
-        <Label htmlFor="gender">Gender</Label>
-        <Select
-          value={formData.gender}
-          onValueChange={(value) => handleInputChange('gender', value)}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Please select your gender" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="male">Male</SelectItem>
-            <SelectItem value="female">Female</SelectItem>
-            <SelectItem value="other">Other</SelectItem>
-            <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
-          </SelectContent>
-        </Select>
+      {/* Gender and Age in Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Gender Select */}
+        <div>
+          <Label htmlFor="gender" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+            <User className="w-5 h-5 text-purple-600" />
+            Gender
+          </Label>
+          <Select
+            value={formData.gender}
+            onValueChange={(value) => handleInputChange('gender', value)}
+          >
+            <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-purple-600 focus:ring-2 focus:ring-purple-200 text-gray-900">
+              <SelectValue placeholder="Please select your gender" className="text-gray-900" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="male">Male</SelectItem>
+              <SelectItem value="female">Female</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+              <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Age Range Select */}
+        <div>
+          <Label htmlFor="age_range" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+            <Clock className="w-5 h-5 text-blue-600" />
+            Age Range
+          </Label>
+          <Select
+            value={formData.age_range}
+            onValueChange={(value) => handleInputChange('age_range', value)}
+          >
+            <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-blue-600 focus:ring-2 focus:ring-blue-200 text-gray-900">
+              <SelectValue placeholder="Your age group" className="text-gray-900" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="under_18">Under 18</SelectItem>
+              <SelectItem value="18_24">18-24</SelectItem>
+              <SelectItem value="25_34">25-34</SelectItem>
+              <SelectItem value="35_44">35-44</SelectItem>
+              <SelectItem value="45_54">45-54</SelectItem>
+              <SelectItem value="55_plus">55+</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-sm text-gray-600 mt-2 ml-1">
+            This helps us tailor content to different learning styles.
+          </p>
+        </div>
       </div>
 
-      <div>
-        <Label htmlFor="age_range">Age Range</Label>
-        <Select
-          value={formData.age_range}
-          onValueChange={(value) => handleInputChange('age_range', value)}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Your age group" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="under_18">Under 18</SelectItem>
-            <SelectItem value="18_24">18-24</SelectItem>
-            <SelectItem value="25_34">25-34</SelectItem>
-            <SelectItem value="35_44">35-44</SelectItem>
-            <SelectItem value="45_54">45-54</SelectItem>
-            <SelectItem value="55_plus">55+</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-gray-500 mt-1">
-          This helps us tailor content to different learning styles.
-        </p>
-      </div>
+      {/* Country and City */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div>
+          <Label htmlFor="country" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+            <Globe className="w-5 h-5 text-emerald-600" />
+            Country
+          </Label>
+          <Input
+            id="country"
+            value={formData.country}
+            onChange={(e) => handleInputChange('country', e.target.value)}
+            placeholder="Which country are you applying from?"
+            className="py-6 text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-emerald-500 focus-visible:ring-emerald-200 transition-all duration-300"
+          />
+          <p className="text-sm text-gray-700 mt-2 ml-1">
+            We prioritize applicants from African countries.
+          </p>
+        </div>
 
-      <div>
-        <Label htmlFor="country">Country</Label>
-        <Input
-          id="country"
-          value={formData.country}
-          onChange={(e) => handleInputChange('country', e.target.value)}
-          placeholder="Which country are you applying from?"
-        />
-        <p className="text-xs text-gray-500 mt-1">
-          We prioritize applicants from African countries.
-        </p>
-      </div>
-
-      <div>
-        <Label htmlFor="city">City / District</Label>
-        <Input
-          id="city"
-          value={formData.city}
-          onChange={(e) => handleInputChange('city', e.target.value)}
-          placeholder="Your current city or district"
-        />
+        <div>
+          <Label htmlFor="city" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+            <Globe className="w-5 h-5 text-teal-600" />
+            City / District
+          </Label>
+          <Input
+            id="city"
+            value={formData.city}
+            onChange={(e) => handleInputChange('city', e.target.value)}
+            placeholder="Your current city or district"
+            className="py-6 text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-teal-500 focus-visible:ring-teal-200 transition-all duration-300"
+          />
+        </div>
       </div>
     </div>
   );
 
   const renderEducationBackground = () => (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <Label htmlFor="education_level">Highest Level of Education</Label>
+        <Label htmlFor="education_level" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <GraduationCap className="w-5 h-5 text-indigo-600" />
+          Highest Level of Education
+        </Label>
         <Select
           value={formData.education_level}
           onValueChange={(value) => handleInputChange('education_level', value)}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="What is your highest academic qualification?" />
+          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 text-gray-900">
+            <SelectValue placeholder="What is your highest academic qualification?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="high_school">High School</SelectItem>
@@ -582,13 +731,16 @@ export default function CourseApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="current_status">Current Status</Label>
+        <Label htmlFor="current_status" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Briefcase className="w-5 h-5 text-blue-600" />
+          Current Status
+        </Label>
         <Select
           value={formData.current_status}
           onValueChange={(value) => handleInputChange('current_status', value)}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="What is your current professional status?" />
+          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-blue-600 focus:ring-2 focus:ring-blue-200 text-gray-900">
+            <SelectValue placeholder="What is your current professional status?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="student">Student</SelectItem>
@@ -602,14 +754,18 @@ export default function CourseApplicationForm({
       </div>
 
       <div>
-        <Label htmlFor="field_of_study">Field of Study / Profession</Label>
+        <Label htmlFor="field_of_study" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Target className="w-5 h-5 text-purple-600" />
+          Field of Study / Profession
+        </Label>
         <Input
           id="field_of_study"
           value={formData.field_of_study}
           onChange={(e) => handleInputChange('field_of_study', e.target.value)}
           placeholder="E.g., Finance, Marketing, Engineering, Student"
+          className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-purple-600 focus:ring-2 focus:ring-purple-200 transition-all duration-300"
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-700 mt-2 ml-1">
           What is your main field of study or profession?
         </p>
       </div>
@@ -617,41 +773,47 @@ export default function CourseApplicationForm({
   );
 
   const renderExcelSkills = () => (
-    <div className="space-y-4">
-      <div>
-        <Label>Have you used Microsoft Excel before?</Label>
-        <div className="flex items-center space-x-4 mt-2">
-          <label className="flex items-center space-x-2">
+    <div className="space-y-6">
+      <div className="bg-emerald-50 border-l-4 border-emerald-600 p-6 rounded-r-xl">
+        <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-4">
+          <Monitor className="w-6 h-6 text-emerald-600" />
+          Have you used Microsoft Excel before?
+        </Label>
+        <div className="flex items-center space-x-6 mt-3">
+          <label className="flex items-center space-x-3 cursor-pointer group">
             <input
               type="radio"
               name="has_used_excel"
               checked={formData.has_used_excel === true}
               onChange={() => handleInputChange('has_used_excel', true)}
-              className="w-4 h-4"
+              className="w-5 h-5 text-emerald-600 border-2 border-gray-300 focus:ring-2 focus:ring-emerald-500"
             />
-            <span>Yes</span>
+            <span className="text-base font-semibold text-gray-700 group-hover:text-emerald-600 transition-colors">Yes</span>
           </label>
-          <label className="flex items-center space-x-2">
+          <label className="flex items-center space-x-3 cursor-pointer group">
             <input
               type="radio"
               name="has_used_excel"
               checked={formData.has_used_excel === false}
               onChange={() => handleInputChange('has_used_excel', false)}
-              className="w-4 h-4"
+              className="w-5 h-5 text-gray-600 border-2 border-gray-300 focus:ring-2 focus:ring-gray-500"
             />
-            <span>No</span>
+            <span className="text-base font-semibold text-gray-700 group-hover:text-gray-600 transition-colors">No</span>
           </label>
         </div>
       </div>
 
       <div>
-        <Label htmlFor="excel_skill_level">Your Excel Skill Level</Label>
+        <Label htmlFor="excel_skill_level" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <TrendingUp className="w-5 h-5 text-emerald-600" />
+          Your Excel Skill Level
+        </Label>
         <Select
           value={formData.excel_skill_level}
           onValueChange={(value) => handleInputChange('excel_skill_level', value)}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="How would you rate your current Excel skill level?" />
+          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-emerald-600 focus:ring-2 focus:ring-emerald-200 text-gray-900">
+            <SelectValue placeholder="How would you rate your current Excel skill level?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="never_used">Never Used Excel</SelectItem>
@@ -661,23 +823,31 @@ export default function CourseApplicationForm({
             <SelectItem value="expert">Expert (Macros, Power Query)</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-600 mt-2 ml-1 flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-amber-500" />
           Be honest! This helps us place you in the right group.
         </p>
       </div>
 
       {formData.has_used_excel && (
-        <div>
-          <Label>Which Excel tasks have you done before?</Label>
-          <p className="text-xs text-gray-500 mb-2">Select all that apply</p>
-          <div className="space-y-2">
+        <div className="bg-blue-50 border-2 border-blue-300 p-6 rounded-2xl">
+          <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-3">
+            <CheckCircle2 className="w-5 h-5 text-blue-600" />
+            Which Excel tasks have you done before?
+          </Label>
+          <p className="text-sm text-gray-700 mb-4">Select all that apply</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {EXCEL_TASKS.map((task) => (
-              <label key={task.value} className="flex items-center space-x-2">
+              <label 
+                key={task.value} 
+                className="flex items-start space-x-3 p-4 bg-white border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 cursor-pointer group"
+              >
                 <Checkbox
                   checked={(formData.excel_tasks_done || []).includes(task.value)}
                   onCheckedChange={() => handleMultiSelect('excel_tasks_done', task.value)}
+                  className="mt-0.5 w-5 h-5"
                 />
-                <span className="text-sm">{task.label}</span>
+                <span className="text-sm font-medium text-gray-700 group-hover:text-blue-700 transition-colors">{task.label}</span>
               </label>
             ))}
           </div>
@@ -687,56 +857,81 @@ export default function CourseApplicationForm({
   );
 
   const renderLearningGoals = () => (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
-        <Label htmlFor="motivation">
-          Why do you want to join this course? <span className="text-red-500">*</span>
+        <Label htmlFor="motivation" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Target className="w-5 h-5 text-rose-600" />
+          Why do you want to join this course? <span className="text-red-600">*</span>
         </Label>
         <Textarea
           id="motivation"
           value={formData.motivation}
           onChange={(e) => handleInputChange('motivation', e.target.value)}
-          placeholder="Tell us what sparked your interest in Excel Mastery..."
-          rows={4}
-          className={validationErrors.motivation ? 'border-red-500' : ''}
+          placeholder="Tell us what sparked your interest in Excel Mastery... Share your story, your challenges, and what drives you to learn this skill."
+          rows={5}
+          className={`text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 resize-none ${
+            validationErrors.motivation 
+              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200' 
+              : formData.motivation.length >= 50
+              ? 'border-emerald-500 bg-emerald-50/30 focus-visible:border-emerald-600 focus-visible:ring-emerald-300'
+              : 'border-gray-300 bg-white focus-visible:border-rose-500 focus-visible:ring-rose-200'
+          }`}
         />
-        <div className="flex justify-between items-center mt-1">
-          <p className="text-xs text-gray-500">
+        <div className="flex justify-between items-center mt-2">
+          <p className="text-sm text-gray-700 flex items-center gap-2">
+            <Sparkles className="w-4 h-4" />
             Your motivation for taking this course (minimum 50 characters)
           </p>
-          <p className="text-xs text-gray-400">
-            {formData.motivation.length} characters
+          <p className={`text-sm font-semibold px-3 py-1 rounded-full ${
+            formData.motivation.length >= 50 
+              ? 'bg-emerald-100 text-emerald-700' 
+              : formData.motivation.length >= 30
+              ? 'bg-amber-100 text-amber-700'
+              : 'bg-gray-100 text-gray-600'
+          }`}>
+            {formData.motivation.length} / 50 characters
           </p>
         </div>
         {validationErrors.motivation && (
-          <p className="text-xs text-red-500 mt-1">{validationErrors.motivation}</p>
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.motivation}
+          </p>
         )}
       </div>
 
       <div>
-        <Label htmlFor="learning_outcomes">What do you want to achieve after completing this course?</Label>
+        <Label htmlFor="learning_outcomes" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Award className="w-5 h-5 text-amber-600" />
+          What do you want to achieve after completing this course?
+        </Label>
         <Textarea
           id="learning_outcomes"
           value={formData.learning_outcomes}
           onChange={(e) => handleInputChange('learning_outcomes', e.target.value)}
-          placeholder="E.g., Get a promotion, start a business, pass a certification..."
-          rows={3}
+          placeholder="E.g., Get a promotion, start a data analytics business, pass Excel certification, build financial models..."
+          rows={4}
+          className="text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-amber-500 focus-visible:ring-amber-200 transition-all duration-300 resize-none"
         />
-        <p className="text-xs text-gray-500 mt-1">
-          Your specific learning outcomes
+        <p className="text-sm text-gray-700 mt-2 ml-1">
+          Your specific learning outcomes and goals
         </p>
       </div>
 
       <div>
-        <Label htmlFor="career_impact">How will Excel skills help your career or business?</Label>
+        <Label htmlFor="career_impact" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <TrendingUp className="w-5 h-5 text-blue-600" />
+          How will Excel skills help your career or business?
+        </Label>
         <Textarea
           id="career_impact"
           value={formData.career_impact}
           onChange={(e) => handleInputChange('career_impact', e.target.value)}
-          placeholder="Think about the real-world impact..."
-          rows={3}
+          placeholder="Think about the real-world impact... Will it help you analyze data better? Make reports? Automate tasks? Scale your business?"
+          rows={4}
+          className="text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-blue-500 focus-visible:ring-blue-200 transition-all duration-300 resize-none"
         />
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-700 mt-2 ml-1">
           Connect Excel to your professional growth
         </p>
       </div>
@@ -744,44 +939,51 @@ export default function CourseApplicationForm({
   );
 
   const renderAccessAvailability = () => (
-    <div className="space-y-4">
-      <div>
-        <Label>Do you have access to a computer or laptop?</Label>
-        <div className="flex items-center space-x-4 mt-2">
-          <label className="flex items-center space-x-2">
+    <div className="space-y-6">
+      <div className="bg-purple-50 border-l-4 border-purple-600 p-6 rounded-r-xl">
+        <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-4">
+          <Monitor className="w-6 h-6 text-purple-600" />
+          Do you have access to a computer or laptop?
+        </Label>
+        <div className="flex items-center space-x-6 mt-3">
+          <label className="flex items-center space-x-3 cursor-pointer group">
             <input
               type="radio"
               name="has_computer"
               checked={formData.has_computer === true}
               onChange={() => handleInputChange('has_computer', true)}
-              className="w-4 h-4"
+              className="w-5 h-5 text-purple-600 border-2 border-gray-300 focus:ring-2 focus:ring-purple-500"
             />
-            <span>Yes</span>
+            <span className="text-base font-semibold text-gray-700 group-hover:text-purple-600 transition-colors">Yes</span>
           </label>
-          <label className="flex items-center space-x-2">
+          <label className="flex items-center space-x-3 cursor-pointer group">
             <input
               type="radio"
               name="has_computer"
               checked={formData.has_computer === false}
               onChange={() => handleInputChange('has_computer', false)}
-              className="w-4 h-4"
+              className="w-5 h-5 text-gray-600 border-2 border-gray-300 focus:ring-2 focus:ring-gray-500"
             />
-            <span>No</span>
+            <span className="text-base font-semibold text-gray-700 group-hover:text-gray-600 transition-colors">No</span>
           </label>
         </div>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-600 mt-3 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4" />
           A personal device is highly recommended for practice.
         </p>
       </div>
 
       <div>
-        <Label htmlFor="internet_access_type">Internet Access Type</Label>
+        <Label htmlFor="internet_access_type" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Globe className="w-5 h-5 text-cyan-600" />
+          Internet Access Type
+        </Label>
         <Select
           value={formData.internet_access_type}
           onValueChange={(value) => handleInputChange('internet_access_type', value)}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="How do you primarily access the internet?" />
+          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-cyan-600 focus:ring-2 focus:ring-cyan-200 text-gray-900">
+            <SelectValue placeholder="How do you primarily access the internet?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="stable_broadband">Stable Broadband / WiFi</SelectItem>
@@ -791,19 +993,22 @@ export default function CourseApplicationForm({
             <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-sm text-gray-600 mt-2 ml-1">
           This helps us plan for data usage and connectivity challenges.
         </p>
       </div>
 
       <div>
-        <Label htmlFor="preferred_learning_mode">Preferred Learning Mode</Label>
+        <Label htmlFor="preferred_learning_mode" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Target className="w-5 h-5 text-indigo-600" />
+          Preferred Learning Mode
+        </Label>
         <Select
           value={formData.preferred_learning_mode}
           onValueChange={(value) => handleInputChange('preferred_learning_mode', value)}
         >
-          <SelectTrigger>
-            <SelectValue placeholder="How do you prefer to learn?" />
+          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 text-gray-900">
+            <SelectValue placeholder="How do you prefer to learn?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="self_paced">Self-Paced (Learn at my own speed)</SelectItem>
@@ -813,19 +1018,26 @@ export default function CourseApplicationForm({
         </Select>
       </div>
 
-      <div>
-        <Label>Available Time for Learning</Label>
-        <p className="text-xs text-gray-500 mb-2">
+      <div className="bg-blue-50 border-2 border-blue-300 p-6 rounded-2xl">
+        <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-3">
+          <Clock className="w-6 h-6 text-blue-600" />
+          Available Time for Learning
+        </Label>
+        <p className="text-sm text-gray-700 mb-4">
           When are you most available to dedicate time to the course? (Select all that work for you)
         </p>
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {TIME_SLOTS.map((slot) => (
-            <label key={slot.value} className="flex items-center space-x-2">
+            <label 
+              key={slot.value} 
+              className="flex items-start space-x-3 p-4 bg-white border-2 border-gray-200 rounded-xl hover:border-sky-400 hover:bg-sky-50 transition-all duration-200 cursor-pointer group"
+            >
               <Checkbox
                 checked={(formData.available_time || []).includes(slot.value)}
                 onCheckedChange={() => handleMultiSelect('available_time', slot.value)}
+                className="mt-0.5 w-5 h-5"
               />
-              <span className="text-sm">{slot.label}</span>
+              <span className="text-sm font-medium text-gray-700 group-hover:text-sky-700 transition-colors">{slot.label}</span>
             </label>
           ))}
         </div>
@@ -834,158 +1046,269 @@ export default function CourseApplicationForm({
   );
 
   const renderCommitment = () => (
-    <div className="space-y-6">
-      <Alert>
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>
-          Please review and confirm your commitment to the course requirements.
+    <div className="space-y-8">
+      <Alert className="border-2 border-blue-400 bg-blue-50 shadow-sm">
+        <AlertCircle className="h-6 w-6 text-blue-600" />
+        <AlertDescription className="ml-2">
+          <p className="font-bold text-gray-900 text-base">
+            Please review and confirm your commitment to the course requirements.
+          </p>
         </AlertDescription>
       </Alert>
 
-      <div className="space-y-4">
-        <div className="flex items-start space-x-3 p-4 border rounded-lg">
-          <Checkbox
-            id="committed"
-            checked={formData.committed_to_complete}
-            onCheckedChange={(checked) => handleCheckboxChange('committed_to_complete', checked as boolean)}
-            className={validationErrors.committed_to_complete ? 'border-red-500' : ''}
-          />
-          <div className="flex-1">
-            <Label htmlFor="committed" className="font-medium cursor-pointer">
-              Are you committed to completing the full course?
-            </Label>
-            <p className="text-sm text-gray-500 mt-1">
-              We are looking for dedicated learners! Your commitment is key to your success.
-            </p>
-            {validationErrors.committed_to_complete && (
-              <p className="text-xs text-red-500 mt-1">{validationErrors.committed_to_complete}</p>
-            )}
+      <div className="space-y-6">
+        {/* Commitment Checkbox */}
+        <div className={`relative transition-all duration-300 ${
+          formData.committed_to_complete 
+            ? 'bg-emerald-50 border-2 border-emerald-500' 
+            : validationErrors.committed_to_complete
+            ? 'bg-red-50 border-2 border-red-400'
+            : 'bg-white border-2 border-gray-300 hover:border-emerald-400'
+        } p-6 rounded-2xl shadow-sm hover:shadow-md`}>
+          <div className="flex items-start space-x-4">
+            <Checkbox
+              id="committed"
+              checked={formData.committed_to_complete}
+              onCheckedChange={(checked) => handleCheckboxChange('committed_to_complete', checked as boolean)}
+              className="mt-1 w-6 h-6"
+            />
+            <div className="flex-1">
+              <Label htmlFor="committed" className="text-base font-bold cursor-pointer text-gray-900 flex items-center gap-2">
+                <Award className="w-5 h-5 text-emerald-600" />
+                Are you committed to completing the full course?
+              </Label>
+              <p className="text-sm text-gray-700 mt-2 leading-relaxed">
+                We are looking for dedicated learners! Your commitment is key to your success. This course requires consistent effort and active participation.
+              </p>
+              {validationErrors.committed_to_complete && (
+                <p className="text-sm text-red-600 mt-3 font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  {validationErrors.committed_to_complete}
+                </p>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-start space-x-3 p-4 border rounded-lg">
-          <Checkbox
-            id="assessments"
-            checked={formData.agrees_to_assessments}
-            onCheckedChange={(checked) => handleCheckboxChange('agrees_to_assessments', checked as boolean)}
-            className={validationErrors.agrees_to_assessments ? 'border-red-500' : ''}
-          />
-          <div className="flex-1">
-            <Label htmlFor="assessments" className="font-medium cursor-pointer">
-              Do you agree to attend assessments and practical projects?
-            </Label>
-            <p className="text-sm text-gray-500 mt-1">
-              I agree to participate fully in all required course activities.
-            </p>
-            {validationErrors.agrees_to_assessments && (
-              <p className="text-xs text-red-500 mt-1">{validationErrors.agrees_to_assessments}</p>
-            )}
+        {/* Assessment Agreement Checkbox */}
+        <div className={`relative transition-all duration-300 ${
+          formData.agrees_to_assessments 
+            ? 'bg-purple-50 border-2 border-purple-500' 
+            : validationErrors.agrees_to_assessments
+            ? 'bg-red-50 border-2 border-red-400'
+            : 'bg-white border-2 border-gray-300 hover:border-purple-400'
+        } p-6 rounded-2xl shadow-sm hover:shadow-md`}>
+          <div className="flex items-start space-x-4">
+            <Checkbox
+              id="assessments"
+              checked={formData.agrees_to_assessments}
+              onCheckedChange={(checked) => handleCheckboxChange('agrees_to_assessments', checked as boolean)}
+              className="mt-1 w-6 h-6"
+            />
+            <div className="flex-1">
+              <Label htmlFor="assessments" className="text-base font-bold cursor-pointer text-gray-900 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-purple-600" />
+                Do you agree to attend assessments and practical projects?
+              </Label>
+              <p className="text-sm text-gray-700 mt-2 leading-relaxed">
+                I agree to participate fully in all required course activities including quizzes, assignments, and practical projects to demonstrate my learning.
+              </p>
+              {validationErrors.agrees_to_assessments && (
+                <p className="text-sm text-red-600 mt-3 font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  {validationErrors.agrees_to_assessments}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
+      {/* Referral Source */}
       <div>
-        <Label htmlFor="referral_source">How did you hear about this course?</Label>
+        <Label htmlFor="referral_source" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
+          <Sparkles className="w-5 h-5 text-amber-600" />
+          How did you hear about this course?
+        </Label>
         <Input
           id="referral_source"
           value={formData.referral_source}
           onChange={(e) => handleInputChange('referral_source', e.target.value)}
-          placeholder="E.g., Facebook, Friend referral, Google search..."
+          placeholder="E.g., Facebook, Friend referral, Google search, WhatsApp group..."
+          className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-amber-600 focus:ring-2 focus:ring-amber-200 transition-all duration-300"
         />
-        <p className="text-xs text-gray-500 mt-1">
-          Please let us know how you found us.
+        <p className="text-sm text-gray-700 mt-2 ml-1">
+          Please let us know how you found us - this helps us reach more learners!
         </p>
       </div>
 
-      <div className="bg-blue-50 p-4 rounded-lg">
-        <p className="text-sm text-blue-900 font-medium">
-          📌 Application Summary
-        </p>
-        <ul className="text-xs text-blue-800 mt-2 space-y-1">
-          <li>• Name: {formData.full_name || 'Not provided'}</li>
-          <li>• Email: {formData.email || 'Not provided'}</li>
-          <li>• Excel Level: {formData.excel_skill_level.replace('_', ' ')}</li>
-          <li>• Has Computer: {formData.has_computer ? 'Yes' : 'No'}</li>
-          <li>• Learning Mode: {formData.preferred_learning_mode || 'Not selected'}</li>
-        </ul>
+      {/* Application Summary Card */}
+      <div className="relative">
+        <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 p-8 rounded-2xl shadow-md">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="p-2 bg-emerald-600 rounded-lg">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
+            <p className="text-xl font-bold text-gray-900">
+              Application Summary
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white/60 backdrop-blur-sm p-4 rounded-xl border border-sky-200">
+              <p className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                <User className="w-4 h-4" /> Full Name
+              </p>
+              <p className="text-base font-semibold text-gray-900">{formData.full_name || 'Not provided'}</p>
+            </div>
+            <div className="bg-white/60 backdrop-blur-sm p-4 rounded-xl border border-sky-200">
+              <p className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                <Mail className="w-4 h-4" /> Email
+              </p>
+              <p className="text-base font-semibold text-gray-900 truncate">{formData.email || 'Not provided'}</p>
+            </div>
+            <div className="bg-white/60 backdrop-blur-sm p-4 rounded-xl border border-sky-200">
+              <p className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                <TrendingUp className="w-4 h-4" /> Excel Level
+              </p>
+              <p className="text-base font-semibold text-gray-900 capitalize">{formData.excel_skill_level.replace('_', ' ')}</p>
+            </div>
+            <div className="bg-white/60 backdrop-blur-sm p-4 rounded-xl border border-sky-200">
+              <p className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                <Monitor className="w-4 h-4" /> Has Computer
+              </p>
+              <p className="text-base font-semibold text-gray-900">{formData.has_computer ? 'Yes ✓' : 'No ✗'}</p>
+            </div>
+            <div className="bg-white/60 backdrop-blur-sm p-4 rounded-xl border border-sky-200 md:col-span-2">
+              <p className="text-sm text-gray-600 mb-1 flex items-center gap-2">
+                <Target className="w-4 h-4" /> Learning Mode
+              </p>
+              <p className="text-base font-semibold text-gray-900 capitalize">{formData.preferred_learning_mode?.replace('_', ' ') || 'Not selected'}</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 
   const sectionTitles = [
-    { num: 1, title: 'Applicant Information', desc: 'Personal details', icon: '👤' },
-    { num: 2, title: 'Education & Background', desc: 'Your professional profile', icon: '🎓' },
-    { num: 3, title: 'Excel & Computer Skills', desc: 'Current skills assessment', icon: '💻' },
-    { num: 4, title: 'Learning Goals', desc: 'Your vision for the future', icon: '🎯' },
-    { num: 5, title: 'Access & Availability', desc: 'Logistics for learning', icon: '⏰' },
-    { num: 6, title: 'Commitment & Agreement', desc: 'Final steps', icon: '✅' },
+    { num: 1, title: 'Applicant Information', desc: 'Tell us about yourself', icon: User },
+    { num: 2, title: 'Education & Background', desc: 'Your professional journey', icon: GraduationCap },
+    { num: 3, title: 'Excel & Computer Skills', desc: 'Current skill assessment', icon: Monitor },
+    { num: 4, title: 'Learning Goals', desc: 'Your vision for the future', icon: Target },
+    { num: 5, title: 'Access & Availability', desc: 'Logistics for learning', icon: Clock },
+    { num: 6, title: 'Commitment & Agreement', desc: 'Final commitment', icon: Award },
   ];
 
   // Calculate progress percentage
   const progressPercentage = (currentSection / 6) * 100;
   
   return (
-    <Card className="max-w-4xl mx-auto shadow-xl border-sky-200">
-      <CardHeader className="border-b border-gray-200">
-        {/* Progress Bar */}
-        <div className="mb-6">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm font-medium text-gray-700">
-              Section {currentSection} of 6
-            </span>
-            <span className="text-sm text-gray-600">
-              {Math.round(progressPercentage)}% Complete
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div
-              className="bg-gradient-to-r from-sky-500 to-blue-600 h-2.5 rounded-full transition-all duration-500"
-              style={{ width: `${progressPercentage}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Section Indicators */}
-        <div className="grid grid-cols-6 gap-2 mb-6">
-          {sectionTitles.map((section) => (
-            <div
-              key={section.num}
-              className={`text-center p-2 rounded-lg transition-all ${
-                section.num === currentSection
-                  ? 'bg-sky-100 border-2 border-sky-500'
-                  : section.num < currentSection
-                  ? 'bg-green-100 border border-green-300'
-                  : 'bg-gray-100 border border-gray-300'
-              }`}
-            >
-              <div className="text-2xl mb-1">{section.icon}</div>
-              <div className="text-xs font-medium text-gray-700 hidden sm:block">
-                {section.title.split(' ')[0]}
+    <div className="max-w-5xl mx-auto py-8 px-4">
+      <Card className="shadow-xl border border-gray-200 bg-white overflow-hidden">
+        <CardHeader className="border-b border-gray-200 bg-gray-50 pb-8">
+          {/* Progress Bar with Animation */}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-3">
+              <span className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-emerald-600" />
+                Section {currentSection} of 6
+              </span>
+              <span className="text-sm font-semibold text-emerald-700 bg-emerald-100 px-4 py-1.5 rounded-full">
+                {Math.round(progressPercentage)}% Complete
+              </span>
+            </div>
+            <div className="relative w-full bg-gray-200 rounded-full h-3 shadow-inner overflow-hidden">
+              <div
+                className="absolute top-0 left-0 h-full bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-full transition-all duration-700 ease-out shadow-md"
+                style={{ width: `${progressPercentage}%` }}
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer"></div>
               </div>
             </div>
-          ))}
-        </div>
+          </div>
 
-        <CardTitle className="text-2xl">
-          {sectionTitles[currentSection - 1]?.icon} {sectionTitles[currentSection - 1]?.title}
-        </CardTitle>
-        {courseTitle && (
-          <CardDescription className="text-base mt-2">
-            Applying for: <strong className="text-sky-700">{courseTitle}</strong>
-          </CardDescription>
-        )}
-        <p className="text-sm text-gray-600 mt-2">
-          {sectionTitles[currentSection - 1]?.desc}
-        </p>
-      </CardHeader>
+          {/* Modern Section Indicators */}
+          <div className="grid grid-cols-6 gap-3 mb-8">
+            {sectionTitles.map((section) => {
+              const IconComponent = section.icon;
+              return (
+                <div
+                  key={section.num}
+                  className={`relative text-center p-4 rounded-2xl transition-all duration-300 transform hover:scale-105 cursor-pointer ${
+                    section.num === currentSection
+                      ? 'bg-emerald-600 shadow-lg scale-105'
+                      : section.num < currentSection
+                      ? 'bg-emerald-100 border-2 border-emerald-400'
+                      : 'bg-gray-100 border border-gray-300 opacity-70 hover:opacity-100'
+                  }`}
+                >
+                  {section.num < currentSection && (
+                    <div className="absolute -top-2 -right-2 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center shadow-lg">
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </div>
+                  )}
+                  <IconComponent 
+                    className={`w-8 h-8 mx-auto mb-2 ${
+                      section.num === currentSection 
+                        ? 'text-white' 
+                        : section.num < currentSection 
+                        ? 'text-emerald-600' 
+                        : 'text-gray-500'
+                    }`} 
+                  />
+                  <div className={`text-xs font-semibold hidden sm:block ${
+                    section.num === currentSection 
+                      ? 'text-white' 
+                      : section.num < currentSection 
+                      ? 'text-emerald-700' 
+                      : 'text-gray-600'
+                  }`}>
+                    {section.title.split(' ')[0]}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
 
-      <CardContent className="pt-6">
-        {/* Global Error Message */}
-        {error && (
-          <Alert className="mb-6 border-red-300 bg-red-50">
-            <AlertCircle className="h-5 w-5 text-red-600" />
-            <AlertDescription className="ml-2">
-              <p className="font-semibold text-red-900 mb-1">Application Error</p>
+          {/* Section Title with Icon */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-4">
+              {(() => {
+                const IconComponent = sectionTitles[currentSection - 1]?.icon;
+                return (
+                  <div className="p-4 bg-emerald-600 rounded-2xl shadow-md">
+                    <IconComponent className="w-8 h-8 text-white" />
+                  </div>
+                );
+              })()}
+              <div>
+                <CardTitle className="text-3xl font-bold text-gray-900">
+                  {sectionTitles[currentSection - 1]?.title}
+                </CardTitle>
+                <p className="text-base text-gray-700 mt-1">
+                  {sectionTitles[currentSection - 1]?.desc}
+                </p>
+              </div>
+            </div>
+            {courseTitle && (
+              <div className="bg-emerald-50 border-l-4 border-emerald-600 p-4 rounded-r-xl">
+                <CardDescription className="text-base flex items-center gap-2">
+                  <Briefcase className="w-5 h-5 text-emerald-600" />
+                  Applying for:{' '}
+                  <strong className="text-emerald-700 font-bold">{courseTitle}</strong>
+                </CardDescription>
+              </div>
+            )}
+          </div>
+        </CardHeader>
+
+<CardContent className="pt-8 pb-8 px-8">
+          {/* Global Error Message */}
+          {error && (
+            <Alert className="mb-8 border-red-300 bg-gradient-to-r from-red-50 to-rose-50 shadow-lg">
+              <AlertCircle className="h-6 w-6 text-red-600" />
+              <AlertDescription className="ml-2">
+                <p className="font-bold text-red-900 mb-2 text-lg">Application Error</p>
               <p className="text-red-700">{error}</p>
             </AlertDescription>
           </Alert>
@@ -995,57 +1318,53 @@ export default function CourseApplicationForm({
           {renderSection()}
 
           {/* Navigation Buttons */}
-          <div className="flex justify-between mt-8 pt-6 border-t">
+          <div className="flex flex-col sm:flex-row justify-between gap-4 mt-12 pt-8 border-t-2 border-gray-200">
             <Button
               type="button"
               variant="outline"
               onClick={currentSection === 1 ? (onCancel || (() => window.history.back())) : handlePrevious}
               disabled={loading}
+              className="px-8 py-6 text-lg border-2 hover:bg-gray-50 rounded-xl transition-all duration-300 font-semibold"
             >
-              <ChevronLeft className="w-4 h-4 mr-2" />
+              <ChevronLeft className="w-5 h-5 mr-2" />
               {currentSection === 1 ? 'Cancel' : 'Previous'}
             </Button>
 
             {currentSection < 6 ? (
-              <Button type="button" onClick={handleNext}>
-                Next
-                <ChevronRight className="w-4 h-4 ml-2" />
+              <Button 
+                type="button" 
+                onClick={handleNext}
+                className="px-10 py-6 text-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md hover:shadow-lg transition-all duration-300 rounded-xl"
+              >
+                Next Section
+                <ChevronRight className="w-5 h-5 ml-2" />
               </Button>
             ) : (
               <Button 
                 type="submit" 
                 disabled={loading || existingApplication}
-                className="bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-700 hover:to-blue-700 text-white font-semibold px-8 py-6 text-lg"
+                className="px-12 py-7 text-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    <Loader2 className="w-6 h-6 mr-3 animate-spin" />
                     Submitting Application...
                   </>
                 ) : existingApplication ? (
                   'Already Applied'
                 ) : (
                   <>
+                    <Sparkles className="w-6 h-6 mr-3" />
                     Submit Application
-                    <CheckCircle2 className="w-5 h-5 ml-2" />
+                    <CheckCircle2 className="w-6 h-6 ml-3" />
                   </>
                 )}
-              </Button>
-            )}
-            
-            {onCancel && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onCancel}
-                className="px-6"
-              >
-                Cancel
               </Button>
             )}
           </div>
         </form>
       </CardContent>
     </Card>
+    </div>
   );
 }
