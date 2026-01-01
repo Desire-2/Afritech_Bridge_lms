@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   CheckCircle,
@@ -36,6 +37,7 @@ export default function AdminApplicationsManager() {
   const [statistics, setStatistics] = useState<ApplicationStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [courses, setCourses] = useState<Array<{ id: number; title: string; applications_count: number }>>([]);
   
   const [filters, setFilters] = useState({
     status: 'all',
@@ -54,11 +56,35 @@ export default function AdminApplicationsManager() {
   
   const [notes, setNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
+  
+  // Bulk action state
+  const [selectedApplicationIds, setSelectedApplicationIds] = useState<number[]>([]);
+  const [bulkActionModalOpen, setBulkActionModalOpen] = useState(false);
+  const [bulkAction, setBulkAction] = useState<'approve' | 'reject' | 'waitlist' | null>(null);
+  const [bulkRejectionReason, setBulkRejectionReason] = useState('');
+  const [bulkCustomMessage, setBulkCustomMessage] = useState('');
+  
+  // Waitlist action state
+  const [waitlistModalOpen, setWaitlistModalOpen] = useState(false);
+  const [waitlistUpdateMessage, setWaitlistUpdateMessage] = useState('');
+  const [resendEmailModalOpen, setResendEmailModalOpen] = useState(false);
+  const [resendWithCredentials, setResendWithCredentials] = useState(false);
+  const [resendCustomMessage, setResendCustomMessage] = useState('');
 
   useEffect(() => {
     loadApplications();
     loadStatistics();
+    loadCourses();
   }, [filters]);
+
+  const loadCourses = async () => {
+    try {
+      const response = await applicationService.getCoursesForFiltering();
+      setCourses(response.courses || []);
+    } catch (err) {
+      console.error('Failed to load courses:', err);
+    }
+  };
 
   const loadApplications = async () => {
     setLoading(true);
@@ -101,13 +127,32 @@ export default function AdminApplicationsManager() {
     setActionLoading(true);
     setActionError(null);
     try {
-      await applicationService.approveApplication(applicationId);
+      const result = await applicationService.approveApplication(applicationId);
       await loadApplications();
       await loadStatistics();
       setDetailModalOpen(false);
       setSelectedApplication(null);
+      
+      // Show success message
+      alert(`✅ Application approved successfully!\n\nUsername: ${result.username || 'N/A'}\nPassword: ${result.temp_password || 'Existing user - no new password'}`);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to approve application');
+      // Handle specific error cases
+      if (err.response?.status === 409) {
+        const errorData = err.response?.data;
+        const message = `⚠️ ${errorData.error}\n\n${errorData.details || ''}\n\n${errorData.action_taken || ''}`;
+        setActionError(message);
+        
+        // If application was marked as approved, reload data
+        if (errorData.application_status === 'approved') {
+          await loadApplications();
+          await loadStatistics();
+        }
+      } else if (err.response?.status === 400) {
+        const errorData = err.response?.data;
+        setActionError(`❌ ${errorData.error}\n${errorData.details || err.message}`);
+      } else {
+        setActionError(`❌ Failed to approve application\n${err.response?.data?.details || err.message}`);
+      }
     } finally {
       setActionLoading(false);
     }
@@ -115,7 +160,7 @@ export default function AdminApplicationsManager() {
 
   const handleReject = async (applicationId: number, reason: string) => {
     if (!reason.trim()) {
-      setActionError('Please provide a reason for rejection');
+      setActionError('⚠️ Please provide a reason for rejection');
       return;
     }
     
@@ -130,8 +175,16 @@ export default function AdminApplicationsManager() {
       setDetailModalOpen(false);
       setSelectedApplication(null);
       setRejectionReason('');
+      
+      // Show success message
+      alert('✅ Application rejected successfully. Notification email has been sent.');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to reject application');
+      if (err.response?.status === 400) {
+        const errorData = err.response?.data;
+        setActionError(`❌ ${errorData.error}\n${errorData.details || err.message}`);
+      } else {
+        setActionError(`❌ Failed to reject application\n${err.response?.data?.details || err.message}`);
+      }
     } finally {
       setActionLoading(false);
     }
@@ -146,8 +199,16 @@ export default function AdminApplicationsManager() {
       await loadStatistics();
       setDetailModalOpen(false);
       setSelectedApplication(null);
+      
+      // Show success message
+      alert('✅ Application moved to waitlist successfully. Notification email has been sent.');
     } catch (err: any) {
-      setActionError(err.message || 'Failed to waitlist application');
+      if (err.response?.status === 400) {
+        const errorData = err.response?.data;
+        setActionError(`❌ ${errorData.error}\n${errorData.details || err.message}`);
+      } else {
+        setActionError(`❌ Failed to waitlist application\n${err.response?.data?.details || err.message}`);
+      }
     } finally {
       setActionLoading(false);
     }
@@ -162,8 +223,15 @@ export default function AdminApplicationsManager() {
       });
       await loadApplications();
       setActionError(null);
+      
+      // Show success feedback
+      const successMsg = document.createElement('div');
+      successMsg.textContent = '✅ Notes saved';
+      successMsg.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded shadow-lg z-50';
+      document.body.appendChild(successMsg);
+      setTimeout(() => successMsg.remove(), 2000);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to update notes');
+      setActionError(`❌ Failed to update notes\n${err.response?.data?.details || err.message}`);
     } finally {
       setActionLoading(false);
     }
@@ -173,14 +241,17 @@ export default function AdminApplicationsManager() {
     setActionLoading(true);
     setActionError(null);
     try {
-      await applicationService.recalculateScores(applicationId);
+      const result = await applicationService.recalculateScores(applicationId);
       await loadApplications();
       if (selectedApplication) {
         const updated = await applicationService.getApplication(applicationId);
         setSelectedApplication(updated);
       }
+      
+      // Show updated scores
+      alert(`✅ Scores recalculated!\n\nApplication Score: ${result.scores.application_score}\nReadiness Score: ${result.scores.readiness_score}\nCommitment Score: ${result.scores.commitment_score}\nRisk Score: ${result.scores.risk_score}\nFinal Rank: ${result.scores.final_rank}`);
     } catch (err: any) {
-      setActionError(err.message || 'Failed to recalculate scores');
+      setActionError(`❌ Failed to recalculate scores\n${err.response?.data?.details || err.message}`);
     } finally {
       setActionLoading(false);
     }
@@ -194,6 +265,155 @@ export default function AdminApplicationsManager() {
       );
     } catch (err: any) {
       setError(err.message || 'Failed to export applications');
+    }
+  };
+
+  const toggleSelectApplication = (appId: number) => {
+    setSelectedApplicationIds(prev =>
+      prev.includes(appId) ? prev.filter(id => id !== appId) : [...prev, appId]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedApplicationIds.length === applications.length) {
+      setSelectedApplicationIds([]);
+    } else {
+      setSelectedApplicationIds(applications.map(app => app.id));
+    }
+  };
+
+  const handleBulkActionClick = (action: 'approve' | 'reject' | 'waitlist') => {
+    if (selectedApplicationIds.length === 0) {
+      setError('Please select at least one application');
+      return;
+    }
+    setBulkAction(action);
+    setBulkActionModalOpen(true);
+  };
+
+  const executeBulkAction = async () => {
+    if (!bulkAction) return;
+    
+    if (bulkAction === 'reject' && !bulkRejectionReason.trim()) {
+      setActionError('Please provide a reason for rejection');
+      return;
+    }
+    
+    setActionLoading(true);
+    setActionError(null);
+    
+    try {
+      const result = await applicationService.bulkAction({
+        action: bulkAction,
+        application_ids: selectedApplicationIds,
+        rejection_reason: bulkAction === 'reject' ? bulkRejectionReason : undefined,
+        custom_message: bulkAction === 'approve' ? bulkCustomMessage : undefined,
+      });
+      
+      await loadApplications();
+      await loadStatistics();
+      
+      // Show detailed results
+      let resultsMessage = `Bulk ${bulkAction.toUpperCase()} completed:\n\n`;
+      resultsMessage += `✅ Successful: ${result.successful}\n`;
+      resultsMessage += `❌ Failed: ${result.failed}\n`;
+      
+      if (result.results.failed.length > 0) {
+        resultsMessage += `\nFailed Applications:\n`;
+        result.results.failed.forEach((fail: any) => {
+          resultsMessage += `- ID ${fail.id}: ${fail.error}\n`;
+        });
+      }
+      
+      alert(resultsMessage);
+      
+      setBulkActionModalOpen(false);
+      setSelectedApplicationIds([]);
+      setBulkRejectionReason('');
+      setBulkCustomMessage('');
+      setBulkAction(null);
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.details || err.message || `Failed to perform bulk ${bulkAction}`;
+      setActionError(`❌ Bulk Action Failed\n\n${errorMsg}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResendApprovalEmail = async () => {
+    if (!selectedApplication) return;
+    
+    setActionLoading(true);
+    setActionError(null);
+    
+    try {
+      const result = await applicationService.resendApprovalEmail(
+        selectedApplication.id,
+        {
+          custom_message: resendCustomMessage,
+          include_credentials: resendWithCredentials
+        }
+      );
+      
+      let message = `✅ Approval email resent successfully!\n\nUsername: ${result.username}`;
+      if (result.credentials_reset) {
+        message += '\n⚠️ New password has been generated and sent via email.';
+      }
+      
+      alert(message);
+      setResendEmailModalOpen(false);
+      setResendWithCredentials(false);
+      setResendCustomMessage('');
+    } catch (err: any) {
+      setActionError(`❌ Failed to resend email\n${err.response?.data?.details || err.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handlePromoteFromWaitlist = async (applicationId: number) => {
+    if (!confirm('Promote this application from waitlist to pending review?')) return;
+    
+    setActionLoading(true);
+    setActionError(null);
+    
+    try {
+      await applicationService.promoteFromWaitlist(applicationId);
+      await loadApplications();
+      await loadStatistics();
+      setDetailModalOpen(false);
+      
+      alert('✅ Application promoted to pending review. Notification email sent.');
+    } catch (err: any) {
+      setActionError(`❌ Failed to promote application\n${err.response?.data?.details || err.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSendWaitlistUpdate = async () => {
+    if (!selectedApplication || !waitlistUpdateMessage.trim()) {
+      setActionError('⚠️ Please enter an update message');
+      return;
+    }
+    
+    setActionLoading(true);
+    setActionError(null);
+    
+    try {
+      await applicationService.sendWaitlistUpdate(
+        selectedApplication.id,
+        waitlistUpdateMessage
+      );
+      
+      alert('✅ Waitlist update sent successfully!');
+      setWaitlistModalOpen(false);
+      setWaitlistUpdateMessage('');
+      await loadApplications();
+    } catch (err: any) {
+      setActionError(`❌ Failed to send update\n${err.response?.data?.details || err.message}`);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -318,6 +538,22 @@ export default function AdminApplicationsManager() {
             </div>
 
             <Select
+              value={filters.course_id || undefined}
+              onValueChange={(value) => setFilters({ ...filters, course_id: value || '', page: 1 })}
+            >
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="All Courses" />
+              </SelectTrigger>
+              <SelectContent>
+                {courses.map(course => (
+                  <SelectItem key={course.id} value={course.id.toString()}>
+                    {course.title} ({course.applications_count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
               value={filters.status}
               onValueChange={(value) => setFilters({ ...filters, status: value, page: 1 })}
             >
@@ -357,6 +593,56 @@ export default function AdminApplicationsManager() {
             </Alert>
           )}
 
+          {/* Bulk Actions Bar */}
+          {selectedApplicationIds.length > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-5 h-5 text-blue-600" />
+                  <span className="font-medium text-blue-900">
+                    {selectedApplicationIds.length} application(s) selected
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => handleBulkActionClick('approve')}
+                    disabled={actionLoading}
+                  >
+                    <ThumbsUp className="w-4 h-4 mr-1" />
+                    Bulk Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => handleBulkActionClick('waitlist')}
+                    disabled={actionLoading}
+                  >
+                    <Pause className="w-4 h-4 mr-1" />
+                    Bulk Waitlist
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => handleBulkActionClick('reject')}
+                    disabled={actionLoading}
+                  >
+                    <ThumbsDown className="w-4 h-4 mr-1" />
+                    Bulk Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setSelectedApplicationIds([])}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <div className="text-center py-12">
               <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" />
@@ -369,12 +655,36 @@ export default function AdminApplicationsManager() {
             </div>
           ) : (
             <div className="space-y-3">
+              {/* Select All Checkbox */}
+              {applications.length > 0 && (
+                <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+                  <input
+                    type="checkbox"
+                    checked={selectedApplicationIds.length === applications.length}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-gray-300"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    Select All ({applications.length})
+                  </span>
+                </div>
+              )}
+              
               {applications.map((application) => (
                 <div
                   key={application.id}
                   className="border rounded-lg p-4 hover:shadow-md transition-shadow"
                 >
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start gap-3">
+                    {/* Selection Checkbox */}
+                    <input
+                      type="checkbox"
+                      checked={selectedApplicationIds.includes(application.id)}
+                      onChange={() => toggleSelectApplication(application.id)}
+                      className="mt-1 w-4 h-4 rounded border-gray-300"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
                         <h3 className="font-semibold text-lg">{application.full_name}</h3>
@@ -445,6 +755,21 @@ export default function AdminApplicationsManager() {
                             Waitlist
                           </Button>
                         </>
+                      )}
+                      
+                      {application.status === 'approved' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedApplication(application);
+                            setResendEmailModalOpen(true);
+                          }}
+                          disabled={actionLoading}
+                        >
+                          <RefreshCw className="w-4 h-4 mr-1" />
+                          Resend Email
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -666,10 +991,281 @@ export default function AdminApplicationsManager() {
                       </div>
                     </div>
                   )}
+                  
+                  {selectedApplication.status === 'approved' && (
+                    <div className="space-y-4 pt-4 border-t">
+                      <Alert className="bg-green-50 border-green-200">
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        <AlertDescription className="text-green-900">
+                          This application has been approved and the student is enrolled.
+                        </AlertDescription>
+                      </Alert>
+                      
+                      <Button
+                        onClick={() => setResendEmailModalOpen(true)}
+                        disabled={actionLoading}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Resend Approval Email
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {selectedApplication.status === 'waitlisted' && (
+                    <div className="space-y-4 pt-4 border-t">
+                      <Alert className="bg-yellow-50 border-yellow-200">
+                        <Clock className="h-4 w-4 text-yellow-600" />
+                        <AlertDescription className="text-yellow-900">
+                          This application is on the waitlist.
+                        </AlertDescription>
+                      </Alert>
+                      
+                      <Button
+                        onClick={() => handlePromoteFromWaitlist(selectedApplication.id)}
+                        disabled={actionLoading}
+                        className="w-full"
+                      >
+                        <TrendingUp className="w-4 h-4 mr-2" />
+                        Promote to Pending Review
+                      </Button>
+                      
+                      <Button
+                        onClick={() => setWaitlistModalOpen(true)}
+                        disabled={actionLoading}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        <FileText className="w-4 h-4 mr-2" />
+                        Send Waitlist Update
+                      </Button>
+                    </div>
+                  )}
                 </TabsContent>
               </Tabs>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Action Modal */}
+      <Dialog open={bulkActionModalOpen} onOpenChange={setBulkActionModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              Bulk {bulkAction && bulkAction.charAt(0).toUpperCase() + bulkAction.slice(1)} Applications
+            </DialogTitle>
+            <DialogDescription>
+              You are about to {bulkAction} {selectedApplicationIds.length} application(s)
+            </DialogDescription>
+          </DialogHeader>
+
+          {actionError && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{actionError}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-4">
+            {bulkAction === 'approve' && (
+              <div>
+                <Label htmlFor="bulk_custom_message">Custom Welcome Message (Optional)</Label>
+                <Textarea
+                  id="bulk_custom_message"
+                  value={bulkCustomMessage}
+                  onChange={(e) => setBulkCustomMessage(e.target.value)}
+                  rows={4}
+                  placeholder="Add a personalized message for the welcome email..."
+                />
+              </div>
+            )}
+
+            {bulkAction === 'reject' && (
+              <div>
+                <Label htmlFor="bulk_rejection_reason">Rejection Reason (Required)</Label>
+                <Textarea
+                  id="bulk_rejection_reason"
+                  value={bulkRejectionReason}
+                  onChange={(e) => setBulkRejectionReason(e.target.value)}
+                  rows={4}
+                  placeholder="Provide a reason for rejection..."
+                  className={!bulkRejectionReason.trim() ? 'border-red-500' : ''}
+                />
+                {!bulkRejectionReason.trim() && (
+                  <p className="text-sm text-red-600 mt-1">Rejection reason is required</p>
+                )}
+              </div>
+            )}
+
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                {bulkAction === 'approve' && 'This will create user accounts and enroll selected applicants in their courses. They will receive welcome emails with login credentials.'}
+                {bulkAction === 'reject' && 'This will reject all selected applications and send rejection emails to the applicants.'}
+                {bulkAction === 'waitlist' && 'This will move selected applications to the waitlist and send notification emails.'}
+              </AlertDescription>
+            </Alert>
+
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setBulkActionModalOpen(false);
+                  setBulkRejectionReason('');
+                  setBulkCustomMessage('');
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={executeBulkAction}
+                disabled={actionLoading || (bulkAction === 'reject' && !bulkRejectionReason.trim())}
+                variant={bulkAction === 'reject' ? 'destructive' : 'default'}
+              >
+                {actionLoading ? 'Processing...' : `${bulkAction && bulkAction.charAt(0).toUpperCase() + bulkAction.slice(1)} ${selectedApplicationIds.length} Application(s)`}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Resend Approval Email Modal */}
+      <Dialog open={resendEmailModalOpen} onOpenChange={setResendEmailModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Resend Approval Email</DialogTitle>
+            <DialogDescription>
+              Resend the approval and welcome email to {selectedApplication?.full_name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {actionError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="whitespace-pre-wrap">{actionError}</AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="include_credentials"
+                checked={resendWithCredentials}
+                onCheckedChange={(checked) => setResendWithCredentials(checked as boolean)}
+              />
+              <Label htmlFor="include_credentials" className="cursor-pointer">
+                Reset password and send new credentials
+              </Label>
+            </div>
+
+            {resendWithCredentials && (
+              <Alert className="bg-yellow-50 border-yellow-200">
+                <AlertCircle className="h-4 w-4 text-yellow-600" />
+                <AlertDescription className="text-yellow-900">
+                  This will generate a new temporary password and force the user to change it on next login.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div>
+              <Label htmlFor="resend_message">Custom Message (Optional)</Label>
+              <Textarea
+                id="resend_message"
+                value={resendCustomMessage}
+                onChange={(e) => setResendCustomMessage(e.target.value)}
+                rows={3}
+                placeholder="Add a custom message to include in the email..."
+              />
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setResendEmailModalOpen(false);
+                  setResendWithCredentials(false);
+                  setResendCustomMessage('');
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleResendApprovalEmail}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Sending...' : 'Resend Email'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Waitlist Update Modal */}
+      <Dialog open={waitlistModalOpen} onOpenChange={setWaitlistModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Waitlist Update</DialogTitle>
+            <DialogDescription>
+              Send a custom update email to {selectedApplication?.full_name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {actionError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="whitespace-pre-wrap">{actionError}</AlertDescription>
+              </Alert>
+            )}
+
+            <div>
+              <Label htmlFor="waitlist_message">Update Message *</Label>
+              <Textarea
+                id="waitlist_message"
+                value={waitlistUpdateMessage}
+                onChange={(e) => setWaitlistUpdateMessage(e.target.value)}
+                rows={5}
+                placeholder="Enter the update message to send to the applicant..."
+                className={!waitlistUpdateMessage.trim() ? 'border-red-500' : ''}
+              />
+              {!waitlistUpdateMessage.trim() && (
+                <p className="text-sm text-red-600 mt-1">Message is required</p>
+              )}
+            </div>
+
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                This will send a personalized update email to the applicant about their waitlist status.
+              </AlertDescription>
+            </Alert>
+
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setWaitlistModalOpen(false);
+                  setWaitlistUpdateMessage('');
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSendWaitlistUpdate}
+                disabled={actionLoading || !waitlistUpdateMessage.trim()}
+              >
+                {actionLoading ? 'Sending...' : 'Send Update'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

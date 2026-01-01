@@ -40,6 +40,7 @@ export default function InstructorApplicationsManager() {
   const [statistics, setStatistics] = useState<ApplicationStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [courses, setCourses] = useState<Array<{ id: number; title: string; applications_count: number }>>([]);
   
   const [filters, setFilters] = useState({
     status: 'all',
@@ -61,6 +62,7 @@ export default function InstructorApplicationsManager() {
 
   useEffect(() => {
     loadInstructorCourses();
+    loadCourses();
   }, [user]);
 
   useEffect(() => {
@@ -81,13 +83,20 @@ export default function InstructorApplicationsManager() {
     }
   };
 
+  const loadCourses = async () => {
+    try {
+      const response = await applicationService.getCoursesForFiltering();
+      setCourses(response.courses || []);
+    } catch (err) {
+      console.error('Failed to load courses:', err);
+    }
+  };
+
   const loadApplications = async () => {
     setLoading(true);
     setError(null);
     try {
-      // Filter applications by instructor's courses only
-      const courseIds = instructorCourses.map(c => c.id);
-      
+      // Backend now handles instructor filtering automatically
       const response = await applicationService.listApplications(
         filters.status !== 'all' ? filters.status : undefined,
         filters.course_id ? parseInt(filters.course_id) : undefined,
@@ -98,12 +107,7 @@ export default function InstructorApplicationsManager() {
         filters.per_page
       );
       
-      // Filter to only show applications for instructor's courses
-      const filteredApps = (response.applications || []).filter(
-        app => courseIds.includes(app.course_id)
-      );
-      
-      setApplications(filteredApps);
+      setApplications(response.applications || []);
     } catch (err: any) {
       setError(err.message || 'Failed to load applications');
     } finally {
@@ -127,59 +131,15 @@ export default function InstructorApplicationsManager() {
   };
 
   const handleApprove = async (applicationId: number) => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await applicationService.approveApplication(applicationId);
-      await loadApplications();
-      await loadStatistics();
-      setDetailModalOpen(false);
-      setSelectedApplication(null);
-    } catch (err: any) {
-      setActionError(err.message || 'Failed to approve application');
-    } finally {
-      setActionLoading(false);
-    }
+    alert('Only administrators can approve applications. Please contact an admin to approve this application.');
   };
 
   const handleReject = async (applicationId: number, reason: string) => {
-    if (!reason.trim()) {
-      setActionError('Please provide a reason for rejection');
-      return;
-    }
-    
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await applicationService.rejectApplication(applicationId, {
-        rejection_reason: reason
-      });
-      await loadApplications();
-      await loadStatistics();
-      setDetailModalOpen(false);
-      setSelectedApplication(null);
-      setRejectionReason('');
-    } catch (err: any) {
-      setActionError(err.message || 'Failed to reject application');
-    } finally {
-      setActionLoading(false);
-    }
+    alert('Only administrators can reject applications. Please contact an admin to reject this application.');
   };
 
   const handleWaitlist = async (applicationId: number) => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await applicationService.waitlistApplication(applicationId);
-      await loadApplications();
-      await loadStatistics();
-      setDetailModalOpen(false);
-      setSelectedApplication(null);
-    } catch (err: any) {
-      setActionError(err.message || 'Failed to waitlist application');
-    } finally {
-      setActionLoading(false);
-    }
+    alert('Only administrators can waitlist applications. Please contact an admin to manage this application.');
   };
 
   const handleUpdateNotes = async (applicationId: number) => {
@@ -318,6 +278,16 @@ export default function InstructorApplicationsManager() {
         </div>
       )}
 
+      {/* Instructor Info Alert */}
+      <Alert className="bg-blue-50 border-blue-200">
+        <AlertCircle className="h-4 w-4 text-blue-600" />
+        <AlertDescription className="text-blue-900">
+          <strong>Instructor View:</strong> You can review applications for your courses and add notes, 
+          but only administrators can approve, reject, or waitlist applications. 
+          Contact an admin for application decisions.
+        </AlertDescription>
+      </Alert>
+
       {/* Filters and Actions */}
       <Card>
         <CardHeader>
@@ -345,6 +315,22 @@ export default function InstructorApplicationsManager() {
                 />
               </div>
             </div>
+
+            <Select
+              value={filters.course_id || undefined}
+              onValueChange={(value) => setFilters({ ...filters, course_id: value || '', page: 1 })}
+            >
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="All My Courses" />
+              </SelectTrigger>
+              <SelectContent>
+                {courses.map(course => (
+                  <SelectItem key={course.id} value={course.id.toString()}>
+                    {course.title} ({course.applications_count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <Select
               value={filters.status}
@@ -449,32 +435,6 @@ export default function InstructorApplicationsManager() {
                         <Eye className="w-4 h-4 mr-1" />
                         View Details
                       </Button>
-                      
-                      {application.status === 'pending' && (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="default"
-                            onClick={() => handleApprove(application.id)}
-                            disabled={actionLoading}
-                          >
-                            <ThumbsUp className="w-4 h-4 mr-1" />
-                            Approve
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => {
-                              setSelectedApplication(application);
-                              setDetailModalOpen(true);
-                            }}
-                            disabled={actionLoading}
-                          >
-                            <Pause className="w-4 h-4 mr-1" />
-                            Waitlist
-                          </Button>
-                        </>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -623,7 +583,7 @@ export default function InstructorApplicationsManager() {
 
                 <TabsContent value="actions" className="space-y-4">
                   <div>
-                    <Label htmlFor="notes">Admin Notes</Label>
+                    <Label htmlFor="notes">Notes</Label>
                     <Textarea
                       id="notes"
                       value={notes}
@@ -653,48 +613,13 @@ export default function InstructorApplicationsManager() {
                     </Button>
                   </div>
 
-                  {selectedApplication.status === 'pending' && (
-                    <div className="space-y-4 pt-4 border-t">
-                      <Button
-                        onClick={() => handleApprove(selectedApplication.id)}
-                        disabled={actionLoading}
-                        className="w-full"
-                      >
-                        <ThumbsUp className="w-4 h-4 mr-2" />
-                        Approve Application
-                      </Button>
-
-                      <Button
-                        onClick={() => handleWaitlist(selectedApplication.id)}
-                        disabled={actionLoading}
-                        variant="secondary"
-                        className="w-full"
-                      >
-                        <Pause className="w-4 h-4 mr-2" />
-                        Move to Waitlist
-                      </Button>
-
-                      <div>
-                        <Label htmlFor="rejection_reason">Rejection Reason</Label>
-                        <Textarea
-                          id="rejection_reason"
-                          value={rejectionReason}
-                          onChange={(e) => setRejectionReason(e.target.value)}
-                          rows={3}
-                          placeholder="Provide a reason for rejection..."
-                        />
-                        <Button
-                          onClick={() => handleReject(selectedApplication.id, rejectionReason)}
-                          disabled={actionLoading || !rejectionReason.trim()}
-                          variant="destructive"
-                          className="w-full mt-2"
-                        >
-                          <ThumbsDown className="w-4 h-4 mr-2" />
-                          Reject Application
-                        </Button>
-                      </div>
-                    </div>
-                  )}
+                  <Alert className="bg-yellow-50 border-yellow-200">
+                    <AlertCircle className="h-4 w-4 text-yellow-600" />
+                    <AlertDescription className="text-yellow-900">
+                      <strong>Note:</strong> Only administrators can approve, reject, or waitlist applications. 
+                      Please contact an admin to make application decisions.
+                    </AlertDescription>
+                  </Alert>
                 </TabsContent>
               </Tabs>
             </>

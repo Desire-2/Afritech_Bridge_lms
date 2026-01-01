@@ -167,6 +167,78 @@ class CourseApplicationService extends BaseApiService {
     // Open in new window to trigger download
     window.open(exportUrl, '_blank');
   }
+
+  /**
+   * Perform bulk action on multiple applications (Admin only)
+   */
+  async bulkAction(data: {
+    action: 'approve' | 'reject' | 'waitlist';
+    application_ids: number[];
+    rejection_reason?: string;
+    custom_message?: string;
+  }): Promise<{
+    message: string;
+    results: {
+      success: Array<{ id: number; status: string }>;
+      failed: Array<{ id: number; error: string }>;
+    };
+    total_processed: number;
+    successful: number;
+    failed: number;
+  }> {
+    return this.post(`${this.BASE_PATH}/bulk-action`, data);
+  }
+
+  /**
+   * Get courses for filtering dropdown (Admin/Instructor)
+   */
+  async getCoursesForFiltering(): Promise<{
+    courses: Array<{
+      id: number;
+      title: string;
+      applications_count: number;
+    }>;
+  }> {
+    return this.get(`${this.BASE_PATH}/courses`);
+  }
+
+  /**
+   * Resend approval email to already approved applicant (Admin only)
+   */
+  async resendApprovalEmail(id: number, data?: {
+    custom_message?: string;
+    include_credentials?: boolean;
+  }): Promise<{
+    message: string;
+    email_sent: boolean;
+    credentials_reset: boolean;
+    username: string;
+    new_password_generated: boolean;
+  }> {
+    return this.post(`${this.BASE_PATH}/${id}/resend-approval`, data || {});
+  }
+
+  /**
+   * Promote waitlisted application back to pending (Admin only)
+   */
+  async promoteFromWaitlist(id: number): Promise<{
+    message: string;
+    application_id: number;
+    new_status: string;
+    email_sent: boolean;
+  }> {
+    return this.post(`${this.BASE_PATH}/${id}/promote`, {});
+  }
+
+  /**
+   * Send custom update email to waitlisted applicant (Admin only)
+   */
+  async sendWaitlistUpdate(id: number, message: string): Promise<{
+    message: string;
+    email_sent: boolean;
+  }> {
+    return this.post(`${this.BASE_PATH}/${id}/waitlist-update`, { message });
+  }
 }
 
 // Export singleton instance
