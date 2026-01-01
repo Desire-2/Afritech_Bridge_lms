@@ -104,15 +104,15 @@ const AdminSidebar = () => {
       {/* Sidebar */}
       <aside
         className={`
-          fixed md:relative
+          fixed
           left-0 top-0
           h-screen
           bg-gray-900 text-gray-100
           overflow-y-auto
           transition-all duration-300 ease-in-out
           z-40
-          ${isOpen ? 'w-64' : 'w-0 md:w-64 md:translate-x-0'}
-          md:w-64
+          ${isOpen ? 'w-64' : 'w-0'}
+          ${isMobile ? '' : 'w-64'}
         `}
       >
         <div className="p-6">

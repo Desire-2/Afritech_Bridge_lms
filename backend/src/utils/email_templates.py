@@ -483,6 +483,55 @@ def application_approved_email(application, course, username, temp_password, cus
                     </div>
                 </div>
                 
+                <!-- WhatsApp Community Section -->
+                <div style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); border-radius: 20px; padding: 35px; margin: 35px 0; box-shadow: 0 10px 30px rgba(37, 211, 102, 0.3); border: 3px solid #25D366;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <span class="icon-medium" style="font-size: 50px; display: block; margin-bottom: 15px;">📱</span>
+                        <h2 style="margin: 0; color: #ffffff; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
+                            Join Our Community!
+                        </h2>
+                        <p style="color: rgba(255,255,255,0.95); margin: 10px 0 0 0; font-size: 15px; line-height: 1.6;">
+                            Connect with fellow students, get instant updates, and collaborate with your peers
+                        </p>
+                    </div>
+                    
+                    <div style="background-color: rgba(255,255,255,0.15); backdrop-filter: blur(10px); border-radius: 16px; padding: 25px; margin: 25px 0;">
+                        <table class="responsive-table" style="width: 100%;">
+                            <tr>
+                                <td style="text-align: center; padding: 10px 0;">
+                                    <div style="background-color: rgba(255,255,255,0.2); border-radius: 12px; padding: 20px; margin-bottom: 10px;">
+                                        <p style="color: #ffffff; font-size: 15px; margin: 0 0 8px 0; font-weight: 600;">
+                                            💬 WhatsApp Communication Channel
+                                        </p>
+                                        <p style="color: rgba(255,255,255,0.9); font-size: 13px; margin: 0; line-height: 1.6;">
+                                            • Share resources and study materials<br>
+                                            • Get quick answers to your questions<br>
+                                            • Network with instructors and peers<br>
+                                            • Stay updated on course announcements
+                                        </p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 25px;">
+                        <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #ffffff; color: #128C7E; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); text-transform: uppercase; letter-spacing: 0.5px; mobile-button; border: 3px solid rgba(255,255,255,0.3);">
+                            <span style="font-size: 20px; margin-right: 8px;">💬</span> Join WhatsApp Group
+                        </a>
+                        <p style="color: rgba(255,255,255,0.95); margin: 15px 0 0 0; font-size: 13px; font-weight: 500;">
+                            Click to join our active learning community
+                        </p>
+                    </div>
+                    
+                    <div style="background-color: rgba(255,255,255,0.1); border: 2px dashed rgba(255,255,255,0.4); border-radius: 12px; padding: 18px; margin-top: 25px;">
+                        <p style="color: rgba(255,255,255,0.95); font-size: 13px; margin: 0; line-height: 1.6; text-align: center;">
+                            <strong style="font-size: 14px;">📋 Group Guidelines:</strong><br>
+                            Be respectful, stay on topic, and help create a positive learning environment for everyone!
+                        </p>
+                    </div>
+                </div>
+                
                 <!-- CTA Button -->
                 <div style="text-align: center; margin: 40px 0;">
                     <a href="https://lms.afritecbridge.com/auth/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 18px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
