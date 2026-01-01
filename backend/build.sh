@@ -91,7 +91,22 @@ fi
 echo "Creating static directory..."
 mkdir -p static
 
-# Set up the database (if needed)
-# This will be handled by the app itself via db.create_all()
+# Run database schema synchronization (production deployment)
+if [ -n "$RENDER" ] && [ -n "$DATABASE_URL" ]; then
+  echo "=================================================="
+  echo "Running database schema synchronization..."
+  echo "=================================================="
+  
+  # Run the schema sync script
+  if $PYTHON_CMD sync_production_schema.py; then
+    echo "✅ Database schema synchronized successfully!"
+  else
+    echo "⚠️  Warning: Schema synchronization had issues, but continuing deployment..."
+    echo "   Check logs above for details."
+    # Don't exit - allow deployment to continue even if migration has issues
+  fi
+else
+  echo "Skipping schema sync (not in production environment or DATABASE_URL not set)"
+fi
 
 echo "Build completed successfully!"
