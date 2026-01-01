@@ -78,7 +78,7 @@ def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_del
             
         sender = current_app.config['MAIL_DEFAULT_SENDER']
         
-        # Attempt to send email with retries
+        # Attempt to send email with retries and exponential backoff
         last_error = None
         for attempt in range(retries):
             try:
@@ -97,7 +97,7 @@ def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_del
                 # Set a shorter timeout for email sending to prevent worker timeouts
                 import socket
                 original_timeout = socket.getdefaulttimeout()
-                socket.setdefaulttimeout(10)  # Reduced to 10 seconds to prevent worker timeout
+                socket.setdefaulttimeout(8)  # Reduced to 8 seconds for faster failure detection
                 
                 try:
                     mail.send(msg)
@@ -111,9 +111,23 @@ def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_del
                     
             except Exception as e:
                 last_error = e
+                error_msg = str(e).lower()
                 logger.warning(f"Email attempt {attempt + 1}/{retries} failed: {str(e)}")
                 
+                # Check for specific SMTP issues
+                if 'timed out' in error_msg:
+                    logger.warning("⚠️ SMTP connection timeout - server may be unreachable")
+                elif 'authentication' in error_msg or 'username' in error_msg or 'password' in error_msg:
+                    logger.error("🔐 SMTP authentication failed - check credentials")
+                    break  # Don't retry auth failures
+                elif 'connection refused' in error_msg:
+                    logger.error("🚫 SMTP connection refused - check server/port")
+                
                 if attempt < retries - 1:  # Don't sleep on last attempt
+                    # Exponential backoff: 2s, 4s, 8s...
+                    wait_time = retry_delay * (2 ** attempt)
+                    logger.info(f"Retrying in {wait_time} seconds with exponential backoff...")
+                    time.sleep(wait_time)
                     time.sleep(retry_delay)
                     logger.info(f"Retrying in {retry_delay} seconds...")
         
