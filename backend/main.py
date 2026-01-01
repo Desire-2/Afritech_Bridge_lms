@@ -107,47 +107,39 @@ if not app.config['SECRET_KEY']:
         raise ValueError("SECRET_KEY must be set in production environment")
 
 # Database configuration
-if env == 'production':
-    # Use PostgreSQL in production (required for Render)
-    database_url = os.getenv('DATABASE_URL')
-    if not database_url:
-        raise ValueError("DATABASE_URL must be set in production environment")
+# Priority: DATABASE_URL from .env (if set) > environment-specific defaults
+database_url = os.getenv('DATABASE_URL')
+
+if database_url:
+    # DATABASE_URL is explicitly set in .env - use it regardless of environment
+    logger.info("Using DATABASE_URL from environment configuration")
     
     # Fix for SQLAlchemy 2.0+ - ensure proper dialect specification
-    original_url = database_url
     if database_url.startswith('postgres://'):
         database_url = database_url.replace('postgres://', 'postgresql+psycopg2://', 1)
-        logger.info(f"Transformed database URL from postgres:// to postgresql+psycopg2://")
+        logger.info("Transformed database URL from postgres:// to postgresql+psycopg2://")
     elif database_url.startswith('postgresql://') and '+psycopg2' not in database_url:
         database_url = database_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
-        logger.info(f"Transformed database URL from postgresql:// to postgresql+psycopg2://")
-    else:
-        logger.info("Database URL already has correct format for SQLAlchemy 2.0+")
+        logger.info("Transformed database URL from postgresql:// to postgresql+psycopg2://")
     
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-    logger.info("Using PostgreSQL database in production")
+    
+    if 'postgresql' in database_url or 'postgres' in database_url:
+        logger.info(f"Using PostgreSQL database (env: {env})")
+    else:
+        logger.info(f"Using custom database configuration (env: {env})")
+        
+elif env == 'production':
+    # Production requires DATABASE_URL to be set
+    raise ValueError("DATABASE_URL must be set in production environment")
+    
 else:
-    # Use SQLite for development and testing (or PostgreSQL if configured)
-    # Ensure we use an absolute path for the SQLite database
+    # Development fallback: Use SQLite if DATABASE_URL not set
     db_path = os.path.join(os.path.dirname(__file__), 'instance', 'afritec_lms_db.db')
-    db_uri = f"sqlite:///{db_path}"
-    database_url = os.getenv("SQLALCHEMY_DATABASE_URI", db_uri)
-    
-    # Fix for SQLAlchemy 2.0+ in development too
-    if database_url.startswith('postgres://'):
-        database_url = database_url.replace('postgres://', 'postgresql+psycopg2://', 1)
-        logger.info(f"Transformed development database URL from postgres:// to postgresql+psycopg2://")
-    elif database_url.startswith('postgresql://') and '+psycopg2' not in database_url:
-        database_url = database_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
-        logger.info(f"Transformed development database URL from postgresql:// to postgresql+psycopg2://")
-    
+    database_url = f"sqlite:///{db_path}"
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-    
-    if database_url.startswith('sqlite'):
-        logger.info(f"Using SQLite database at {app.config['SQLALCHEMY_DATABASE_URI']}")
-        logger.info(f"Database file path: {db_path}")
-    else:
-        logger.info(f"Using PostgreSQL database in development")
+    logger.info(f"Using SQLite database at {database_url}")
+    logger.info(f"Database file path: {db_path}")
     
     # Ensure the instance directory exists
     instance_dir = os.path.dirname(db_path)
@@ -158,6 +150,7 @@ else:
     # Check if database file exists
     if os.path.exists(db_path):
         logger.info(f"Database file exists and is accessible: {os.access(db_path, os.R_OK | os.W_OK)}")
+
     else:
         logger.info("Database file does not exist, will be created")
 
