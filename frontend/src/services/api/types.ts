@@ -360,3 +360,84 @@ export interface UserBadge {
   badge: Badge;
   earned_at: string;
 }
+
+// ============== Course Applications ==============
+export interface CourseApplication {
+  id: number;
+  course_id: number;
+  full_name: string;
+  email: string;
+  phone: string;
+  whatsapp_number?: string;
+  gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say';
+  age_range?: 'under_18' | '18_24' | '25_34' | '35_44' | '45_54' | '55_plus';
+  country: string;
+  city: string;
+  education_level?: 'high_school' | 'diploma' | 'bachelors' | 'masters' | 'phd' | 'other';
+  current_status?: 'student' | 'employed' | 'self_employed' | 'freelancer' | 'unemployed' | 'other';
+  field_of_study?: string;
+  has_used_excel: boolean;
+  excel_skill_level: 'never_used' | 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  excel_tasks_done?: string[];
+  motivation: string;
+  learning_outcomes?: string;
+  career_impact?: string;
+  has_computer: boolean;
+  internet_access_type?: 'stable_broadband' | 'mobile_data' | 'limited_access' | 'public_wifi' | 'other';
+  preferred_learning_mode?: 'self_paced' | 'live_sessions' | 'hybrid';
+  available_time?: string[];
+  committed_to_complete: boolean;
+  agrees_to_assessments: boolean;
+  referral_source?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'waitlisted';
+  admin_notes?: string;
+  rejection_reason?: string;
+  application_score?: number;
+  readiness_score?: number;
+  commitment_score?: number;
+  risk_score?: number;
+  final_rank?: number;
+  submission_date: string;
+  reviewed_date?: string;
+  reviewed_by?: number;
+}
+
+export interface ApplicationSubmitData {
+  course_id: number;
+  full_name: string;
+  email: string;
+  phone: string;
+  whatsapp_number?: string;
+  gender?: string;
+  age_range?: string;
+  country: string;
+  city: string;
+  education_level?: string;
+  current_status?: string;
+  field_of_study?: string;
+  has_used_excel: boolean;
+  excel_skill_level: string;
+  excel_tasks_done?: string[];
+  motivation: string;
+  learning_outcomes?: string;
+  career_impact?: string;
+  has_computer: boolean;
+  internet_access_type?: string;
+  preferred_learning_mode?: string;
+  available_time?: string[];
+  committed_to_complete: boolean;
+  agrees_to_assessments: boolean;
+  referral_source?: string;
+}
+
+export interface ApplicationStatistics {
+  total_applications: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  waitlisted: number;
+  average_score: number;
+  by_course: Record<number, number>;
+  by_country: Record<string, number>;
+  by_excel_level: Record<string, number>;
+}

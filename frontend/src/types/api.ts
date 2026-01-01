@@ -7,7 +7,9 @@ export interface User {
   last_name?: string;
   profile_picture_url?: string;
   bio?: string;
+  phone_number?: string;
   role: string;
+  is_active?: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -14,6 +14,7 @@ const InstructorSidebar = () => {
   const navItems = [
     { href: '/instructor/dashboard', label: 'Overview' },
     { href: '/instructor/courses', label: 'My Courses' },
+    { href: '/instructor/applications', label: 'Applications' },
     { href: '/instructor/grading', label: 'Grading' },
     { href: '/instructor/announcements', label: 'Announcements' },
     { href: '/instructor/students', label: 'Students' },
@@ -72,17 +73,16 @@ const InstructorSidebar = () => {
         <ul className="space-y-1">
           {navItems.map((item) => (
             <li key={item.href}>
-              <Link href={item.href} legacyBehavior>
-                <a
-                  onClick={() => isMobile && closeSidebar()}
-                  className={`flex items-center py-2.5 px-4 rounded-lg transition-all duration-200 ${
-                    pathname === item.href 
-                      ? 'bg-sky-500/20 text-sky-400 border-l-2 border-sky-400' 
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white hover:translate-x-1'
-                  }`}
-                >
-                  {item.label}
-                </a>
+              <Link
+                href={item.href}
+                onClick={() => isMobile && closeSidebar()}
+                className={`flex items-center py-2.5 px-4 rounded-lg transition-all duration-200 ${
+                  pathname === item.href 
+                    ? 'bg-sky-500/20 text-sky-400 border-l-2 border-sky-400' 
+                    : 'text-slate-300 hover:bg-white/5 hover:text-white hover:translate-x-1'
+                }`}
+              >
+                {item.label}
               </Link>
             </li>
           ))}

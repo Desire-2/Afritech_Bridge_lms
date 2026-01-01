@@ -57,6 +57,55 @@ export class AdminService {
     }
   }
 
+  static async createUser(userData: any): Promise<User> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/users`, userData);
+      return response.data.user;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async getUserStats(): Promise<any> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/users/stats`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async getUserActivity(userId: number): Promise<any> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/users/${userId}/activity`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async bulkUserAction(data: {
+    user_ids: number[];
+    action: string;
+    role_name?: string;
+  }): Promise<{ message: string; affected_users: number }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/users/bulk-action`, data);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async getRoles(): Promise<{ roles: Array<{ id: number; name: string }> }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/roles`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
   static async updateUserRole(userId: number, roleId: number): Promise<User> {
     try {
       const response = await apiClient.patch(`${this.BASE_PATH}/users/${userId}/role`, { role_id: roleId });

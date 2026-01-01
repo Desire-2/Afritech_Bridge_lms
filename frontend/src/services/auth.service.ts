@@ -105,4 +105,14 @@ export class AuthService {
       throw ApiErrorHandler.handleError(error);
     }
   }
+
+  // New method for password change (compatible with backend endpoint)
+  static async changePassword(data: { current_password: string; new_password: string }): Promise<{ message: string; must_change_password: boolean }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/change-password`, data);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
 }

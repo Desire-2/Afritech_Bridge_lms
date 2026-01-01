@@ -7,6 +7,7 @@ import json
 from ..models.user_models import db, User
 from ..models.course_models import Course, Module, Quiz, Question, Answer
 from ..models.student_models import AssessmentAttempt, ModuleProgress
+from ..utils.email_notifications import send_quiz_grade_notification
 
 
 class AssessmentService:
@@ -175,6 +176,21 @@ class AssessmentService:
             )
             
             db.session.commit()
+            
+            # Send email notification to student about quiz grade
+            try:
+                student = User.query.get(attempt.student_id)
+                if student and student.email:
+                    send_quiz_grade_notification(
+                        student=student,
+                        quiz=quiz,
+                        score=int(score),
+                        total_points=total_questions
+                    )
+                    current_app.logger.info(f"📧 Quiz grade notification email sent to {student.email}")
+            except Exception as email_error:
+                current_app.logger.warning(f"Failed to send quiz grade notification email: {str(email_error)}")
+                # Don't fail the request if email fails
             
             result_data = {
                 "attempt": attempt.to_dict(),

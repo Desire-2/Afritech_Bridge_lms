@@ -10,6 +10,8 @@ interface StudentWithCourse extends User {
   enrollment_date?: string;
   progress?: number;
   last_accessed?: string;
+  enrollment_id?: number;
+  course_id?: number;
 }
 
 const StudentsPage = () => {
@@ -21,6 +23,8 @@ const StudentsPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isClient, setIsClient] = useState(false);
+  const [unenrolling, setUnenrolling] = useState<number | null>(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState<{ show: boolean; student: StudentWithCourse | null }>({ show: false, student: null });
 
   // Handle client-side hydration
   useEffect(() => {
@@ -65,6 +69,44 @@ const StudentsPage = () => {
     
     return matchesSearch && matchesCourse;
   }) : [];
+
+  const handleUnenrollClick = (student: StudentWithCourse) => {
+    setShowConfirmDialog({ show: true, student });
+  };
+
+  const handleUnenrollConfirm = async () => {
+    const student = showConfirmDialog.student;
+    if (!student || !student.enrollment_id) {
+      setError('Cannot unenroll: Missing enrollment information');
+      setShowConfirmDialog({ show: false, student: null });
+      return;
+    }
+
+    setUnenrolling(student.enrollment_id);
+    try {
+      const result = await InstructorService.unenrollStudent(student.enrollment_id);
+      
+      // Remove student from local state
+      setStudents(prevStudents => 
+        prevStudents.filter(s => s.enrollment_id !== student.enrollment_id)
+      );
+      
+      // Show success message (you can use a toast notification library here)
+      console.log(result.message);
+      
+    } catch (err: any) {
+      console.error('Unenroll error:', err);
+      setError(err.message || 'Failed to unenroll student');
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setUnenrolling(null);
+      setShowConfirmDialog({ show: false, student: null });
+    }
+  };
+
+  const handleUnenrollCancel = () => {
+    setShowConfirmDialog({ show: false, student: null });
+  };
 
   // Prevent hydration mismatch
   if (!isClient || loading) {
@@ -171,7 +213,7 @@ const StudentsPage = () => {
               </thead>
               <tbody className="bg-white dark:bg-slate-800 divide-y divide-slate-200 dark:divide-slate-700">
                 {Array.isArray(filteredStudents) && filteredStudents.map((student) => (
-                  <tr key={student.id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+                  <tr key={`${student.id}-${student.enrollment_id || student.course_id}`} className="hover:bg-slate-50 dark:hover:bg-slate-700">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center">
                         <div className="flex-shrink-0 h-10 w-10">
@@ -232,8 +274,15 @@ const StudentsPage = () => {
                       <button className="text-blue-600 dark:text-blue-400 hover:text-blue-900 dark:hover:text-blue-300 mr-3">
                         View Details
                       </button>
-                      <button className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300">
+                      <button className="text-green-600 dark:text-green-400 hover:text-green-900 dark:hover:text-green-300 mr-3">
                         Message
+                      </button>
+                      <button 
+                        onClick={() => handleUnenrollClick(student)}
+                        disabled={unenrolling === student.enrollment_id}
+                        className="text-red-600 dark:text-red-400 hover:text-red-900 dark:hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {unenrolling === student.enrollment_id ? 'Unenrolling...' : 'Unenroll'}
                       </button>
                     </td>
                   </tr>
@@ -243,6 +292,37 @@ const StudentsPage = () => {
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog */}
+      {showConfirmDialog.show && showConfirmDialog.student && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+              Confirm Unenrollment
+            </h3>
+            <p className="text-slate-600 dark:text-slate-400 mb-6">
+              Are you sure you want to unenroll <strong>{showConfirmDialog.student.first_name} {showConfirmDialog.student.last_name}</strong> from <strong>{showConfirmDialog.student.course_title}</strong>?
+              <br /><br />
+              <span className="text-red-600 dark:text-red-400">This action cannot be undone and will remove all their progress in this course.</span>
+            </p>
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={handleUnenrollCancel}
+                className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUnenrollConfirm}
+                disabled={unenrolling !== null}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {unenrolling !== null ? 'Unenrolling...' : 'Yes, Unenroll'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

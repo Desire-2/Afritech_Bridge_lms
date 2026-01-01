@@ -395,11 +395,12 @@ export default function LoginForm() {
                     <p className="text-red-400/70 text-xs">
                       Need an account?{' '}
                       <Link 
-                        href="/auth/register" 
+                        href="/courses" 
                         className="text-red-300 hover:text-red-200 underline font-medium"
                       >
-                        Create one here
+                        Apply for a course
                       </Link>
+                      {' '}to get started.
                     </p>
                   </div>
                 )}
@@ -671,13 +672,14 @@ export default function LoginForm() {
           </div>
 
           <p className="mt-8 text-center text-slate-400">
-            Don't have an account?{' '}
+            Don't have an account yet?{' '}
             <Link 
-              href="/auth/register" 
+              href="/courses" 
               className="font-medium text-sky-400 hover:text-sky-300 underline-offset-4 hover:underline"
             >
-              Create account
+              Apply for a course
             </Link>
+            {' '}to get started.
           </p>
         </div>
       </div>

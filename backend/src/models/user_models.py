@@ -37,13 +37,18 @@ class User(db.Model):
     last_name = db.Column(db.String(50), nullable=True)
     profile_picture_url = db.Column(db.String(255), nullable=True)
     bio = db.Column(db.Text, nullable=True)
+    phone_number = db.Column(db.String(20), nullable=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Password reset fields
     reset_token = db.Column(db.String(100), nullable=True)
     reset_token_expires_at = db.Column(db.DateTime, nullable=True)
+    
+    # Force password change on first login (for auto-created accounts)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
 
     # Relationships (placeholders, to be expanded with other models)
     # enrollments = db.relationship('Enrollment', backref='student', lazy='dynamic')
@@ -88,7 +93,10 @@ class User(db.Model):
             'last_name': self.last_name,
             'profile_picture_url': self.profile_picture_url,
             'bio': self.bio,
+            'phone_number': self.phone_number,
             'role': self.role.name if self.role else None,
+            'is_active': self.is_active,
+            'must_change_password': self.must_change_password,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }

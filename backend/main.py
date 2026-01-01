@@ -24,6 +24,7 @@ from src.utils.email_utils import mail # Import the mail instance
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
 from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
+from src.routes.application_routes import application_bp
 from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
 from src.routes.course_creation_routes import course_creation_bp # Import course creation blueprint
 from src.routes.instructor_assessment_routes import instructor_assessment_bp # Import instructor assessment blueprint (consolidated - replaced old assessment_bp)
@@ -37,6 +38,7 @@ from src.routes.progress_routes import progress_bp # Import progress blueprint
 from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
 from src.routes.forum_routes import forum_bp # Import forum blueprint
 from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
+from src.routes.admin_routes import admin_bp # Import admin blueprint
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -72,11 +74,12 @@ else:
          resources={r"/*": {
              "origins": ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", 
                         "http://localhost:3005", "http://localhost:5173", 
-                        "http://192.168.0.5:3000", "http://192.168.0.5:3001", 
-                        "http://192.168.0.5:3002", "http://192.168.0.5:3005",
+                        "http://192.168.0.4:3000", "http://192.168.0.4:3001", 
+                        "http://192.168.0.4:3002", "http://192.168.0.4:3005",
                         "http://192.168.0.3:3000", "http://192.168.0.3:3001",
                         "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
-                        "http://192.168.116.116:3002", "http://192.168.116.116:3005"],
+                        "http://192.168.116.116:3002", "http://192.168.116.116:3005",
+                        "http://192.168.0.4:5001", "http://localhost:5001"],
              "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
              "expose_headers": ["Content-Type", "Authorization"],
@@ -259,6 +262,8 @@ app.register_blueprint(progress_bp) # Register progress blueprint
 app.register_blueprint(certificate_bp) # Register certificate blueprint
 app.register_blueprint(forum_bp) # Register forum blueprint
 app.register_blueprint(ai_agent_bp) # Register AI agent blueprint
+app.register_blueprint(application_bp) # Register application blueprint
+app.register_blueprint(admin_bp) # Register admin blueprint
 
 with app.app_context():
     db.create_all()

@@ -367,7 +367,7 @@ const MyLearningPage = () => {
                       </Link>
                     )}
                     <Link
-                      href={`/student/courses/myprogress/${course.id}`}
+                      href={`/courses/${course.id}`}
                       className="flex items-center justify-center px-4 py-2.5 border-2 border-gray-200 text-gray-700 rounded-lg hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 transition-all"
                       title="View Progress"
                     >

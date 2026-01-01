@@ -1792,7 +1792,7 @@ const LearningPage = () => {
             <p className="text-red-200 mb-4">{error}</p>
             <div className="flex gap-2 justify-center">
               <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
-                <Link href={`/student/courses/${courseId}`}>Back to Course</Link>
+                <Link href={`/courses/${courseId}`}>Back to Course</Link>
               </Button>
               <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">Try Again</Button>
             </div>

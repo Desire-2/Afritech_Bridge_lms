@@ -89,15 +89,27 @@ def get_instructor_dashboard():
 
 # --- Course Management Routes ---
 @instructor_bp.route("/courses", methods=["GET"])
-@instructor_required
+@jwt_required()
 def get_instructor_courses():
     """Get all courses taught by the current instructor."""
-    current_user_id = int(get_jwt_identity())  # Ensure integer comparison
-    
     try:
+        current_user_id = int(get_jwt_identity())
+        print(f"DEBUG: User ID from JWT: {current_user_id}")
+        
+        user = User.query.get(current_user_id)
+        print(f"DEBUG: User found: {user}")
+        print(f"DEBUG: User role: {user.role.name if user and user.role else 'None'}")
+        
+        if not user or not user.role or user.role.name not in ['instructor', 'admin']:
+            return jsonify({"message": "Instructor access required"}), 403
+        
         courses = Course.query.filter_by(instructor_id=current_user_id).all()
-        return jsonify([course.to_dict() for course in courses]), 200
+        print(f"DEBUG: Found {len(courses)} courses for instructor {current_user_id}")
+        return jsonify({"courses": [course.to_dict() for course in courses]}), 200
     except Exception as e:
+        print(f"ERROR in get_instructor_courses: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"message": "Failed to fetch courses", "error": str(e)}), 500
 
 @instructor_bp.route("/courses/<int:course_id>/analytics", methods=["GET"])
@@ -182,6 +194,8 @@ def get_instructor_students():
             
             student_data = user.to_dict()
             student_data.update({
+                "enrollment_id": enrollment.id,  # Include enrollment_id for unenroll action
+                "course_id": course.id,
                 "course_title": course.title,
                 "enrollment_date": enrollment.enrollment_date.isoformat(),
                 "progress": 0,  # Placeholder - would need progress tracking
@@ -210,6 +224,91 @@ def get_course_enrollments(course_id):
         return jsonify([enrollment.to_dict() for enrollment in enrollments]), 200
     except Exception as e:
         return jsonify({"message": "Failed to fetch enrollments", "error": str(e)}), 500
+
+@instructor_bp.route("/enrollments/<int:enrollment_id>", methods=["DELETE"])
+@instructor_required
+def unenroll_student(enrollment_id):
+    """Unenroll a student from a course."""
+    current_user_id = get_jwt_identity()
+    
+    try:
+        # Get the enrollment
+        enrollment = Enrollment.query.get(enrollment_id)
+        if not enrollment:
+            return jsonify({"message": "Enrollment not found"}), 404
+        
+        # Verify instructor owns this course
+        course = Course.query.filter_by(id=enrollment.course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Access denied. You do not own this course."}), 403
+        
+        # Store info for response
+        student_name = enrollment.student.username
+        course_title = course.title
+        student_id = enrollment.student_id
+        course_id = enrollment.course_id
+        
+        # Import related models that need cleanup
+        from ..models.student_models import (
+            ModuleProgress, LessonCompletion, 
+            UserProgress, StudentNote, StudentBookmark, StudentSuspension, Certificate
+        )
+        
+        # Delete all related records for this enrollment
+        # This must be done before deleting the enrollment due to foreign key constraints
+        
+        # Delete module progress records
+        ModuleProgress.query.filter_by(enrollment_id=enrollment_id).delete()
+        
+        # Delete suspension records if any
+        StudentSuspension.query.filter_by(enrollment_id=enrollment_id).delete()
+        
+        # Delete certificates if any
+        Certificate.query.filter_by(enrollment_id=enrollment_id).delete()
+        
+        # Delete lesson completions for this student in this course
+        lesson_ids = db.session.query(Lesson.id).join(Module).filter(Module.course_id == course_id).all()
+        lesson_ids = [lid[0] for lid in lesson_ids]
+        if lesson_ids:
+            LessonCompletion.query.filter(
+                LessonCompletion.student_id == student_id,
+                LessonCompletion.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
+        
+        # Delete user progress for this course
+        UserProgress.query.filter_by(user_id=student_id, course_id=course_id).delete()
+        
+        # Delete student notes for lessons in this course
+        if lesson_ids:
+            StudentNote.query.filter(
+                StudentNote.student_id == student_id,
+                StudentNote.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
+        
+        # Delete student bookmarks for this course
+        StudentBookmark.query.filter_by(student_id=student_id, course_id=course_id).delete()
+        
+        # Delete submissions for quizzes in this course
+        quiz_ids = db.session.query(Quiz.id).join(Module).filter(Module.course_id == course_id).all()
+        quiz_ids = [qid[0] for qid in quiz_ids]
+        if quiz_ids:
+            Submission.query.filter(
+                Submission.student_id == student_id,
+                Submission.quiz_id.in_(quiz_ids)
+            ).delete(synchronize_session=False)
+        
+        # Now delete the enrollment
+        db.session.delete(enrollment)
+        db.session.commit()
+        
+        return jsonify({
+            "message": f"Successfully unenrolled {student_name} from {course_title}",
+            "success": True
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Failed to unenroll student", "error": str(e)}), 500
 
 # --- Submission and Grading Routes ---
 @instructor_bp.route("/submissions/pending", methods=["GET"])

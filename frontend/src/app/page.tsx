@@ -53,15 +53,24 @@ export default function HomePage() {
             </p>
 
             {/* APPLY BUTTON */}
-            <div className="flex justify-center animate-fade-in-up">
+            <div className="flex flex-col sm:flex-row justify-center gap-4 animate-fade-in-up">
               <Link
-                href="https://form.jotform.com/253592779063570"
+                href="/courses"
                 className="px-10 py-5 bg-sky-500 hover:bg-sky-600 text-white font-bold rounded-2xl shadow-xl 
                            transition-all duration-300 hover:shadow-2xl hover:shadow-sky-500/30 text-xl
                            flex items-center justify-center gap-3"
               >
-                <span className="text-3xl">📝</span>
-                Apply for a Course
+                <span className="text-3xl">📚</span>
+                Browse Courses
+              </Link>
+              <Link
+                href="/auth/login?redirect=/student/dashboard"
+                className="px-10 py-5 bg-transparent border-2 border-sky-400 hover:bg-sky-400/10 text-sky-400 font-bold rounded-2xl shadow-xl 
+                           transition-all duration-300 hover:shadow-2xl hover:shadow-sky-400/30 text-xl
+                           flex items-center justify-center gap-3"
+              >
+                <span className="text-3xl">🔐</span>
+                Sign In
               </Link>
             </div>
 

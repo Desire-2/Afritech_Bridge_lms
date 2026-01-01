@@ -81,6 +81,16 @@ export class InstructorService {
     }
   }
 
+  // Unenroll a student from a course
+  static async unenrollStudent(enrollmentId: number): Promise<{ message: string; success: boolean }> {
+    try {
+      const response = await apiClient.delete(`${this.BASE_PATH}/enrollments/${enrollmentId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
   // Grade submission
   static async gradeSubmission(submissionId: number, grade: number, feedback?: string): Promise<void> {
     try {

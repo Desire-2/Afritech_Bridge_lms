@@ -237,7 +237,7 @@ const MyProgressPage = () => {
                       Continue Learning
                     </Link>
                     <Link
-                      href={`/student/courses/myprogress/${course.id}`}
+                      href={`/courses/${course.id}`}
                       className="text-xs px-3 py-1 bg-slate-700 text-slate-300 rounded-full hover:bg-slate-600 transition-colors"
                     >
                       View Details

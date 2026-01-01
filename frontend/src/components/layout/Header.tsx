@@ -124,12 +124,7 @@ const Header = () => {
             ) : (
               <div className="hidden md:flex items-center space-x-2">
                 <Link href="/auth/login" legacyBehavior>
-                  <a className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">Login</a>
-                </Link>
-                <Link href="/auth/register" legacyBehavior>
-                  <a className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors dark:bg-blue-500 dark:hover:bg-blue-600">
-                    Register
-                  </a>
+                  <a className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors dark:bg-blue-500 dark:hover:bg-blue-600">Login</a>
                 </Link>
               </div>
             )}
@@ -163,10 +158,7 @@ const Header = () => {
           {!user && (
             <div className="pt-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
                 <Link href="/auth/login" legacyBehavior>
-                  <a onClick={() => setIsMobileMenuOpen(false)} className="block w-full text-center px-4 py-2 text-base font-medium text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors">Login</a>
-                </Link>
-                <Link href="/auth/register" legacyBehavior>
-                  <a onClick={() => setIsMobileMenuOpen(false)} className="block w-full text-center px-4 py-2 text-base font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors dark:bg-blue-500 dark:hover:bg-blue-600">Register</a>
+                  <a onClick={() => setIsMobileMenuOpen(false)} className="block w-full text-center px-4 py-2 text-base font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors dark:bg-blue-500 dark:hover:bg-blue-600">Login</a>
                 </Link>
             </div>
           )}

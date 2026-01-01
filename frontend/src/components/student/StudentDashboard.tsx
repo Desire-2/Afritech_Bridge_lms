@@ -118,7 +118,7 @@ const CourseCard: React.FC<CourseCardProps> = ({ course, progress, lastAccessed 
             <div className="text-sm text-muted-foreground">
               Last accessed: {new Date(lastAccessed).toLocaleDateString()}
             </div>
-            <Link href={`/student/courses/${course.id}`}>
+            <Link href={`/courses/${course.id}`}>
               <Button size="sm" className="ml-auto">
                 Continue
                 <ChevronRight className="h-4 w-4 ml-1" />

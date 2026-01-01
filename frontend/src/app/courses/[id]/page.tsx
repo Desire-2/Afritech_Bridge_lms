@@ -110,9 +110,9 @@ interface CourseDetailData {
   enrollment?: Enrollment;
 }
 
-export default function CourseDetailPage({ params }: { params: Promise<{ courseId: string }> }) {
+export default function CourseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   // Unwrap params using React.use() for Next.js 15+ compatibility
-  const { courseId: courseIdParam } = use(params);
+  const { id: courseIdParam } = use(params);
   const courseId = parseInt(courseIdParam);
 
   const [courseData, setCourseData] = useState<CourseDetailData | null>(null);

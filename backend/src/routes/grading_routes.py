@@ -14,6 +14,7 @@ from ..models.course_models import (
     Project, ProjectSubmission, Quiz, Submission, Enrollment, Lesson
 )
 from ..models.student_models import AssessmentAttempt, LessonCompletion
+from ..utils.email_notifications import send_grade_notification, send_project_graded_notification
 
 logger = logging.getLogger(__name__)
 
@@ -348,7 +349,32 @@ def grade_assignment_submission(submission_id):
             # Don't fail the whole request, just log the error
         # ===== END LessonCompletion FIX =====
         
-        # TODO: Send notification to student about grade
+        # Send email notification to student about grade
+        email_sent = False
+        try:
+            student = User.query.get(submission.student_id)
+            if student and student.email:
+                logger.info(f"📧 Preparing grade notification for student {student.email}")
+                logger.info(f"   Assignment: {submission.assignment.title if submission.assignment else 'N/A'}")
+                logger.info(f"   Grade: {grade}/100")
+                
+                email_sent = send_grade_notification(
+                    submission=submission,
+                    assignment=submission.assignment,
+                    student=student,
+                    grade=grade,
+                    feedback=data.get('feedback', '')
+                )
+                
+                if email_sent:
+                    logger.info(f"✅ Grade notification sent successfully to {student.email}")
+                else:
+                    logger.warning(f"⚠️ Grade notification failed to send to {student.email}")
+            else:
+                logger.warning(f"⚠️ Cannot send grade notification - student not found or no email")
+        except Exception as email_error:
+            logger.error(f"❌ Error sending grade notification: {str(email_error)}")
+            # Don't fail the request if email fails
         
         logger.info(f"Assignment submission {submission_id} graded by instructor {current_user_id}")
         
@@ -673,7 +699,21 @@ def grade_project_submission(submission_id):
         
         db.session.commit()
         
-        # TODO: Send notification to student (and team members if applicable)
+        # Send email notification to student about project grade
+        try:
+            student = User.query.get(submission.student_id)
+            if student and student.email:
+                send_project_graded_notification(
+                    submission=submission,
+                    project=submission.project,
+                    student=student,
+                    grade=grade,
+                    feedback=data.get('feedback', '')
+                )
+                logger.info(f"📧 Project grade notification email sent to student {student.email}")
+        except Exception as email_error:
+            logger.warning(f"Failed to send project grade notification email: {str(email_error)}")
+            # Don't fail the request if email fails
         
         logger.info(f"Project submission {submission_id} graded by instructor {current_user_id}")
         

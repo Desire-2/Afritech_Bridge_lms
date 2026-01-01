@@ -242,7 +242,7 @@ const ForumDetailPage = () => {
                 <p className="text-slate-300 mb-4">
                   You need to be enrolled in <span className="text-amber-400">{forum.course_title}</span> to participate in this forum.
                 </p>
-                <Link href={`/student/courses/${forum.course_id}`}>
+                <Link href={`/courses/${forum.course_id}`}>
                   <Button className="bg-amber-600 hover:bg-amber-700 text-white">
                     View Course
                   </Button>

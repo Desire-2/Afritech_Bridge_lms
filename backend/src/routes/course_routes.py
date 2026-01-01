@@ -6,6 +6,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role # For role checking
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
+from ..utils.email_notifications import send_announcement_notification
 
 # Helper for role checking (decorator)
 from functools import wraps
@@ -507,6 +508,35 @@ def create_announcement_for_course(course_id):
         )
         db.session.add(new_announcement)
         db.session.commit()
+        
+        # Send email notification to all enrolled students
+        email_results = {"sent": 0, "failed": 0, "total": 0}
+        try:
+            enrollments = Enrollment.query.filter_by(course_id=course_id).all()
+            students = [User.query.get(enrollment.student_id) for enrollment in enrollments]
+            students = [s for s in students if s and s.email]  # Filter out None and no email
+            
+            if students:
+                logger.info(f"📧 Preparing announcement notification for {len(students)} students")
+                logger.info(f"   Course: {course.title}")
+                logger.info(f"   Title: {new_announcement.title}")
+                
+                email_results = send_announcement_notification(
+                    announcement=new_announcement,
+                    course=course,
+                    students=students
+                )
+                
+                logger.info(f"✅ Announcement emails: {email_results['sent']} sent, {email_results['failed']} failed out of {email_results['total']} students")
+                
+                if email_results['failed'] > 0:
+                    logger.warning(f"⚠️ {email_results['failed']} announcement emails failed to send")
+            else:
+                logger.info(f"🔕 No students with email addresses found for course {course_id}")
+        except Exception as email_error:
+            logger.error(f"❌ Error sending announcement notifications: {str(email_error)}")
+            # Don't fail the request if emails fail
+        
         return jsonify(new_announcement.to_dict()), 201
     except KeyError as e:
         return jsonify({"message": f"Missing field: {e}"}), 400
@@ -588,3 +618,184 @@ def delete_announcement(announcement_id):
         db.session.rollback()
         logger.error(f"Error deleting announcement {announcement_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Could not delete announcement", "error": str(e)}), 500
+
+
+# --- ENROLLMENT ROUTES (Enhanced) ---
+
+@enrollment_bp.route("", methods=["GET"])
+@jwt_required()
+def get_my_enrollments():
+    """
+    Get all enrollments for the current user with detailed course and progress information.
+    """
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+    
+    try:
+        enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
+        
+        result = []
+        for enrollment in enrollments:
+            course = enrollment.course
+            
+            # Get module count and completion
+            total_modules = course.modules.count()
+            from ..models.student_models import ModuleProgress
+            completed_modules = ModuleProgress.query.filter_by(
+                student_id=current_user_id,
+                enrollment_id=enrollment.id
+            ).filter(ModuleProgress.progress >= 1.0).count()
+            
+            # Get overall course score
+            course_score = enrollment.calculate_course_score()
+            
+            result.append({
+                "id": enrollment.id,
+                "course": {
+                    "id": course.id,
+                    "title": course.title,
+                    "description": course.description,
+                    "instructor_name": f"{course.instructor.first_name} {course.instructor.last_name}",
+                    "is_published": course.is_published
+                },
+                "enrollment_date": enrollment.enrollment_date.isoformat(),
+                "progress": enrollment.progress,
+                "course_score": round(course_score, 2),
+                "total_modules": total_modules,
+                "completed_modules": completed_modules,
+                "completed_at": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
+                "is_completed": enrollment.completed_at is not None
+            })
+        
+        return jsonify({
+            "success": True,
+            "enrollments": result,
+            "total": len(result)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching enrollments: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to fetch enrollments", "details": str(e)}), 500
+
+
+@enrollment_bp.route("/check/<int:course_id>", methods=["GET"])
+@jwt_required()
+def check_enrollment(course_id):
+    """
+    Check if current user is enrolled in a specific course.
+    """
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+    
+    enrollment = Enrollment.query.filter_by(
+        student_id=current_user_id,
+        course_id=course_id
+    ).first()
+    
+    if enrollment:
+        return jsonify({
+            "enrolled": True,
+            "enrollment_id": enrollment.id,
+            "enrollment_date": enrollment.enrollment_date.isoformat(),
+            "progress": enrollment.progress,
+            "course_score": round(enrollment.calculate_course_score(), 2)
+        }), 200
+    else:
+        return jsonify({
+            "enrolled": False
+        }), 200
+
+
+@enrollment_bp.route("/statistics", methods=["GET"])
+@jwt_required()
+def get_enrollment_statistics():
+    """
+    Get enrollment statistics for the current user.
+    """
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+    
+    try:
+        total_enrollments = Enrollment.query.filter_by(student_id=current_user_id).count()
+        completed_enrollments = Enrollment.query.filter_by(
+            student_id=current_user_id
+        ).filter(Enrollment.completed_at.isnot(None)).count()
+        
+        in_progress = total_enrollments - completed_enrollments
+        
+        # Calculate average score across all enrollments
+        enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
+        total_score = sum(enrollment.calculate_course_score() for enrollment in enrollments)
+        average_score = (total_score / total_enrollments) if total_enrollments > 0 else 0
+        
+        return jsonify({
+            "success": True,
+            "statistics": {
+                "total_enrollments": total_enrollments,
+                "completed_courses": completed_enrollments,
+                "in_progress": in_progress,
+                "average_score": round(average_score, 2),
+                "completion_rate": round((completed_enrollments / total_enrollments * 100), 1) if total_enrollments > 0 else 0
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error calculating statistics: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to calculate statistics"}), 500
+
+
+@enrollment_bp.route("/<int:enrollment_id>", methods=["GET"])
+@jwt_required()
+def get_enrollment_detail(enrollment_id):
+    """
+    Get detailed information about a specific enrollment.
+    """
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+    
+    enrollment = Enrollment.query.get_or_404(enrollment_id)
+    
+    # Verify ownership
+    if enrollment.student_id != current_user_id:
+        user = User.query.get(current_user_id)
+        if not user or user.role.name not in ["admin", "instructor"]:
+            return jsonify({"error": "Unauthorized access"}), 403
+    
+    course = enrollment.course
+    from ..models.student_models import ModuleProgress
+    
+    # Get module progress details
+    module_progress_list = []
+    for module in course.modules.order_by(Module.order).all():
+        progress = ModuleProgress.query.filter_by(
+            student_id=enrollment.student_id,
+            module_id=module.id,
+            enrollment_id=enrollment.id
+        ).first()
+        
+        module_progress_list.append({
+            "module_id": module.id,
+            "module_title": module.title,
+            "module_order": module.order,
+            "progress": progress.progress if progress else 0.0,
+            "module_score": round(progress.calculate_module_score(), 2) if progress else 0.0,
+            "completed": progress.progress >= 1.0 if progress else False
+        })
+    
+    return jsonify({
+        "success": True,
+        "enrollment": {
+            "id": enrollment.id,
+            "course_id": course.id,
+            "course_title": course.title,
+            "enrollment_date": enrollment.enrollment_date.isoformat(),
+            "progress": enrollment.progress,
+            "course_score": round(enrollment.calculate_course_score(), 2),
+            "completed_at": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
+            "modules": module_progress_list
+        }
+    }), 200

@@ -24,73 +24,85 @@ user_bp = Blueprint('user_bp', __name__, url_prefix='/api/v1/users')
 # In a production environment, this should be a persistent store like Redis.
 BLOCKLIST = set()
 
+# Registration endpoint disabled - users are created automatically upon course application approval
 @auth_bp.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    username = data.get('username')
-    email = data.get('email')
-    password = data.get('password')
-    first_name = data.get('first_name')
-    last_name = data.get('last_name')
+    return jsonify({
+        'message': 'Direct registration is disabled. Please apply for a course - user accounts are created automatically upon application approval.',
+        'details': {
+            'registration_disabled': True,
+            'apply_url': '/courses'
+        }
+    }), 403
 
-    if not username or not email or not password:
-        return jsonify({'message': 'Username, email, and password are required'}), 400
-
-    # Check for existing username and email separately for better error messages
-    existing_user_by_username = User.query.filter_by(username=username).first()
-    existing_user_by_email = User.query.filter_by(email=email).first()
-    
-    if existing_user_by_username and existing_user_by_email:
-        return jsonify({
-            'message': 'Both username and email are already registered',
-            'details': {
-                'username_taken': True,
-                'email_taken': True
-            }
-        }), 409
-    elif existing_user_by_username:
-        return jsonify({
-            'message': 'Username is already taken',
-            'details': {
-                'username_taken': True,
-                'email_taken': False
-            }
-        }), 409
-    elif existing_user_by_email:
-        return jsonify({
-            'message': 'Email is already registered',
-            'details': {
-                'username_taken': False,
-                'email_taken': True
-            }
-        }), 409
-
-    # Default role to 'student' if not specified or if role system is more complex
-    student_role = Role.query.filter_by(name='student').first()
-    if not student_role:
-        # Create student role if it doesn't exist (basic setup)
-        student_role = Role(name='student')
-        db.session.add(student_role)
-        # Also create instructor and admin roles for completeness if they don't exist
-        if not Role.query.filter_by(name='instructor').first():
-            db.session.add(Role(name='instructor'))
-        if not Role.query.filter_by(name='admin').first():
-            db.session.add(Role(name='admin'))
-        db.session.commit() # Commit roles first
-        student_role = Role.query.filter_by(name='student').first() # Re-fetch after commit
-
-    new_user = User(
-        username=username,
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        role_id=student_role.id
-    )
-    new_user.set_password(password)
-    db.session.add(new_user)
-    db.session.commit()
-
-    return jsonify({'message': 'User registered successfully', 'user': new_user.to_dict()}), 201
+# Original registration code kept for reference (disabled)
+# @auth_bp.route('/register', methods=['POST'])
+# def register():
+#     data = request.get_json()
+#     username = data.get('username')
+#     email = data.get('email')
+#     password = data.get('password')
+#     first_name = data.get('first_name')
+#     last_name = data.get('last_name')
+# 
+#     if not username or not email or not password:
+#         return jsonify({'message': 'Username, email, and password are required'}), 400
+# 
+#     # Check for existing username and email separately for better error messages
+#     existing_user_by_username = User.query.filter_by(username=username).first()
+#     existing_user_by_email = User.query.filter_by(email=email).first()
+#     
+#     if existing_user_by_username and existing_user_by_email:
+#         return jsonify({
+#             'message': 'Both username and email are already registered',
+#             'details': {
+#                 'username_taken': True,
+#                 'email_taken': True
+#             }
+#         }), 409
+#     elif existing_user_by_username:
+#         return jsonify({
+#             'message': 'Username is already taken',
+#             'details': {
+#                 'username_taken': True,
+#                 'email_taken': False
+#             }
+#         }), 409
+#     elif existing_user_by_email:
+#         return jsonify({
+#             'message': 'Email is already registered',
+#             'details': {
+#                 'username_taken': False,
+#                 'email_taken': True
+#             }
+#         }), 409
+# 
+#     # Default role to 'student' if not specified or if role system is more complex
+#     student_role = Role.query.filter_by(name='student').first()
+#     if not student_role:
+#         # Create student role if it doesn't exist (basic setup)
+#         student_role = Role(name='student')
+#         db.session.add(student_role)
+#         # Also create instructor and admin roles for completeness if they don't exist
+#         if not Role.query.filter_by(name='instructor').first():
+#             db.session.add(Role(name='instructor'))
+#         if not Role.query.filter_by(name='admin').first():
+#             db.session.add(Role(name='admin'))
+#         db.session.commit() # Commit roles first
+#         student_role = Role.query.filter_by(name='student').first() # Re-fetch after commit
+# 
+#     new_user = User(
+#         username=username,
+#         email=email,
+#         first_name=first_name,
+#         last_name=last_name,
+#         role_id=student_role.id
+#     )
+#     new_user.set_password(password)
+#     db.session.add(new_user)
+#     db.session.commit()
+# 
+#     return jsonify({'message': 'User registered successfully', 'user': new_user.to_dict()}), 201
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
@@ -189,12 +201,20 @@ def login():
         # Log successful authentication
         print(f"✓ User {user.email} ({user.role}) logged in successfully")
         
-        return jsonify({
+        # Check if user must change password
+        response_data = {
             'message': 'Login successful',
             'access_token': access_token,
             'refresh_token': refresh_token,
             'user': user_data
-        }), 200
+        }
+        
+        # Add flag if password change is required
+        if user.must_change_password:
+            response_data['must_change_password'] = True
+            response_data['message'] = 'Login successful. Please change your password to continue.'
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         print(f"Login error: Failed to generate tokens for user {user.email}: {str(e)}")
@@ -343,6 +363,48 @@ def validate_reset_token():
     
     if not email or not token:
         return jsonify({'message': 'Email and token are required'}), 400
+
+
+@auth_bp.route('/change-password', methods=['POST'])
+@jwt_required()
+def change_password():
+    """
+    Change user password (authenticated users).
+    Clears must_change_password flag if set.
+    """
+    user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    current_password = data.get('current_password')
+    new_password = data.get('new_password')
+    
+    if not current_password or not new_password:
+        return jsonify({'message': 'Current password and new password are required'}), 400
+    
+    if len(new_password) < 6:
+        return jsonify({'message': 'New password must be at least 6 characters long'}), 400
+    
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    
+    # Verify current password
+    if not user.check_password(current_password):
+        return jsonify({'message': 'Current password is incorrect'}), 401
+    
+    # Set new password
+    user.set_password(new_password)
+    
+    # Clear must_change_password flag if it was set
+    if user.must_change_password:
+        user.must_change_password = False
+    
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Password changed successfully',
+        'must_change_password': False
+    }), 200
         
     user = User.query.filter_by(email=email).first()
     if not user or not user.verify_reset_token(token):
