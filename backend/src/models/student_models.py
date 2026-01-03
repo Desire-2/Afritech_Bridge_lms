@@ -19,6 +19,7 @@ class LessonCompletion(db.Model):
     reading_progress = db.Column(db.Float, default=0.0)  # 0-100 percentage
     engagement_score = db.Column(db.Float, default=0.0)  # 0-100 engagement score
     scroll_progress = db.Column(db.Float, default=0.0)  # 0-100 scroll percentage
+    video_progress = db.Column(db.Float, default=0.0)  # 0-100 video watch percentage
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -190,6 +191,7 @@ class LessonCompletion(db.Model):
             'reading_progress': self.reading_progress,
             'engagement_score': self.engagement_score,
             'scroll_progress': self.scroll_progress,
+            'video_progress': self.video_progress,
             'lesson_score': score_breakdown['total_score'],  # Comprehensive lesson score
             'score_breakdown': score_breakdown,  # Detailed breakdown with weights
             'has_quiz': score_breakdown['has_quiz'],

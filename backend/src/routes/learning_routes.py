@@ -23,8 +23,8 @@ def student_required(f):
     def decorated_function(*args, **kwargs):
         current_user_id = int(get_jwt_identity())
         user = User.query.get(current_user_id)
-        if not user or not user.role or user.role.name != 'student':
-            return jsonify({"message": "Student access required"}), 403
+        if not user or not user.role or user.role.name not in ['student', 'instructor', 'admin']:
+            return jsonify({"message": "Access denied"}), 403
         return f(*args, **kwargs)
     return decorated_function
 
@@ -250,16 +250,22 @@ def get_course_for_learning(course_id):
         if not course:
             return jsonify({"error": "Course not found"}), 404
         
-        if not course.is_published:
+        # Get current user
+        user = User.query.get(student_id)
+        is_instructor = user.role.name == 'instructor' and course.instructor_id == student_id
+        is_admin = user.role.name == 'admin'
+        
+        # Check if course is published (allow instructors and admins to view unpublished courses)
+        if not course.is_published and not is_instructor and not is_admin:
             return jsonify({"error": "Course is not available"}), 404
         
-        # Check if student is enrolled
+        # Check if student is enrolled (not required for instructors viewing their own courses or admins)
         enrollment = Enrollment.query.filter_by(
             student_id=student_id,
             course_id=course_id
         ).first()
         
-        if not enrollment:
+        if not enrollment and not is_instructor and not is_admin:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
         # OPTIMIZED: Load modules and lessons in efficient batch queries
@@ -280,8 +286,9 @@ def get_course_for_learning(course_id):
         else:
             lessons_by_module = {}
         
-        # OPTIMIZED: Batch query for all module progress
-        if module_ids:
+        # OPTIMIZED: Batch query for all module progress (only if enrolled)
+        existing_progress_map = {}
+        if enrollment and module_ids:
             existing_progress_map = {
                 mp.module_id: mp for mp in ModuleProgress.query.filter(
                     ModuleProgress.student_id == student_id,
@@ -289,48 +296,56 @@ def get_course_for_learning(course_id):
                     ModuleProgress.enrollment_id == enrollment.id
                 ).all()
             }
+        
+        # Initialize missing progress records (only if enrolled and needed)
+        if enrollment:
+            try:
+                missing_modules = [m for m in modules if m.id not in existing_progress_map]
+                if missing_modules:
+                    current_app.logger.info(f"Initializing {len(missing_modules)} missing module progress records")
+                    for module in missing_modules:
+                        ProgressionService._initialize_module_progress(
+                            student_id, module.id, enrollment.id
+                        )
+                    db.session.commit()
+            except Exception as init_error:
+                current_app.logger.error(f"Error initializing module progress: {str(init_error)}")
+                db.session.rollback()
+            finally:
+                # Ensure session is cleaned up
+                db.session.close()
+        
+        # OPTIMIZED: Get lightweight progress data (only if enrolled)
+        if enrollment:
+            try:
+                # Quick progress calculation without full ProgressionService
+                completed_modules = ModuleProgress.query.filter(
+                    ModuleProgress.student_id == student_id,
+                    ModuleProgress.enrollment_id == enrollment.id,
+                    ModuleProgress.status == 'completed'
+                ).count()
+                
+                overall_progress = (completed_modules / len(modules) * 100) if modules else 0
+                
+                progress_data = {
+                    "overall_progress": overall_progress,
+                    "completed_modules": completed_modules,
+                    "total_modules": len(modules)
+                }
+            except Exception as e:
+                current_app.logger.error(f"Progress calculation error: {str(e)}")
+                progress_data = {
+                    "overall_progress": 0,
+                    "completed_modules": 0,
+                    "total_modules": len(modules)
+                }
         else:
-            existing_progress_map = {}
-        
-        # Initialize missing progress records (only if needed)
-        try:
-            missing_modules = [m for m in modules if m.id not in existing_progress_map]
-            if missing_modules:
-                current_app.logger.info(f"Initializing {len(missing_modules)} missing module progress records")
-                for module in missing_modules:
-                    ProgressionService._initialize_module_progress(
-                        student_id, module.id, enrollment.id
-                    )
-                db.session.commit()
-        except Exception as init_error:
-            current_app.logger.error(f"Error initializing module progress: {str(init_error)}")
-            db.session.rollback()
-        finally:
-            # Ensure session is cleaned up
-            db.session.close()
-        
-        # OPTIMIZED: Get lightweight progress data (skip if too slow)
-        try:
-            # Quick progress calculation without full ProgressionService
-            completed_modules = ModuleProgress.query.filter(
-                ModuleProgress.student_id == student_id,
-                ModuleProgress.enrollment_id == enrollment.id,
-                ModuleProgress.status == 'completed'
-            ).count()
-            
-            overall_progress = (completed_modules / len(modules) * 100) if modules else 0
-            
-            progress_data = {
-                "overall_progress": overall_progress,
-                "completed_modules": completed_modules,
-                "total_modules": len(modules)
-            }
-        except Exception as e:
-            current_app.logger.error(f"Progress calculation error: {str(e)}")
+            # Preview mode - no progress
             progress_data = {
                 "overall_progress": 0,
                 "completed_modules": 0,
-                "total_modules": len(modules)
+                "total_modules": len(modules),
+                "preview_mode": True
             }
         
         # OPTIMIZED: Build lightweight course data
@@ -358,26 +373,27 @@ def get_course_for_learning(course_id):
             } for m in modules]
         }
         
-        # Find first incomplete lesson as current lesson
+        # Find first incomplete lesson as current lesson (only if enrolled)
         current_lesson = None
-        for module in modules:
-            for lesson in lessons_by_module.get(module.id, []):
-                completion = LessonCompletion.query.filter_by(
-                    student_id=student_id,
-                    lesson_id=lesson.id
-                ).first()
-                if not completion:
-                    current_lesson = {
-                        "id": lesson.id,
-                        "title": lesson.title,
-                        "module_id": module.id,
-                        "module_title": module.title
-                    }
+        if enrollment:
+            for module in modules:
+                for lesson in lessons_by_module.get(module.id, []):
+                    completion = LessonCompletion.query.filter_by(
+                        student_id=student_id,
+                        lesson_id=lesson.id
+                    ).first()
+                    if not completion:
+                        current_lesson = {
+                            "id": lesson.id,
+                            "title": lesson.title,
+                            "module_id": module.id,
+                            "module_title": module.title
+                        }
+                        break
+                if current_lesson:
                     break
-            if current_lesson:
-                break
         
-        # If all complete, default to first lesson
+        # If all complete or preview mode, default to first lesson
         if not current_lesson and course_data["modules"] and course_data["modules"][0]["lessons"]:
             first_lesson = course_data["modules"][0]["lessons"][0]
             current_lesson = {
@@ -387,16 +403,21 @@ def get_course_for_learning(course_id):
                 "module_title": course_data["modules"][0]["title"]
             }
         
+        # Build enrollment data only if enrollment exists
+        enrollment_data = None
+        if enrollment:
+            enrollment_data = {
+                "enrolled_at": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                "completion_date": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
+                "is_completed": enrollment.completed_at is not None
+            }
+        
         return jsonify({
             "success": True,
             "course": course_data,
             "current_lesson": current_lesson,
             "progress": progress_data,
-            "enrollment": {
-                "enrolled_at": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
-                "completion_date": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
-                "is_completed": enrollment.completed_at is not None
-            }
+            "enrollment": enrollment_data
         }), 200
         
     except Exception as e:
@@ -455,54 +476,71 @@ def get_course_modules(course_id):
     try:
         student_id = int(get_jwt_identity())
         
-        # Check enrollment
+        # Get course and user
+        course = Course.query.get(course_id)
+        if not course:
+            return jsonify({"error": "Course not found"}), 404
+        
+        user = User.query.get(student_id)
+        is_instructor = user.role.name == 'instructor' and course.instructor_id == student_id
+        is_admin = user.role.name == 'admin'
+        
+        # Check enrollment (not required for instructors viewing their own courses or admins)
         enrollment = Enrollment.query.filter_by(
             student_id=student_id,
             course_id=course_id
         ).first()
         
-        if not enrollment:
+        if not enrollment and not is_instructor and not is_admin:
             return jsonify({"error": "Not enrolled in this course"}), 403
-        
-        # Get course and modules
-        course = Course.query.get(course_id)
-        if not course:
-            return jsonify({"error": "Course not found"}), 404
         
         modules = course.modules.order_by(Module.order).all()
         
         # Get progress for each module
         modules_data = []
         for module in modules:
-            module_progress = ModuleProgress.query.filter_by(
-                student_id=student_id,
-                module_id=module.id,
-                enrollment_id=enrollment.id
-            ).first()
-            
-            if not module_progress:
-                # Initialize if missing
-                module_progress = ProgressionService._initialize_module_progress(
-                    student_id, module.id, enrollment.id
-                )
-            
-            # Get assessment attempts for this module
-            attempts = AssessmentAttempt.query.filter_by(
-                student_id=student_id,
-                module_id=module.id
-            ).all()
-            
-            module_data = {
-                "module": module.to_dict(include_lessons=True),
-                "progress": module_progress.to_dict(),
-                "assessment_attempts": [attempt.to_dict() for attempt in attempts],
-                "can_retake": module_progress.status == 'failed' and module_progress.attempts_count < module_progress.max_attempts
-            }
+            # For instructors/admins without enrollment, show module structure without progress
+            if enrollment:
+                module_progress = ModuleProgress.query.filter_by(
+                    student_id=student_id,
+                    module_id=module.id,
+                    enrollment_id=enrollment.id
+                ).first()
+                
+                if not module_progress:
+                    # Initialize if missing
+                    module_progress = ProgressionService._initialize_module_progress(
+                        student_id, module.id, enrollment.id
+                    )
+                
+                # Get assessment attempts for this module
+                attempts = AssessmentAttempt.query.filter_by(
+                    student_id=student_id,
+                    module_id=module.id
+                ).all()
+                
+                module_data = {
+                    "module": module.to_dict(include_lessons=True),
+                    "progress": module_progress.to_dict(),
+                    "assessment_attempts": [attempt.to_dict() for attempt in attempts],
+                    "can_retake": module_progress.status == 'failed' and module_progress.attempts_count < module_progress.max_attempts
+                }
+            else:
+                # Instructor/admin preview mode - no progress data
+                module_data = {
+                    "module": module.to_dict(include_lessons=True),
+                    "progress": None,
+                    "assessment_attempts": [],
+                    "can_retake": False,
+                    "preview_mode": True
+                }
             
             modules_data.append(module_data)
         
-        # Get suspension status
-        suspension_status = ProgressionService.check_student_suspension_status(student_id, course_id)
+        # Get suspension status (only for enrolled students)
+        suspension_status = None
+        if enrollment:
+            suspension_status = ProgressionService.check_student_suspension_status(student_id, course_id)
         
         return jsonify({
             "success": True,

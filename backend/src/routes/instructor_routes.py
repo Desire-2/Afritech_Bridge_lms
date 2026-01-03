@@ -105,7 +105,8 @@ def get_instructor_courses():
         
         courses = Course.query.filter_by(instructor_id=current_user_id).all()
         print(f"DEBUG: Found {len(courses)} courses for instructor {current_user_id}")
-        return jsonify({"courses": [course.to_dict() for course in courses]}), 200
+        # Return courses array directly for consistency with frontend
+        return jsonify([course.to_dict() for course in courses]), 200
     except Exception as e:
         print(f"ERROR in get_instructor_courses: {str(e)}")
         import traceback

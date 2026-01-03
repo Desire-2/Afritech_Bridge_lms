@@ -18,11 +18,28 @@ def instructor_required(f):
     @wraps(f)
     @jwt_required()
     def decorated_function(*args, **kwargs):
-        current_user_id = get_jwt_identity()
-        user = User.query.get(current_user_id)
-        if not user or not user.role or user.role.name not in ['instructor', 'admin']:
-            return jsonify({"message": "Instructor access required"}), 403
-        return f(*args, **kwargs)
+        try:
+            current_user_id = get_jwt_identity()
+            logger.info(f"instructor_required check: user_id={current_user_id}")
+            
+            user = User.query.get(current_user_id)
+            if not user:
+                logger.warning(f"User not found: {current_user_id}")
+                return jsonify({"message": "User not found"}), 403
+            
+            if not user.role:
+                logger.warning(f"User {current_user_id} has no role assigned")
+                return jsonify({"message": "No role assigned to user"}), 403
+            
+            if user.role.name not in ['instructor', 'admin']:
+                logger.warning(f"User {current_user_id} has role '{user.role.name}', requires instructor/admin")
+                return jsonify({"message": f"Instructor access required. Current role: {user.role.name}"}), 403
+            
+            logger.info(f"Access granted for user {current_user_id} with role {user.role.name}")
+            return f(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error in instructor_required: {str(e)}")
+            return jsonify({"message": f"Authentication error: {str(e)}"}), 403
     return decorated_function
 
 ai_agent_bp = Blueprint("ai_agent_bp", __name__, url_prefix="/api/v1/ai-agent")
@@ -339,6 +356,99 @@ def generate_lesson_content():
         return jsonify({
             "success": False,
             "message": "Failed to generate lesson content",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/generate-comprehensive-lesson", methods=["POST"])
+@instructor_required
+def generate_comprehensive_lesson():
+    """
+    Generate AI-powered COMPREHENSIVE professor-level lesson with step-by-step generation and validation
+    
+    This endpoint generates a complete, academically rigorous lesson with:
+    - Detailed lesson outline and structure
+    - Engaging introduction
+    - Comprehensive theoretical foundation
+    - Practical applications and examples
+    - Practice exercises and assessments
+    - Summary and additional resources
+    
+    Each section is generated separately with quality validation.
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 2,
+        "lesson_title": "Advanced Python Decorators",
+        "lesson_description": "Master the art of Python decorators" (optional),
+        "difficulty_level": "intermediate" (optional: "beginner", "intermediate", "advanced")
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        if not data.get('lesson_title'):
+            return jsonify({"message": "Lesson title is required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        lesson_title = data['lesson_title']
+        lesson_description = data.get('lesson_description', '')
+        difficulty_level = data.get('difficulty_level', 'intermediate')
+        
+        # Validate difficulty level
+        if difficulty_level not in ['beginner', 'intermediate', 'advanced']:
+            return jsonify({"message": "Invalid difficulty_level. Must be 'beginner', 'intermediate', or 'advanced'"}), 400
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Get module
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            return jsonify({"message": "Module not found"}), 404
+        
+        # Get existing lessons in this module for context
+        existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
+        existing_lessons_data = [{
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'order': lesson.order,
+            'duration_minutes': lesson.duration_minutes or 0
+        } for lesson in existing_lessons]
+        
+        logger.info(f"Generating COMPREHENSIVE lesson: {lesson_title} for module: {module.title} (difficulty: {difficulty_level}, existing lessons: {len(existing_lessons)})")
+        
+        # Use the enhanced generation method with validation
+        result = ai_agent_service.generate_comprehensive_lesson_with_validation(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or '',
+            module_objectives=module.learning_objectives or '',
+            lesson_title=lesson_title,
+            lesson_description=lesson_description,
+            difficulty_level=difficulty_level,
+            existing_lessons=existing_lessons_data
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result,
+            "message": f"Comprehensive lesson generated successfully with quality score: {result.get('quality_metrics', {}).get('average_score', 0):.1f}/100"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating comprehensive lesson: {e}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate comprehensive lesson",
             "error": str(e)
         }), 500
 
@@ -861,6 +971,136 @@ def enhance_content():
         return jsonify({
             "success": False,
             "message": "Failed to enhance content",
+            "error": str(e)
+        }), 500
+
+
+# =====================
+# MIXED CONTENT GENERATION
+# =====================
+
+@ai_agent_bp.route("/generate-mixed-content", methods=["POST"])
+@instructor_required
+def generate_mixed_content():
+    """
+    Generate AI-powered mixed content lesson with template support
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 1,
+        "lesson_title": "Introduction to Variables",
+        "lesson_description": "Learn about variables in Python",
+        "template_id": "intro-video-summary" (optional),
+        "existing_sections": [] (optional - for enhancement/append mode)
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        lesson_title = data.get('lesson_title', '')
+        lesson_description = data.get('lesson_description', '')
+        template_id = data.get('template_id')
+        existing_sections = data.get('existing_sections', [])
+        
+        # Verify access
+        course = Course.query.get(course_id)
+        if not course:
+            logger.warning(f"Course not found: {course_id}")
+            return jsonify({"message": "Course not found"}), 404
+        
+        # Check if user is the course instructor or an admin
+        user = User.query.get(current_user_id)
+        is_admin = user and user.role and user.role.name == 'admin'
+        is_course_instructor = course.instructor_id == int(current_user_id)
+        
+        if not (is_course_instructor or is_admin):
+            logger.warning(f"User {current_user_id} attempted to access course {course_id} (instructor: {course.instructor_id})")
+            return jsonify({"message": "Unauthorized - You are not the instructor of this course"}), 403
+        
+        logger.info(f"Access granted to course {course_id} for user {current_user_id}")
+        
+        module = Module.query.get(module_id)
+        if not module or module.course_id != course_id:
+            return jsonify({"message": "Module not found"}), 404
+        
+        logger.info(f"Generating mixed content for lesson: {lesson_title} with template: {template_id}")
+        
+        result = ai_agent_service.generate_mixed_content(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or "",
+            lesson_title=lesson_title,
+            lesson_description=lesson_description,
+            template_id=template_id,
+            existing_sections=existing_sections
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating mixed content: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate mixed content",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/enhance-section-content", methods=["POST"])
+@instructor_required
+def enhance_section_content():
+    """
+    Enhance a specific section of mixed content using AI
+    
+    Request body:
+    {
+        "section_type": "text",
+        "section_content": "Brief content...",
+        "context": {
+            "lesson_title": "Variables in Python",
+            "section_position": "introduction",
+            "previous_section": "..."
+        }
+    }
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or not data.get('section_type'):
+            return jsonify({"message": "Section type is required"}), 400
+        
+        section_type = data['section_type']
+        section_content = data.get('section_content', '')
+        context = data.get('context', {})
+        
+        logger.info(f"Enhancing {section_type} section content")
+        
+        result = ai_agent_service.enhance_section_content(
+            section_type=section_type,
+            section_content=section_content,
+            context=context
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error enhancing section content: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to enhance section content",
             "error": str(e)
         }), 500
 

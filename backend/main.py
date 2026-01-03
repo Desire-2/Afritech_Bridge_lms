@@ -4,6 +4,10 @@ import sys
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Load environment variables FIRST before any other imports
+from dotenv import load_dotenv
+load_dotenv()
+
 from flask import Flask, send_from_directory, jsonify, request
 from flask_jwt_extended import JWTManager
 from datetime import timedelta
@@ -40,7 +44,6 @@ from src.routes.forum_routes import forum_bp # Import forum blueprint
 from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
 from src.routes.admin_routes import admin_bp # Import admin blueprint
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
-from dotenv import load_dotenv
 from flask_cors import CORS
 
 # Configure logging
@@ -79,7 +82,8 @@ else:
                         "http://192.168.0.3:3000", "http://192.168.0.3:3001",
                         "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
                         "http://192.168.116.116:3002", "http://192.168.116.116:3005",
-                        "http://192.168.0.4:5001", "http://localhost:5001"],
+                        "http://192.168.0.4:5001", "http://localhost:5001",
+                        "http://localhost:51164"],
              "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
              "expose_headers": ["Content-Type", "Authorization"],
@@ -91,8 +95,7 @@ else:
 # Disable strict trailing slash enforcement to prevent redirects during CORS preflight
 app.url_map.strict_slashes = False
 
-# Load environment variables
-load_dotenv()
+# Environment variables already loaded at top of file
 
 # Determine environment
 env = os.environ.get('FLASK_ENV', 'development')

@@ -10,6 +10,7 @@ interface UseProgressTrackingProps {
   interactionHistory: InteractionEvent[];
   hasQuiz?: boolean;
   hasAssignment?: boolean;
+  videoProgress?: number; // Video watch progress (0-100%)
 }
 
 export const useProgressTracking = ({
@@ -19,7 +20,8 @@ export const useProgressTracking = ({
   contentRef,
   interactionHistory,
   hasQuiz = false,
-  hasAssignment = false
+  hasAssignment = false,
+  videoProgress = 0
 }: UseProgressTrackingProps) => {
   const [readingProgress, setReadingProgress] = useState<number>(0);
   const [timeSpent, setTimeSpent] = useState<number>(0);
@@ -135,15 +137,31 @@ export const useProgressTracking = ({
       scrollProgress: newMaxScrollProgress / 100,
       timeSpent: Math.min(timeSinceStart / 600, 1),
       interactions: Math.min(interactionHistory.length / 10, 1),
-      consistency: Math.min(readingTimeRef.current / 100, 1)
+      consistency: Math.min(readingTimeRef.current / 100, 1),
+      videoWatchProgress: videoProgress / 100  // Add video progress to engagement
     };
     
-    const newEngagementScore = (
-      engagementFactors.scrollProgress * 0.3 +
-      engagementFactors.timeSpent * 0.3 +
-      engagementFactors.interactions * 0.2 +
-      engagementFactors.consistency * 0.2
-    ) * 100;
+    // Dynamic engagement scoring based on content type
+    let newEngagementScore: number;
+    
+    if (videoProgress > 0) {
+      // For video content: video progress is major factor (40%), scroll (20%), time (20%), interactions (10%), consistency (10%)
+      newEngagementScore = (
+        engagementFactors.videoWatchProgress * 0.4 +
+        engagementFactors.scrollProgress * 0.2 +
+        engagementFactors.timeSpent * 0.2 +
+        engagementFactors.interactions * 0.1 +
+        engagementFactors.consistency * 0.1
+      ) * 100;
+    } else {
+      // For text/mixed content without video: original formula
+      newEngagementScore = (
+        engagementFactors.scrollProgress * 0.3 +
+        engagementFactors.timeSpent * 0.3 +
+        engagementFactors.interactions * 0.2 +
+        engagementFactors.consistency * 0.2
+      ) * 100;
+    }
     
     setEngagementScore(newEngagementScore);
     
@@ -163,7 +181,7 @@ export const useProgressTracking = ({
       estimatedScore = (maxReadingProgressRef.current * 0.25) + (newEngagementScore * 0.25);
     }
     setLessonScore(estimatedScore);
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress]);
 
   // Check if lesson should auto-complete based on 80% lesson score
   const checkAutoCompletion = useCallback(() => {
@@ -325,6 +343,7 @@ export const useProgressTracking = ({
         reading_progress: readingProgress,
         engagement_score: engagementScore,
         scroll_progress: scrollProgress,
+        video_progress: videoProgress,  // Include video progress
         completion_method: 'automatic'
       });
       

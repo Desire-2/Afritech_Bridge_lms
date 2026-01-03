@@ -225,7 +225,8 @@ const LearningPage = () => {
     contentRef,
     interactionHistory,
     hasQuiz: !!lessonQuiz,
-    hasAssignment: lessonAssignments.length > 0
+    hasAssignment: lessonAssignments.length > 0,
+    videoProgress  // Pass video progress to tracking hook
   });
 
   // Handle auto-completion event (lesson reached 80% score)

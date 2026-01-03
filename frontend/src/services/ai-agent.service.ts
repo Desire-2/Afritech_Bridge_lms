@@ -334,6 +334,55 @@ class AIAgentService {
       };
     }
   }
+
+  /**
+   * Generate mixed content lesson with template support
+   */
+  async generateMixedContent(request: {
+    course_id: number;
+    module_id: number;
+    lesson_title: string;
+    lesson_description?: string;
+    template_id?: string;
+    existing_sections?: any[];
+  }): Promise<AIResponse> {
+    try {
+      const response = await aiApiClient.post('/ai-agent/generate-mixed-content', request);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error generating mixed content:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to generate mixed content',
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Enhance a specific section of mixed content
+   */
+  async enhanceSectionContent(request: {
+    section_type: string;
+    section_content: string;
+    context?: {
+      lesson_title?: string;
+      section_position?: string;
+      previous_section?: string;
+    };
+  }): Promise<AIResponse> {
+    try {
+      const response = await aiApiClient.post('/ai-agent/enhance-section-content', request);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error enhancing section content:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to enhance section content',
+        error: error.message
+      };
+    }
+  }
 }
 
 export const aiAgentService = new AIAgentService();

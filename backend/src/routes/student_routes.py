@@ -255,6 +255,8 @@ def update_lesson_progress(lesson_id):
         lesson_completion.engagement_score = data['engagement_score']
     if 'scroll_progress' in data:
         lesson_completion.scroll_progress = data['scroll_progress']
+    if 'video_progress' in data:
+        lesson_completion.video_progress = data['video_progress']
     if 'time_spent' in data:
         lesson_completion.time_spent = data['time_spent']
     

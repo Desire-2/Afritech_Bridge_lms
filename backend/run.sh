@@ -7,11 +7,11 @@ set -o errexit
 # Change to the backend directory
 cd "$(dirname "$0")"
 
-# Check if virtual environment exists (prefer venv-new over venv)
-if [ -d "venv-new" ]; then
-    VENV_DIR="venv-new"
-elif [ -d "venv" ]; then
+# Check if virtual environment exists (prefer venv over venv-new)
+if [ -d "venv" ]; then
     VENV_DIR="venv"
+elif [ -d "venv-new" ]; then
+    VENV_DIR="venv-new"
 else
     echo "Virtual environment not found. Please run setup.sh first."
     exit 1

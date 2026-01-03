@@ -8,6 +8,8 @@ import { Sparkles } from 'lucide-react';
 import { AIContentGenerator } from '@/components/instructor/ai-agent';
 import { aiAgentService } from '@/services/ai-agent.service';
 import { AIContentButton } from './AIContentButton';
+import { AIMixedContentButton } from './AIMixedContentButton';
+import MixedContentBuilder from '@/components/instructor/content/MixedContentBuilder';
 
 interface ModuleManagementProps {
   course: Course;
@@ -35,6 +37,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const [isCreatingLessons, setIsCreatingLessons] = useState(false);
   const [showContentAI, setShowContentAI] = useState(false);
   const [isGeneratingContent, setIsGeneratingContent] = useState(false);
+  const [showMixedContentAI, setShowMixedContentAI] = useState(false);
+  const [isGeneratingMixedContent, setIsGeneratingMixedContent] = useState(false);
   
   const [moduleForm, setModuleForm] = useState({
     title: '',
@@ -994,6 +998,97 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     }
   };
 
+  // Handler for mixed content AI generation
+  const handleMixedContentAIGenerate = async () => {
+    if (!lessonForm.title) {
+      alert('⚠️ Please enter a lesson title first');
+      return;
+    }
+
+    setIsGeneratingMixedContent(true);
+    setShowMixedContentAI(false);
+
+    try {
+      const currentModuleId = editingLesson?.moduleId || showLessonForm.moduleId;
+      const currentModule = modules.find(m => m.id === currentModuleId);
+      
+      if (!currentModule) {
+        alert('❌ Module not found');
+        return;
+      }
+
+      console.log('Generating mixed content with AI for:', lessonForm.title);
+      
+      const response = await aiAgentService.generateMixedContent({
+        course_id: course.id,
+        module_id: currentModule.id,
+        lesson_title: lessonForm.title,
+        lesson_description: lessonForm.description
+      });
+
+      if (response.success && response.data?.sections) {
+        console.log('AI generated mixed content:', response.data);
+        console.log('Sections count:', response.data.sections.length);
+        console.log('First section:', response.data.sections[0]);
+        
+        // Convert sections to the format MixedContentBuilder expects
+        const formattedSections = response.data.sections.map((section: any, index: number) => {
+          const baseSection: any = {
+            id: `section-${Date.now()}-${index}`,
+            type: section.type || 'text',
+          };
+          
+          // Handle different section types correctly
+          if (section.type === 'video' || section.type === 'pdf' || section.type === 'image') {
+            // For media types, use 'url' field (NOT content)
+            baseSection.url = section.url || '';
+            baseSection.content = section.url || ''; // Keep for backward compatibility
+            baseSection.metadata = {
+              title: section.title || '',
+              caption: section.caption || '',
+              url: section.url || ''
+            };
+          } else if (section.type === 'heading') {
+            // For headings, use content and title
+            baseSection.content = section.content || section.title || '';
+            baseSection.title = section.title || section.content || '';
+          } else {
+            // For text sections, use content
+            baseSection.content = section.content || '';
+          }
+          
+          // Add metadata if not already set
+          if (!baseSection.metadata && (section.title || section.caption)) {
+            baseSection.metadata = {
+              title: section.title || '',
+              caption: section.caption || ''
+            };
+          }
+          
+          return baseSection;
+        });
+        
+        // Convert to JSON string for MixedContentBuilder
+        const sectionsJSON = JSON.stringify(formattedSections);
+        console.log('Formatted sections JSON:', sectionsJSON);
+        
+        setLessonForm(prev => ({
+          ...prev,
+          content_data: sectionsJSON
+        }));
+        
+        alert('✅ Mixed content generated successfully!');
+      } else {
+        alert('❌ Failed to generate content: ' + (response.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error generating mixed content:', error);
+      alert('❌ Failed to generate content. Please try again.');
+    } finally {
+      setIsGeneratingMixedContent(false);
+    }
+  };
+
   // Handler for AI content enhancement
   const handleContentAIGenerate = async () => {
     // Both Add and Edit modes use lessonForm state
@@ -1398,7 +1493,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                                         {config.label} *
                                       </label>
-                                      {isTextContent && (
+                                      {isTextContent && lessonForm.content_type !== 'mixed' && (
                                         <div className="flex gap-2">
                                           <AIContentButton
                                             lessonTitle={lessonForm.title}
@@ -1421,8 +1516,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                       )}
                                     </div>
 
-                                    {/* Markdown Toolbar - For text and mixed content */}
-                                    {isTextContent && !showMarkdownPreview && (
+                                    {/* Markdown Toolbar - For text content only */}
+                                    {lessonForm.content_type === 'text' && !showMarkdownPreview && (
                                       <div className="mb-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg border border-slate-300 dark:border-slate-600">
                                         <div className="flex flex-wrap gap-1">
                                           {/* Text Formatting */}
@@ -1520,8 +1615,32 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                     )}
 
                                     {/* Editor/Preview Area */}
-                                    {config.inputType === 'textarea' ? (
-                                      showMarkdownPreview && isTextContent ? (
+                                    {lessonForm.content_type === 'mixed' ? (
+                                      <>
+                                        <div className="mb-3">
+                                          <AIMixedContentButton
+                                            lessonTitle={lessonForm.title}
+                                            courseTitle={course.title}
+                                            moduleTitle={modules.find(m => m.id === showLessonForm.moduleId)?.title}
+                                            existingContent={lessonForm.content_data}
+                                            isGenerating={isGeneratingMixedContent}
+                                            showDialog={showMixedContentAI}
+                                            onToggleDialog={() => setShowMixedContentAI(!showMixedContentAI)}
+                                            onGenerate={handleMixedContentAIGenerate}
+                                          />
+                                        </div>
+                                        <MixedContentBuilder
+                                          value={lessonForm.content_data}
+                                          onChange={(value) => setLessonForm({ ...lessonForm, content_data: value })}
+                                          courseTitle={course.title}
+                                          moduleTitle={modules.find(m => m.id === showLessonForm.moduleId)?.title}
+                                          lessonTitle={lessonForm.title}
+                                          courseId={course.id}
+                                          moduleId={showLessonForm.moduleId}
+                                        />
+                                      </>
+                                    ) : config.inputType === 'textarea' ? (
+                                      showMarkdownPreview && lessonForm.content_type === 'text' ? (
                                         <div 
                                           className="w-full min-h-[200px] p-4 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 prose dark:prose-invert max-w-none overflow-auto"
                                           dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(lessonForm.content_data) }}
@@ -1545,9 +1664,11 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         placeholder={config.placeholder}
                                       />
                                     )}
-                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                      {config.helperText}
-                                    </p>
+                                    {lessonForm.content_type !== 'mixed' && (
+                                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        {config.helperText}
+                                      </p>
+                                    )}
                                     
                                     {/* Google Drive PDF Helper */}
                                     {lessonForm.content_type === 'pdf' && (
@@ -1759,7 +1880,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                                         {config.label} *
                                       </label>
-                                      {isTextContent && (
+                                      {isTextContent && lessonForm.content_type !== 'mixed' && (
                                         <div className="flex gap-2">
                                           <AIContentButton
                                             lessonTitle={lessonForm.title}
@@ -1782,8 +1903,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                       )}
                                     </div>
 
-                                    {/* Markdown Toolbar - For text and mixed content */}
-                                    {isTextContent && !showMarkdownPreview && (
+                                    {/* Markdown Toolbar - For text content only */}
+                                    {lessonForm.content_type === 'text' && !showMarkdownPreview && (
                                       <div className="mb-2 p-2 bg-slate-100 dark:bg-slate-700 rounded-lg border border-slate-300 dark:border-slate-600">
                                         <div className="flex flex-wrap gap-1">
                                           {/* Text Formatting */}
@@ -1871,8 +1992,32 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                     )}
 
                                     {/* Editor/Preview Area */}
-                                    {config.inputType === 'textarea' ? (
-                                      showMarkdownPreview && isTextContent ? (
+                                    {lessonForm.content_type === 'mixed' ? (
+                                      <>
+                                        <div className="mb-3">
+                                          <AIMixedContentButton
+                                            lessonTitle={lessonForm.title}
+                                            courseTitle={course.title}
+                                            moduleTitle={modules.find(m => m.id === editingLesson.moduleId)?.title}
+                                            existingContent={lessonForm.content_data}
+                                            isGenerating={isGeneratingMixedContent}
+                                            showDialog={showMixedContentAI}
+                                            onToggleDialog={() => setShowMixedContentAI(!showMixedContentAI)}
+                                            onGenerate={handleMixedContentAIGenerate}
+                                          />
+                                        </div>
+                                        <MixedContentBuilder
+                                          value={lessonForm.content_data}
+                                          onChange={(value) => setLessonForm({ ...lessonForm, content_data: value })}
+                                          courseTitle={course.title}
+                                          moduleTitle={modules.find(m => m.id === editingLesson.moduleId)?.title}
+                                          lessonTitle={lessonForm.title}
+                                          courseId={course.id}
+                                          moduleId={editingLesson.moduleId}
+                                        />
+                                      </>
+                                    ) : config.inputType === 'textarea' ? (
+                                      showMarkdownPreview && lessonForm.content_type === 'text' ? (
                                         <div 
                                           className="w-full min-h-[200px] p-4 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 prose dark:prose-invert max-w-none overflow-auto"
                                           dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(lessonForm.content_data) }}
@@ -1896,9 +2041,11 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         placeholder={config.placeholder}
                                       />
                                     )}
-                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                      {config.helperText}
-                                    </p>
+                                    {lessonForm.content_type !== 'mixed' && (
+                                      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        {config.helperText}
+                                      </p>
+                                    )}
                                   </>
                                 );
                               })()}
