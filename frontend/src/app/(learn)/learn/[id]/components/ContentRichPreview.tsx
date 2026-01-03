@@ -20,8 +20,25 @@ import {
   Clock,
   BookOpen,
   CheckCircle,
-  Lock
+  Lock,
+  ZoomIn,
+  ZoomOut,
+  ChevronLeft,
+  ChevronRight,
+  SkipForward,
+  SkipBack,
+  Volume2,
+  Settings,
+  AlertCircle
 } from 'lucide-react';
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface ContentRichPreviewProps {
   lesson: {
@@ -36,6 +53,15 @@ interface ContentRichPreviewProps {
   onVideoProgress?: (progress: number) => void;
 }
 
+interface MixedContentSection {
+  type: 'text' | 'video' | 'pdf' | 'image' | 'heading';
+  content?: string;
+  url?: string;
+  title?: string;
+  level?: number;
+  alt?: string;
+}
+
 export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({ 
   lesson,
   onVideoComplete,
@@ -48,6 +74,12 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const [videoDuration, setVideoDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [playerReady, setPlayerReady] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [pdfZoom, setPdfZoom] = useState(100);
+  const [pdfPage, setPdfPage] = useState(1);
+  const [pdfTotalPages, setPdfTotalPages] = useState(0);
+  const [activeContentSection, setActiveContentSection] = useState(0);
+  const [mixedContentError, setMixedContentError] = useState<string | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -55,6 +87,85 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const vimeoPlayerRef = useRef<any>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
+  const contentSectionRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Keyboard navigation for video controls
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      const video = videoRef.current;
+      if (!video || lesson.content_type !== 'video') return;
+
+      // Only handle if video player is focused or no input is focused
+      const activeElement = document.activeElement;
+      if (activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA') return;
+
+      switch (e.key) {
+        case ' ':
+        case 'k':
+          e.preventDefault();
+          if (video.paused) {
+            video.play();
+          } else {
+            video.pause();
+          }
+          break;
+        case 'ArrowLeft':
+        case 'j':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 5);
+          break;
+        case 'ArrowRight':
+        case 'l':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration, video.currentTime + 5);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          video.volume = Math.min(1, video.volume + 0.1);
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          video.volume = Math.max(0, video.volume - 0.1);
+          break;
+        case 'f':
+          e.preventDefault();
+          handleFullscreenToggle(videoContainerRef.current);
+          break;
+        case 'm':
+          e.preventDefault();
+          video.muted = !video.muted;
+          break;
+        case '>':
+          e.preventDefault();
+          handlePlaybackSpeedChange(Math.min(2, playbackSpeed + 0.25));
+          break;
+        case '<':
+          e.preventDefault();
+          handlePlaybackSpeedChange(Math.max(0.5, playbackSpeed - 0.25));
+          break;
+        case '0':
+        case 'Home':
+          e.preventDefault();
+          video.currentTime = 0;
+          break;
+        case 'End':
+          e.preventDefault();
+          video.currentTime = video.duration;
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [lesson.content_type, playbackSpeed]);
+
+  // Handle playback speed changes for direct video elements
+  const handlePlaybackSpeedChange = (speed: number) => {
+    setPlaybackSpeed(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
+  };
 
   // Track video progress for direct video elements
   useEffect(() => {
@@ -77,6 +188,8 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
 
     const handleLoadedMetadata = () => {
       setVideoDuration(video.duration);
+      // Apply saved playback speed
+      video.playbackRate = playbackSpeed;
     };
 
     video.addEventListener('timeupdate', handleTimeUpdate);
@@ -86,7 +199,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       video.removeEventListener('timeupdate', handleTimeUpdate);
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
     };
-  }, [videoWatched, onVideoComplete, onVideoProgress]);
+  }, [videoWatched, onVideoComplete, onVideoProgress, playbackSpeed]);
 
   // Load YouTube API
   useEffect(() => {
@@ -501,16 +614,21 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             <div 
               ref={videoContainerRef}
               className="relative aspect-video rounded-lg overflow-hidden bg-black group"
+              role="region"
+              aria-label="Video player"
             >
               <div
                 ref={iframeRef as any}
                 id={`youtube-player-${videoId}`}
                 className="absolute inset-0 w-full h-full"
+                role="application"
+                aria-label={`YouTube video: ${lesson.title}`}
               />
               <button
                 onClick={() => handleFullscreenToggle(videoContainerRef.current)}
                 className="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
                 title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                aria-label={fullscreen ? "Exit fullscreen mode" : "Enter fullscreen mode"}
               >
                 {fullscreen ? (
                   <Minimize2 className="h-5 w-5" />
@@ -521,37 +639,48 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             </div>
             
             {/* YouTube Progress Tracker */}
-            <Card className={`border-2 ${videoWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}>
+            <Card 
+              className={`border-2 ${videoWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}
+              role="status"
+              aria-live="polite"
+            >
               <div className="p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <Video className={`h-4 w-4 ${videoWatched ? 'text-green-400' : 'text-blue-400'}`} />
+                    <Video className={`h-4 w-4 ${videoWatched ? 'text-green-400' : 'text-blue-400'}`} aria-hidden="true" />
                     <span className={`text-sm font-medium ${videoWatched ? 'text-green-200' : 'text-blue-200'}`}>
                       Video Progress
                     </span>
                   </div>
                   {videoWatched ? (
                     <Badge className="bg-green-600">
-                      <CheckCircle className="h-3 w-3 mr-1" />
+                      <CheckCircle className="h-3 w-3 mr-1" aria-hidden="true" />
                       Completed
                     </Badge>
                   ) : (
-                    <span className="text-sm text-gray-300">
+                    <span className="text-sm text-gray-300" aria-label={`Video watched: ${Math.round(videoProgress)} percent`}>
                       {Math.round(videoProgress)}% watched
                     </span>
                   )}
                 </div>
                 
-                <Progress value={videoProgress} className="h-2" />
+                <Progress 
+                  value={videoProgress} 
+                  className="h-2" 
+                  aria-label="Video progress"
+                  aria-valuenow={Math.round(videoProgress)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                />
                 
                 <div className="flex items-center justify-between text-xs text-gray-400">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>{formatTime(videoDuration)}</span>
+                  <span aria-label={`Current time: ${formatTime(currentTime)}`}>{formatTime(currentTime)}</span>
+                  <span aria-label={`Total duration: ${formatTime(videoDuration)}`}>{formatTime(videoDuration)}</span>
                 </div>
                 
                 {!videoWatched && videoProgress > 0 && (
-                  <div className="flex items-center space-x-2 text-xs text-blue-300">
-                    <Lock className="h-3 w-3" />
+                  <div className="flex items-center space-x-2 text-xs text-blue-300" role="alert">
+                    <Lock className="h-3 w-3" aria-hidden="true" />
                     <span>Watch at least 90% to unlock next lesson</span>
                   </div>
                 )}
@@ -632,7 +761,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       }
     }
     
-    // Direct video URL with progress tracking
+    // Direct video URL with progress tracking and enhanced controls
     return (
       <div className="space-y-4">
         <div 
@@ -652,7 +781,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           </video>
           <button
             onClick={() => handleFullscreenToggle(videoContainerRef.current)}
-            className="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute bottom-4 right-4 bg-black/60 hover:bg-black/80 text-white p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10"
             title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
           >
             {fullscreen ? (
@@ -663,41 +792,69 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           </button>
         </div>
         
-        {/* Video Progress Tracker */}
-        <Card className={`border-2 ${videoWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}>
-          <div className="p-4 space-y-3">
+        {/* Enhanced Video Controls */}
+        <Card className="bg-gray-800/50 border-gray-700">
+          <div className="p-4 space-y-4">
+            {/* Playback Speed Control */}
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
-                <Video className={`h-4 w-4 ${videoWatched ? 'text-green-400' : 'text-blue-400'}`} />
-                <span className={`text-sm font-medium ${videoWatched ? 'text-green-200' : 'text-blue-200'}`}>
-                  Video Progress
-                </span>
+                <Settings className="h-4 w-4 text-gray-400" />
+                <span className="text-sm font-medium text-gray-300">Playback Speed:</span>
               </div>
-              {videoWatched ? (
-                <Badge className="bg-green-600">
-                  <CheckCircle className="h-3 w-3 mr-1" />
-                  Completed
-                </Badge>
-              ) : (
-                <span className="text-sm text-gray-300">
-                  {Math.round(videoProgress)}% watched
-                </span>
+              <Select
+                value={playbackSpeed.toString()}
+                onValueChange={(value) => handlePlaybackSpeedChange(parseFloat(value))}
+              >
+                <SelectTrigger className="w-24 h-8 text-xs bg-gray-700 border-gray-600">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0.5">0.5x</SelectItem>
+                  <SelectItem value="0.75">0.75x</SelectItem>
+                  <SelectItem value="1">1x</SelectItem>
+                  <SelectItem value="1.25">1.25x</SelectItem>
+                  <SelectItem value="1.5">1.5x</SelectItem>
+                  <SelectItem value="1.75">1.75x</SelectItem>
+                  <SelectItem value="2">2x</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {/* Video Progress Section */}
+            <div className="space-y-3 pt-3 border-t border-gray-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Video className={`h-4 w-4 ${videoWatched ? 'text-green-400' : 'text-blue-400'}`} />
+                  <span className={`text-sm font-medium ${videoWatched ? 'text-green-200' : 'text-blue-200'}`}>
+                    Video Progress
+                  </span>
+                </div>
+                {videoWatched ? (
+                  <Badge className="bg-green-600">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    Completed
+                  </Badge>
+                ) : (
+                  <span className="text-sm text-gray-300">
+                    {Math.round(videoProgress)}% watched
+                  </span>
+                )}
+              </div>
+              
+              <Progress value={videoProgress} className="h-2" />
+              
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span>{formatTime(currentTime)}</span>
+                <span>{formatTime(videoDuration)}</span>
+              </div>
+              
+              {!videoWatched && videoProgress > 0 && (
+                <div className="flex items-center space-x-2 text-xs text-blue-300">
+                  <Lock className="h-3 w-3" />
+                  <span>Watch at least 90% to unlock next lesson</span>
+                </div>
               )}
             </div>
-            
-            <Progress value={videoProgress} className="h-2" />
-            
-            <div className="flex items-center justify-between text-xs text-gray-400">
-              <span>{formatTime(currentTime)}</span>
-              <span>{formatTime(videoDuration)}</span>
-            </div>
-            
-            {!videoWatched && videoProgress > 0 && (
-              <div className="flex items-center space-x-2 text-xs text-blue-300">
-                <Lock className="h-3 w-3" />
-                <span>Watch at least 90% to unlock next lesson</span>
-              </div>
-            )}
           </div>
         </Card>
       </div>
@@ -736,50 +893,100 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       <div className="space-y-4">
         <Card className="bg-gradient-to-r from-red-900/30 to-orange-900/30 border-red-800">
           <div className="p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div className="flex items-center space-x-4">
-                <div className="h-12 w-12 bg-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <FileText className="h-6 w-6 text-white" />
+            <div className="flex flex-col gap-4">
+              {/* Header Section */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center space-x-4">
+                  <div className="h-12 w-12 bg-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <FileText className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-white">PDF Document</h4>
+                    <p className="text-sm text-gray-300">
+                      {isGoogleDrive ? 'Google Drive PDF' : 'View or download the lesson material'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-semibold text-white">PDF Document</h4>
-                  <p className="text-sm text-gray-300">
-                    {isGoogleDrive ? 'Google Drive PDF' : 'View or download the lesson material'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => window.open(downloadUrl, '_blank')}
-                  className="bg-red-600 hover:bg-red-700 text-sm"
-                  size="sm"
-                >
-                  <Maximize2 className="h-4 w-4 mr-2" />
-                  Open in New Tab
-                </Button>
-                {!isGoogleDrive && (
-                  <Button 
-                    variant="outline" 
-                    className="border-gray-600 text-gray-300 hover:bg-gray-700 text-sm" 
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => window.open(downloadUrl, '_blank')}
+                    className="bg-red-600 hover:bg-red-700 text-sm"
                     size="sm"
-                    asChild
                   >
-                    <a href={pdfUrl} download>
-                      <Download className="h-4 w-4 mr-2" />
-                      Download
-                    </a>
+                    <Maximize2 className="h-4 w-4 mr-2" />
+                    Open in New Tab
                   </Button>
-                )}
+                  {!isGoogleDrive && (
+                    <Button 
+                      variant="outline" 
+                      className="border-gray-600 text-gray-300 hover:bg-gray-700 text-sm" 
+                      size="sm"
+                      asChild
+                    >
+                      <a href={pdfUrl} download>
+                        <Download className="h-4 w-4 mr-2" />
+                        Download
+                      </a>
+                    </Button>
+                  )}
+                </div>
               </div>
+              
+              {/* Zoom Controls (for non-Google Drive PDFs) */}
+              {!isGoogleDrive && (
+                <div className="flex items-center justify-between pt-2 border-t border-red-800/50">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-300">Zoom:</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPdfZoom(Math.max(50, pdfZoom - 25))}
+                      disabled={pdfZoom <= 50}
+                      className="h-7 w-7 p-0"
+                    >
+                      <ZoomOut className="h-3 w-3" />
+                    </Button>
+                    <span className="text-sm font-medium text-white min-w-[50px] text-center">
+                      {pdfZoom}%
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPdfZoom(Math.min(200, pdfZoom + 25))}
+                      disabled={pdfZoom >= 200}
+                      className="h-7 w-7 p-0"
+                    >
+                      <ZoomIn className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPdfZoom(100)}
+                    className="text-xs text-gray-400 hover:text-white"
+                  >
+                    Reset
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         </Card>
         
         {/* PDF Viewer */}
-        <div className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900" style={{ minHeight: '600px', height: '80vh' }}>
+        <div 
+          className="border border-gray-700 rounded-lg overflow-hidden bg-gray-900 relative" 
+          style={{ minHeight: '600px', height: '80vh' }}
+        >
           <iframe
             src={embeddableUrl}
             className="w-full h-full"
+            style={{ 
+              transform: `scale(${pdfZoom / 100})`,
+              transformOrigin: 'top left',
+              width: `${10000 / pdfZoom}%`,
+              height: `${10000 / pdfZoom}%`
+            }}
             title="PDF Viewer"
             allow="autoplay"
           />
@@ -787,56 +994,269 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
         
         {/* Helper text for Google Drive PDFs */}
         {isGoogleDrive && (
-          <div className="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4">
-            <p className="text-sm text-blue-300">
-              💡 <strong>Tip:</strong> If the PDF doesn't display, make sure the Google Drive file has proper sharing permissions set to "Anyone with the link can view".
-            </p>
-          </div>
+          <Alert className="bg-blue-900/20 border border-blue-700/50">
+            <AlertCircle className="h-4 w-4 text-blue-400" />
+            <AlertDescription className="text-blue-300">
+              <strong>Tip:</strong> If the PDF doesn't display, make sure the Google Drive file has proper sharing permissions set to "Anyone with the link can view".
+            </AlertDescription>
+          </Alert>
         )}
+        
+        {/* Mobile-friendly message */}
+        <div className="block sm:hidden">
+          <Alert className="bg-gray-800/50 border-gray-700">
+            <AlertCircle className="h-4 w-4 text-gray-400" />
+            <AlertDescription className="text-gray-300">
+              <strong>Mobile Tip:</strong> For the best reading experience, tap "Open in New Tab" to view the PDF in full screen.
+            </AlertDescription>
+          </Alert>
+        </div>
       </div>
     );
   };
 
-  const renderMixedContent = (contentData: string) => {
-    // Parse mixed content (could be JSON or structured format)
+  // Enhanced mixed content parser with robust error handling
+  const parseMixedContent = (contentData: string): MixedContentSection[] => {
+    setMixedContentError(null);
+    
     try {
+      // First, try to parse as JSON
       const parsed = JSON.parse(contentData);
-      return (
-        <div className="space-y-6">
-          {parsed.sections?.map((section: any, index: number) => (
-            <div key={index} className="space-y-4">
-              {section.type === 'text' && (
-                <div className="prose prose-invert prose-lg max-w-none">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeRaw, rehypeHighlight]}
-                  >
-                    {section.content}
-                  </ReactMarkdown>
-                </div>
-              )}
-              {section.type === 'video' && (
-                <div className="my-6">
-                  {renderVideoContent(section.url)}
-                </div>
-              )}
-              {section.type === 'pdf' && (
-                <div className="my-6">
-                  {renderPdfContent(section.url)}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      );
-    } catch {
-      // Fallback to plain text if parsing fails
-      return renderTextContent(contentData);
+      
+      // Validate the structure
+      if (Array.isArray(parsed)) {
+        return parsed.filter(section => section && section.type);
+      }
+      
+      if (parsed.sections && Array.isArray(parsed.sections)) {
+        return parsed.sections.filter((section: any) => section && section.type);
+      }
+      
+      if (parsed.content && Array.isArray(parsed.content)) {
+        return parsed.content.filter((section: any) => section && section.type);
+      }
+      
+      // If it's an object with type property, wrap it in an array
+      if (parsed.type) {
+        return [parsed];
+      }
+      
+      // Couldn't extract sections from JSON
+      setMixedContentError('Invalid mixed content format. Displaying as text.');
+      return [{ type: 'text', content: contentData }];
+      
+    } catch (jsonError) {
+      // Not JSON, try to parse as markdown with embedded media
+      try {
+        const sections: MixedContentSection[] = [];
+        const lines = contentData.split('\n');
+        let currentTextBlock = '';
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          
+          // Detect YouTube/Vimeo video URLs
+          if (line.match(/^https?:\/\/(www\.)?(youtube\.com|youtu\.be|vimeo\.com)/)) {
+            // Save any accumulated text
+            if (currentTextBlock.trim()) {
+              sections.push({ type: 'text', content: currentTextBlock.trim() });
+              currentTextBlock = '';
+            }
+            sections.push({ type: 'video', url: line });
+            continue;
+          }
+          
+          // Detect PDF URLs
+          if (line.match(/^https?:\/\/.*\.pdf$/i) || line.includes('drive.google.com')) {
+            if (currentTextBlock.trim()) {
+              sections.push({ type: 'text', content: currentTextBlock.trim() });
+              currentTextBlock = '';
+            }
+            sections.push({ type: 'pdf', url: line });
+            continue;
+          }
+          
+          // Detect markdown image syntax ![alt](url)
+          const imgMatch = line.match(/!\[([^\]]*)\]\(([^)]+)\)/);
+          if (imgMatch) {
+            if (currentTextBlock.trim()) {
+              sections.push({ type: 'text', content: currentTextBlock.trim() });
+              currentTextBlock = '';
+            }
+            sections.push({ type: 'image', url: imgMatch[2], alt: imgMatch[1] });
+            continue;
+          }
+          
+          // Detect markdown headings
+          const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+          if (headingMatch) {
+            if (currentTextBlock.trim()) {
+              sections.push({ type: 'text', content: currentTextBlock.trim() });
+              currentTextBlock = '';
+            }
+            sections.push({ 
+              type: 'heading', 
+              level: headingMatch[1].length, 
+              title: headingMatch[2] 
+            });
+            continue;
+          }
+          
+          // Accumulate regular text
+          currentTextBlock += line + '\n';
+        }
+        
+        // Add remaining text
+        if (currentTextBlock.trim()) {
+          sections.push({ type: 'text', content: currentTextBlock.trim() });
+        }
+        
+        return sections.length > 0 ? sections : [{ type: 'text', content: contentData }];
+        
+      } catch (parseError) {
+        console.error('Error parsing mixed content:', parseError);
+        setMixedContentError('Failed to parse content structure. Displaying as text.');
+        return [{ type: 'text', content: contentData }];
+      }
     }
+  };
+
+  const renderMixedContent = (contentData: string) => {
+    const sections = parseMixedContent(contentData);
+    
+    return (
+      <div className="space-y-6">
+        {/* Error Alert */}
+        {mixedContentError && (
+          <Alert className="bg-yellow-900/20 border-yellow-700">
+            <AlertCircle className="h-4 w-4 text-yellow-400" />
+            <AlertDescription className="text-yellow-200">
+              {mixedContentError}
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        {/* Content Navigation (if multiple sections) */}
+        {sections.length > 3 && (
+          <Card className="bg-gray-800/50 border-gray-700">
+            <div className="p-4">
+              <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
+                <BookOpen className="h-4 w-4 mr-2" />
+                Content Sections ({sections.length})
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {sections.map((section, index) => (
+                  <Button
+                    key={index}
+                    variant={activeContentSection === index ? "default" : "outline"}
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => {
+                      setActiveContentSection(index);
+                      contentSectionRefs.current[index]?.scrollIntoView({ 
+                        behavior: 'smooth', 
+                        block: 'start' 
+                      });
+                    }}
+                  >
+                    {section.type === 'heading' ? section.title?.substring(0, 20) : 
+                     section.type === 'text' ? `Text ${index + 1}` :
+                     section.type === 'video' ? `Video ${index + 1}` :
+                     section.type === 'pdf' ? `PDF ${index + 1}` :
+                     section.type === 'image' ? `Image ${index + 1}` :
+                     `Section ${index + 1}`}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </Card>
+        )}
+        
+        {/* Render Content Sections */}
+        {sections.map((section, index) => (
+          <div 
+            key={index} 
+            ref={(el) => contentSectionRefs.current[index] = el}
+            className="scroll-mt-6"
+          >
+            {section.type === 'heading' && (
+              <div className={`
+                ${section.level === 1 ? 'text-3xl sm:text-4xl font-bold text-white mb-6 pb-3 border-b border-gray-700' : ''}
+                ${section.level === 2 ? 'text-2xl sm:text-3xl font-bold text-white mb-5 pb-2 border-b border-gray-700/50' : ''}
+                ${section.level === 3 ? 'text-xl sm:text-2xl font-semibold text-white mb-4' : ''}
+                ${section.level === 4 ? 'text-lg sm:text-xl font-semibold text-gray-200 mb-3' : ''}
+                ${section.level === 5 ? 'text-base sm:text-lg font-semibold text-gray-300 mb-2' : ''}
+                ${section.level === 6 ? 'text-sm sm:text-base font-semibold text-gray-400 mb-2' : ''}
+              `}>
+                {section.title}
+              </div>
+            )}
+            
+            {section.type === 'text' && section.content && (
+              <Card className="bg-gray-800/30 border-gray-700 p-6">
+                {renderTextContent(section.content)}
+              </Card>
+            )}
+            
+            {section.type === 'video' && section.url && (
+              <Card className="bg-gray-800/30 border-gray-700 p-6">
+                <div className="flex items-center space-x-2 mb-4">
+                  <Video className="h-5 w-5 text-blue-400" />
+                  <h4 className="font-semibold text-white">Video Content</h4>
+                  <Badge variant="outline" className="ml-auto">Section {index + 1}</Badge>
+                </div>
+                {renderVideoContent(section.url)}
+              </Card>
+            )}
+            
+            {section.type === 'pdf' && section.url && (
+              <Card className="bg-gray-800/30 border-gray-700 p-6">
+                <div className="flex items-center space-x-2 mb-4">
+                  <FileText className="h-5 w-5 text-red-400" />
+                  <h4 className="font-semibold text-white">PDF Document</h4>
+                  <Badge variant="outline" className="ml-auto">Section {index + 1}</Badge>
+                </div>
+                {renderPdfContent(section.url)}
+              </Card>
+            )}
+            
+            {section.type === 'image' && section.url && (
+              <Card className="bg-gray-800/30 border-gray-700 p-6">
+                <img 
+                  src={section.url} 
+                  alt={section.alt || 'Lesson image'} 
+                  className="w-full rounded-lg shadow-lg"
+                  loading="lazy"
+                />
+                {section.alt && (
+                  <p className="text-sm text-gray-400 mt-2 text-center italic">{section.alt}</p>
+                )}
+              </Card>
+            )}
+          </div>
+        ))}
+      </div>
+    );
   };
 
   return (
     <div className="space-y-6 w-full">
+      {/* Keyboard Shortcuts Help (for video content) */}
+      {lesson.content_type === 'video' && (
+        <Alert className="bg-gray-800/50 border-gray-700">
+          <Settings className="h-4 w-4 text-gray-400" />
+          <AlertDescription className="text-gray-300 text-sm">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span><kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs">Space</kbd> Play/Pause</span>
+              <span><kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs">←/→</kbd> Skip 5s</span>
+              <span><kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs">↑/↓</kbd> Volume</span>
+              <span><kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs">F</kbd> Fullscreen</span>
+              <span><kbd className="px-2 py-0.5 bg-gray-700 rounded text-xs">&gt;/&lt;</kbd> Speed</span>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+      
       {/* Content Header */}
       <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg p-6 border border-blue-800/50 w-full">
         <div className="flex items-start justify-between mb-4">
@@ -849,7 +1269,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             )}
           </div>
           
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-wrap">
             <Badge variant="secondary" className="flex items-center space-x-1 bg-gray-700 text-gray-200">
               {lesson.content_type === 'text' && <FileText className="h-3 w-3" />}
               {lesson.content_type === 'video' && <Video className="h-3 w-3" />}
@@ -887,7 +1307,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       </div>
 
       {/* Content Display based on type */}
-      <div className="bg-gray-800/30 rounded-lg p-6 border border-gray-700 w-full">
+      <div className="bg-gray-800/30 rounded-lg p-4 sm:p-6 border border-gray-700 w-full">
         {lesson.content_type === 'text' && renderTextContent(lesson.content_data)}
         {lesson.content_type === 'video' && renderVideoContent(lesson.content_data)}
         {lesson.content_type === 'pdf' && renderPdfContent(lesson.content_data)}
