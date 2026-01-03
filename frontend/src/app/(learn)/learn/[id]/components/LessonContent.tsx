@@ -38,6 +38,8 @@ interface LessonContentProps {
   contentRef?: any;
   onVideoComplete?: () => void;
   onVideoProgress?: (progress: number) => void;
+  onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
+  onMixedContentVideoComplete?: (videoIndex: number) => void;
   moduleScoring: any;
   lessonScore: number;
   currentLessonQuizScore?: number;
@@ -83,6 +85,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   lessonNotes,
   setLessonNotes,
   contentRef,
+  onVideoComplete,
+  onVideoProgress,
+  onMixedContentVideoProgress,
+  onMixedContentVideoComplete,
   moduleScoring,
   lessonScore,
   currentLessonQuizScore = 0,
@@ -357,6 +363,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     learning_objectives: currentLesson.learning_objectives,
                     duration_minutes: currentLesson.duration_minutes
                   }}
+                  onVideoProgress={onVideoProgress}
+                  onVideoComplete={onVideoComplete}
+                  onMixedContentVideoProgress={onMixedContentVideoProgress}
+                  onMixedContentVideoComplete={onMixedContentVideoComplete}
                 />
 
                 {/* Progress Status */}

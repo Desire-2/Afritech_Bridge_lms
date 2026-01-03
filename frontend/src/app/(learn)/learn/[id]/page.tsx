@@ -124,6 +124,19 @@ const LearningPage = () => {
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoCompleted, setVideoCompleted] = useState(false);
   
+  // Mixed content video progress tracking (map of videoIndex -> progress)
+  const [mixedContentVideoProgress, setMixedContentVideoProgress] = useState<Record<number, number>>({});
+  const [mixedContentVideosCompleted, setMixedContentVideosCompleted] = useState<Set<number>>(new Set());
+
+  // Reset video progress when lesson changes
+  useEffect(() => {
+    console.log('🔄 Lesson changed, resetting video progress states');
+    setVideoProgress(0);
+    setVideoCompleted(false);
+    setMixedContentVideoProgress({});
+    setMixedContentVideosCompleted(new Set());
+  }, [currentLesson?.id]);
+  
   // Module progress requirements modal state
   const [showModuleProgressModal, setShowModuleProgressModal] = useState(false);
   const [moduleProgressInfo, setModuleProgressInfo] = useState<{
@@ -496,7 +509,6 @@ const LearningPage = () => {
     }
   }, [moduleScoring]);
 
-  // Handler for manual lesson completion (Mark as Complete button)
   const handleManualCompletion = useCallback(async () => {
     if (!currentLesson || !currentModuleId) {
       console.error('❌ Cannot complete lesson: missing lesson or module data');
@@ -550,21 +562,59 @@ const LearningPage = () => {
         if (checkAndUnlockNextModuleRef.current) {
           checkAndUnlockNextModuleRef.current();
         }
-      }, 1500);
-      
-    } catch (error: any) {
-      console.error('❌ Failed to complete lesson:', error);
-      
-      // Handle specific error cases
-      if (error?.response?.status === 402 && error?.response?.data?.quiz_required) {
-        alert(`Please complete the quiz first: ${error.response.data.quiz_info?.message || 'Quiz required'}`);
-      } else if (error?.response?.data?.message) {
-        alert(`Failed to complete lesson: ${error.response.data.message}`);
-      } else {
-        alert('Failed to complete lesson. Please try again.');
-      }
+      }, 1000);
+    } catch (error) {
+      console.error('❌ Error manually completing lesson:', error);
     }
   }, [currentLesson, currentModuleId, timeSpent, readingProgress, engagementScore, scrollProgress, lessonScore, moduleScoring, forceSaveProgress]);
+
+  // Video progress handlers (for main video lessons only)
+  const handleVideoProgress = useCallback((progress: number) => {
+    // Only update for main video lessons, not mixed content
+    if (currentLesson?.content_type === 'video') {
+      console.log(`📹 Main video progress updated: ${progress.toFixed(1)}%`);
+      setVideoProgress(progress);
+    } else {
+      console.warn('⚠️ Ignoring video progress - not a main video lesson');
+    }
+  }, [currentLesson?.content_type]);
+
+  const handleVideoComplete = useCallback(() => {
+    // Only update for main video lessons, not mixed content
+    if (currentLesson?.content_type === 'video') {
+      console.log('✅ Main video completed (90% threshold reached)');
+      setVideoCompleted(true);
+    } else {
+      console.warn('⚠️ Ignoring video completion - not a main video lesson');
+    }
+  }, [currentLesson?.content_type]);
+
+  // Mixed content video progress handlers
+  const handleMixedContentVideoProgress = useCallback((videoIndex: number, progress: number) => {
+    console.log(`📹 Mixed content video ${videoIndex} progress: ${progress.toFixed(1)}%`);
+    setMixedContentVideoProgress(prev => ({
+      ...prev,
+      [videoIndex]: progress
+    }));
+    
+    // Track interaction for engagement
+    trackInteraction('mixed_video_progress', {
+      videoIndex,
+      progress: Math.round(progress),
+      timestamp: Date.now()
+    });
+  }, []);
+
+  const handleMixedContentVideoComplete = useCallback((videoIndex: number) => {
+    console.log(`✅ Mixed content video ${videoIndex} completed`);
+    setMixedContentVideosCompleted(prev => new Set([...prev, videoIndex]));
+    
+    // Track interaction for engagement
+    trackInteraction('mixed_video_completed', {
+      videoIndex,
+      timestamp: Date.now()
+    });
+  }, []);
 
   // Helper function to check if lesson can be manually completed
   const canManuallyComplete = useCallback(() => {
@@ -849,41 +899,6 @@ const LearningPage = () => {
       console.error('Error checking course completion:', error);
     }
   }, [courseData, courseId]);
-
-  // Video tracking handlers
-  const handleVideoProgress = useCallback((progress: number) => {
-    setVideoProgress(progress);
-    setInteractionHistory(prev => [...prev, {
-      type: 'video_progress',
-      lessonId: currentLesson?.id,
-      data: { progress },
-      timestamp: new Date().toISOString()
-    }]);
-  }, [currentLesson?.id]);
-
-  const handleVideoComplete = useCallback(async () => {
-    setVideoCompleted(true);
-    setInteractionHistory(prev => [...prev, {
-      type: 'video_completed',
-      lessonId: currentLesson?.id,
-      timestamp: new Date().toISOString()
-    }]);
-    
-    // Mark lesson as completed when video is watched
-    if (currentLesson?.id && currentModuleId) {
-      try {
-        // Use existing API to mark lesson complete
-        await StudentApiService.completeLesson(currentLesson.id, {
-          method: 'video_watched',
-          module_id: currentModuleId,
-          auto_completed: false
-        });
-        setShowCelebration(true);
-      } catch (error) {
-        console.error('Error marking lesson complete:', error);
-      }
-    }
-  }, [currentLesson?.id, currentModuleId]);
 
   // Check if current lesson requires video completion
   const requiresVideoCompletion = currentLesson?.content_type === 'video';
@@ -1878,6 +1893,8 @@ const LearningPage = () => {
             contentRef={contentRef}
             onVideoProgress={handleVideoProgress}
             onVideoComplete={handleVideoComplete}
+            onMixedContentVideoProgress={handleMixedContentVideoProgress}
+            onMixedContentVideoComplete={handleMixedContentVideoComplete}
             moduleScoring={moduleScoring}
             lessonScore={lessonScore}
             currentLessonQuizScore={currentLessonQuizScore}

@@ -52,6 +52,8 @@ interface ContentRichPreviewProps {
   };
   onVideoComplete?: () => void;
   onVideoProgress?: (progress: number) => void;
+  onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
+  onMixedContentVideoComplete?: (videoIndex: number) => void;
 }
 
 interface MixedContentSection {
@@ -66,7 +68,9 @@ interface MixedContentSection {
 export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({ 
   lesson,
   onVideoComplete,
-  onVideoProgress 
+  onVideoProgress,
+  onMixedContentVideoProgress,
+  onMixedContentVideoComplete
 }) => {
   // Debug: Log the entire lesson object when component mounts or lesson changes
   useEffect(() => {
@@ -419,24 +423,196 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     };
   }, []);
 
+  // Initialize YouTube player for MAIN video lessons
+  useEffect(() => {
+    if (lesson.content_type !== 'video') return;
+    if (!lesson.content_data || !(window as any).YT || !(window as any).YT.Player) return;
+    
+    const videoUrl = lesson.content_data.trim();
+    const isYouTube = videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be');
+    
+    if (!isYouTube) return;
+    
+    console.log('🎬 Initializing MAIN YouTube video player');
+    
+    const timeoutId = setTimeout(() => {
+      const iframe = document.getElementById('main-youtube-video');
+      if (!iframe) {
+        console.warn('❌ Main YouTube iframe not found');
+        return;
+      }
+      
+      try {
+        const player = new (window as any).YT.Player('main-youtube-video', {
+          events: {
+            onReady: (event: any) => {
+              console.log('✅ Main YouTube player ready');
+              youtubePlayerRef.current = player;
+              
+              // Start tracking progress
+              const interval = setInterval(() => {
+                try {
+                  const currentTime = event.target.getCurrentTime();
+                  const duration = event.target.getDuration();
+                  
+                  if (duration > 0) {
+                    const progress = (currentTime / duration) * 100;
+                    
+                    // Update local state for UI display
+                    setVideoProgress(progress);
+                    setCurrentTime(currentTime);
+                    setVideoDuration(duration);
+                    
+                    if (typeof onVideoProgress === 'function' && progress > 0) {
+                      console.log(`📊 Main video progress:`, progress.toFixed(1) + '%');
+                      onVideoProgress(progress);
+                    }
+                    
+                    // Mark as complete at 90%
+                    if (progress >= 90 && typeof onVideoComplete === 'function') {
+                      console.log('✅ Main video completed');
+                      setVideoWatched(true);
+                      onVideoComplete();
+                      clearInterval(interval);
+                    }
+                  }
+                } catch (error) {
+                  console.error('Error tracking main YouTube video:', error);
+                }
+              }, 2000);
+              
+              progressIntervalRef.current = interval;
+            },
+            onError: (event: any) => {
+              console.error('❌ Main YouTube player error:', event.data);
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Failed to initialize main YouTube player:', error);
+      }
+    }, 1000);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      if (youtubePlayerRef.current?.destroy) youtubePlayerRef.current.destroy();
+    };
+  }, [lesson.content_type, lesson.content_data, lesson.title, onVideoProgress, onVideoComplete]);
+
+  // Initialize Vimeo player for MAIN video lessons
+  useEffect(() => {
+    if (lesson.content_type !== 'video') return;
+    if (!lesson.content_data || typeof window === 'undefined' || !(window as any).Vimeo) return;
+    
+    const videoUrl = lesson.content_data.trim();
+    const isVimeo = videoUrl.includes('vimeo.com');
+    
+    if (!isVimeo) return;
+    
+    console.log('🎬 Initializing MAIN Vimeo video player');
+    
+    const timeoutId = setTimeout(() => {
+      const iframe = document.getElementById('main-vimeo-video');
+      if (!iframe) {
+        console.warn('❌ Main Vimeo iframe not found');
+        return;
+      }
+      
+      try {
+        const player = new (window as any).Vimeo.Player(iframe);
+        vimeoPlayerRef.current = player;
+        
+        player.on('loaded', () => {
+          console.log('📺 Main Vimeo player ready');
+        });
+        
+        player.on('timeupdate', async (data: any) => {
+          try {
+            const progress = (data.percent || 0) * 100;
+            
+            // Update local state for UI display
+            setVideoProgress(progress);
+            setCurrentTime(data.seconds || 0);
+            
+            // Get duration if not set
+            if (videoDuration === 0 && player) {
+              player.getDuration().then((duration: number) => {
+                setVideoDuration(duration);
+              });
+            }
+            
+            if (typeof onVideoProgress === 'function') {
+              console.log(`📊 Main Vimeo video progress:`, progress.toFixed(1) + '%');
+              onVideoProgress(progress);
+            }
+            
+            // Check for completion (90% threshold)
+            if (progress >= 90 && typeof onVideoComplete === 'function') {
+              console.log('✅ Main Vimeo video completed');
+              setVideoWatched(true);
+              onVideoComplete();
+            }
+          } catch (error) {
+            console.error('Error tracking main Vimeo video:', error);
+          }
+        });
+        
+        player.on('error', (error: any) => {
+          console.error('❌ Main Vimeo player error:', error);
+        });
+      } catch (error) {
+        console.error('Failed to initialize main Vimeo player:', error);
+      }
+    }, 1000);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      if (vimeoPlayerRef.current?.off) {
+        vimeoPlayerRef.current.off('timeupdate');
+        vimeoPlayerRef.current.off('loaded');
+        vimeoPlayerRef.current.off('error');
+      }
+    };
+  }, [lesson.content_type, lesson.content_data, lesson.title, onVideoProgress, onVideoComplete]);
+
   // Initialize YouTube players for mixed content videos
   useEffect(() => {
     if (lesson.content_type !== 'mixed') return;
-    if (!(window as any).YT || !(window as any).YT.Player) return;
+    if (!(window as any).YT || !(window as any).YT.Player) {
+      console.log('⚠️ YouTube IFrame API not loaded yet');
+      return;
+    }
 
-    // Parse mixed content to find YouTube videos
-    try {
-      const content = typeof lesson.content_data === 'string' 
-        ? JSON.parse(lesson.content_data) 
-        : lesson.content_data;
-      
-      const sections = Array.isArray(content) ? content : (content.sections || []);
-      
-      sections.forEach((section: any, index: number) => {
+    console.log('🎬 Starting YouTube player initialization for mixed content...');
+
+    // Small delay to ensure DOM is fully rendered
+    const timeoutId = setTimeout(() => {
+      try {
+        // Parse mixed content to find YouTube videos
+        const content = typeof lesson.content_data === 'string' 
+          ? JSON.parse(lesson.content_data) 
+          : lesson.content_data;
+        
+        const sections = Array.isArray(content) ? content : (content.sections || []);
+        
+        console.log(`📋 Found ${sections.length} total sections in mixed content`);
+        
+        sections.forEach((section: any, index: number) => {
         if (section.type !== 'video') return;
         
-        const videoUrl = section.url || section.metadata?.url || section.content || '';
+        // Get video URL from multiple possible locations with priority order
+        const videoUrl = (section.url || section.metadata?.url || section.content || '').trim();
         const isYouTube = videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be');
+        
+        console.log(`🔍 Checking section ${index} for YouTube video:`, { 
+          type: section.type, 
+          videoUrl, 
+          isYouTube,
+          hasUrl: !!section.url,
+          hasMetadataUrl: !!section.metadata?.url,
+          hasContent: !!section.content
+        });
         
         if (!isYouTube) return;
         
@@ -474,15 +650,29 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     if (duration > 0) {
                       const progress = (currentTime / duration) * 100;
                       
-                      // Call onVideoProgress to update engagement score
-                      if (onVideoProgress && progress > 0) {
-                        console.log(`📊 Mixed YouTube video ${index} progress:`, progress.toFixed(1));
-                        onVideoProgress(progress);
+                      // Track progress for mixed content videos
+                      console.log(`📊 Mixed YouTube video ${index} progress:`, progress.toFixed(1));
+                      
+                      if (typeof onMixedContentVideoProgress === 'function') {
+                        try {
+                          onMixedContentVideoProgress(index, progress);
+                        } catch (error) {
+                          console.error('Error calling onMixedContentVideoProgress:', error);
+                        }
                       }
                       
                       // Mark as watched if >= 90%
-                      if (progress >= 90 && onVideoComplete) {
-                        onVideoComplete();
+                      if (progress >= 90) {
+                        console.log(`✅ Mixed YouTube video ${index} completed (90% threshold)`);
+                        
+                        if (typeof onMixedContentVideoComplete === 'function') {
+                          try {
+                            onMixedContentVideoComplete(index);
+                          } catch (error) {
+                            console.error('Error calling onMixedContentVideoComplete:', error);
+                          }
+                        }
+                        
                         if (interval) clearInterval(interval);
                       }
                     }
@@ -506,12 +696,14 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           console.error(`Failed to initialize YouTube player ${index}:`, error);
         }
       });
-    } catch (error) {
-      console.error('Error parsing mixed content for YouTube players:', error);
-    }
+      } catch (error) {
+        console.error('Error parsing mixed content for YouTube players:', error);
+      }
+    }, 1000); // 1 second delay to ensure DOM is ready
     
     // Cleanup on unmount or content change
     return () => {
+      clearTimeout(timeoutId);
       Object.values(mixedVideoRefs.current).forEach(({ player, interval }) => {
         if (interval) clearInterval(interval);
         if (player?.destroy) player.destroy();
@@ -528,24 +720,27 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       return;
     }
 
-    console.log('🎬 Initializing Vimeo players for mixed content...');
+    console.log('🎬 Starting Vimeo player initialization for mixed content...');
 
-    try {
-      const content = JSON.parse(lesson.content_data);
+    // Small delay to ensure DOM is fully rendered
+    const timeoutId = setTimeout(() => {
+      try {
+        const content = JSON.parse(lesson.content_data);
       if (!Array.isArray(content.sections)) return;
 
       // Find all video sections with Vimeo URLs
       const vimeoSections = content.sections
-        .map((section: any, index: number) => ({ section, index }))
-        .filter(({ section }: any) => 
-          section.type === 'video' && 
-          section.videoUrl && 
-          /vimeo\.com/.test(section.videoUrl)
+        .map((section: any, index: number) => {
+          const videoUrl = (section.url || section.metadata?.url || section.content || '').trim();
+          return { section, index, videoUrl };
+        })
+        .filter(({ videoUrl }: any) => 
+          videoUrl && /vimeo\.com/.test(videoUrl)
         );
 
       console.log(`Found ${vimeoSections.length} Vimeo videos in mixed content`);
 
-      vimeoSections.forEach(({ section, index }: any) => {
+      vimeoSections.forEach(({ section, index, videoUrl }: any) => {
         const playerId = `mixed-vimeo-${index}`;
         const iframe = document.getElementById(playerId) as HTMLIFrameElement;
 
@@ -571,14 +766,25 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               
               console.log(`📊 Mixed Vimeo video ${index} progress:`, progress.toFixed(1) + '%');
               
-              if (onVideoProgress) {
-                onVideoProgress(progress);
+              if (typeof onMixedContentVideoProgress === 'function') {
+                try {
+                  onMixedContentVideoProgress(index, progress);
+                } catch (error) {
+                  console.error('Error calling onMixedContentVideoProgress:', error);
+                }
               }
 
               // Check for completion (90% threshold)
-              if (progress >= 90 && onVideoComplete) {
-                console.log(`✅ Mixed Vimeo video ${index} completed (90% threshold reached)`);
-                onVideoComplete();
+              if (progress >= 90) {
+                console.log(`✅ Mixed Vimeo video ${index} completed (90% threshold)`);
+                
+                if (typeof onMixedContentVideoComplete === 'function') {
+                  try {
+                    onMixedContentVideoComplete(index);
+                  } catch (error) {
+                    console.error('Error calling onMixedContentVideoComplete:', error);
+                  }
+                }
               }
             } catch (error) {
               console.error(`Error tracking Vimeo video ${index}:`, error);
@@ -597,12 +803,14 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           console.error(`Failed to initialize Vimeo player ${index}:`, error);
         }
       });
-    } catch (error) {
-      console.error('Error parsing mixed content for Vimeo players:', error);
-    }
+      } catch (error) {
+        console.error('Error parsing mixed content for Vimeo players:', error);
+      }
+    }, 1000); // 1 second delay to ensure DOM is ready
 
     // Cleanup on unmount or content change
     return () => {
+      clearTimeout(timeoutId);
       Object.values(mixedVideoRefs.current).forEach(({ player }) => {
         if (player?.off) {
           player.off('timeupdate');
@@ -611,7 +819,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
         }
       });
     };
-  }, [lesson.content_type, lesson.content_data, onVideoProgress, onVideoComplete]);
+  }, [lesson.content_type, lesson.content_data, lesson.title, onVideoProgress, onVideoComplete, onMixedContentVideoProgress, onMixedContentVideoComplete]);
 
   const handleFullscreenToggle = async (element: HTMLElement | null) => {
     if (!element) return;
@@ -843,7 +1051,12 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
 
   const renderVideoContent = (videoUrl: string, mixedContentIndex?: number) => {
     // Debug logging
-    console.log('🎬 renderVideoContent called with:', { videoUrl, mixedContentIndex });
+    console.log('🎬 renderVideoContent called with:', { 
+      videoUrl, 
+      mixedContentIndex, 
+      contentType: lesson.content_type,
+      isMainVideo: lesson.content_type === 'video' && mixedContentIndex === undefined
+    });
     
     // Validate URL first
     if (!videoUrl || videoUrl.trim() === '') {
@@ -900,6 +1113,10 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
         );
       }
       
+      // Check if this is a main video (not mixed content)
+      const isMainVideo = lesson.content_type === 'video' && mixedContentIndex === undefined;
+      console.log('🎬 Video type:', isMainVideo ? 'MAIN VIDEO' : 'MIXED CONTENT VIDEO');
+      
       return (
         <div className="space-y-4">
           <div 
@@ -909,7 +1126,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             aria-label="Video player"
           >
             <iframe
-              id={mixedContentIndex !== undefined ? `mixed-youtube-${mixedContentIndex}` : undefined}
+              id={mixedContentIndex !== undefined ? `mixed-youtube-${mixedContentIndex}` : 'main-youtube-video'}
               ref={iframeRef}
               src={`https://www.youtube.com/embed/${videoId}?enablejsapi=1&origin=${window.location.origin}`}
               className="absolute inset-0 w-full h-full"
@@ -1043,7 +1260,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             aria-label="Vimeo video player"
           >
             <iframe
-              id={mixedContentIndex !== undefined ? `mixed-vimeo-${mixedContentIndex}` : undefined}
+              id={mixedContentIndex !== undefined ? `mixed-vimeo-${mixedContentIndex}` : 'main-vimeo-video'}
               ref={iframeRef}
               src={`https://player.vimeo.com/video/${videoId}`}
               className="absolute inset-0 w-full h-full"
@@ -1148,14 +1365,25 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     const progress = (el.currentTime / el.duration) * 100;
                     console.log(`📊 Mixed direct video ${mixedContentIndex} progress:`, progress.toFixed(1) + '%');
                     
-                    if (onVideoProgress) {
-                      onVideoProgress(progress);
+                    if (typeof onMixedContentVideoProgress === 'function') {
+                      try {
+                        onMixedContentVideoProgress(mixedContentIndex, progress);
+                      } catch (error) {
+                        console.error('Error calling onMixedContentVideoProgress:', error);
+                      }
                     }
                     
                     // Check for completion (90% threshold)
-                    if (progress >= 90 && onVideoComplete) {
-                      console.log(`✅ Mixed direct video ${mixedContentIndex} completed (90% threshold reached)`);
-                      onVideoComplete();
+                    if (progress >= 90) {
+                      console.log(`✅ Mixed direct video ${mixedContentIndex} completed (90% threshold)`);
+                      
+                      if (typeof onMixedContentVideoComplete === 'function') {
+                        try {
+                          onMixedContentVideoComplete(mixedContentIndex);
+                        } catch (error) {
+                          console.error('Error calling onMixedContentVideoComplete:', error);
+                        }
+                      }
                     }
                   }
                 };
