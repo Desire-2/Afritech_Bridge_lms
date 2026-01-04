@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { authService } from '@/services/auth.service';
+import { AuthService } from '@/services/auth.service';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -70,7 +70,7 @@ export function ChangePasswordModal({ isOpen, onClose, required = false }: Chang
     setLoading(true);
 
     try {
-      const response = await authService.changePassword({
+      const response = await AuthService.changePassword({
         current_password: formData.currentPassword,
         new_password: formData.newPassword,
       });

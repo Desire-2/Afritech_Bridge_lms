@@ -260,6 +260,24 @@ def update_lesson_progress(lesson_id):
     if 'time_spent' in data:
         lesson_completion.time_spent = data['time_spent']
     
+    # Enhanced video tracking fields
+    if 'video_current_time' in data:
+        lesson_completion.video_current_time = data['video_current_time']
+    if 'video_duration' in data:
+        lesson_completion.video_duration = data['video_duration']
+    if 'video_completed' in data:
+        old_completed = lesson_completion.video_completed
+        lesson_completion.video_completed = data['video_completed']
+        # Increment watch count when video completes for the first time or rewatches
+        if data['video_completed'] and (not old_completed or lesson_completion.video_watch_count > 0):
+            lesson_completion.video_watch_count = (lesson_completion.video_watch_count or 0) + 1
+            lesson_completion.video_last_watched = datetime.utcnow()
+    if 'playback_speed' in data:
+        lesson_completion.playback_speed = data['playback_speed']
+    if 'mixed_video_progress' in data:
+        # Store mixed video progress as JSON string
+        lesson_completion.mixed_video_progress = json.dumps(data['mixed_video_progress'])
+    
     # Update timestamps
     lesson_completion.updated_at = datetime.utcnow()
     if data.get('auto_saved'):

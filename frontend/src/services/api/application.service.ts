@@ -170,23 +170,52 @@ class CourseApplicationService extends BaseApiService {
 
   /**
    * Perform bulk action on multiple applications (Admin only)
+   * Returns immediately with a task ID for background processing
    */
   async bulkAction(data: {
     action: 'approve' | 'reject' | 'waitlist';
     application_ids: number[];
     rejection_reason?: string;
     custom_message?: string;
+    send_emails?: boolean;
   }): Promise<{
+    task_id: string;
     message: string;
-    results: {
-      success: Array<{ id: number; status: string }>;
-      failed: Array<{ id: number; error: string }>;
-    };
-    total_processed: number;
-    successful: number;
-    failed: number;
+    status: string;
+    status_url: string;
+    total_applications: number;
+    estimated_time: string;
+    poll_interval_seconds: number;
   }> {
     return this.post(`${this.BASE_PATH}/bulk-action`, data);
+  }
+
+  /**
+   * Check the status of a bulk action task
+   */
+  async getBulkActionStatus(taskId: string): Promise<{
+    task_id: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    progress: {
+      processed: number;
+      total: number;
+    };
+    started_at: string;
+    completed_at?: string;
+    action: string;
+    results?: {
+      success: Array<{ id: number; status: string; email: string }>;
+      failed: Array<{ id: number; error: string }>;
+    };
+    summary?: {
+      total_processed: number;
+      successful: number;
+      failed: number;
+      action: string;
+    };
+    error?: string;
+  }> {
+    return this.get(`${this.BASE_PATH}/bulk-action/${taskId}/status`);
   }
 
   /**
@@ -238,6 +267,20 @@ class CourseApplicationService extends BaseApiService {
     email_sent: boolean;
   }> {
     return this.post(`${this.BASE_PATH}/${id}/waitlist-update`, { message });
+  }
+
+  /**
+   * Change application status directly (Admin only)
+   */
+  async changeStatus(id: number, data: {
+    status: 'pending' | 'approved' | 'rejected' | 'waitlisted' | 'withdrawn';
+    reason?: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    data: { id: number; old_status: string; new_status: string };
+  }> {
+    return this.put(`${this.BASE_PATH}/${id}/status`, data);
   }
 }
 

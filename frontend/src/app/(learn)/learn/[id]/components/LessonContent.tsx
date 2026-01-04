@@ -20,6 +20,14 @@ import { QuizAttemptTracker } from './QuizAttemptTracker';
 import { AssignmentPanel } from './AssignmentPanel';
 import { LessonScoreDisplay } from './LessonScoreDisplay';
 
+// Helper function to format time in MM:SS format
+const formatTime = (seconds: number): string => {
+  if (!seconds || isNaN(seconds)) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
 interface LessonContentProps {
   currentLesson: any;
   lessonQuiz: ContentQuiz | null;
@@ -37,9 +45,13 @@ interface LessonContentProps {
   setLessonNotes: (notes: string) => void;
   contentRef?: any;
   onVideoComplete?: () => void;
-  onVideoProgress?: (progress: number) => void;
+  onVideoProgress?: (progress: number, currentTime?: number, duration?: number) => void;
   onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
   onMixedContentVideoComplete?: (videoIndex: number) => void;
+  // Video progress tracking
+  videoProgress?: number;
+  videoCurrentTime?: number;
+  videoDuration?: number;
   moduleScoring: any;
   lessonScore: number;
   currentLessonQuizScore?: number;
@@ -89,6 +101,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   onVideoProgress,
   onMixedContentVideoProgress,
   onMixedContentVideoComplete,
+  videoProgress = 0,
+  videoCurrentTime = 0,
+  videoDuration = 0,
   moduleScoring,
   lessonScore,
   currentLessonQuizScore = 0,
@@ -368,6 +383,32 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onMixedContentVideoProgress={onMixedContentVideoProgress}
                   onMixedContentVideoComplete={onMixedContentVideoComplete}
                 />
+
+                {/* Video Progress Card - Only show for video content */}
+                {currentLesson.content_type === 'video' && videoDuration > 0 && (
+                  <Card className="bg-gray-800/50 border-gray-700">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center space-x-2">
+                          <Play className="h-5 w-5 text-blue-400" />
+                          <span className="font-medium text-white">Video Progress</span>
+                        </div>
+                        <span className="text-sm text-gray-400">
+                          {Math.round(videoProgress)}% watched
+                        </span>
+                      </div>
+                      
+                      {/* Progress Bar */}
+                      <Progress value={videoProgress} className="h-2 mb-2" />
+                      
+                      {/* Time Display */}
+                      <div className="flex items-center justify-between text-sm text-gray-400">
+                        <span>{formatTime(videoCurrentTime)}</span>
+                        <span>{formatTime(videoDuration)}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* Progress Status */}
                 {isLessonCompleted ? (

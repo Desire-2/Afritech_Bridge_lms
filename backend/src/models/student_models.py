@@ -20,6 +20,18 @@ class LessonCompletion(db.Model):
     engagement_score = db.Column(db.Float, default=0.0)  # 0-100 engagement score
     scroll_progress = db.Column(db.Float, default=0.0)  # 0-100 scroll percentage
     video_progress = db.Column(db.Float, default=0.0)  # 0-100 video watch percentage
+    
+    # Enhanced video tracking fields
+    video_current_time = db.Column(db.Float, default=0.0)  # Current timestamp in seconds
+    video_duration = db.Column(db.Float, default=0.0)  # Total video duration in seconds
+    video_completed = db.Column(db.Boolean, default=False)  # 90%+ threshold reached
+    video_watch_count = db.Column(db.Integer, default=0)  # Number of times video was watched
+    video_last_watched = db.Column(db.DateTime)  # Last video watch timestamp
+    playback_speed = db.Column(db.Float, default=1.0)  # Preferred playback speed
+    
+    # Mixed content video tracking (JSON: {videoIndex: {progress, currentTime, completed}})
+    mixed_video_progress = db.Column(db.Text)  # JSON string for tracking multiple videos
+    
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -192,6 +204,13 @@ class LessonCompletion(db.Model):
             'engagement_score': self.engagement_score,
             'scroll_progress': self.scroll_progress,
             'video_progress': self.video_progress,
+            'video_current_time': self.video_current_time if hasattr(self, 'video_current_time') else 0.0,
+            'video_duration': self.video_duration if hasattr(self, 'video_duration') else 0.0,
+            'video_completed': self.video_completed if hasattr(self, 'video_completed') else False,
+            'video_watch_count': self.video_watch_count if hasattr(self, 'video_watch_count') else 0,
+            'video_last_watched': self.video_last_watched.isoformat() if hasattr(self, 'video_last_watched') and self.video_last_watched else None,
+            'playback_speed': self.playback_speed if hasattr(self, 'playback_speed') else 1.0,
+            'mixed_video_progress': json.loads(self.mixed_video_progress) if hasattr(self, 'mixed_video_progress') and self.mixed_video_progress else {},
             'lesson_score': score_breakdown['total_score'],  # Comprehensive lesson score
             'score_breakdown': score_breakdown,  # Detailed breakdown with weights
             'has_quiz': score_breakdown['has_quiz'],

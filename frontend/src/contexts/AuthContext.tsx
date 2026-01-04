@@ -29,6 +29,7 @@ interface AuthContextType {
   refreshToken: () => Promise<boolean>;
   updateProfile: (userData: Partial<User>) => Promise<void>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<void>;
+  updateUser: (userData: Partial<User>) => void;
 }
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -398,6 +399,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const updateUser = (userData: Partial<User>) => {
+    if (user) {
+      const updatedUser = { ...user, ...userData };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+    }
+  };
+
   return (
     <AuthContext.Provider value={{ 
       user, 
@@ -410,7 +419,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       refreshToken,
       fetchUserProfile,
       updateProfile,
-      changePassword
+      changePassword,
+      updateUser
     }}>
       {children}
     </AuthContext.Provider>

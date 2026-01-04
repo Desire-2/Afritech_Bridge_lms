@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useIsClient, ClientOnly } from '@/lib/hydration-helper';
 import { ApiErrorHandler } from '@/lib/error-handler';
 import { RolePermissions } from '@/lib/permissions';
+import { ChangePasswordModal } from '@/components/auth/ChangePasswordModal';
 
 export default function LoginForm() {
   const searchParams = useSearchParams();
@@ -28,6 +29,8 @@ export default function LoginForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authCheckTimeout, setAuthCheckTimeout] = useState<number>(0);
   const [initialAuthCheckComplete, setInitialAuthCheckComplete] = useState(false);
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [pendingRedirect, setPendingRedirect] = useState<string | null>(null);
 
   
   // Validation states
@@ -185,7 +188,26 @@ export default function LoginForm() {
       
       const authData = await Promise.race([loginPromise, timeoutPromise]) as any;
       
-      console.log('LoginForm: Login successful, redirecting to dashboard');
+      console.log('LoginForm: Login successful');
+      
+      // Check if password change is required
+      if (authData.must_change_password || authData.user.must_change_password) {
+        console.log('LoginForm: Password change required, showing modal');
+        
+        // Determine where to redirect after password change
+        let targetRoute = '/student/dashboard'; // Default fallback
+        
+        if (redirectPath && !redirectPath.includes('/auth/')) {
+          targetRoute = redirectPath;
+        } else {
+          targetRoute = RolePermissions.getDashboardRoute(authData.user.role);
+        }
+        
+        setPendingRedirect(targetRoute);
+        setShowPasswordChangeModal(true);
+        setIsSubmitting(false);
+        return;
+      }
       
       // Determine where to redirect after login
       let targetRoute = '/student/dashboard'; // Default fallback
@@ -683,6 +705,19 @@ export default function LoginForm() {
           </p>
         </div>
       </div>
+      
+      {/* Password Change Modal for first-time login */}
+      <ChangePasswordModal
+        isOpen={showPasswordChangeModal}
+        onClose={() => {
+          setShowPasswordChangeModal(false);
+          // After password change, redirect to the intended destination
+          if (pendingRedirect) {
+            router.push(pendingRedirect);
+          }
+        }}
+        required={true}
+      />
     </div>
     </ClientOnly>
   );

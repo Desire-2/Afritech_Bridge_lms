@@ -1,6 +1,6 @@
 # admin_routes.py
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, make_response
 from functools import wraps
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, or_, and_, desc
@@ -13,6 +13,9 @@ from ..models.student_models import (
     StudentBookmark, Certificate, LearningAnalytics
 )
 import logging
+import csv
+import json
+from io import StringIO
 
 logger = logging.getLogger(__name__)
 
@@ -202,40 +205,78 @@ def get_user_stats():
 @admin_bp.route("/users/bulk-action", methods=["POST"])
 @admin_required
 def bulk_user_action():
-    """Perform bulk actions on multiple users"""
+    """Perform bulk actions on multiple users with detailed error reporting"""
     try:
         data = request.get_json()
         user_ids = data.get("user_ids", [])
         action = data.get("action")  # activate, deactivate, delete, change_role
         
-        if not user_ids or not action:
-            return jsonify({"error": "Missing user_ids or action"}), 400
+        # Validation
+        if not user_ids:
+            return jsonify({"error": "No user IDs provided"}), 400
+            
+        if not action:
+            return jsonify({"error": "No action specified"}), 400
+        
+        if not isinstance(user_ids, list):
+            return jsonify({"error": "user_ids must be an array"}), 400
+        
+        # Limit bulk operations for safety
+        MAX_BULK_USERS = 100
+        if len(user_ids) > MAX_BULK_USERS:
+            return jsonify({
+                "error": f"Cannot process more than {MAX_BULK_USERS} users at once"
+            }), 400
+        
+        # Get current user to prevent self-actions
+        current_user_id = get_jwt_identity()
         
         affected_count = 0
+        errors = []
+        warnings = []
         
         if action == "activate":
-            User.query.filter(User.id.in_(user_ids)).update(
-                {User.is_active: True}, 
-                synchronize_session=False
-            )
-            affected_count = len(user_ids)
+            # Check which users exist and are inactive
+            users_to_activate = User.query.filter(
+                User.id.in_(user_ids),
+                User.is_active == False
+            ).all()
+            
+            for user in users_to_activate:
+                user.is_active = True
+                affected_count += 1
+            
+            already_active = len(user_ids) - affected_count
+            if already_active > 0:
+                warnings.append(f"{already_active} user(s) were already active")
             
         elif action == "deactivate":
-            User.query.filter(User.id.in_(user_ids)).update(
-                {User.is_active: False}, 
-                synchronize_session=False
-            )
-            affected_count = len(user_ids)
+            # Prevent self-deactivation
+            if current_user_id in user_ids:
+                return jsonify({"error": "Cannot deactivate your own account"}), 400
+            
+            # Check which users exist and are active
+            users_to_deactivate = User.query.filter(
+                User.id.in_(user_ids),
+                User.is_active == True
+            ).all()
+            
+            for user in users_to_deactivate:
+                user.is_active = False
+                affected_count += 1
+            
+            already_inactive = len(user_ids) - affected_count
+            if already_inactive > 0:
+                warnings.append(f"{already_inactive} user(s) were already inactive")
             
         elif action == "delete":
-            # Prevent self-deletion in bulk operations
-            current_user_id = get_jwt_identity()
+            # Prevent self-deletion
             if current_user_id in user_ids:
                 return jsonify({"error": "Cannot delete your own account"}), 400
             
             # Handle cascading deletes for each user
             deleted_count = 0
-            errors = []
+            skipped_count = 0
             
             for user_id in user_ids:
                 try:
@@ -244,13 +285,21 @@ def bulk_user_action():
                         errors.append(f"User {user_id} not found")
                         continue
                     
-                    user_role = user.role.name
+                    user_role = user.role.name if user.role else "unknown"
+                    
+                    # Check if instructor has courses
+                    if user_role == "instructor":
+                        course_count = Course.query.filter_by(instructor_id=user_id).count()
+                        if course_count > 0:
+                            errors.append(f"Cannot delete {user.username} - has {course_count} course(s)")
+                            skipped_count += 1
+                            continue
                     
                     # Delete related records based on role (in dependency order)
                     if user_role == "student":
                         ModuleProgress.query.filter_by(student_id=user_id).delete()
                         LessonCompletion.query.filter_by(student_id=user_id).delete()
-                        UserProgress.query.filter_by(user_id=user_id).delete()  # Uses user_id
+                        UserProgress.query.filter_by(user_id=user_id).delete()
                         LearningAnalytics.query.filter_by(student_id=user_id).delete()
                         Submission.query.filter_by(student_id=user_id).delete()
                         StudentNote.query.filter_by(student_id=user_id).delete()
@@ -260,7 +309,7 @@ def bulk_user_action():
                         
                         try:
                             from ..models.quiz_progress_models import QuizAttempt
-                            QuizAttempt.query.filter_by(user_id=user_id).delete()  # Uses user_id
+                            QuizAttempt.query.filter_by(user_id=user_id).delete()
                         except ImportError:
                             pass
                             
@@ -270,29 +319,25 @@ def bulk_user_action():
                             LearningStreak.query.filter_by(user_id=user_id).delete()
                         except ImportError:
                             pass
-                            
-                    elif user_role == "instructor":
-                        course_count = Course.query.filter_by(instructor_id=user_id).count()
-                        if course_count > 0:
-                            errors.append(f"User {user_id} ({user.username}) has {course_count} courses")
-                            continue
                     
                     db.session.delete(user)
                     deleted_count += 1
                     
                 except Exception as e:
-                    errors.append(f"User {user_id}: {str(e)}")
+                    errors.append(f"Error deleting user {user_id}: {str(e)}")
+                    skipped_count += 1
             
             affected_count = deleted_count
             
-            if errors:
-                logger.warning(f"Bulk delete completed with errors: {errors}")
-                if deleted_count == 0:
-                    db.session.rollback()
-                    return jsonify({
-                        "error": "Bulk delete failed",
-                        "details": errors
-                    }), 400
+            if skipped_count > 0:
+                warnings.append(f"{skipped_count} user(s) could not be deleted")
+            
+            if deleted_count == 0 and errors:
+                db.session.rollback()
+                return jsonify({
+                    "error": "Bulk delete failed - no users were deleted",
+                    "details": errors
+                }), 400
             
         elif action == "change_role":
             new_role_name = data.get("role_name")
@@ -301,26 +346,147 @@ def bulk_user_action():
             
             role = Role.query.filter_by(name=new_role_name).first()
             if not role:
-                return jsonify({"error": f"Role '{new_role_name}' not found"}), 400
+                available_roles = [r.name for r in Role.query.all()]
+                return jsonify({
+                    "error": f"Role '{new_role_name}' not found",
+                    "available_roles": available_roles
+                }), 400
             
-            User.query.filter(User.id.in_(user_ids)).update(
-                {User.role_id: role.id}, 
-                synchronize_session=False
-            )
-            affected_count = len(user_ids)
+            # Prevent changing own role if admin
+            current_user = User.query.get(current_user_id)
+            if current_user_id in user_ids and current_user.role.name == "admin":
+                return jsonify({"error": "Cannot change your own admin role"}), 400
+            
+            # Update roles
+            users_to_update = User.query.filter(User.id.in_(user_ids)).all()
+            for user in users_to_update:
+                if user.role_id != role.id:
+                    user.role_id = role.id
+                    affected_count += 1
+            
+            already_role = len(user_ids) - affected_count
+            if already_role > 0:
+                warnings.append(f"{already_role} user(s) already had this role")
         else:
-            return jsonify({"error": "Invalid action"}), 400
+            return jsonify({
+                "error": "Invalid action",
+                "valid_actions": ["activate", "deactivate", "delete", "change_role"]
+            }), 400
         
         db.session.commit()
         
-        return jsonify({
+        response_data = {
             "message": f"Bulk action '{action}' completed successfully",
-            "affected_users": affected_count
-        }), 200
+            "affected_users": affected_count,
+            "total_requested": len(user_ids)
+        }
+        
+        if errors:
+            response_data["errors"] = errors
+        if warnings:
+            response_data["warnings"] = warnings
+        
+        return jsonify(response_data), 200
+        
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error in bulk action: {str(e)}")
-        return jsonify({"error": "Bulk action failed"}), 500
+        logger.error(f"Error in bulk action: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": "Bulk action failed due to server error",
+            "details": str(e)
+        }), 500
+
+@admin_bp.route("/users/export", methods=["GET"])
+@admin_required
+def export_users():
+    """Export users data to CSV or JSON format"""
+    try:
+        export_format = request.args.get("format", "csv")
+        role_filter = request.args.get("role")
+        search_query = request.args.get("search", "").strip()
+        status_filter = request.args.get("status")
+        
+        # Build query with filters
+        query = User.query.join(Role)
+        
+        if role_filter:
+            query = query.filter(Role.name == role_filter)
+        
+        if search_query:
+            search_pattern = f"%{search_query}%"
+            query = query.filter(
+                or_(
+                    User.username.ilike(search_pattern),
+                    User.email.ilike(search_pattern),
+                    User.first_name.ilike(search_pattern),
+                    User.last_name.ilike(search_pattern)
+                )
+            )
+        
+        if status_filter:
+            if status_filter == "active":
+                query = query.filter(User.is_active == True)
+            elif status_filter == "inactive":
+                query = query.filter(User.is_active == False)
+        
+        users = query.all()
+        
+        if export_format == "csv":
+            # Create CSV
+            output = StringIO()
+            writer = csv.writer(output)
+            
+            # Write header
+            writer.writerow([
+                'ID', 'Username', 'Email', 'First Name', 'Last Name', 
+                'Role', 'Status', 'Created At', 'Last Login'
+            ])
+            
+            # Write data
+            for user in users:
+                writer.writerow([
+                    user.id,
+                    user.username,
+                    user.email,
+                    user.first_name or '',
+                    user.last_name or '',
+                    user.role.name if user.role else '',
+                    'Active' if user.is_active else 'Inactive',
+                    user.created_at.strftime('%Y-%m-%d %H:%M:%S') if user.created_at else '',
+                    user.last_login.strftime('%Y-%m-%d %H:%M:%S') if hasattr(user, 'last_login') and user.last_login else 'Never'
+                ])
+            
+            response = make_response(output.getvalue())
+            response.headers['Content-Type'] = 'text/csv'
+            response.headers['Content-Disposition'] = f'attachment; filename=users_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            return response
+            
+        elif export_format == "json":
+            # Create JSON
+            users_data = []
+            for user in users:
+                users_data.append({
+                    'id': user.id,
+                    'username': user.username,
+                    'email': user.email,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'role': user.role.name if user.role else None,
+                    'is_active': user.is_active,
+                    'created_at': user.created_at.isoformat() if user.created_at else None,
+                    'last_login': user.last_login.isoformat() if hasattr(user, 'last_login') and user.last_login else None
+                })
+            
+            response = make_response(json.dumps(users_data, indent=2))
+            response.headers['Content-Type'] = 'application/json'
+            response.headers['Content-Disposition'] = f'attachment; filename=users_export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+            return response
+        else:
+            return jsonify({"error": "Invalid format. Use 'csv' or 'json'"}), 400
+            
+    except Exception as e:
+        logger.error(f"Error exporting users: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to export users"}), 500
 
 @admin_bp.route("/users", methods=["POST"])
 @admin_required

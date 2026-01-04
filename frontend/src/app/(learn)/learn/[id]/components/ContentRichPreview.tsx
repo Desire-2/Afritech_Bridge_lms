@@ -51,7 +51,7 @@ interface ContentRichPreviewProps {
     duration_minutes?: number;
   };
   onVideoComplete?: () => void;
-  onVideoProgress?: (progress: number) => void;
+  onVideoProgress?: (progress: number, currentTime?: number, duration?: number) => void;
   onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
   onMixedContentVideoComplete?: (videoIndex: number) => void;
 }
@@ -215,7 +215,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       
       // Always call onVideoProgress for both main video and mixed content
       if (onVideoProgress) {
-        onVideoProgress(progress);
+        onVideoProgress(progress, video.currentTime, video.duration);
       }
       
       // Mark as watched if >= 90% completed
@@ -267,23 +267,43 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
 
   // Initialize YouTube Player
   useEffect(() => {
-    if (!playerReady || !iframeRef.current || lesson.content_type !== 'video') return;
+    console.log('🎬 YouTube player initialization check:', {
+      playerReady,
+      hasIframeRef: !!iframeRef.current,
+      contentType: lesson.content_type,
+      hasExistingPlayer: !!youtubePlayerRef.current
+    });
+    
+    if (!playerReady || !iframeRef.current || lesson.content_type !== 'video') {
+      console.log('⏭️ Skipping YouTube player initialization:', {
+        reason: !playerReady ? 'Player not ready' : !iframeRef.current ? 'No iframe ref' : 'Not a video lesson'
+      });
+      return;
+    }
     
     const videoUrl = lesson.content_data;
     const isYouTube = videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be');
     
-    if (!isYouTube) return;
+    if (!isYouTube) {
+      console.log('⏭️ Not a YouTube video');
+      return;
+    }
 
     const videoId = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
     
-    if (!videoId || youtubePlayerRef.current) return;
+    if (!videoId || youtubePlayerRef.current) {
+      console.log('⏭️ Skipping:', { hasVideoId: !!videoId, hasExistingPlayer: !!youtubePlayerRef.current });
+      return;
+    }
 
     try {
+      console.log('🎬 Initializing YouTube player for video ID:', videoId);
       youtubePlayerRef.current = new (window as any).YT.Player(iframeRef.current, {
         videoId,
         events: {
           onReady: (event: any) => {
             const duration = event.target.getDuration();
+            console.log('✅ YouTube player ready! Duration:', duration);
             setVideoDuration(duration);
 
             // Poll for progress updates
@@ -297,12 +317,14 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               
               if (duration > 0) {
                 const progress = (currentTime / duration) * 100;
+                console.log('🎬 YouTube progress update:', { progress, currentTime, duration });
                 setVideoProgress(progress);
                 setCurrentTime(currentTime);
                 
                 // Always call onVideoProgress for both main video and mixed content
                 if (onVideoProgress) {
-                  onVideoProgress(progress);
+                  console.log('🎬 Calling onVideoProgress callback');
+                  onVideoProgress(progress, currentTime, duration);
                 }
                 
                 // Mark as watched if >= 90% completed
@@ -313,8 +335,10 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     clearInterval(progressIntervalRef.current);
                   }
                 }
+              } else {
+                console.warn('🎬 YouTube duration is 0 or invalid');
               }
-            }, 1000);
+            }, 2000);
           },
           onStateChange: (event: any) => {
             // 1 = playing, 2 = paused
@@ -373,7 +397,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           
           // Always call onVideoProgress for both main video and mixed content
           if (onVideoProgress) {
-            onVideoProgress(progress);
+            onVideoProgress(progress, data.seconds, duration);
           }
           
           // Mark as watched if >= 90% completed
@@ -464,8 +488,8 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     setVideoDuration(duration);
                     
                     if (typeof onVideoProgress === 'function' && progress > 0) {
-                      console.log(`📊 Main video progress:`, progress.toFixed(1) + '%');
-                      onVideoProgress(progress);
+                      console.log(`📊 Main video progress:`, progress.toFixed(1) + '%', { currentTime, duration });
+                      onVideoProgress(progress, currentTime, duration);
                     }
                     
                     // Mark as complete at 90%
@@ -543,8 +567,8 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             }
             
             if (typeof onVideoProgress === 'function') {
-              console.log(`📊 Main Vimeo video progress:`, progress.toFixed(1) + '%');
-              onVideoProgress(progress);
+              console.log(`📊 Main Vimeo video progress:`, progress.toFixed(1) + '%', { seconds: data.seconds, duration });
+              onVideoProgress(progress, data.seconds, duration);
             }
             
             // Check for completion (90% threshold)

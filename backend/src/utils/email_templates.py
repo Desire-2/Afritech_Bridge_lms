@@ -385,49 +385,94 @@ def application_received_email(application, course_title):
     {get_email_footer()}
     """
 
-def application_approved_email(application, course, username, temp_password, custom_message=""):
+def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None):
     """🎉 Creative celebration email template for application approval"""
-    return f"""
-    {get_email_header()}
-            
-            <!-- Main Content -->
-            <div class="email-content" style="padding: 50px 35px;">
-                <!-- Celebration Header -->
-                <div style="text-align: center; margin-bottom: 40px;">
-                    <div class="icon-large" style="font-size: 80px; margin-bottom: 15px;">🎉</div>
-                    <h1 style="color: #10b981; margin: 0; font-size: 36px; font-weight: 800; letter-spacing: -1px;">
-                        Congratulations!
-                    </h1>
-                    <p style="color: #10b981; margin: 10px 0 0 0; font-size: 20px; font-weight: 600;">
-                        You're In! Welcome to Your Learning Journey 🚀
-                    </p>
-                </div>
-                
-                <!-- Greeting -->
-                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; border: 3px solid #10b981;">
-                    <p style="color: #ffffff; font-size: 17px; line-height: 1.8; margin: 0; text-align: center;">
-                        <strong style="font-size: 19px;">{application.full_name}</strong>, your application for<br>
-                        <strong style="color: #60a5fa; font-size: 20px;">{course.title}</strong><br>
-                        has been <strong style="color: #10b981; font-size: 18px;">APPROVED!</strong> 🎓✨
-                    </p>
-                </div>
-                
-                {f'''<div style="background-color: #2c3e50; border-left: 5px solid #3b82f6; border-radius: 12px; padding: 25px; margin: 30px 0;">
-                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
-                        <tr>
-                            <td style="vertical-align: middle; padding-right: 12px;">
-                                <span style="font-size: 28px;">💌</span>
-                            </td>
-                            <td style="vertical-align: middle;">
-                                <h3 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 700;">Personal Message from Your Instructor</h3>
-                            </td>
-                        </tr>
-                    </table>
-                    <p style="color: #bdc3c7; margin: 0; font-size: 15px; line-height: 1.8; font-style: italic; background-color: #34495e; padding: 20px; border-radius: 8px;">
-                        "{custom_message}"
-                    </p>
-                </div>''' if custom_message else ''}
-                
+    
+    # Determine account type message and credentials display
+    account_type_msg = ""
+    credentials_section = ""
+    
+    if not is_new_account and not temp_password and password_reset_link:
+        # Existing user - show reset link instead of password
+        account_type_msg = f'''<div style="background-color: #1e3a8a; border-left: 5px solid #3b82f6; border-radius: 12px; padding: 20px; margin: 25px 0;">
+            <p style="color: #ffffff; margin: 0; font-size: 15px; line-height: 1.7;">
+                <strong style="font-size: 16px;">👋 Welcome Back!</strong> You already have an account with us. 
+                If you don't remember your password, <strong style="color: #60a5fa;">you can set a new one using the link below</strong>.
+            </p>
+        </div>'''
+        
+        credentials_section = f'''
+                <!-- Login Credentials Box -->
+                <div style="background-color: #2c3e50; border-radius: 20px; padding: 35px; margin: 35px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: 3px solid #f59e0b;">
+                    <div style="text-align: center; margin-bottom: 25px;">
+                        <span class="icon-medium" style="font-size: 50px; display: block; margin-bottom: 10px;">🔐</span>
+                        <h2 style="margin: 0; color: #ffffff; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
+                            Your Login Information
+                        </h2>
+                        <p style="color: #f59e0b; margin: 8px 0 0 0; font-size: 14px;">
+                            Use your existing credentials to log in
+                        </p>
+                    </div>
+                    
+                    <div style="background-color: #34495e; border-radius: 16px; padding: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+                        <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 15px;">
+                            <tr>
+                                <td style="padding: 18px; background-color: #2c3e50; border-radius: 10px; color: #bdc3c7; font-size: 15px; font-weight: 700; vertical-align: middle; width: 40%;">
+                                    <span style="margin-right: 10px;">👤</span> Username
+                                </td>
+                                <td style="padding: 18px; background-color: #1a252f; border-radius: 10px;">
+                                    <span style="color: #60a5fa; font-family: 'Courier New', monospace; font-size: 18px; font-weight: 800; letter-spacing: 1px;">
+                                        {username}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 18px; background-color: #2c3e50; border-radius: 10px; color: #bdc3c7; font-size: 15px; font-weight: 700; vertical-align: middle;">
+                                    <span style="margin-right: 10px;">🌐</span> Login URL
+                                </td>
+                                <td style="padding: 18px; background-color: #1a252f; border-radius: 10px;">
+                                    <a href="https://study.afritechbridge.online/auth/login" style="color: #2563eb; font-size: 14px; text-decoration: none; font-weight: 600;">
+                                        study.afritechbridge.online
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div style="background-color: #065f46; border: 2px solid #10b981; border-radius: 12px; padding: 25px; margin-top: 25px;">
+                        <p style="color: #d1fae5; font-size: 15px; margin: 0 0 15px 0; line-height: 1.7; text-align: center;">
+                            <strong style="font-size: 16px;">🔑 Don't Remember Your Password?</strong><br>
+                            No problem! Set a new password using the button below:
+                        </p>
+                        <div style="text-align: center;">
+                            <a href="{password_reset_link}" style="display: inline-block; background-color: #10b981; color: #ffffff; padding: 15px 35px; text-decoration: none; border-radius: 8px; font-weight: 700; font-size: 15px; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);">
+                                🔐 Set New Password
+                            </a>
+                        </div>
+                        <p style="color: #a7f3d0; font-size: 12px; margin: 15px 0 0 0; text-align: center; line-height: 1.6;">
+                            This link will expire in 3 days for security reasons.
+                        </p>
+                    </div>
+                </div>'''
+    
+    elif temp_password:
+        # New account or existing with temp password
+        if not is_new_account:
+            account_type_msg = f'''<div style="background-color: #1e3a8a; border-left: 5px solid #3b82f6; border-radius: 12px; padding: 20px; margin: 25px 0;">
+                <p style="color: #ffffff; margin: 0; font-size: 15px; line-height: 1.7;">
+                    <strong style="font-size: 16px;">🔄 Account Update:</strong> We've generated a new temporary password for your existing account. 
+                    Please use the credentials below to log in and <strong style="color: #60a5fa;">change your password</strong> immediately for security.
+                </p>
+            </div>'''
+        else:
+            account_type_msg = f'''<div style="background-color: #065f46; border-left: 5px solid #10b981; border-radius: 12px; padding: 20px; margin: 25px 0;">
+                <p style="color: #ffffff; margin: 0; font-size: 15px; line-height: 1.7;">
+                    <strong style="font-size: 16px;">✨ New Account Created:</strong> We've created a new student account for you. 
+                    Use the credentials below to access your dashboard and start your learning journey!
+                </p>
+            </div>'''
+        
+        credentials_section = f'''
                 <!-- Login Credentials Box -->
                 <div style="background-color: #2c3e50; border-radius: 20px; padding: 35px; margin: 35px 0; box-shadow: 0 10px 30px rgba(0,0,0,0.3); border: 3px solid #f59e0b;">
                     <div style="text-align: center; margin-bottom: 25px;">
@@ -467,8 +512,80 @@ def application_approved_email(application, course, username, temp_password, cus
                                     <span style="margin-right: 10px;">🌐</span> Login URL
                                 </td>
                                 <td style="padding: 18px; background-color: #1a252f; border-radius: 10px;">
-                                    <a href="https://lms.afritecbridge.com/auth/login" style="color: #2563eb; font-size: 14px; text-decoration: none; font-weight: 600;">
-                                        lms.afritecbridge.com
+                                    <a href="https://study.afritechbridge.online/auth/login" style="color: #2563eb; font-size: 14px; text-decoration: none; font-weight: 600;">
+                                        study.afritechbridge.online
+                                    </a>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div style="background-color: #34495e; border: 2px dashed #ef4444; border-radius: 12px; padding: 20px; margin-top: 25px;">
+                        <p style="color: #fca5a5; font-size: 14px; margin: 0; line-height: 1.7; text-align: center;">
+                            <strong style="font-size: 15px;">⚠️ Security First!</strong><br>
+                            Change your password immediately after your first login to keep your account secure.
+                        </p>
+                    </div>
+                </div>'''
+    
+    return f"""
+    {get_email_header()}
+            
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Celebration Header -->
+                <div style="text-align: center; margin-bottom: 40px;">
+                    <div class="icon-large" style="font-size: 80px; margin-bottom: 15px;">🎉</div>
+                    <h1 style="color: #10b981; margin: 0; font-size: 36px; font-weight: 800; letter-spacing: -1px;">
+                        Congratulations!
+                    </h1>
+                    <p style="color: #10b981; margin: 10px 0 0 0; font-size: 20px; font-weight: 600;">
+                        You're In! Welcome to Your Learning Journey 🚀
+                    </p>
+                </div>
+                
+                <!-- Greeting -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; border: 3px solid #10b981;">
+                    <p style="color: #ffffff; font-size: 17px; line-height: 1.8; margin: 0; text-align: center;">
+                        <strong style="font-size: 19px;">{application.full_name}</strong>, your application for<br>
+                        <strong style="color: #60a5fa; font-size: 20px;">{course.title}</strong><br>
+                        has been <strong style="color: #10b981; font-size: 18px;">APPROVED!</strong> 🎓✨
+                    </p>
+                </div>
+                
+                {account_type_msg}
+                
+                {f'''<div style="background-color: #2c3e50; border-left: 5px solid #3b82f6; border-radius: 12px; padding: 25px; margin: 30px 0;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 12px;">
+                                <span style="font-size: 28px;">💌</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 700;">Personal Message from Your Instructor</h3>
+                            </td>
+                        </tr>
+                    </table>
+                    <p style="color: #bdc3c7; margin: 0; font-size: 15px; line-height: 1.8; font-style: italic; background-color: #34495e; padding: 20px; border-radius: 8px;">
+                        "{custom_message}"
+                    </p>
+                </div>''' if custom_message else ''}
+                
+                {credentials_section}
+                                </td>
+                                <td style="padding: 18px; background-color: #1a252f; border-radius: 10px;">
+                                    <span style="color: #60a5fa; font-family: 'Courier New', monospace; font-size: 18px; font-weight: 800; letter-spacing: 1px;">
+                                        {temp_password}
+                                    </span>
+                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 18px; background-color: #2c3e50; border-radius: 10px; color: #bdc3c7; font-size: 15px; font-weight: 700; vertical-align: middle;">
+                                    <span style="margin-right: 10px;">🌐</span> Login URL
+                                </td>
+                                <td style="padding: 18px; background-color: #1a252f; border-radius: 10px;">
+                                    <a href="https://study.afritechbridge.online/auth/login" style="color: #2563eb; font-size: 14px; text-decoration: none; font-weight: 600;">
+                                        study.afritechbridge.online
                                     </a>
                                 </td>
                             </tr>
@@ -534,7 +651,7 @@ def application_approved_email(application, course, username, temp_password, cus
                 
                 <!-- CTA Button -->
                 <div style="text-align: center; margin: 40px 0;">
-                    <a href="https://lms.afritecbridge.com/auth/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 18px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
+                    <a href="https://study.afritechbridge.online/auth/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 18px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
                         🚀 Start Learning Now
                     </a>
                     <p style="color: #bdc3c7; margin: 15px 0 0 0; font-size: 13px;">
@@ -770,7 +887,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                     </div>
                     
                     <div style="text-align: center;">
-                        <a href="https://lms.afritecbridge.com/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
+                        <a href="https://study.afritechbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
                             🔍 Browse All Courses
                         </a>
                         <p style="color: #bdc3c7; margin: 15px 0 0 0; font-size: 13px;">
@@ -1026,7 +1143,7 @@ def application_waitlisted_email(application, course_title, position=None, estim
                                 can strengthen your background for this one! 💪
                             </p>
                             <div style="text-align: center;">
-                                <a href="https://lms.afritecbridge.com/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); mobile-button">
+                                <a href="https://study.afritechbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); mobile-button">
                                     🔍 Browse Available Courses
                                 </a>
                             </div>
@@ -1174,7 +1291,7 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
         </div>'''}
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://lms.afritecbridge.com/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Full Details
             </a>
         </div>
@@ -1238,7 +1355,7 @@ def course_announcement_email(student_name, course_title, announcement_title, an
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://lms.afritecbridge.com/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Full Announcement
             </a>
         </div>
@@ -1311,7 +1428,7 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://lms.afritecbridge.com/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Detailed Results
             </a>
         </div>
@@ -1322,5 +1439,297 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
             <strong>The Afritec Bridge Team</strong>
         </p>
     </div>
+    {get_email_footer()}
+    """
+
+def application_status_pending_email(application, course_title, reason=None):
+    """✨ Professional email template for status change to pending"""
+    return f"""
+    {get_email_header()}
+            
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Status Icon & Title -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">⏳</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #3b82f6; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
+                        Application Under Review
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        Your application status has been updated
+                    </p>
+                </div>
+                
+                <!-- Greeting -->
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{application.full_name}</strong> 👋
+                </p>
+                
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    We're writing to inform you that your application for <strong style="color: #667eea; font-size: 16px;">{course_title}</strong> has been moved to <strong style="color: #3b82f6;">Pending</strong> status for further review.
+                </p>
+                
+                <!-- Status Details Card -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 12px;">
+                                <span style="font-size: 28px;">📋</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Status Update Details</h3>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 12px;">
+                        <tr>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 14px; font-weight: 600; width: 45%;">
+                                <span style="margin-right: 8px;">🆔</span> Application ID
+                            </td>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 15px; font-weight: 700;">
+                                #{application.id}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 14px; font-weight: 600;">
+                                <span style="margin-right: 8px;">📚</span> Course
+                            </td>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 15px; font-weight: 600;">
+                                {course_title}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 14px; font-weight: 600;">
+                                <span style="margin-right: 8px;">📊</span> New Status
+                            </td>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 0 8px 8px 0;">
+                                <span style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #ffffff; padding: 6px 16px; border-radius: 20px; font-size: 14px; font-weight: 600;">
+                                    ⏳ Pending Review
+                                </span>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    {f'''
+                    <div style="margin-top: 25px; padding: 20px; background-color: #34495e; border-left: 4px solid #3b82f6; border-radius: 8px;">
+                        <p style="margin: 0; color: #ffffff; font-size: 15px; line-height: 1.7;">
+                            <strong style="color: #3b82f6; font-size: 16px;">📝 Note:</strong><br>
+                            {reason}
+                        </p>
+                    </div>
+                    ''' if reason else ''}
+                </div>
+                
+                <!-- Info Section -->
+                <div style="background-color: rgba(59, 130, 246, 0.1); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px dashed #3b82f6;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 10px;">
+                                <span style="font-size: 24px;">ℹ️</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #3b82f6; font-size: 18px; font-weight: 700;">What This Means</h3>
+                            </td>
+                        </tr>
+                    </table>
+                    <p style="color: #d1d5db; font-size: 14px; line-height: 1.7; margin: 0;">
+                        Your application is currently under review by our admissions team. We will carefully evaluate your qualifications and notify you once a decision has been made. This process typically takes 2-3 business days.
+                    </p>
+                </div>
+                
+                <!-- Next Steps -->
+                <div style="margin: 35px 0;">
+                    <h3 style="color: #ffffff; font-size: 20px; margin: 0 0 20px 0; font-weight: 700;">
+                        <span style="margin-right: 8px;">🎯</span> What Happens Next
+                    </h3>
+                    <table class="responsive-table" style="width: 100%;">
+                        <tr>
+                            <td style="padding: 15px; background-color: #2c3e50; border-radius: 10px; margin-bottom: 12px; display: block; margin-bottom: 12px;">
+                                <span style="font-size: 22px; margin-right: 10px;">1️⃣</span>
+                                <span style="color: #e5e7eb; font-size: 15px; line-height: 1.6;">
+                                    <strong style="color: #ffffff;">Our team will review your application</strong><br>
+                                    <span style="color: #bdc3c7; font-size: 14px;">We'll assess your qualifications and experience</span>
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 15px; background-color: #2c3e50; border-radius: 10px; display: block; margin-bottom: 12px;">
+                                <span style="font-size: 22px; margin-right: 10px;">2️⃣</span>
+                                <span style="color: #e5e7eb; font-size: 15px; line-height: 1.6;">
+                                    <strong style="color: #ffffff;">You'll receive a decision notification</strong><br>
+                                    <span style="color: #bdc3c7; font-size: 14px;">We'll email you with the outcome</span>
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 15px; background-color: #2c3e50; border-radius: 10px; display: block;">
+                                <span style="font-size: 22px; margin-right: 10px;">3️⃣</span>
+                                <span style="color: #e5e7eb; font-size: 15px; line-height: 1.6;">
+                                    <strong style="color: #ffffff;">If approved, you'll get instant access</strong><br>
+                                    <span style="color: #bdc3c7; font-size: 14px;">Start learning immediately!</span>
+                                </span>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <!-- Contact Section -->
+                <div style="text-align: center; margin: 40px 0 20px 0; padding: 30px 20px; background-color: #2c3e50; border-radius: 12px;">
+                    <p style="color: #d1d5db; font-size: 15px; line-height: 1.7; margin: 0 0 20px 0;">
+                        Have questions about your application?
+                    </p>
+                    <a href="mailto:support@afritecbridge.com" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);">
+                        📧 Contact Support
+                    </a>
+                </div>
+                
+                <p style="color: #bdc3c7; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0;">
+                    Thank you for your patience.<br>
+                    <strong style="color: #ffffff;">The Afritec Bridge Team</strong> 🎓
+                </p>
+            </div>
+    {get_email_footer()}
+    """
+
+
+def application_status_withdrawn_email(application, course_title, reason=None):
+    """✨ Professional email template for withdrawn status"""
+    return f"""
+    {get_email_header()}
+            
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Status Icon & Title -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(107, 114, 128, 0.3);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">⊗</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #9ca3af; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
+                        Application Withdrawn
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        Your application has been withdrawn
+                    </p>
+                </div>
+                
+                <!-- Greeting -->
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{application.full_name}</strong> 👋
+                </p>
+                
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    This email confirms that your application for <strong style="color: #667eea; font-size: 16px;">{course_title}</strong> has been marked as <strong style="color: #9ca3af;">Withdrawn</strong>.
+                </p>
+                
+                <!-- Status Details Card -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 12px;">
+                                <span style="font-size: 28px;">📋</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Withdrawal Details</h3>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 12px;">
+                        <tr>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 14px; font-weight: 600; width: 45%;">
+                                <span style="margin-right: 8px;">🆔</span> Application ID
+                            </td>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 15px; font-weight: 700;">
+                                #{application.id}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 14px; font-weight: 600;">
+                                <span style="margin-right: 8px;">📚</span> Course
+                            </td>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 15px; font-weight: 600;">
+                                {course_title}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 14px; font-weight: 600;">
+                                <span style="margin-right: 8px;">📊</span> Status
+                            </td>
+                            <td style="padding: 12px 15px; background-color: #34495e; border-radius: 0 8px 8px 0;">
+                                <span style="display: inline-block; background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%); color: #ffffff; padding: 6px 16px; border-radius: 20px; font-size: 14px; font-weight: 600;">
+                                    ⊗ Withdrawn
+                                </span>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    {f'''
+                    <div style="margin-top: 25px; padding: 20px; background-color: #34495e; border-left: 4px solid #6b7280; border-radius: 8px;">
+                        <p style="margin: 0; color: #ffffff; font-size: 15px; line-height: 1.7;">
+                            <strong style="color: #9ca3af; font-size: 16px;">📝 Reason:</strong><br>
+                            {reason}
+                        </p>
+                    </div>
+                    ''' if reason else ''}
+                </div>
+                
+                <!-- Important Notice -->
+                <div style="background-color: rgba(239, 68, 68, 0.1); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px solid #ef4444;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 10px;">
+                                <span style="font-size: 24px;">⚠️</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #ef4444; font-size: 18px; font-weight: 700;">Important Notice</h3>
+                            </td>
+                        </tr>
+                    </table>
+                    <p style="color: #d1d5db; font-size: 14px; line-height: 1.7; margin: 0;">
+                        If this withdrawal was done in error or without your knowledge, please contact our support team immediately. We're here to help resolve any issues.
+                    </p>
+                </div>
+                
+                <!-- Reapply Section -->
+                <div style="margin: 35px 0; padding: 30px; background-color: #2c3e50; border-radius: 12px;">
+                    <h3 style="color: #ffffff; font-size: 20px; margin: 0 0 15px 0; font-weight: 700; text-align: center;">
+                        <span style="margin-right: 8px;">🔄</span> Want to Reapply?
+                    </h3>
+                    <p style="color: #d1d5db; font-size: 15px; line-height: 1.7; margin: 0 0 20px 0; text-align: center;">
+                        You're always welcome to submit a new application if you'd like to join this course in the future.
+                    </p>
+                    <div style="text-align: center;">
+                        <a href="https://study.afritechbridge.online/courses" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                            📚 Browse Courses
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Contact Section -->
+                <div style="text-align: center; margin: 40px 0 20px 0; padding: 30px 20px; background-color: #2c3e50; border-radius: 12px;">
+                    <p style="color: #d1d5db; font-size: 15px; line-height: 1.7; margin: 0 0 20px 0;">
+                        Questions or concerns about this withdrawal?
+                    </p>
+                    <a href="mailto:support@afritecbridge.com" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
+                        🆘 Contact Support Urgently
+                    </a>
+                </div>
+                
+                <p style="color: #bdc3c7; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0;">
+                    We hope to see you again soon.<br>
+                    <strong style="color: #ffffff;">The Afritec Bridge Team</strong> 🎓
+                </p>
+            </div>
     {get_email_footer()}
     """

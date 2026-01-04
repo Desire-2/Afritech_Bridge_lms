@@ -114,7 +114,7 @@ export default function UserManagementPage() {
     }
 
     try {
-      await AdminService.bulkUserAction({
+      const response = await AdminService.bulkUserAction({
         user_ids: selectedUsers,
         action,
         ...data
@@ -122,9 +122,77 @@ export default function UserManagementPage() {
       
       setSelectedUsers([]);
       setRefreshTrigger(prev => prev + 1);
-      toast.success(`Bulk action '${action}' completed successfully`);
+      
+      // Show detailed success message
+      const affectedCount = response.affected_users;
+      const userWord = affectedCount === 1 ? 'user' : 'users';
+      
+      let message = '';
+      switch (action) {
+        case 'activate':
+          message = `${affectedCount} ${userWord} activated successfully`;
+          break;
+        case 'deactivate':
+          message = `${affectedCount} ${userWord} deactivated successfully`;
+          break;
+        case 'delete':
+          message = `${affectedCount} ${userWord} deleted successfully`;
+          break;
+        case 'change_role':
+          message = `${affectedCount} ${userWord} role changed to ${data.role_name}`;
+          break;
+        default:
+          message = `Bulk action completed successfully for ${affectedCount} ${userWord}`;
+      }
+      
+      // Show warnings if any
+      if (response.warnings && response.warnings.length > 0) {
+        toast.warning(message, {
+          description: response.warnings.join('. ')
+        });
+      } else {
+        toast.success(message);
+      }
+      
+      // Log errors if any (partial success)
+      if (response.errors && response.errors.length > 0) {
+        console.error('Bulk action errors:', response.errors);
+      }
     } catch (error: any) {
-      toast.error(error.message || 'Bulk action failed');
+      // Detailed error handling
+      const errorMessage = error.message || 'Bulk action failed';
+      const details = error.details;
+      
+      if (details && Array.isArray(details)) {
+        toast.error(errorMessage, {
+          description: details.slice(0, 3).join(', ') + (details.length > 3 ? '...' : '')
+        });
+      } else {
+        toast.error(errorMessage);
+      }
+    }
+  };
+
+  const handleExportUsers = async (format: 'csv' | 'json' = 'csv') => {
+    try {
+      const blob = await AdminService.exportUsers({
+        ...filters,
+        format
+      });
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `users_export_${new Date().toISOString().split('T')[0]}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      toast.success(`Users exported as ${format.toUpperCase()} successfully`);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to export users');
     }
   };
 
@@ -157,13 +225,38 @@ export default function UserManagementPage() {
             <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
             <p className="text-gray-600 mt-1">Manage and monitor all system users</p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors"
-          >
-            <span className="text-xl">+</span>
-            Create User
-          </button>
+          <div className="flex gap-2">
+            <div className="relative group">
+              <button
+                className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors"
+                onClick={() => handleExportUsers('csv')}
+              >
+                <span>📥</span>
+                Export
+              </button>
+              <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                <button
+                  onClick={() => handleExportUsers('csv')}
+                  className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+                >
+                  Export CSV
+                </button>
+                <button
+                  onClick={() => handleExportUsers('json')}
+                  className="w-full text-left px-4 py-2 hover:bg-gray-100 text-sm"
+                >
+                  Export JSON
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors"
+            >
+              <span className="text-xl">+</span>
+              Create User
+            </button>
+          </div>
         </div>
 
         {/* Statistics Cards */}

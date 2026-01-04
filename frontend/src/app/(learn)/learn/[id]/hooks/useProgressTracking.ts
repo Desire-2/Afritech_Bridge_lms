@@ -11,6 +11,9 @@ interface UseProgressTrackingProps {
   hasQuiz?: boolean;
   hasAssignment?: boolean;
   videoProgress?: number; // Video watch progress (0-100%)
+  videoCurrentTime?: number; // Current playback position in seconds
+  videoDuration?: number; // Total video duration in seconds
+  videoCompleted?: boolean; // Whether video reached 90% threshold
 }
 
 export const useProgressTracking = ({
@@ -21,7 +24,10 @@ export const useProgressTracking = ({
   interactionHistory,
   hasQuiz = false,
   hasAssignment = false,
-  videoProgress = 0
+  videoProgress = 0,
+  videoCurrentTime = 0,
+  videoDuration = 0,
+  videoCompleted = false
 }: UseProgressTrackingProps) => {
   const [readingProgress, setReadingProgress] = useState<number>(0);
   const [timeSpent, setTimeSpent] = useState<number>(0);
@@ -181,7 +187,7 @@ export const useProgressTracking = ({
       estimatedScore = (maxReadingProgressRef.current * 0.25) + (newEngagementScore * 0.25);
     }
     setLessonScore(estimatedScore);
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress, videoCurrentTime, videoDuration]);
 
   // Check if lesson should auto-complete based on 80% lesson score
   const checkAutoCompletion = useCallback(() => {
@@ -265,6 +271,10 @@ export const useProgressTracking = ({
         engagement_score: engagementScore,
         scroll_progress: scrollProgress,
         time_spent: Math.floor((Date.now() - startTimeRef.current) / 1000),
+        video_progress: videoProgress,  // Include video progress percentage
+        video_current_time: videoCurrentTime,  // Current playback position
+        video_duration: videoDuration,  // Total video duration
+        video_completed: videoCompleted,  // Whether 90% threshold reached
         auto_saved: !forceSave
       });
       
@@ -303,7 +313,7 @@ export const useProgressTracking = ({
       console.error('Save failed:', error);
       throw error;
     }
-  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, isLessonCompleted, lessonScore, progressLoaded]);
+  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, isLessonCompleted, lessonScore, progressLoaded]);
 
   // Force save progress regardless of score threshold
   // Used when user manually triggers actions like unlocking next module

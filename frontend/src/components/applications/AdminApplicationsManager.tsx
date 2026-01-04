@@ -64,12 +64,23 @@ export default function AdminApplicationsManager() {
   const [bulkRejectionReason, setBulkRejectionReason] = useState('');
   const [bulkCustomMessage, setBulkCustomMessage] = useState('');
   
+  // Background task state
+  const [taskInProgress, setTaskInProgress] = useState(false);
+  const [taskProgress, setTaskProgress] = useState({ processed: 0, total: 0 });
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [taskResults, setTaskResults] = useState<any>(null);
+  
   // Waitlist action state
   const [waitlistModalOpen, setWaitlistModalOpen] = useState(false);
   const [waitlistUpdateMessage, setWaitlistUpdateMessage] = useState('');
   const [resendEmailModalOpen, setResendEmailModalOpen] = useState(false);
   const [resendWithCredentials, setResendWithCredentials] = useState(false);
   const [resendCustomMessage, setResendCustomMessage] = useState('');
+  
+  // Status change state
+  const [statusChangeModalOpen, setStatusChangeModalOpen] = useState(false);
+  const [newStatus, setNewStatus] = useState<string>('');
+  const [statusChangeReason, setStatusChangeReason] = useState('');
 
   useEffect(() => {
     loadApplications();
@@ -301,40 +312,129 @@ export default function AdminApplicationsManager() {
     
     setActionLoading(true);
     setActionError(null);
+    setTaskInProgress(true);
+    setTaskProgress({ processed: 0, total: selectedApplicationIds.length });
+    setTaskResults(null);
     
     try {
-      const result = await applicationService.bulkAction({
+      // Start the background task
+      const response = await applicationService.bulkAction({
         action: bulkAction,
         application_ids: selectedApplicationIds,
         rejection_reason: bulkAction === 'reject' ? bulkRejectionReason : undefined,
         custom_message: bulkAction === 'approve' ? bulkCustomMessage : undefined,
+        send_emails: true,
+      });
+      
+      setTaskId(response.task_id);
+      setBulkActionModalOpen(false);
+      
+      // Start polling for task status
+      const pollInterval = response.poll_interval_seconds || 2;
+      const pollTaskStatus = async () => {
+        try {
+          const status = await applicationService.getBulkActionStatus(response.task_id);
+          
+          // Update progress
+          setTaskProgress({
+            processed: status.progress.processed,
+            total: status.progress.total
+          });
+          
+          if (status.status === 'completed') {
+            // Task completed successfully
+            setTaskInProgress(false);
+            setTaskResults(status.results);
+            setActionLoading(false);
+            
+            // Reload data
+            await loadApplications();
+            await loadStatistics();
+            
+            // Show success message with results
+            let resultsMessage = `✅ Bulk ${status.action.toUpperCase()} completed successfully!\n\n`;
+            if (status.summary) {
+              resultsMessage += `📊 Summary:\n`;
+              resultsMessage += `   Total Processed: ${status.summary.total_processed}\n`;
+              resultsMessage += `   ✅ Successful: ${status.summary.successful}\n`;
+              resultsMessage += `   ❌ Failed: ${status.summary.failed}\n`;
+            }
+            
+            if (status.results?.failed && status.results.failed.length > 0) {
+              resultsMessage += `\n❌ Failed Applications:\n`;
+              status.results.failed.slice(0, 5).forEach((fail: any) => {
+                resultsMessage += `   - ID ${fail.id}: ${fail.error}\n`;
+              });
+              if (status.results.failed.length > 5) {
+                resultsMessage += `   ... and ${status.results.failed.length - 5} more\n`;
+              }
+            }
+            
+            alert(resultsMessage);
+            
+            // Reset state
+            setSelectedApplicationIds([]);
+            setBulkRejectionReason('');
+            setBulkCustomMessage('');
+            setBulkAction(null);
+            setTaskId(null);
+            setTaskResults(null);
+            
+          } else if (status.status === 'failed') {
+            // Task failed
+            setTaskInProgress(false);
+            setActionLoading(false);
+            setActionError(`❌ Bulk action failed: ${status.error || 'Unknown error'}`);
+            setTaskId(null);
+            
+          } else {
+            // Still processing, continue polling
+            setTimeout(pollTaskStatus, pollInterval * 1000);
+          }
+        } catch (err: any) {
+          console.error('Error polling task status:', err);
+          setTaskInProgress(false);
+          setActionLoading(false);
+          setActionError(`❌ Failed to check task status: ${err.message}`);
+          setTaskId(null);
+        }
+      };
+      
+      // Start polling after a brief delay
+      setTimeout(pollTaskStatus, pollInterval * 1000);
+      
+    } catch (err: any) {
+      const errorMsg = err.response?.data?.details || err.message || `Failed to start bulk ${bulkAction}`;
+      setActionError(`❌ Failed to start bulk action\n\n${errorMsg}`);
+      setActionLoading(false);
+      setTaskInProgress(false);
+      setTaskId(null);
+    }
+  };
+
+  const handleChangeStatus = async () => {
+    if (!selectedApplication || !newStatus) return;
+    
+    setActionLoading(true);
+    setActionError(null);
+    
+    try {
+      const result = await applicationService.changeStatus(selectedApplication.id, {
+        status: newStatus as any,
+        reason: statusChangeReason || undefined
       });
       
       await loadApplications();
       await loadStatistics();
       
-      // Show detailed results
-      let resultsMessage = `Bulk ${bulkAction.toUpperCase()} completed:\n\n`;
-      resultsMessage += `✅ Successful: ${result.successful}\n`;
-      resultsMessage += `❌ Failed: ${result.failed}\n`;
+      setStatusChangeModalOpen(false);
+      setNewStatus('');
+      setStatusChangeReason('');
+      setSelectedApplication(null);
       
-      if (result.results.failed.length > 0) {
-        resultsMessage += `\nFailed Applications:\n`;
-        result.results.failed.forEach((fail: any) => {
-          resultsMessage += `- ID ${fail.id}: ${fail.error}\n`;
-        });
-      }
-      
-      alert(resultsMessage);
-      
-      setBulkActionModalOpen(false);
-      setSelectedApplicationIds([]);
-      setBulkRejectionReason('');
-      setBulkCustomMessage('');
-      setBulkAction(null);
+      alert(`✅ Status changed successfully: ${result.message}`);
     } catch (err: any) {
-      const errorMsg = err.response?.data?.details || err.message || `Failed to perform bulk ${bulkAction}`;
-      setActionError(`❌ Bulk Action Failed\n\n${errorMsg}`);
+      setActionError(`❌ Failed to change status\n${err.response?.data?.details || err.message}`);
     } finally {
       setActionLoading(false);
     }
@@ -454,6 +554,57 @@ export default function AdminApplicationsManager() {
 
   return (
     <div className="space-y-6">
+      {/* Background Task Progress Indicator */}
+      {taskInProgress && (
+        <Card className="border-blue-500 bg-blue-50">
+          <CardContent className="pt-6">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+                  <div>
+                    <h3 className="font-semibold text-blue-900">
+                      Processing Bulk {bulkAction?.toUpperCase()}...
+                    </h3>
+                    <p className="text-sm text-blue-700">
+                      {taskProgress.processed} of {taskProgress.total} applications processed
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-blue-900">
+                    {taskProgress.total > 0 
+                      ? Math.round((taskProgress.processed / taskProgress.total) * 100)
+                      : 0}%
+                  </p>
+                  <p className="text-xs text-blue-600">Complete</p>
+                </div>
+              </div>
+              
+              {/* Progress Bar */}
+              <div className="w-full bg-blue-200 rounded-full h-3 overflow-hidden">
+                <div 
+                  className="bg-blue-600 h-full rounded-full transition-all duration-500 ease-out"
+                  style={{ 
+                    width: `${taskProgress.total > 0 
+                      ? (taskProgress.processed / taskProgress.total) * 100 
+                      : 0}%` 
+                  }}
+                />
+              </div>
+              
+              <Alert className="border-blue-300 bg-white">
+                <AlertCircle className="h-4 w-4 text-blue-600" />
+                <AlertDescription className="text-blue-800">
+                  Please wait while we process your bulk action. This may take a few moments.
+                  You can continue working on other tasks, and we'll notify you when it's complete.
+                </AlertDescription>
+              </Alert>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Statistics Cards */}
       {statistics && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -729,6 +880,20 @@ export default function AdminApplicationsManager() {
                       >
                         <Eye className="w-4 h-4 mr-1" />
                         View Details
+                      </Button>
+                      
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setSelectedApplication(application);
+                          setNewStatus(application.status);
+                          setStatusChangeModalOpen(true);
+                        }}
+                        disabled={actionLoading}
+                      >
+                        <RefreshCw className="w-4 h-4 mr-1" />
+                        Change Status
                       </Button>
                       
                       {application.status === 'pending' && (
@@ -1263,6 +1428,94 @@ export default function AdminApplicationsManager() {
                 disabled={actionLoading || !waitlistUpdateMessage.trim()}
               >
                 {actionLoading ? 'Sending...' : 'Send Update'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Status Change Modal */}
+      <Dialog open={statusChangeModalOpen} onOpenChange={setStatusChangeModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change Application Status</DialogTitle>
+            <DialogDescription>
+              Update the status for {selectedApplication?.full_name}'s application
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {actionError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="whitespace-pre-wrap">{actionError}</AlertDescription>
+              </Alert>
+            )}
+
+            <div>
+              <Label htmlFor="status_select">New Status *</Label>
+              <select
+                id="status_select"
+                value={newStatus}
+                onChange={(e) => setNewStatus(e.target.value)}
+                className="w-full p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">-- Select Status --</option>
+                <option value="pending">Pending</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
+                <option value="waitlisted">Waitlisted</option>
+                <option value="withdrawn">Withdrawn</option>
+              </select>
+              {!newStatus && (
+                <p className="text-sm text-red-600 mt-1">Please select a status</p>
+              )}
+            </div>
+
+            <div>
+              <Label htmlFor="status_reason">Reason (Optional)</Label>
+              <Textarea
+                id="status_reason"
+                value={statusChangeReason}
+                onChange={(e) => setStatusChangeReason(e.target.value)}
+                rows={3}
+                placeholder="Provide a reason for this status change (optional)..."
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                This reason will be logged for audit purposes.
+              </p>
+            </div>
+
+            {selectedApplication && newStatus && newStatus !== selectedApplication.status && (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Changing status from <strong>{selectedApplication.status}</strong> to <strong>{newStatus}</strong>.
+                  {newStatus === 'approved' && ' This will enroll the student in the course.'}
+                  {newStatus === 'rejected' && ' This will send a rejection notification email.'}
+                  {newStatus === 'waitlisted' && ' This will move the applicant to the waitlist.'}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setStatusChangeModalOpen(false);
+                  setNewStatus('');
+                  setStatusChangeReason('');
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleChangeStatus}
+                disabled={actionLoading || !newStatus || newStatus === selectedApplication?.status}
+              >
+                {actionLoading ? 'Updating...' : 'Update Status'}
               </Button>
             </div>
           </div>

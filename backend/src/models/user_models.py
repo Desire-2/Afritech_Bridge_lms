@@ -64,8 +64,8 @@ class User(db.Model):
     def generate_reset_token(self):
         """Generate a secure token for password reset"""
         self.reset_token = secrets.token_urlsafe(32)
-        # Token expires in 1 hour
-        self.reset_token_expires_at = datetime.utcnow() + timedelta(hours=1)
+        # Token expires in 3 days
+        self.reset_token_expires_at = datetime.utcnow() + timedelta(days=3)
         return self.reset_token
         
     def verify_reset_token(self, token):

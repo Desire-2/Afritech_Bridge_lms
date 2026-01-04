@@ -123,6 +123,8 @@ const LearningPage = () => {
   // Video tracking state
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoCompleted, setVideoCompleted] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
   
   // Mixed content video progress tracking (map of videoIndex -> progress)
   const [mixedContentVideoProgress, setMixedContentVideoProgress] = useState<Record<number, number>>({});
@@ -133,6 +135,8 @@ const LearningPage = () => {
     console.log('🔄 Lesson changed, resetting video progress states');
     setVideoProgress(0);
     setVideoCompleted(false);
+    setVideoCurrentTime(0);
+    setVideoDuration(0);
     setMixedContentVideoProgress({});
     setMixedContentVideosCompleted(new Set());
   }, [currentLesson?.id]);
@@ -239,7 +243,10 @@ const LearningPage = () => {
     interactionHistory,
     hasQuiz: !!lessonQuiz,
     hasAssignment: lessonAssignments.length > 0,
-    videoProgress  // Pass video progress to tracking hook
+    videoProgress,  // Pass video progress to tracking hook
+    videoCurrentTime,  // Pass current playback time
+    videoDuration,  // Pass total video duration
+    videoCompleted  // Pass completion status
   });
 
   // Handle auto-completion event (lesson reached 80% score)
@@ -569,15 +576,28 @@ const LearningPage = () => {
   }, [currentLesson, currentModuleId, timeSpent, readingProgress, engagementScore, scrollProgress, lessonScore, moduleScoring, forceSaveProgress]);
 
   // Video progress handlers (for main video lessons only)
-  const handleVideoProgress = useCallback((progress: number) => {
+  const handleVideoProgress = useCallback((progress: number, currentTime?: number, duration?: number) => {
+    console.log('🎬 handleVideoProgress called:', { 
+      progress, 
+      currentTime, 
+      duration, 
+      lessonContentType: currentLesson?.content_type,
+      lessonId: currentLesson?.id 
+    });
+    
     // Only update for main video lessons, not mixed content
     if (currentLesson?.content_type === 'video') {
-      console.log(`📹 Main video progress updated: ${progress.toFixed(1)}%`);
+      console.log(`📹 Main video progress updated: ${progress.toFixed(1)}%`, { currentTime, duration });
       setVideoProgress(progress);
+      if (currentTime !== undefined) setVideoCurrentTime(currentTime);
+      if (duration !== undefined) setVideoDuration(duration);
     } else {
-      console.warn('⚠️ Ignoring video progress - not a main video lesson');
+      console.warn('⚠️ Ignoring video progress - not a main video lesson', {
+        contentType: currentLesson?.content_type,
+        expected: 'video'
+      });
     }
-  }, [currentLesson?.content_type]);
+  }, [currentLesson?.content_type, currentLesson?.id]);
 
   const handleVideoComplete = useCallback(() => {
     // Only update for main video lessons, not mixed content
@@ -1054,7 +1074,7 @@ const LearningPage = () => {
     
     if (!isAuthenticated) {
       // Only redirect after auth loading is complete and user is not authenticated
-      window.location.href = '/auth/signin';
+      window.location.href = '/auth/login';
       return;
     }
   }, [isAuthenticated, authLoading]);
@@ -1895,6 +1915,9 @@ const LearningPage = () => {
             onVideoComplete={handleVideoComplete}
             onMixedContentVideoProgress={handleMixedContentVideoProgress}
             onMixedContentVideoComplete={handleMixedContentVideoComplete}
+            videoProgress={videoProgress}
+            videoCurrentTime={videoCurrentTime}
+            videoDuration={videoDuration}
             moduleScoring={moduleScoring}
             lessonScore={lessonScore}
             currentLessonQuizScore={currentLessonQuizScore}

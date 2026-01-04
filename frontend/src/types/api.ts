@@ -10,6 +10,7 @@ export interface User {
   phone_number?: string;
   role: string;
   is_active?: boolean;
+  must_change_password?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +37,8 @@ export interface AuthResponse {
   access_token: string;
   refresh_token: string;
   user: User;
+  must_change_password?: boolean;
+  message?: string;
 }
 
 export interface PasswordResetRequest {

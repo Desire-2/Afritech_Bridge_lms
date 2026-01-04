@@ -18,14 +18,23 @@ from ..utils.email_templates import (
     application_received_email,
     application_approved_email,
     application_rejected_email,
-    application_waitlisted_email
+    application_waitlisted_email,
+    application_status_pending_email,
+    application_status_withdrawn_email
 )
 import pandas as pd
 import io
 import json
 import logging
+import threading
+import uuid
+import os
+from flask import current_app
 
 logger = logging.getLogger(__name__)
+
+# In-memory task tracking (use Redis in production)
+bulk_action_tasks = {}
 
 application_bp = Blueprint(
     "application_bp", __name__, url_prefix="/api/v1/applications"
@@ -362,7 +371,148 @@ def get_application(app_id):
     return jsonify(application.to_dict(include_sensitive=True)), 200
 
 
-# ✅ Approve application
+# 🔄 Change application status
+@application_bp.route("/<int:app_id>/status", methods=["PUT"])
+@jwt_required()
+def change_application_status(app_id):
+    """
+    Change application status directly (admin quick action).
+    Useful for moving applications between statuses without full approve/reject flow.
+    Sends email notification for every status change.
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ["admin", "instructor"]:
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    application = CourseApplication.query.get_or_404(app_id)
+    data = request.get_json() or {}
+    new_status = data.get("status", "").lower()
+    reason = data.get("reason", "")
+    send_notification = data.get("send_email", True)  # Default to True
+    
+    valid_statuses = ["pending", "approved", "rejected", "waitlisted", "withdrawn"]
+    if not new_status or new_status not in valid_statuses:
+        return jsonify({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}), 400
+    
+    try:
+        from ..models.course_models import Course
+        
+        old_status = application.status
+        
+        # Skip if status is unchanged
+        if old_status == new_status:
+            return jsonify({
+                "success": True,
+                "message": "Status unchanged",
+                "data": {
+                    "id": application.id,
+                    "old_status": old_status,
+                    "new_status": new_status
+                }
+            }), 200
+        
+        course = Course.query.get(application.course_id)
+        
+        application.status = new_status
+        application.reviewed_at = datetime.utcnow()
+        application.approved_by = current_user_id
+        
+        if reason:
+            if new_status == "rejected":
+                application.rejection_reason = reason
+            else:
+                application.admin_notes = f"{application.admin_notes or ''}\n[{datetime.utcnow().isoformat()}] Status changed to {new_status}: {reason}".strip()
+        
+        db.session.commit()
+        logger.info(f"Application {app_id} status changed from {old_status} to {new_status} by user {current_user_id}")
+        
+        # Send email notification for status change
+        email_sent = False
+        if send_notification:
+            try:
+                email_content = None
+                email_subject = None
+                
+                if new_status == "approved":
+                    # For approved status, send approval email
+                    # Note: This doesn't create enrollment - use approve endpoint for full workflow
+                    email_content = application_approved_email(
+                        application=application,
+                        course=course,
+                        username=None,  # No credentials for direct status change
+                        temp_password=None,
+                        custom_message=reason or "Your application has been approved!"
+                    )
+                    email_subject = f"🎉 Application Approved - {course.title}"
+                    
+                elif new_status == "rejected":
+                    email_content = application_rejected_email(
+                        application=application,
+                        course_title=course.title,
+                        reason=reason or "Unfortunately, we cannot approve your application at this time."
+                    )
+                    email_subject = f"Application Update - {course.title}"
+                    
+                elif new_status == "waitlisted":
+                    email_content = application_waitlisted_email(
+                        application=application,
+                        course_title=course.title,
+                        position=None
+                    )
+                    email_subject = f"Application Waitlisted - {course.title}"
+                    
+                elif new_status == "pending":
+                    # Send professional status change notification for pending
+                    email_content = application_status_pending_email(
+                        application=application,
+                        course_title=course.title,
+                        reason=reason
+                    )
+                    email_subject = f"⏳ Application Under Review - {course.title}"
+                    
+                elif new_status == "withdrawn":
+                    # Send professional withdrawal confirmation
+                    email_content = application_status_withdrawn_email(
+                        application=application,
+                        course_title=course.title,
+                        reason=reason
+                    )
+                    email_subject = f"Application Withdrawn - {course.title}"
+                
+                # Send the email
+                if email_content and email_subject:
+                    email_sent = send_email(
+                        to=application.email,
+                        subject=email_subject,
+                        template=email_content
+                    )
+                    if email_sent:
+                        logger.info(f"✅ Status change email sent to {application.email} (status: {new_status})")
+                    else:
+                        logger.warning(f"⚠️ Failed to send status change email to {application.email}")
+                        
+            except Exception as email_error:
+                logger.error(f"❌ Error sending status change email: {str(email_error)}")
+        
+        return jsonify({
+            "success": True,
+            "message": f"Application status changed from {old_status} to {new_status}",
+            "email_sent": email_sent,
+            "data": {
+                "id": application.id,
+                "old_status": old_status,
+                "new_status": new_status
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error changing application status: {str(e)}")
+        return jsonify({"error": "Failed to change status", "details": str(e)}), 500
+
+
 @application_bp.route("/<int:app_id>/approve", methods=["POST"])
 @jwt_required()
 def approve_application(app_id):
@@ -377,14 +527,16 @@ def approve_application(app_id):
     """
     application = CourseApplication.query.get_or_404(app_id)
     
-    if application.status != "pending":
+    if application.status not in ["pending", "rejected", "withdrawn"]:
         return jsonify({
-            "error": f"Application is already {application.status}"
+            "error": f"Cannot approve application with status: {application.status}",
+            "details": "Only pending, rejected, or withdrawn applications can be approved"
         }), 400
     
     data = request.get_json() or {}
     send_welcome_email = data.get("send_email", True)
     custom_message = data.get("custom_message", "")
+    force_reapproval = data.get("force_reapproval", True)  # Allow re-approval by default
     
     try:
         # Validate course exists
@@ -395,30 +547,42 @@ def approve_application(app_id):
         
         # Check if user already exists with this email
         existing_user = User.query.filter_by(email=application.email).first()
+        existing_enrollment = None  # Track if enrollment already exists
         
         if existing_user:
-            # User exists - just create enrollment
+            # User exists - check enrollment
             existing_enrollment = Enrollment.query.filter_by(
                 student_id=existing_user.id,
                 course_id=application.course_id
             ).first()
             
             if existing_enrollment:
-                return jsonify({
-                    "error": "User is already enrolled in this course",
-                    "user_id": existing_user.id,
-                    "enrollment_id": existing_enrollment.id
-                }), 409
+                # Enrollment exists - handle re-approval
+                if not force_reapproval:
+                    return jsonify({
+                        "error": "User is already enrolled in this course",
+                        "user_id": existing_user.id,
+                        "enrollment_id": existing_enrollment.id,
+                        "details": "Use force_reapproval=true to re-activate enrollment"
+                    }), 409
+                
+                # Re-activate existing enrollment
+                logger.info(f"Re-approving application {app_id} - reactivating existing enrollment {existing_enrollment.id}")
+                enrollment = existing_enrollment
+            else:
+                # Create new enrollment for existing user
+                enrollment = Enrollment(
+                    student_id=existing_user.id,
+                    course_id=application.course_id
+                )
+                db.session.add(enrollment)
             
-            # Create new enrollment for existing user
-            enrollment = Enrollment(
-                student_id=existing_user.id,
-                course_id=application.course_id
-            )
-            db.session.add(enrollment)
-            
+            # For existing user, generate password reset token instead of password
             username = existing_user.username
-            temp_password = None  # No new password for existing users
+            temp_password = None  # No password for existing users
+            reset_token = existing_user.generate_reset_token()
+            logger.info(f"Generated password reset token for existing user {username}")
+            
             user = existing_user
             new_account = False
         else:
@@ -461,16 +625,26 @@ def approve_application(app_id):
         
         db.session.flush()
         
-        # Initialize progress tracking for course modules
+        # Initialize progress tracking for course modules (skip if already exists)
         from ..models.student_models import ModuleProgress
         modules = course.modules.filter_by(is_published=True).all()
         for module in modules:
-            module_progress = ModuleProgress(
+            # Check if module progress already exists
+            existing_progress = ModuleProgress.query.filter_by(
                 student_id=user.id,
                 module_id=module.id,
                 enrollment_id=enrollment.id
-            )
-            db.session.add(module_progress)
+            ).first()
+            
+            if not existing_progress:
+                module_progress = ModuleProgress(
+                    student_id=user.id,
+                    module_id=module.id,
+                    enrollment_id=enrollment.id
+                )
+                db.session.add(module_progress)
+            else:
+                logger.info(f"Module progress already exists for user {user.id}, module {module.id}")
         
         db.session.commit()
         
@@ -481,13 +655,20 @@ def approve_application(app_id):
                 logger.info(f"📧 Preparing welcome email for {application.email}")
                 logger.info(f"   New account: {new_account}, Username: {username}")
                 
+                # Generate reset link for existing users
+                reset_link = None
+                if not new_account and temp_password is None:
+                    reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/reset-password?token={reset_token}&email={application.email}"
+                
                 # Send professional welcome email
                 email_html = application_approved_email(
                     application=application,
                     course=course,
                     username=username,
-                    temp_password=temp_password if new_account else None,
-                    custom_message=custom_message
+                    temp_password=temp_password,
+                    custom_message=custom_message,
+                    is_new_account=new_account,
+                    password_reset_link=reset_link
                 )
                 
                 email_sent = send_email(
@@ -507,9 +688,12 @@ def approve_application(app_id):
         # Get enrollment statistics
         total_enrollments = Enrollment.query.filter_by(course_id=course.id).count()
         
+        # Determine if this is a re-approval
+        is_reapproval = existing_user is not None and existing_enrollment is not None
+        
         return jsonify({
             "success": True,
-            "message": "Application approved and student enrolled successfully",
+            "message": "Application re-approved successfully" if is_reapproval else "Application approved and student enrolled successfully",
             "data": {
                 "user_id": user.id,
                 "username": username,
@@ -517,8 +701,9 @@ def approve_application(app_id):
                 "course_id": course.id,
                 "course_title": course.title,
                 "new_account": new_account,
+                "is_reapproval": is_reapproval,
                 "email_sent": email_sent,
-                "credentials_sent": email_sent and send_welcome_email,
+                "credentials_sent": email_sent and send_welcome_email and new_account,
                 "modules_initialized": len(modules),
                 "total_course_enrollments": total_enrollments,
                 "enrollment_date": enrollment.enrollment_date.isoformat()
@@ -871,3 +1056,572 @@ def get_user_application_stats(email):
     except Exception as e:
         print(f"Error fetching user stats: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+# ✅ Check Bulk Action Task Status
+@application_bp.route("/bulk-action/<task_id>/status", methods=["GET"])
+@jwt_required()
+def get_bulk_action_status(task_id):
+    """
+    Check the status of a bulk action task.
+    
+    Returns:
+    {
+        "task_id": "uuid",
+        "status": "pending" | "processing" | "completed" | "failed",
+        "progress": {"processed": 5, "total": 10},
+        "results": {...},  // Available when completed
+        "error": "..."  // Available when failed
+    }
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ["admin", "instructor"]:
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    task = bulk_action_tasks.get(task_id)
+    
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    
+    # Check if task belongs to current user
+    if task.get("user_id") != current_user_id:
+        return jsonify({"error": "Unauthorized access to task"}), 403
+    
+    response = {
+        "task_id": task_id,
+        "status": task.get("status", "unknown"),
+        "progress": task.get("progress", {"processed": 0, "total": 0}),
+        "started_at": task.get("started_at"),
+        "completed_at": task.get("completed_at"),
+        "action": task.get("action")
+    }
+    
+    if task.get("status") == "completed":
+        response["results"] = task.get("results", {})
+        response["summary"] = task.get("summary", {})
+    
+    if task.get("status") == "failed":
+        response["error"] = task.get("error")
+    
+    return jsonify(response), 200
+
+# ✅ Bulk Actions (Admin/Instructor) - Background Processing
+@application_bp.route("/bulk-action", methods=["POST"])
+@jwt_required()
+def bulk_action():
+    """
+    Perform bulk actions on multiple applications in the background.
+    Returns immediately with a task ID that can be polled for status.
+    
+    Actions supported:
+    - approve: Create accounts and enroll students
+    - reject: Reject applications with reason
+    - waitlist: Move applications to waitlist
+    
+    Request body:
+    {
+        "action": "approve" | "reject" | "waitlist",
+        "application_ids": [1, 2, 3],
+        "rejection_reason": "Optional for reject action",
+        "custom_message": "Optional custom message for emails",
+        "send_emails": true
+    }
+    
+    Response (Immediate):
+    {
+        "task_id": "uuid",
+        "message": "Bulk action started in background",
+        "status_url": "/api/v1/applications/bulk-action/{task_id}/status",
+        "total_applications": 10,
+        "estimated_time": "2-5 minutes"
+    }
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ["admin", "instructor"]:
+        return jsonify({"error": "Unauthorized. Admin or instructor access required."}), 403
+    
+    data = request.get_json() or {}
+    action = data.get("action", "").lower()
+    application_ids = data.get("application_ids", [])
+    rejection_reason = data.get("rejection_reason", "")
+    custom_message = data.get("custom_message", "")
+    send_emails = data.get("send_emails", True)
+    
+    # Validation
+    if not action or action not in ["approve", "reject", "waitlist"]:
+        return jsonify({
+            "error": "Invalid action. Must be 'approve', 'reject', or 'waitlist'"
+        }), 400
+    
+    if not application_ids or not isinstance(application_ids, list) or len(application_ids) == 0:
+        return jsonify({
+            "error": "application_ids must be a non-empty array"
+        }), 400
+    
+    # Limit batch size for safety
+    if len(application_ids) > 100:
+        return jsonify({
+            "error": f"Too many applications. Maximum 100 per batch, received {len(application_ids)}"
+        }), 400
+    
+    if action == "reject" and not rejection_reason.strip():
+        return jsonify({
+            "error": "rejection_reason is required for reject action"
+        }), 400
+    
+    # Generate unique task ID
+    task_id = str(uuid.uuid4())
+    
+    # Initialize task tracking
+    bulk_action_tasks[task_id] = {
+        "task_id": task_id,
+        "user_id": current_user_id,
+        "action": action,
+        "status": "pending",
+        "progress": {
+            "processed": 0,
+            "total": len(application_ids)
+        },
+        "started_at": datetime.utcnow().isoformat(),
+        "results": None,
+        "error": None
+    }
+    
+    logger.info(f"🚀 Starting background bulk {action} task {task_id} for {len(application_ids)} applications by user {current_user_id}")
+    
+    # Start background processing
+    app = current_app._get_current_object()
+    thread = threading.Thread(
+        target=_process_bulk_action_background,
+        args=(
+            app,
+            task_id,
+            action,
+            application_ids,
+            rejection_reason,
+            custom_message,
+            current_user_id,
+            send_emails
+        )
+    )
+    thread.daemon = True
+    thread.start()
+    
+    # Calculate estimated time (roughly 2-5 seconds per application)
+    estimated_seconds = len(application_ids) * 3
+    estimated_time = f"{estimated_seconds // 60} minutes" if estimated_seconds > 60 else f"{estimated_seconds} seconds"
+    
+    # Return immediately with task info
+    return jsonify({
+        "task_id": task_id,
+        "message": f"Bulk {action} started in background",
+        "status": "processing",
+        "status_url": f"/api/v1/applications/bulk-action/{task_id}/status",
+        "total_applications": len(application_ids),
+        "estimated_time": estimated_time,
+        "poll_interval_seconds": 2
+    }), 202  # 202 Accepted - request accepted for processing
+
+
+def _process_bulk_action_background(app, task_id, action, application_ids, rejection_reason, custom_message, admin_id, send_emails):
+    """
+    Background worker function to process bulk actions.
+    Runs in a separate thread to avoid blocking the main request.
+    """
+    with app.app_context():
+        try:
+            # Update task status
+            bulk_action_tasks[task_id]["status"] = "processing"
+            
+            results = {
+                "success": [],
+                "failed": []
+            }
+            
+            logger.info(f"📊 Processing bulk {action} task {task_id}")
+            
+            # Fetch all applications at once
+            applications_map = {}
+            try:
+                applications = CourseApplication.query.filter(
+                    CourseApplication.id.in_(application_ids)
+                ).all()
+                applications_map = {app.id: app for app in applications}
+            except Exception as e:
+                logger.error(f"Error fetching applications: {str(e)}")
+                bulk_action_tasks[task_id].update({
+                    "status": "failed",
+                    "error": f"Failed to fetch applications: {str(e)}",
+                    "completed_at": datetime.utcnow().isoformat()
+                })
+                return
+            
+            # Process each application
+            processed_count = 0
+            for app_id in application_ids:
+                try:
+                    application = applications_map.get(app_id)
+                    
+                    if not application:
+                        results["failed"].append({
+                            "id": app_id,
+                            "error": "Application not found"
+                        })
+                        processed_count += 1
+                        bulk_action_tasks[task_id]["progress"]["processed"] = processed_count
+                        continue
+                    
+                    # Check if application can be processed
+                    if action == "approve" and application.status not in ["pending", "rejected", "withdrawn"]:
+                        results["failed"].append({
+                            "id": app_id,
+                            "error": f"Cannot approve application with status: {application.status}"
+                        })
+                        processed_count += 1
+                        bulk_action_tasks[task_id]["progress"]["processed"] = processed_count
+                        continue
+                    elif action in ["reject", "waitlist"] and application.status != "pending":
+                        results["failed"].append({
+                            "id": app_id,
+                            "error": f"Application already {application.status}"
+                        })
+                        processed_count += 1
+                        bulk_action_tasks[task_id]["progress"]["processed"] = processed_count
+                        continue
+                    
+                    # Perform action with individual transaction
+                    db.session.begin_nested()
+                    try:
+                        if action == "approve":
+                            success, error_msg = _bulk_approve_application(
+                                application, 
+                                custom_message,
+                                admin_id,
+                                send_emails
+                            )
+                            if success:
+                                db.session.commit()
+                                results["success"].append({
+                                    "id": app_id,
+                                    "status": "approved",
+                                    "email": application.email
+                                })
+                            else:
+                                db.session.rollback()
+                                results["failed"].append({
+                                    "id": app_id,
+                                    "error": error_msg
+                                })
+                        
+                        elif action == "reject":
+                            success, error_msg = _bulk_reject_application(
+                                application,
+                                rejection_reason,
+                                admin_id,
+                                send_emails
+                            )
+                            if success:
+                                db.session.commit()
+                                results["success"].append({
+                                    "id": app_id,
+                                    "status": "rejected",
+                                    "email": application.email
+                                })
+                            else:
+                                db.session.rollback()
+                                results["failed"].append({
+                                    "id": app_id,
+                                    "error": error_msg
+                                })
+                        
+                        elif action == "waitlist":
+                            success, error_msg = _bulk_waitlist_application(
+                                application,
+                                custom_message,
+                                admin_id,
+                                send_emails
+                            )
+                            if success:
+                                db.session.commit()
+                                results["success"].append({
+                                    "id": app_id,
+                                    "status": "waitlisted",
+                                    "email": application.email
+                                })
+                            else:
+                                db.session.rollback()
+                                results["failed"].append({
+                                    "id": app_id,
+                                    "error": error_msg
+                                })
+                    except Exception as action_error:
+                        db.session.rollback()
+                        logger.error(f"Transaction error for application {app_id}: {str(action_error)}")
+                        results["failed"].append({
+                            "id": app_id,
+                            "error": f"Transaction failed: {str(action_error)}"
+                        })
+                    
+                    # Update progress
+                    processed_count += 1
+                    bulk_action_tasks[task_id]["progress"]["processed"] = processed_count
+                
+                except Exception as e:
+                    logger.error(f"Error processing application {app_id}: {str(e)}")
+                    results["failed"].append({
+                        "id": app_id,
+                        "error": f"Internal error: {str(e)}"
+                    })
+                    processed_count += 1
+                    bulk_action_tasks[task_id]["progress"]["processed"] = processed_count
+            
+            # Mark task as completed
+            total_processed = len(application_ids)
+            successful = len(results["success"])
+            failed = len(results["failed"])
+            
+            bulk_action_tasks[task_id].update({
+                "status": "completed",
+                "results": results,
+                "summary": {
+                    "total_processed": total_processed,
+                    "successful": successful,
+                    "failed": failed,
+                    "action": action
+                },
+                "completed_at": datetime.utcnow().isoformat()
+            })
+            
+            logger.info(f"✅ Bulk {action} task {task_id} completed: {successful} successful, {failed} failed")
+            
+        except Exception as e:
+            logger.error(f"❌ Fatal error in bulk action task {task_id}: {str(e)}")
+            bulk_action_tasks[task_id].update({
+                "status": "failed",
+                "error": f"Fatal error: {str(e)}",
+                "completed_at": datetime.utcnow().isoformat()
+            })
+
+
+def _bulk_approve_application(application, custom_message, admin_id, send_emails=True):
+    """
+    Helper function to approve a single application in bulk operation.
+    Returns (success: bool, error_message: str)
+    """
+    try:
+        from ..models.course_models import Course
+        from ..models.student_models import ModuleProgress
+        
+        # Validate course exists
+        course = Course.query.get(application.course_id)
+        if not course:
+            return False, "Course not found"
+        
+        # Check if user already exists
+        existing_user = User.query.filter_by(email=application.email).first()
+        existing_enrollment = None
+        
+        if existing_user:
+            # Check for duplicate enrollment
+            existing_enrollment = Enrollment.query.filter_by(
+                student_id=existing_user.id,
+                course_id=application.course_id
+            ).first()
+            
+            if existing_enrollment:
+                # Re-approval case - reactivate existing enrollment
+                logger.info(f"Re-approving application {application.id} - reactivating existing enrollment {existing_enrollment.id}")
+                enrollment = existing_enrollment
+            else:
+                # Create enrollment for existing user
+                enrollment = Enrollment(
+                    student_id=existing_user.id,
+                    course_id=application.course_id
+                )
+                db.session.add(enrollment)
+            
+            # Generate password reset token for existing user
+            temp_password = None  # No password for existing users
+            reset_token = existing_user.generate_reset_token()
+            logger.info(f"Generated password reset token for existing user {existing_user.username}")
+            
+            user = existing_user
+            new_account = False
+        else:
+            # Create new user
+            username = generate_username(
+                application.first_name or application.full_name.split()[0],
+                application.last_name or " ".join(application.full_name.split()[1:])
+            )
+            temp_password = generate_temp_password()
+            
+            student_role = Role.query.filter_by(name="student").first()
+            if not student_role:
+                return False, "Student role not found in system"
+            
+            user = User(
+                username=username,
+                email=application.email,
+                first_name=application.first_name or application.full_name.split()[0],
+                last_name=application.last_name or " ".join(application.full_name.split()[1:]),
+                role_id=student_role.id,
+                must_change_password=True
+            )
+            user.set_password(temp_password)
+            db.session.add(user)
+            db.session.flush()
+            
+            # Create enrollment
+            enrollment = Enrollment(
+                student_id=user.id,
+                course_id=application.course_id
+            )
+            db.session.add(enrollment)
+            new_account = True
+        
+        # Update application status
+        application.status = "approved"
+        application.approved_by = admin_id
+        application.reviewed_at = datetime.utcnow()
+        
+        db.session.flush()
+        
+        # Initialize progress tracking for course modules (check for existing)
+        modules = course.modules.filter_by(is_published=True).all()
+        for module in modules:
+            # Check if module progress already exists
+            existing_progress = ModuleProgress.query.filter_by(
+                student_id=user.id,
+                module_id=module.id,
+                enrollment_id=enrollment.id
+            ).first()
+            
+            if not existing_progress:
+                module_progress = ModuleProgress(
+                    student_id=user.id,
+                    module_id=module.id,
+                    enrollment_id=enrollment.id
+                )
+                db.session.add(module_progress)
+        
+        # Send email notification (non-blocking)
+        if send_emails:
+            try:
+                # Generate reset link for existing users
+                reset_link = None
+                if not new_account and temp_password is None:
+                    reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/reset-password?token={reset_token}&email={application.email}"
+                
+                # Send professional welcome email matching single approval
+                email_content = application_approved_email(
+                    application=application,
+                    course=course,
+                    username=user.username,
+                    temp_password=temp_password,
+                    custom_message=custom_message,
+                    is_new_account=new_account,
+                    password_reset_link=reset_link
+                )
+                
+                send_email(
+                    to=application.email,
+                    subject=f"🎉 Congratulations! Welcome to {course.title}",
+                    template=email_content
+                )
+                logger.info(f"✅ Welcome email sent to {application.email}")
+            except Exception as email_error:
+                logger.warning(f"Failed to send approval email for app {application.id}: {str(email_error)}")
+        
+        return True, None
+        
+    except Exception as e:
+        logger.error(f"Error in bulk approve: {str(e)}")
+        return False, str(e)
+
+
+def _bulk_reject_application(application, rejection_reason, admin_id, send_emails=True):
+    """
+    Helper function to reject a single application in bulk operation.
+    Returns (success: bool, error_message: str)
+    """
+    try:
+        from ..models.course_models import Course
+        
+        course = Course.query.get(application.course_id)
+        if not course:
+            return False, "Course not found"
+        
+        # Update application status
+        application.status = "rejected"
+        application.rejection_reason = rejection_reason
+        application.reviewed_at = datetime.utcnow()
+        application.approved_by = admin_id  # Track who rejected it
+        
+        # Send rejection email (non-blocking)
+        if send_emails:
+            try:
+                email_content = application_rejected_email(
+                    application=application,
+                    course_title=course.title,
+                    reason=rejection_reason
+                )
+                
+                send_email(
+                    to=application.email,
+                    subject=f"Application Update - {course.title}",
+                    template=email_content
+                )
+                logger.info(f"✅ Rejection email sent to {application.email}")
+            except Exception as email_error:
+                logger.warning(f"Failed to send rejection email for app {application.id}: {str(email_error)}")
+        
+        return True, None
+        
+    except Exception as e:
+        logger.error(f"Error in bulk reject: {str(e)}")
+        return False, str(e)
+
+
+def _bulk_waitlist_application(application, custom_message, admin_id, send_emails=True):
+    """
+    Helper function to waitlist a single application in bulk operation.
+    Returns (success: bool, error_message: str)
+    """
+    try:
+        from ..models.course_models import Course
+        
+        course = Course.query.get(application.course_id)
+        if not course:
+            return False, "Course not found"
+        
+        # Update application status
+        application.status = "waitlisted"
+        application.reviewed_at = datetime.utcnow()
+        application.approved_by = admin_id  # Track who waitlisted it
+        
+        # Send waitlist email (non-blocking)
+        if send_emails:
+            try:
+                email_content = application_waitlisted_email(
+                    application=application,
+                    course_title=course.title,
+                    position=None  # Position can be calculated if needed
+                )
+                
+                send_email(
+                    to=application.email,
+                    subject=f"Application Waitlisted - {course.title}",
+                    template=email_content
+                )
+                logger.info(f"✅ Waitlist email sent to {application.email}")
+            except Exception as email_error:
+                logger.warning(f"Failed to send waitlist email for app {application.id}: {str(email_error)}")
+        
+        return True, None
+        
+    except Exception as e:
+        logger.error(f"Error in bulk waitlist: {str(e)}")
+        return False, str(e)

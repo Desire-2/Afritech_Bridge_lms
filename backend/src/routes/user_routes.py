@@ -354,16 +354,6 @@ def reset_password():
     
     return jsonify({'message': 'Password has been reset successfully'}), 200
 
-@auth_bp.route('/validate-reset-token', methods=['POST'])
-def validate_reset_token():
-    """Validate a password reset token"""
-    data = request.get_json()
-    email = data.get('email')
-    token = data.get('token')
-    
-    if not email or not token:
-        return jsonify({'message': 'Email and token are required'}), 400
-
 
 @auth_bp.route('/change-password', methods=['POST'])
 @jwt_required()
@@ -405,6 +395,17 @@ def change_password():
         'message': 'Password changed successfully',
         'must_change_password': False
     }), 200
+
+
+@auth_bp.route('/validate-reset-token', methods=['POST'])
+def validate_reset_token():
+    """Validate if a password reset token is valid"""
+    data = request.get_json()
+    token = data.get('token')
+    email = data.get('email')
+    
+    if not token or not email:
+        return jsonify({'message': 'Email and token are required'}), 400
         
     user = User.query.filter_by(email=email).first()
     if not user or not user.verify_reset_token(token):

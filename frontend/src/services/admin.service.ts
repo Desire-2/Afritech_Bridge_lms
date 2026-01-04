@@ -88,9 +88,36 @@ export class AdminService {
     user_ids: number[];
     action: string;
     role_name?: string;
-  }): Promise<{ message: string; affected_users: number }> {
+  }): Promise<{ 
+    message: string; 
+    affected_users: number;
+    total_requested: number;
+    errors?: string[];
+    warnings?: string[];
+  }> {
     try {
       const response = await apiClient.post(`${this.BASE_PATH}/users/bulk-action`, data);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async exportUsers(params?: {
+    role?: string;
+    search?: string;
+    status?: string;
+    format?: 'csv' | 'json';
+  }): Promise<Blob> {
+    try {
+      const searchParams = new URLSearchParams();
+      if (params?.role) searchParams.set('role', params.role);
+      if (params?.search) searchParams.set('search', params.search);
+      if (params?.status) searchParams.set('status', params.status);
+      searchParams.set('format', params?.format || 'csv');
+
+      const url = `${this.BASE_PATH}/users/export?${searchParams.toString()}`;
+      const response = await apiClient.get(url, { responseType: 'blob' });
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
