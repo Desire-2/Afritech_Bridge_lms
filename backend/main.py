@@ -27,6 +27,8 @@ from src.utils.email_utils import mail # Import the mail instance
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
+from src.routes.student_profile_routes import profile_bp  # Import profile blueprint
+from src.routes.student_support_routes import support_bp  # Import student support blueprint
 from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
 from src.routes.application_routes import application_bp
 from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
@@ -250,6 +252,8 @@ app.register_blueprint(course_creation_bp) # Register course creation blueprint
 app.register_blueprint(instructor_assessment_bp) # Register instructor assessment blueprint (consolidated endpoint - OLD assessment_bp removed)
 app.register_blueprint(dashboard_bp) # Register dashboard blueprint
 app.register_blueprint(student_bp) # Register student blueprint
+app.register_blueprint(profile_bp) # Register student profile blueprint
+app.register_blueprint(support_bp, url_prefix='/api/v1/student/support') # Register student support blueprint
 app.register_blueprint(learning_bp) # Register learning blueprint
 app.register_blueprint(content_assignment_bp) # Register content assignment blueprint
 app.register_blueprint(achievement_bp) # Register achievement blueprint

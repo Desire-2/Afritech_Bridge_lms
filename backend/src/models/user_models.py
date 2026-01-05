@@ -43,6 +43,43 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Enhanced profile fields
+    portfolio_url = db.Column(db.String(255), nullable=True)
+    github_username = db.Column(db.String(100), nullable=True)
+    linkedin_url = db.Column(db.String(255), nullable=True)
+    twitter_username = db.Column(db.String(100), nullable=True)
+    website_url = db.Column(db.String(255), nullable=True)
+    location = db.Column(db.String(100), nullable=True)
+    timezone = db.Column(db.String(50), nullable=True, default='UTC')
+    
+    # Career & Skills
+    job_title = db.Column(db.String(100), nullable=True)
+    company = db.Column(db.String(100), nullable=True)
+    industry = db.Column(db.String(100), nullable=True)
+    experience_level = db.Column(db.String(20), nullable=True)  # beginner, intermediate, advanced, expert
+    skills = db.Column(db.JSON, nullable=True)  # Array of skills
+    interests = db.Column(db.JSON, nullable=True)  # Array of interests
+    
+    # Learning preferences
+    learning_goals = db.Column(db.Text, nullable=True)
+    preferred_learning_style = db.Column(db.String(20), nullable=True)  # visual, auditory, kinesthetic, reading
+    daily_learning_time = db.Column(db.Integer, nullable=True)  # minutes per day
+    
+    # Notification preferences
+    email_notifications = db.Column(db.Boolean, default=True, nullable=False)
+    push_notifications = db.Column(db.Boolean, default=True, nullable=False)
+    marketing_emails = db.Column(db.Boolean, default=False, nullable=False)
+    weekly_digest = db.Column(db.Boolean, default=True, nullable=False)
+    
+    # Privacy settings
+    profile_visibility = db.Column(db.String(20), default='public', nullable=False)  # public, private, friends_only
+    show_email = db.Column(db.Boolean, default=False, nullable=False)
+    show_progress = db.Column(db.Boolean, default=True, nullable=False)
+    
+    # Gamification settings
+    enable_gamification = db.Column(db.Boolean, default=True, nullable=False)
+    show_leaderboard = db.Column(db.Boolean, default=True, nullable=False)
+    
     # Password reset fields
     reset_token = db.Column(db.String(100), nullable=True)
     reset_token_expires_at = db.Column(db.DateTime, nullable=True)
@@ -98,6 +135,37 @@ class User(db.Model):
             'is_active': self.is_active,
             'must_change_password': self.must_change_password,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'updated_at': self.updated_at.isoformat(),
+            # Enhanced profile fields
+            'portfolio_url': self.portfolio_url,
+            'github_username': self.github_username,
+            'linkedin_url': self.linkedin_url,
+            'twitter_username': self.twitter_username,
+            'website_url': self.website_url,
+            'location': self.location,
+            'timezone': self.timezone,
+            # Career & Skills
+            'job_title': self.job_title,
+            'company': self.company,
+            'industry': self.industry,
+            'experience_level': self.experience_level,
+            'skills': self.skills or [],
+            'interests': self.interests or [],
+            # Learning preferences
+            'learning_goals': self.learning_goals,
+            'preferred_learning_style': self.preferred_learning_style,
+            'daily_learning_time': self.daily_learning_time,
+            # Notification preferences
+            'email_notifications': self.email_notifications,
+            'push_notifications': self.push_notifications,
+            'marketing_emails': self.marketing_emails,
+            'weekly_digest': self.weekly_digest,
+            # Privacy settings
+            'profile_visibility': self.profile_visibility,
+            'show_email': self.show_email,
+            'show_progress': self.show_progress,
+            # Gamification settings
+            'enable_gamification': self.enable_gamification,
+            'show_leaderboard': self.show_leaderboard
         }
 
