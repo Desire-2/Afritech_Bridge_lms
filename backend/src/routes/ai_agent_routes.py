@@ -1106,6 +1106,776 @@ def enhance_section_content():
 
 
 # =====================
+# TASK-BASED LESSON GENERATION
+# =====================
+
+@ai_agent_bp.route("/task-based/create-session", methods=["POST"])
+@instructor_required
+def create_task_session():
+    """
+    Create a new task-based lesson generation session.
+    Returns a session ID that can be used to start/resume/monitor generation.
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 2,
+        "lesson_title": "Variables and Data Types",
+        "lesson_description": "Learn about Python variables",
+        "depth_level": "comprehensive"  // basic, standard, comprehensive, expert
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        if not data.get('lesson_title'):
+            return jsonify({"message": "Lesson title is required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Get module
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            return jsonify({"message": "Module not found"}), 404
+        
+        # Get existing lessons
+        existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
+        existing_lessons_data = [{
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'order': lesson.order,
+            'duration_minutes': lesson.duration_minutes or 0
+        } for lesson in existing_lessons]
+        
+        depth_level = data.get('depth_level', 'comprehensive')
+        if depth_level not in ['basic', 'standard', 'comprehensive', 'expert']:
+            depth_level = 'comprehensive'
+        
+        logger.info(f"Creating task-based session for lesson: {data.get('lesson_title')} (depth: {depth_level})")
+        
+        # Create session using task-based generator
+        session_id = ai_agent_service.task_based_gen.create_session(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or '',
+            module_objectives=module.learning_objectives or '',
+            lesson_title=data.get('lesson_title'),
+            lesson_description=data.get('lesson_description', ''),
+            difficulty_level=data.get('difficulty_level', 'intermediate'),
+            existing_lessons=existing_lessons_data,
+            depth_level=depth_level
+        )
+        
+        # Get initial status
+        status = ai_agent_service.task_based_gen.get_session_status(session_id)
+        
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "status": status
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating task session: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to create task session",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/task-based/session/<session_id>", methods=["GET"])
+@instructor_required
+def get_task_session_status(session_id):
+    """
+    Get the current status of a task-based generation session.
+    
+    Returns task progress, completed/pending tasks, and timing info.
+    """
+    try:
+        status = ai_agent_service.task_based_gen.get_session_status(session_id)
+        
+        if not status:
+            return jsonify({
+                "success": False,
+                "message": "Session not found"
+            }), 404
+        
+        return jsonify({
+            "success": True,
+            "data": status
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting session status: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get session status",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/task-based/execute/<session_id>", methods=["POST"])
+@instructor_required
+def execute_task_session(session_id):
+    """
+    Execute or resume a task-based generation session.
+    
+    Request body (optional):
+    {
+        "parallel": true  // Whether to run independent tasks in parallel
+    }
+    
+    Returns the complete generated lesson when finished.
+    """
+    try:
+        data = request.get_json() or {}
+        parallel = data.get('parallel', True)
+        
+        logger.info(f"Executing session {session_id} (parallel: {parallel})")
+        
+        # Resume/execute the session
+        result = ai_agent_service.task_based_gen.resume_session(
+            session_id=session_id,
+            parallel=parallel
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 404
+    except Exception as e:
+        logger.error(f"Error executing session: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to execute session",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/task-based/generate", methods=["POST"])
+@instructor_required
+def generate_lesson_with_tasks():
+    """
+    Generate a lesson using task-based approach (one-shot: creates and executes session).
+    For real-time progress, use create-session + execute-stream instead.
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 2,
+        "lesson_title": "Variables and Data Types",
+        "lesson_description": "Learn about Python variables",
+        "depth_level": "comprehensive",  // basic, standard, comprehensive, expert
+        "parallel": true
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        if not data.get('lesson_title'):
+            return jsonify({"message": "Lesson title is required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Get module
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            return jsonify({"message": "Module not found"}), 404
+        
+        # Get existing lessons
+        existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
+        existing_lessons_data = [{
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'order': lesson.order,
+            'duration_minutes': lesson.duration_minutes or 0
+        } for lesson in existing_lessons]
+        
+        depth_level = data.get('depth_level', 'comprehensive')
+        if depth_level not in ['basic', 'standard', 'comprehensive', 'expert']:
+            depth_level = 'comprehensive'
+        
+        parallel = data.get('parallel', True)
+        
+        logger.info(f"Generating lesson with tasks: {data.get('lesson_title')} (depth: {depth_level}, parallel: {parallel})")
+        
+        result = ai_agent_service.generate_lesson_with_tasks(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or '',
+            module_objectives=module.learning_objectives or '',
+            lesson_title=data.get('lesson_title'),
+            lesson_description=data.get('lesson_description', ''),
+            difficulty_level=data.get('difficulty_level', 'intermediate'),
+            existing_lessons=existing_lessons_data,
+            depth_level=depth_level,
+            parallel=parallel
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating lesson with tasks: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate lesson",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/task-based/stream/<session_id>", methods=["GET"])
+@instructor_required
+def stream_task_progress(session_id):
+    """
+    Stream task progress using Server-Sent Events (SSE).
+    Connect to this endpoint to receive real-time updates during generation.
+    
+    SSE Events:
+    - status: Session status update (percentage, current task)
+    - task_complete: A task has completed
+    - task_failed: A task has failed
+    - complete: Generation finished
+    - error: An error occurred
+    
+    Usage:
+    const eventSource = new EventSource('/api/v1/ai-agent/task-based/stream/{session_id}');
+    eventSource.onmessage = (e) => console.log(JSON.parse(e.data));
+    """
+    from flask import Response
+    import json
+    import time
+    
+    def generate_events():
+        last_completed = 0
+        last_status = ""
+        check_count = 0
+        max_checks = 600  # 10 minutes timeout (at 1 check/sec)
+        
+        while check_count < max_checks:
+            status = ai_agent_service.task_based_gen.get_session_status(session_id)
+            
+            if not status:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'})}\n\n"
+                break
+            
+            current_completed = status['progress'].get('completed_tasks', 0)
+            current_status = status['status']
+            
+            # Send update if progress changed
+            if current_completed != last_completed or current_status != last_status:
+                event_data = {
+                    'type': 'status',
+                    'session_id': session_id,
+                    'status': current_status,
+                    'progress': status['progress'],
+                    'current_task': status['progress'].get('current_task'),
+                    'tasks_summary': {
+                        task_id: {
+                            'title': task_info['title'],
+                            'status': task_info['status']
+                        }
+                        for task_id, task_info in status.get('tasks', {}).items()
+                    }
+                }
+                yield f"data: {json.dumps(event_data)}\n\n"
+                
+                last_completed = current_completed
+                last_status = current_status
+            
+            # Check if complete
+            if current_status == 'completed':
+                yield f"data: {json.dumps({'type': 'complete', 'session_id': session_id, 'progress': status['progress']})}\n\n"
+                break
+            
+            if current_status == 'failed':
+                yield f"data: {json.dumps({'type': 'error', 'session_id': session_id, 'message': 'Generation failed'})}\n\n"
+                break
+            
+            time.sleep(1)
+            check_count += 1
+        
+        if check_count >= max_checks:
+            yield f"data: {json.dumps({'type': 'timeout', 'message': 'Stream timeout'})}\n\n"
+    
+    return Response(
+        generate_events(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'X-Accel-Buffering': 'no'  # Disable nginx buffering
+        }
+    )
+
+
+@ai_agent_bp.route("/task-based/generate-deep", methods=["POST"])
+@instructor_required
+def generate_deep_lesson():
+    """
+    Generate a deeply comprehensive lesson (expert depth level).
+    Uses 30+ tasks for maximum detail.
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 2,
+        "lesson_title": "Variables and Data Types",
+        "lesson_description": "Learn about Python variables"
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        if not data.get('lesson_title'):
+            return jsonify({"message": "Lesson title is required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Get module
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            return jsonify({"message": "Module not found"}), 404
+        
+        # Get existing lessons
+        existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
+        existing_lessons_data = [{
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'order': lesson.order,
+            'duration_minutes': lesson.duration_minutes or 0
+        } for lesson in existing_lessons]
+        
+        logger.info(f"Generating deep lesson: {data.get('lesson_title')}")
+        
+        result = ai_agent_service.generate_deep_lesson(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or '',
+            module_objectives=module.learning_objectives or '',
+            lesson_title=data.get('lesson_title'),
+            lesson_description=data.get('lesson_description', ''),
+            existing_lessons=existing_lessons_data
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating deep lesson: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate deep lesson",
+            "error": str(e)
+        }), 500
+
+
+# =====================
+# CHAPTER-BASED LESSON GENERATION
+# =====================
+
+@ai_agent_bp.route("/chapter-based/create-session", methods=["POST"])
+@instructor_required
+def create_chapter_session():
+    """
+    Create a chapter-based lesson generation session.
+    
+    This approach generates lessons chapter-by-chapter for deeper content.
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 2,
+        "lesson_title": "Variables and Data Types",
+        "lesson_description": "Learn about Python variables",
+        "target_chapters": 5,  // Number of chapters to generate
+        "chapter_depth": "deep"  // shallow, standard, deep
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        if not data.get('lesson_title'):
+            return jsonify({"message": "Lesson title is required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Get module
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            return jsonify({"message": "Module not found"}), 404
+        
+        # Get existing lessons
+        existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
+        existing_lessons_data = [{
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'order': lesson.order
+        } for lesson in existing_lessons]
+        
+        target_chapters = data.get('target_chapters', 5)
+        chapter_depth = data.get('chapter_depth', 'deep')
+        if chapter_depth not in ['shallow', 'standard', 'deep']:
+            chapter_depth = 'deep'
+        
+        logger.info(f"Creating chapter-based session for: {data.get('lesson_title')}")
+        
+        session_id = ai_agent_service.create_chapter_session(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or '',
+            module_objectives=module.learning_objectives or '',
+            lesson_title=data.get('lesson_title'),
+            lesson_description=data.get('lesson_description', ''),
+            difficulty_level=data.get('difficulty_level', 'intermediate'),
+            existing_lessons=existing_lessons_data,
+            target_chapters=target_chapters,
+            chapter_depth=chapter_depth
+        )
+        
+        status = ai_agent_service.get_chapter_session_status(session_id)
+        
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "status": status
+        }), 201
+        
+    except Exception as e:
+        logger.error(f"Error creating chapter session: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to create chapter session",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/chapter-based/outline/<session_id>", methods=["POST"])
+@instructor_required
+def outline_lesson_chapters(session_id):
+    """
+    Generate chapter outlines for a lesson.
+    This is the first step - determines the lesson structure.
+    
+    Returns chapter titles, descriptions, and learning objectives.
+    """
+    try:
+        logger.info(f"Generating chapter outlines for session: {session_id}")
+        
+        outlines = ai_agent_service.outline_lesson_chapters(session_id)
+        
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "chapters": outlines,
+            "total_chapters": len(outlines)
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 404
+    except Exception as e:
+        logger.error(f"Error outlining chapters: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to outline chapters",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/chapter-based/generate-chapter/<session_id>/<chapter_id>", methods=["POST"])
+@instructor_required
+def generate_single_chapter(session_id, chapter_id):
+    """
+    Generate content for a single chapter.
+    
+    This generates deep content for one chapter including:
+    - Introduction
+    - Theory with subsections
+    - Examples
+    - Exercises
+    - Summary and key takeaways
+    
+    Call this for each chapter after outlining.
+    """
+    try:
+        logger.info(f"Generating chapter {chapter_id} for session {session_id}")
+        
+        content = ai_agent_service.generate_chapter(session_id, chapter_id)
+        
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "chapter": content
+        }), 200
+        
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "message": str(e)
+        }), 404
+    except Exception as e:
+        logger.error(f"Error generating chapter: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate chapter",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/chapter-based/session/<session_id>", methods=["GET"])
+@instructor_required
+def get_chapter_session_status(session_id):
+    """
+    Get the current status of a chapter-based generation session.
+    
+    Returns:
+    - Session status
+    - Chapter list with completion status
+    - Progress percentage
+    """
+    try:
+        status = ai_agent_service.get_chapter_session_status(session_id)
+        
+        if not status:
+            return jsonify({
+                "success": False,
+                "message": "Session not found"
+            }), 404
+        
+        return jsonify({
+            "success": True,
+            "data": status
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting chapter session status: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get session status",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/chapter-based/generate", methods=["POST"])
+@instructor_required
+def generate_lesson_by_chapters():
+    """
+    Generate a complete lesson using chapter-by-chapter approach.
+    
+    This is the most thorough lesson generation method:
+    1. Analyzes topic and determines optimal chapter structure
+    2. Creates detailed outline with objectives per chapter
+    3. Generates each chapter with deep content, examples, exercises
+    4. Builds lesson progressively
+    
+    Request body:
+    {
+        "course_id": 1,
+        "module_id": 2,
+        "lesson_title": "Variables and Data Types",
+        "lesson_description": "Learn about Python variables",
+        "target_chapters": 5,
+        "chapter_depth": "deep"
+    }
+    """
+    try:
+        current_user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        if not data or not data.get('course_id') or not data.get('module_id'):
+            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        
+        if not data.get('lesson_title'):
+            return jsonify({"message": "Lesson title is required"}), 400
+        
+        course_id = data['course_id']
+        module_id = data['module_id']
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Get module
+        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
+        if not module:
+            return jsonify({"message": "Module not found"}), 404
+        
+        # Get existing lessons
+        existing_lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
+        existing_lessons_data = [{
+            'title': lesson.title,
+            'description': lesson.description or '',
+            'order': lesson.order
+        } for lesson in existing_lessons]
+        
+        target_chapters = data.get('target_chapters', 5)
+        chapter_depth = data.get('chapter_depth', 'deep')
+        if chapter_depth not in ['shallow', 'standard', 'deep']:
+            chapter_depth = 'deep'
+        
+        logger.info(f"Generating lesson by chapters: {data.get('lesson_title')}")
+        
+        result = ai_agent_service.generate_lesson_by_chapters(
+            course_title=course.title,
+            module_title=module.title,
+            module_description=module.description or '',
+            module_objectives=module.learning_objectives or '',
+            lesson_title=data.get('lesson_title'),
+            lesson_description=data.get('lesson_description', ''),
+            difficulty_level=data.get('difficulty_level', 'intermediate'),
+            existing_lessons=existing_lessons_data,
+            target_chapters=target_chapters,
+            chapter_depth=chapter_depth
+        )
+        
+        return jsonify({
+            "success": True,
+            "data": result
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating lesson by chapters: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate lesson",
+            "error": str(e)
+        }), 500
+
+
+@ai_agent_bp.route("/chapter-based/stream/<session_id>", methods=["GET"])
+@instructor_required
+def stream_chapter_progress(session_id):
+    """
+    Stream chapter generation progress using Server-Sent Events (SSE).
+    
+    SSE Events:
+    - outline: Chapter outline generated
+    - chapter_start: Starting a new chapter
+    - chapter_progress: Progress within a chapter
+    - chapter_complete: A chapter has been completed
+    - complete: All chapters generated
+    - error: An error occurred
+    """
+    from flask import Response
+    import json
+    import time
+    
+    def generate_events():
+        last_completed = 0
+        last_phase = ""
+        check_count = 0
+        max_checks = 1200  # 20 minutes timeout
+        
+        while check_count < max_checks:
+            status = ai_agent_service.get_chapter_session_status(session_id)
+            
+            if not status:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Session not found'})}\n\n"
+                break
+            
+            current_completed = status['progress'].get('completed_chapters', 0)
+            current_phase = status['progress'].get('phase', '')
+            current_chapter = status['progress'].get('current_chapter')
+            
+            # Send update if progress changed
+            if current_completed != last_completed or current_phase != last_phase:
+                event_data = {
+                    'type': 'progress',
+                    'session_id': session_id,
+                    'phase': current_phase,
+                    'progress': status['progress'],
+                    'current_chapter': current_chapter,
+                    'chapters': status.get('chapters', [])
+                }
+                yield f"data: {json.dumps(event_data)}\n\n"
+                
+                last_completed = current_completed
+                last_phase = current_phase
+            
+            # Check if complete
+            if status['status'] == 'completed':
+                yield f"data: {json.dumps({'type': 'complete', 'session_id': session_id, 'progress': status['progress']})}\n\n"
+                break
+            
+            if status['status'] == 'failed':
+                yield f"data: {json.dumps({'type': 'error', 'session_id': session_id, 'message': 'Generation failed'})}\n\n"
+                break
+            
+            time.sleep(1)
+            check_count += 1
+        
+        if check_count >= max_checks:
+            yield f"data: {json.dumps({'type': 'timeout', 'message': 'Stream timeout'})}\n\n"
+    
+    return Response(
+        generate_events(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'X-Accel-Buffering': 'no'
+        }
+    )
+
+
+# =====================
 # HEALTH CHECK
 # =====================
 

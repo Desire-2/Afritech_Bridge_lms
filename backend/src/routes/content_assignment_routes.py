@@ -624,9 +624,9 @@ def get_student_content_progress(student_id, course_id):
             }
         }
         
-        # Process lessons
-        for module in course.modules.filter_by(is_published=True):
-            for lesson in module.lessons.filter_by(is_published=True):
+        # Process lessons (ordered by module order, then lesson order)
+        for module in course.modules.filter_by(is_published=True).order_by(Module.order):
+            for lesson in module.lessons.filter_by(is_published=True).order_by(Lesson.order):
                 lesson_completion = LessonCompletion.query.filter_by(
                     student_id=student_id,
                     lesson_id=lesson.id

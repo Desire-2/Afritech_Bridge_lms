@@ -1,0 +1,610 @@
+"""
+Lesson Generation Module
+Handles AI-powered generation of lesson content including basic, comprehensive, and mixed content
+"""
+
+import time
+import json
+import logging
+from typing import Dict, List, Optional, Any, Callable
+from datetime import datetime
+
+from .ai_providers import ai_provider_manager
+from .json_parser import json_parser
+from .content_validator import content_validator
+from .fallback_generators import fallback_generators
+
+logger = logging.getLogger(__name__)
+
+
+class LessonGenerator:
+    """Generates lesson content using AI"""
+    
+    # Template structure definitions for mixed content
+    TEMPLATES = {
+        'intro-video-summary': [
+            {'type': 'heading', 'role': 'introduction', 'content': 'Introduction'},
+            {'type': 'text', 'role': 'intro_text', 'content': 'introduction paragraph'},
+            {'type': 'video', 'role': 'main_video', 'content': 'video URL placeholder'},
+            {'type': 'heading', 'role': 'takeaways', 'content': 'Key Takeaways'},
+            {'type': 'text', 'role': 'summary', 'content': 'bullet point summary'}
+        ],
+        'multi-video-notes': [
+            {'type': 'heading', 'role': 'part1', 'content': 'Part 1: Getting Started'},
+            {'type': 'video', 'role': 'video1', 'content': 'video URL placeholder'},
+            {'type': 'text', 'role': 'notes1', 'content': 'notes about part 1'},
+            {'type': 'heading', 'role': 'part2', 'content': 'Part 2: Advanced Concepts'},
+            {'type': 'video', 'role': 'video2', 'content': 'video URL placeholder'},
+            {'type': 'text', 'role': 'notes2', 'content': 'notes about part 2'}
+        ],
+        'reading-exercises': [
+            {'type': 'text', 'role': 'overview', 'content': 'overview with markdown'},
+            {'type': 'pdf', 'role': 'study_material', 'content': 'PDF URL placeholder'},
+            {'type': 'heading', 'role': 'exercises', 'content': 'Practice Exercises'},
+            {'type': 'text', 'role': 'questions', 'content': 'exercise questions'}
+        ],
+        'visual-guide': [
+            {'type': 'heading', 'role': 'guide', 'content': 'Step-by-Step Guide'},
+            {'type': 'text', 'role': 'intro', 'content': 'guide introduction'},
+            {'type': 'image', 'role': 'step1', 'content': 'image URL placeholder'},
+            {'type': 'text', 'role': 'explanation1', 'content': 'step 1 explanation'},
+            {'type': 'image', 'role': 'step2', 'content': 'image URL placeholder'},
+            {'type': 'text', 'role': 'explanation2', 'content': 'step 2 explanation'}
+        ]
+    }
+    
+    def __init__(self, provider_manager=None):
+        self.provider = provider_manager or ai_provider_manager
+    
+    def generate_lesson_content(self, course_title: str, module_title: str,
+                               module_description: str, module_objectives: str,
+                               lesson_title: str = "", lesson_description: str = "",
+                               existing_lessons: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Generate detailed lesson content with markdown formatting
+        
+        Args:
+            course_title: Parent course title
+            module_title: Parent module title
+            module_description: Module description for context
+            module_objectives: Module learning objectives
+            lesson_title: Lesson title (optional)
+            lesson_description: Brief lesson description (optional)
+            existing_lessons: List of existing lessons in the module for context
+            
+        Returns:
+            Dict with lesson title, description, objectives, and markdown content
+        """
+        existing_lessons_text = ""
+        if existing_lessons and len(existing_lessons) > 0:
+            existing_lessons_text = "\n\nExisting Lessons in this Module:\n"
+            for lesson in existing_lessons:
+                existing_lessons_text += f"\n{lesson['order']}. {lesson['title']}"
+                if lesson.get('description'):
+                    existing_lessons_text += f"\n   Description: {lesson['description']}"
+                if lesson.get('duration_minutes'):
+                    existing_lessons_text += f"\n   Duration: {lesson['duration_minutes']} minutes"
+            existing_lessons_text += f"\n\n[IMPORTANT: Analyze the existing {len(existing_lessons)} lesson(s) above. Generate the NEXT lesson (Lesson {len(existing_lessons) + 1}) that:"
+            existing_lessons_text += "\n- Builds upon previous lessons naturally"
+            existing_lessons_text += "\n- Covers NEW content not already taught"
+            existing_lessons_text += "\n- Fills gaps in the learning progression"
+            existing_lessons_text += "\n- Maintains logical flow and difficulty progression]"
+        
+        prompt = f"""You are an expert professor and curriculum designer creating COMPREHENSIVE, UNIVERSITY-LEVEL lesson content.
+
+Course: {course_title}
+Module: {module_title}
+Module Description: {module_description}
+Module Objectives: {module_objectives}{existing_lessons_text}
+{'Lesson Title: ' + lesson_title if lesson_title else 'Generate a lesson title'}
+{'Lesson Focus: ' + lesson_description if lesson_description else ''}
+
+===== CRITICAL REQUIREMENTS =====
+
+You MUST create EXTENSIVE, DETAILED lesson content (minimum 3000-4000 words total). This is NOT a summary or outline - it is a FULL LESSON that a student will read and study from.
+
+The content_data field MUST contain:
+
+1. **INTRODUCTION SECTION** (400-500 words):
+   - Hook with a compelling real-world scenario, problem, or question
+   - Context explaining why this topic matters in professional practice
+   - Clear preview of what will be covered
+   - Connection to previous knowledge{" (referencing prior lessons)" if existing_lessons and len(existing_lessons) > 0 else ""}
+   - Specific learning objectives stated clearly
+
+2. **5-7 MAIN CONTENT SECTIONS** (500-800 words EACH section):
+   Each section MUST include:
+   - Clear ## Header for the section
+   - Detailed theoretical explanation (not just definitions)
+   - Step-by-step procedures or processes where applicable
+   - SPECIFIC examples with actual data, numbers, formulas, or code
+   - Real-world applications with named companies or scenarios
+   - Common mistakes or misconceptions addressed
+   - Best practices and professional tips
+   - Visual descriptions (describe what charts/diagrams would show)
+
+3. **WORKED EXAMPLES SECTION** (600-800 words):
+   Include 2-3 DETAILED worked examples with:
+   - Realistic scenario context (100+ words per example)
+   - Given data with specific numbers
+   - Complete step-by-step solutions
+   - All calculations shown with formulas
+   - Explanation of why each step is necessary
+   - Final answer with proper units and interpretation
+
+4. **CASE STUDY OR APPLICATION** (400-500 words):
+   - Real-world scenario with named company or detailed situation
+   - How the concepts apply to solve a practical problem
+   - Analysis of outcomes or results
+
+5. **KEY TAKEAWAYS SECTION** (200-300 words):
+   - 6-8 specific, actionable takeaways (not generic statements)
+   - Quick reference formulas or procedures
+   - Common pitfalls to avoid
+
+6. **DISCUSSION QUESTIONS** (150-200 words):
+   - 4-5 thought-provoking questions
+   - Mix of comprehension and application questions
+   - Questions that encourage critical thinking
+
+===== CONTENT QUALITY STANDARDS =====
+- Write as a professor teaching the subject, not summarizing it
+- Include SPECIFIC data, numbers, formulas, statistics
+- Explain the "how" and "why", not just the "what"
+- Use professional terminology with explanations
+- Reference industry standards and best practices
+- Make content immediately applicable to real work
+- Use proper markdown: ## headers, **bold**, `code`, lists, tables
+- DO NOT write vague, generic, or placeholder content
+- Every section must have substantive, educational content
+
+IMPORTANT: Return ONLY valid JSON. Escape all special characters properly.
+
+Format as JSON:
+{{
+  "title": "Lesson Title",
+  "description": "3-4 sentence description covering scope and value of this lesson",
+  "learning_objectives": "• Specific measurable objective 1\\n• Specific measurable objective 2\\n• Specific measurable objective 3\\n• Specific measurable objective 4",
+  "duration_minutes": 60,
+  "content_type": "text",
+  "content_data": "# Introduction\\n\\n[400-500 word engaging introduction...]\\n\\n## Section 1: [Topic]\\n\\n[500-800 words of detailed content...]\\n\\n## Section 2: [Topic]\\n\\n[500-800 words...]\\n\\n[Continue for all sections...]\\n\\n## Worked Examples\\n\\n[Detailed examples with solutions...]\\n\\n## Key Takeaways\\n\\n[Specific actionable points...]\\n\\n## Discussion Questions\\n\\n[Thought-provoking questions...]"
+}}"""
+        
+        # Request more tokens to accommodate comprehensive content (3000-4000 words)
+        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=8192)
+        if result:
+            parsed = json_parser.parse_json_response(result, "lesson content")
+            if parsed:
+                return parsed
+        
+        return {
+            "title": lesson_title or "Course Lesson",
+            "description": lesson_description or "This lesson covers important concepts.",
+            "learning_objectives": "• Learn key concepts\n• Apply knowledge practically",
+            "duration_minutes": 60,
+            "content_type": "text",
+            "content_data": f"## Introduction\n\nWelcome to this lesson on {lesson_title or 'the topic'}.\n\n## Main Content\n\nContent to be developed..."
+        }
+    
+    def generate_multiple_lessons(self, course_title: str, module_title: str,
+                                  module_description: str, module_objectives: str,
+                                  num_lessons: int = 5,
+                                  existing_lessons: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Generate multiple lesson outlines at once for a module
+        
+        Args:
+            course_title: Parent course title
+            module_title: Parent module title
+            module_description: Module description for context
+            module_objectives: Module learning objectives
+            num_lessons: Number of lessons to generate
+            existing_lessons: List of existing lessons in the module for context
+            
+        Returns:
+            Dict containing list of lessons with their details
+        """
+        existing_lessons_text = ""
+        start_lesson_num = 1
+        if existing_lessons and len(existing_lessons) > 0:
+            existing_lessons_text = f"\n\nExisting Lessons in this Module ({len(existing_lessons)}):\n"
+            for lesson in existing_lessons:
+                existing_lessons_text += f"\n{lesson['order']}. {lesson['title']}"
+                if lesson.get('description'):
+                    existing_lessons_text += f"\n   Description: {lesson['description']}"
+                if lesson.get('duration_minutes'):
+                    existing_lessons_text += f"\n   Duration: {lesson['duration_minutes']} minutes"
+            start_lesson_num = len(existing_lessons) + 1
+            existing_lessons_text += f"\n\n[Note: Generate {num_lessons} NEW lessons (starting from Lesson {start_lesson_num}) that build upon these existing lessons and fill any gaps]"
+        
+        prompt = f"""You are an expert professor and curriculum designer creating COMPREHENSIVE, UNIVERSITY-LEVEL lesson content for a learning management system.
+
+Course: {course_title}
+Module: {module_title}
+Module Description: {module_description}
+Module Objectives: {module_objectives}{existing_lessons_text}
+
+===== CRITICAL REQUIREMENTS =====
+
+Create {num_lessons} COMPREHENSIVE lessons (each with 2500-3500 words of content) that form a complete learning sequence.
+
+For EACH lesson, you MUST provide:
+
+1. **Title**: Clear, specific, descriptive title
+
+2. **Description**: 3-4 sentences explaining scope and value
+
+3. **Learning Objectives**: 3-5 SPECIFIC, MEASURABLE objectives with action verbs
+
+4. **Content (content_data)** - MINIMUM 2500 words per lesson with this structure:
+
+   A. **Introduction** (300-400 words):
+      - Hook with real-world scenario or question
+      - Why this topic matters professionally
+      - Preview of what will be covered
+      - Connection to previous lesson (if not first)
+
+   B. **4-6 Main Content Sections** (400-600 words EACH):
+      - Each with clear ## Header
+      - Detailed explanations with step-by-step procedures
+      - SPECIFIC examples with real data/numbers/formulas
+      - Practical applications
+      - Common mistakes and how to avoid them
+      - Professional tips and best practices
+
+   C. **Worked Examples Section** (400-500 words):
+      - 2-3 detailed examples with complete solutions
+      - All steps and calculations shown
+      - Explanation of reasoning
+
+   D. **Key Takeaways** (150-200 words):
+      - 5-7 specific actionable points
+      - Quick reference formulas if applicable
+
+   E. **Discussion Questions** (100-150 words):
+      - 3-4 thought-provoking questions
+
+5. **Duration**: Realistic estimate (typically 45-75 minutes per comprehensive lesson)
+
+===== LESSON PROGRESSION REQUIREMENTS =====
+- Lesson {start_lesson_num}: Foundation - Core concepts, definitions, fundamentals
+- Middle lessons: Build complexity progressively
+- Final lesson: Advanced topics, integration, practical application
+{f"- Build upon and reference the {len(existing_lessons)} existing lesson(s) - DO NOT repeat their content" if existing_lessons and len(existing_lessons) > 0 else ""}
+
+===== CONTENT QUALITY STANDARDS =====
+- Write as a professor teaching, not summarizing
+- Include SPECIFIC data, numbers, formulas, examples
+- Use proper markdown formatting
+- Make content immediately applicable to real work
+- DO NOT write generic or placeholder content
+
+IMPORTANT: Return ONLY valid JSON.
+
+Format as JSON:
+{{
+  "lessons": [
+    {{
+      "title": "Specific Lesson Title",
+      "description": "3-4 sentence comprehensive description...",
+      "learning_objectives": "• Specific objective 1\\n• Specific objective 2\\n• Specific objective 3\\n• Specific objective 4",
+      "duration_minutes": 60,
+      "order": {start_lesson_num},
+      "content_type": "text",
+      "content_data": "# Introduction\\n\\n[300-400 words...]\\n\\n## Section 1: [Topic]\\n\\n[400-600 words...]\\n\\n## Section 2: [Topic]\\n\\n[400-600 words...]\\n\\n[Continue with all sections...]\\n\\n## Worked Examples\\n\\n[Detailed examples...]\\n\\n## Key Takeaways\\n\\n[Actionable points...]\\n\\n## Discussion Questions\\n\\n[Thought-provoking questions...]"
+    }}
+  ]
+}}"""
+        
+        # Increase tokens significantly for multiple comprehensive lessons
+        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=16000)
+        if result:
+            parsed = json_parser.parse_json_response(result, "multiple lessons")
+            if parsed:
+                return parsed
+        
+        return {"lessons": []}
+    
+    def generate_mixed_content(self, course_title: str, module_title: str,
+                              module_description: str, lesson_title: str,
+                              lesson_description: str = "",
+                              template_id: Optional[str] = None,
+                              existing_sections: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Generate mixed content lesson with intelligent template-aware structure
+        
+        Args:
+            course_title: Parent course title
+            module_title: Parent module title
+            module_description: Module description for context
+            lesson_title: Lesson title
+            lesson_description: Brief lesson description
+            template_id: Template to use (intro-video-summary, multi-video-notes, etc.)
+            existing_sections: Existing sections if appending/enhancing
+            
+        Returns:
+            Dict containing structured mixed content sections
+        """
+        existing_context = ""
+        if existing_sections and len(existing_sections) > 0:
+            existing_context = "\\n\\nExisting Content Sections:\\n"
+            for idx, section in enumerate(existing_sections, 1):
+                existing_context += f"\\n{idx}. {section.get('type', 'unknown').upper()}: "
+                if section['type'] == 'heading':
+                    existing_context += section.get('content', '')
+                elif section['type'] in ['text']:
+                    content_preview = section.get('content', '')[:100]
+                    existing_context += f"{content_preview}..."
+                elif section['type'] in ['video', 'pdf', 'image']:
+                    existing_context += section.get('title', 'Untitled')
+            existing_context += "\\n\\n[Generate sections that complement and extend this existing content]"
+        
+        template_structure = self.TEMPLATES.get(template_id, None) if template_id else None
+        template_guidance = ""
+        if template_structure:
+            template_guidance = f"\\n\\nTemplate Structure ({template_id}):\\n"
+            for idx, section in enumerate(template_structure, 1):
+                template_guidance += f"{idx}. {section['type'].upper()}: {section['role']}\\n"
+            template_guidance += "\\n[Generate content following this exact structure]"
+        
+        prompt = self._build_mixed_content_prompt(
+            course_title, module_title, module_description, 
+            lesson_title, lesson_description, existing_context, 
+            template_guidance, template_id
+        )
+        
+        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        if result:
+            parsed = json_parser.parse_json_response(result, "mixed content")
+            if parsed and 'sections' in parsed:
+                return {
+                    "sections": parsed['sections'],
+                    "lesson_title": lesson_title,
+                    "template_used": template_id
+                }
+        
+        return fallback_generators.generate_fallback_mixed_content(lesson_title, template_id)
+    
+    def _build_mixed_content_prompt(self, course_title: str, module_title: str,
+                                   module_description: str, lesson_title: str,
+                                   lesson_description: str, existing_context: str,
+                                   template_guidance: str, template_id: str) -> str:
+        """Build the prompt for mixed content generation"""
+        return f"""You are an expert professor and instructional designer creating COMPREHENSIVE, UNIVERSITY-LEVEL lesson content.
+
+**Course Context:**
+- Course: {course_title}
+- Module: {module_title}
+- Module Description: {module_description}
+- Lesson Title: {lesson_title}
+{f'- Lesson Description: {lesson_description}' if lesson_description else ''}{existing_context}{template_guidance}
+
+===== CRITICAL REQUIREMENTS =====
+
+Create a complete, professional lesson with RICH, DETAILED content (minimum 2500-3500 total words).
+
+**TEXT SECTION REQUIREMENTS:**
+Each TEXT section MUST be SUBSTANTIAL and COMPREHENSIVE:
+
+1. **Introduction Section** (400-500 words):
+   - Hook with compelling real-world scenario or question
+   - Context explaining professional relevance
+   - Clear preview of what will be covered
+   - Specific learning objectives
+
+2. **Main Content Sections** (500-800 words EACH):
+   - Detailed theoretical explanations (not just definitions)
+   - Step-by-step procedures where applicable
+   - SPECIFIC examples with actual data, numbers, formulas
+   - Real-world applications with named companies/scenarios
+   - Common mistakes and how to avoid them
+   - Professional tips and best practices
+
+3. **Practical Examples Section** (400-600 words):
+   - 2-3 detailed worked examples
+   - Complete step-by-step solutions
+   - All calculations and reasoning shown
+
+4. **Summary/Takeaways Section** (200-300 words):
+   - 5-7 specific actionable takeaways
+   - Quick reference formulas if applicable
+
+**MEDIA PLACEHOLDERS:**
+- VIDEO: Use [INSERT_VIDEO_URL_HERE]
+- PDF: Use [INSERT_PDF_URL_HERE]  
+- IMAGE: Use [INSERT_IMAGE_URL_HERE]
+
+**CONTENT QUALITY STANDARDS:**
+- Write as a professor teaching, not summarizing
+- Include SPECIFIC data, numbers, formulas, statistics
+- Explain the "how" and "why", not just the "what"
+- Make content immediately applicable to real work
+- Use proper markdown: ## headers, **bold**, `code`, lists
+- DO NOT write vague, generic, or placeholder text content
+
+CRITICAL: Return ONLY valid JSON. Use \\\\n for newlines.
+
+{{
+  "sections": [
+    {{"type": "heading", "content": "Introduction", "title": "Introduction"}},
+    {{"type": "text", "content": "## Introduction\\\\n\\\\n[400-500 words of engaging, detailed introduction content...]"}},
+    {{"type": "heading", "content": "Core Concepts", "title": "Core Concepts"}},
+    {{"type": "text", "content": "## Core Concepts\\\\n\\\\n[500-800 words of comprehensive theory...]"}},
+    {{"type": "video", "url": "[INSERT_VIDEO_URL_HERE]", "title": "Video Tutorial", "description": "Detailed description of video content..."}},
+    {{"type": "heading", "content": "Practical Application", "title": "Practical Application"}},
+    {{"type": "text", "content": "## Practical Application\\\\n\\\\n[500-800 words with detailed examples...]"}},
+    {{"type": "heading", "content": "Key Takeaways", "title": "Key Takeaways"}},
+    {{"type": "text", "content": "## Key Takeaways\\\\n\\\\n[200-300 words with specific, actionable points...]"}}
+  ]
+}}"""
+    
+    def generate_lesson_section(self, lesson_title: str, section_type: str,
+                               section_context: Dict[str, Any],
+                               difficulty_level: str = "intermediate") -> str:
+        """
+        Generate a specific section of a lesson with professor-level quality
+        
+        Args:
+            lesson_title: Title of the lesson
+            section_type: Type of section ('introduction', 'theory', 'examples', 'exercises', 'summary')
+            section_context: Context dictionary with relevant information
+            difficulty_level: Difficulty level of content
+            
+        Returns:
+            Markdown content for the section
+        """
+        section_prompts = {
+            "introduction": f"""Write a COMPREHENSIVE, ENGAGING introduction for the lesson '{lesson_title}' as an expert professor.
+
+REQUIREMENTS (500-700 words minimum):
+
+1. **Opening Hook** (100+ words):
+   - Start with a compelling real-world scenario, surprising fact, or thought-provoking question
+   - Make the reader immediately understand why this topic matters
+   - Include a specific industry example or statistic
+
+2. **Context and Relevance** (150+ words):
+   - Explain where this topic fits in the broader field
+   - Describe real-world applications and professional use cases
+   - Explain why mastering this is essential for professionals
+
+3. **Chapter Overview** (150+ words):
+   - Clearly state what will be covered in detail
+   - Preview the main sections and key concepts
+   - Set clear expectations for skills gained
+
+4. **Learning Objectives** (100+ words):
+   - List 4-5 specific, measurable learning objectives
+   - Connect objectives to practical applications
+   - Use action verbs (analyze, create, evaluate, apply)
+
+Use markdown formatting with **bold** for emphasis. Write in professional yet engaging tone.""",
+            
+            "theory": f"""Write COMPREHENSIVE theoretical content for '{lesson_title}' with academic rigor and practical depth.
+
+REQUIREMENTS (1000-1500 words minimum):
+
+1. **Core Concepts** (300+ words):
+   - Define all key terms with clear explanations
+   - Explain fundamental principles in detail
+   - Include the theoretical foundation
+
+2. **Detailed Explanations** (400+ words):
+   - Break down complex concepts step-by-step
+   - Explain the "how" and "why", not just "what"
+   - Include SPECIFIC data, formulas, or code examples
+   - Address common misconceptions
+
+3. **Professional Context** (200+ words):
+   - How this applies in real industry settings
+   - Best practices and standards
+   - Expert tips and insights
+
+4. **Connections** (150+ words):
+   - How concepts relate to each other
+   - Prerequisites and building blocks
+   - Advanced applications
+
+Use markdown with ## headers for subsections, **bold** for key terms, `code` for technical content, and lists where appropriate.""",
+            
+            "examples": f"""Create DETAILED, COMPREHENSIVE practical examples for '{lesson_title}'.
+
+REQUIREMENTS (1000-1500 words minimum):
+
+Provide 3-4 FULLY WORKED examples:
+
+For EACH example:
+1. **Scenario** (100+ words):
+   - Realistic professional context with named company or specific situation
+   - Clear problem statement
+
+2. **Given Data**:
+   - Specific numbers, values, inputs
+   - All relevant information
+
+3. **Step-by-Step Solution** (200+ words per example):
+   - Show ALL steps explicitly
+   - Include formulas or code with explanations
+   - Explain the reasoning behind each step
+
+4. **Result and Interpretation** (50+ words):
+   - Final answer with proper units
+   - What the result means in context
+
+5. **Key Insight**:
+   - One important takeaway from this example
+
+Progress from simpler to more complex examples. Include variations or edge cases where relevant.""",
+            
+            "exercises": f"""Create COMPREHENSIVE practice exercises for '{lesson_title}' at {difficulty_level} level.
+
+REQUIREMENTS (800-1200 words minimum):
+
+Provide 6-8 exercises with COMPLETE solutions:
+
+For EACH exercise:
+1. **Problem Statement** (50+ words):
+   - Clear, specific question or task
+   - Realistic scenario context
+
+2. **Given Data**:
+   - All necessary information
+
+3. **Hints** (2-3 per exercise):
+   - Helpful clues without giving away the answer
+
+4. **Complete Solution** (100+ words per exercise):
+   - Step-by-step approach
+   - All calculations shown
+   - Final answer
+
+5. **Learning Point**:
+   - What concept this reinforces
+
+Include:
+- Mix of difficulty levels (2 easy, 3 medium, 2-3 hard)
+- Various types (calculation, analysis, application, critical thinking)
+- Progressive complexity""",
+            
+            "summary": f"""Write a COMPREHENSIVE summary and conclusion for '{lesson_title}'.
+
+REQUIREMENTS (600-800 words minimum):
+
+1. **Lesson Recap** (150+ words):
+   - Summarize all main concepts covered
+   - Highlight how concepts connect together
+   - Reference specific topics and techniques
+
+2. **Key Takeaways** (200+ words):
+   - 6-8 specific, actionable points
+   - What the learner can now DO
+   - Quick reference for important formulas or procedures
+
+3. **Common Pitfalls** (100+ words):
+   - Mistakes to avoid
+   - Tips for success
+
+4. **Practical Application** (100+ words):
+   - How to apply this knowledge immediately
+   - Real scenarios where these skills are valuable
+
+5. **Next Steps** (100+ words):
+   - Reflection questions (3-4)
+   - Suggestions for further learning
+   - Additional resources to explore"""
+        }
+        
+        prompt = section_prompts.get(section_type, f"""Generate a COMPREHENSIVE {section_type} section for '{lesson_title}'.
+Write at least 600-800 words of detailed, educational content.
+Include specific examples, explanations, and practical applications.
+Use markdown formatting.""")
+        
+        if section_context:
+            prompt += f"\n\nContext: {json.dumps(section_context)}"
+        
+        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4000)
+        return result.strip() if result else f"## {section_type.capitalize()}\n\nContent to be generated..."
+
+
+# Singleton instance
+lesson_generator = LessonGenerator()

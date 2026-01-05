@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.*.local
+.env.production
+.env.development
 
 # Python
 __pycache__/
@@ -48,6 +50,16 @@ logs/
 .vscode/
 .idea/
 *.swp
+*.swo
+
+# Test outputs
+test_lesson_output*.json
+test_lesson_output*.md
+
+# Backup files
+*_old.py
+*.backup
+*.bak
 *.swo
 
 # OS

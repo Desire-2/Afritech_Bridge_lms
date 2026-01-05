@@ -1,5 +1,8 @@
 # Build artifacts
 .next/
+out/
+build/
+dist/
 node_modules/
 
 # Cache
@@ -8,6 +11,8 @@ node_modules/
 *.pack.old
 *.gz
 *.gz.old
+.turbo/
+.vercel/
 
 # Environment
 .env
@@ -15,3 +20,33 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+.env*.local
+
+# Testing
+coverage/
+.nyc_output/
+*.lcov
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.pem
+*.log

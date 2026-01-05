@@ -39,7 +39,8 @@ class Course(db.Model):
             'is_published': self.is_published
         }
         if include_modules:
-            data['modules'] = [module.to_dict(include_lessons=True) for module in self.modules]
+            # Order modules by their 'order' field to preserve reordering after refresh
+            data['modules'] = [module.to_dict(include_lessons=True) for module in self.modules.order_by('order')]
         if include_announcements:
             data['announcements'] = [ann.to_dict() for ann in self.announcements.order_by(Announcement.created_at.desc())]
         return data
