@@ -198,13 +198,7 @@ const MyProgressPage = () => {
           {courses.length === 0 ? (
             <div className="text-center py-8">
               <BookOpen className="w-12 h-12 text-slate-500 mx-auto mb-4" />
-              <p className="text-slate-400 mb-4">No courses enrolled yet</p>
-              <Link 
-                href="/student/courses"
-                className="inline-block px-4 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:from-indigo-700 hover:to-blue-700 transition-all font-medium"
-              >
-                Browse Courses
-              </Link>
+              <p className="text-slate-400 mb-4">No courses enrolled yet. Contact your instructor for course access.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -370,17 +364,7 @@ const MyProgressPage = () => {
             <ArrowRight className="w-4 h-4 text-slate-500 ml-auto group-hover:text-indigo-400" />
           </Link>
           
-          <Link
-            href="/student/courses"
-            className="flex items-center gap-3 p-4 bg-slate-900/50 rounded-lg border border-slate-700 hover:bg-slate-900 hover:border-green-600 transition-all group"
-          >
-            <TrendingUp className="w-8 h-8 text-green-400 group-hover:text-green-300" />
-            <div>
-              <p className="font-medium text-white">Explore Courses</p>
-              <p className="text-sm text-slate-400">Find new learning paths</p>
-            </div>
-            <ArrowRight className="w-4 h-4 text-slate-500 ml-auto group-hover:text-green-400" />
-          </Link>
+
           
           <Link
             href="/student/certificates"

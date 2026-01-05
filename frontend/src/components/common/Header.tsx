@@ -13,7 +13,6 @@ export default function Header({ transparent = false }: HeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const navigation = [
-    { name: 'Courses', href: '/student/courses' },
     { name: 'Opportunities', href: '/student/opportunities' },
     { name: 'About', href: '/about' },
     { name: 'Contact', href: '/contact' },

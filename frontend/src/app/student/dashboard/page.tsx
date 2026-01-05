@@ -355,14 +355,8 @@ const StudentDashboardOverviewPage = () => {
                         <BookOpen className="w-8 h-8 text-blue-600 dark:text-blue-400" />
                       </div>
                       <p className="text-gray-600 dark:text-gray-400 mb-4">
-                        No courses in progress yet
+                        No courses in progress yet. Contact your instructor for course access.
                       </p>
-                      <Link href="/student/courses">
-                        <Button>
-                          <Target className="w-4 h-4 mr-2" />
-                          Browse Courses
-                        </Button>
-                      </Link>
                     </div>
                   )}
                 </CardContent>
@@ -441,12 +435,7 @@ const StudentDashboardOverviewPage = () => {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Link href="/student/courses">
-                    <Button variant="outline" className="w-full justify-start">
-                      <Target className="w-4 h-4 mr-2" />
-                      Browse Courses
-                    </Button>
-                  </Link>
+
                   <Link href="/student/mylearning">
                     <Button variant="outline" className="w-full justify-start">
                       <BookOpen className="w-4 h-4 mr-2" />

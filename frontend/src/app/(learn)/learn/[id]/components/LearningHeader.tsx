@@ -225,7 +225,7 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
               </Dialog>
               
               <Button asChild variant="outline" size="sm" className="hover:bg-red-900/30 border-gray-700 text-gray-300">
-                <Link href={`/courses/${courseId}`}>Exit Learning</Link>
+                <Link href="/student/dashboard">Exit Learning</Link>
               </Button>
             </div>
           </div>

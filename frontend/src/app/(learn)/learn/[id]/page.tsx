@@ -1881,9 +1881,6 @@ const LearningPage = () => {
               ) : isNotPublished ? (
                 <>
                   <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
-                    <Link href="/student/courses">Browse Courses</Link>
-                  </Button>
-                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
                     <Link href="/student/dashboard">Back to Dashboard</Link>
                   </Button>
                 </>

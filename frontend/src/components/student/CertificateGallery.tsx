@@ -1072,9 +1072,6 @@ const CertificateGallery: React.FC = () => {
                 <p className="text-muted-foreground mb-4">
                   Complete courses to earn your first certificate
                 </p>
-                <Link href="/student/courses">
-                  <Button>Browse Courses</Button>
-                </Link>
               </div>
             )}
           </TabsContent>

@@ -344,11 +344,8 @@ const StudentDashboard: React.FC = () => {
                   <BookOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="text-lg font-medium mb-2">No active courses</h3>
                   <p className="text-muted-foreground mb-4">
-                    Start your learning journey by enrolling in a course
+                    Contact your instructor for course enrollment
                   </p>
-                  <Link href="/student/courses">
-                    <Button>Browse Courses</Button>
-                  </Link>
                 </div>
               )}
             </CardContent>
@@ -425,12 +422,7 @@ const StudentDashboard: React.FC = () => {
               <CardTitle>Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Link href="/student/courses">
-                <Button className="w-full justify-start" variant="outline">
-                  <BookOpen className="h-4 w-4 mr-2" />
-                  Browse Courses
-                </Button>
-              </Link>
+
               <Link href="/student/courses/myprogress">
                 <Button className="w-full justify-start" variant="outline">
                   <BarChart3 className="h-4 w-4 mr-2" />

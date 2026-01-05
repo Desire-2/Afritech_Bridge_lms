@@ -60,12 +60,6 @@ const StudentSidebar = () => {
           description: 'Track progress',
           icon: <GraduationCap size={iconSize} /> 
         },
-        { 
-          href: '/student/courses', 
-          label: 'Browse Courses', 
-          description: 'Explore courses',
-          icon: <BookOpen size={iconSize} /> 
-        },
       ]
     },
     {
