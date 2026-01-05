@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
 import {
   CheckCircle2,
   Clock,
@@ -16,16 +17,22 @@ import {
   TrendingUp,
   Award,
   ExternalLink,
-  ChevronRight
+  ChevronRight,
+  BookOpen
 } from 'lucide-react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 
 export default function StudentAssessmentsPage() {
+  const searchParams = useSearchParams();
   const [assignments, setAssignments] = useState<AssignmentWithStatus[]>([]);
   const [projects, setProjects] = useState<ProjectWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState('assignments');
+  
+  // Set initial tab based on URL parameter, default to 'assignments'
+  const initialTab = searchParams.get('tab') || 'assignments';
+  const [activeTab, setActiveTab] = useState(initialTab);
 
   // Statistics
   const [stats, setStats] = useState({
@@ -198,14 +205,17 @@ export default function StudentAssessmentsPage() {
     const letterGrade = percentage ? StudentSubmissionService.getLetterGrade(percentage) : null;
 
     return (
-      <Card key={assignment.id} className="hover:shadow-lg transition-shadow">
+      <Card key={assignment.id} className="hover:shadow-lg transition-shadow border-l-4 border-l-blue-500">
         <CardHeader>
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <CardTitle className="text-lg mb-2">{assignment.title}</CardTitle>
+              <CardTitle className="text-lg mb-2 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600" />
+                {assignment.title}
+              </CardTitle>
               <CardDescription className="flex flex-col gap-1">
                 <span className="flex items-center gap-1 text-sm">
-                  <FileText className="w-4 h-4" />
+                  <BookOpen className="w-4 h-4" />
                   {assignment.course_title}
                 </span>
                 <span className="flex items-center gap-1 text-sm">
@@ -219,6 +229,17 @@ export default function StudentAssessmentsPage() {
               {getDueDateBadge(assignment.due_date, status.submitted)}
             </div>
           </div>
+          
+          {/* Assignment Description */}
+          {assignment.description && (
+            <div className="mt-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+              <MarkdownRenderer 
+                content={assignment.description} 
+                variant="compact" 
+                className="text-sm" 
+              />
+            </div>
+          )}
         </CardHeader>
         
         <CardContent>
@@ -259,9 +280,16 @@ export default function StudentAssessmentsPage() {
             {/* Feedback (if available) */}
             {status.feedback && (
               <div className="space-y-2">
-                <span className="text-sm font-medium">Instructor Feedback:</span>
-                <div className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800 text-sm">
-                  {status.feedback}
+                <span className="text-sm font-medium flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-blue-600" />
+                  Instructor Feedback:
+                </span>
+                <div className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <MarkdownRenderer 
+                    content={status.feedback} 
+                    variant="compact" 
+                    className="text-sm" 
+                  />
                 </div>
               </div>
             )}
@@ -307,14 +335,17 @@ export default function StudentAssessmentsPage() {
     const letterGrade = percentage ? StudentSubmissionService.getLetterGrade(percentage) : null;
 
     return (
-      <Card key={project.id} className="hover:shadow-lg transition-shadow">
+      <Card key={project.id} className="hover:shadow-lg transition-shadow border-l-4 border-l-purple-500">
         <CardHeader>
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <CardTitle className="text-lg mb-2">{project.title}</CardTitle>
+              <CardTitle className="text-lg mb-2 flex items-center gap-2">
+                <Award className="w-5 h-5 text-purple-600" />
+                {project.title}
+              </CardTitle>
               <CardDescription className="flex flex-col gap-1">
                 <span className="flex items-center gap-1 text-sm">
-                  <FileText className="w-4 h-4" />
+                  <BookOpen className="w-4 h-4" />
                   {project.course_title}
                 </span>
                 <span className="flex items-center gap-1 text-sm">
@@ -333,6 +364,17 @@ export default function StudentAssessmentsPage() {
               {getDueDateBadge(project.due_date, status.submitted)}
             </div>
           </div>
+          
+          {/* Project Description */}
+          {project.description && (
+            <div className="mt-4 p-4 bg-purple-50 dark:bg-purple-800/20 rounded-lg border border-purple-200 dark:border-purple-700">
+              <MarkdownRenderer 
+                content={project.description} 
+                variant="compact" 
+                className="text-sm" 
+              />
+            </div>
+          )}
         </CardHeader>
         
         <CardContent>
@@ -373,9 +415,43 @@ export default function StudentAssessmentsPage() {
             {/* Feedback (if available) */}
             {status.feedback && (
               <div className="space-y-2">
-                <span className="text-sm font-medium">Instructor Feedback:</span>
-                <div className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800 text-sm">
-                  {status.feedback}
+                <span className="text-sm font-medium flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-purple-600" />
+                  Instructor Feedback:
+                </span>
+                <div className="p-3 bg-purple-50 dark:bg-purple-900/10 rounded-lg border border-purple-200 dark:border-purple-800">
+                  <MarkdownRenderer 
+                    content={status.feedback} 
+                    variant="compact" 
+                    className="text-sm" 
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Submission info */}
+            {status.submitted && status.submitted_at && (
+              <div className="text-xs text-muted-foreground">
+                Submitted on {formatDate(status.submitted_at)}
+                {status.is_late && (
+                  <span className="text-red-600 ml-1">(Late submission)</span>
+                )}
+              </div>
+            )}
+
+            {/* Feedback (if available) */}
+            {status.feedback && (
+              <div className="space-y-2">
+                <span className="text-sm font-medium flex items-center gap-2">
+                  <BookOpen className="w-4 h-4 text-blue-600" />
+                  Instructor Feedback:
+                </span>
+                <div className="p-3 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <MarkdownRenderer 
+                    content={status.feedback} 
+                    variant="compact" 
+                    className="text-sm" 
+                  />
                 </div>
               </div>
             )}

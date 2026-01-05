@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
 import { 
   Upload,
   FileText,
@@ -17,7 +18,8 @@ import {
   Paperclip,
   Edit,
   Loader2,
-  ArrowLeft
+  ArrowLeft,
+  BookOpen
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
@@ -191,8 +193,16 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     </Badge>
                   )}
                 </div>
-                <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-2">{assignment.title}</h3>
-                <p className="text-gray-700 dark:text-gray-300 text-sm sm:text-base">{assignment.description}</p>
+                <h3 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white mb-3">{assignment.title}</h3>
+                {assignment.description && (
+                  <div className="text-gray-700 dark:text-gray-300 text-sm sm:text-base">
+                    <MarkdownRenderer 
+                      content={assignment.description} 
+                      variant="compact" 
+                      className="prose-sm leading-relaxed" 
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </CardHeader>
@@ -265,28 +275,33 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 
             {/* Instructions */}
             {assignment.instructions && (
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 mb-6 border-l-4 border-green-500 shadow-md">
-                <h4 className="font-bold text-gray-900 dark:text-white text-base sm:text-lg mb-4 flex items-center">
-                  <div className="p-1.5 bg-green-100 dark:bg-green-900 rounded-lg mr-3">
-                    <FileText className="h-5 w-5 text-green-600 dark:text-green-400" />
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-xl p-6 sm:p-7 mb-6 border-l-4 border-green-500 shadow-lg hover:shadow-xl transition-all duration-300">
+                <h4 className="font-bold text-gray-900 dark:text-white text-lg sm:text-xl mb-5 flex items-center">
+                  <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg mr-3 shadow-sm">
+                    <BookOpen className="h-6 w-6 text-green-600 dark:text-green-400" />
                   </div>
-                  Instructions
+                  Assignment Instructions
                 </h4>
-                <div className="text-gray-700 dark:text-gray-300 text-sm sm:text-base whitespace-pre-wrap leading-relaxed">
-                  {assignment.instructions}
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-green-100 dark:border-green-900">
+                  <MarkdownRenderer 
+                    content={assignment.instructions} 
+                    variant="card" 
+                    className="prose-green" 
+                  />
                 </div>
               </div>
             )}
 
             {/* Submission Requirements */}
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-5 sm:p-6 mb-6 shadow-md">
-              <h4 className="font-bold text-gray-900 dark:text-white text-base sm:text-lg mb-4 flex items-center">
-                <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded-lg mr-3">
-                  <AlertCircle className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-xl p-6 sm:p-7 mb-6 shadow-lg hover:shadow-xl transition-all duration-300">
+              <h4 className="font-bold text-gray-900 dark:text-white text-lg sm:text-xl mb-5 flex items-center">
+                <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg mr-3 shadow-sm">
+                  <AlertCircle className="h-6 w-6 text-blue-600 dark:text-blue-400" />
                 </div>
                 Submission Requirements
               </h4>
-              <ul className="space-y-3 text-gray-700 dark:text-gray-300 text-sm sm:text-base">
+              <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-blue-100 dark:border-blue-900">
+                <ul className="space-y-3 text-gray-700 dark:text-gray-300 text-sm sm:text-base">
                 {isTextResponse && (
                   <li className="flex items-start gap-2">
                     <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
@@ -327,6 +342,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   </li>
                 )}
               </ul>
+              </div>
             </div>
 
             {/* Action Buttons */}

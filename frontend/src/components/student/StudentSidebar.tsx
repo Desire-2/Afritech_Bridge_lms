@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, Settings, HelpCircle, MessageSquare, Menu, X, LogOut } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, Settings, HelpCircle, MessageSquare, Menu, X, LogOut, FileText } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
@@ -59,6 +59,17 @@ const StudentSidebar = () => {
           label: 'My Progress', 
           description: 'Track progress',
           icon: <GraduationCap size={iconSize} /> 
+        },
+      ]
+    },
+    {
+      title: 'ASSESSMENTS',
+      items: [
+        { 
+          href: '/student/assessments?tab=assignments', 
+          label: 'Assignments', 
+          description: 'View & submit assignments',
+          icon: <FileText size={iconSize} /> 
         },
       ]
     },

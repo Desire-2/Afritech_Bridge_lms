@@ -508,7 +508,7 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
 
         {/* Other */}
         <div className="flex gap-1">
-          <ToolbarButton onClick={() => insertMarkdown('quote', 'Quote text')} title="Quote (Ctrl+/)" label=""" />
+          <ToolbarButton onClick={() => insertMarkdown('quote', 'Quote text')} title="Quote (Ctrl+/)" label="❝" />
           <ToolbarButton onClick={() => insertMarkdown('table')} title="Insert Table" label="⊞" />
           <ToolbarButton onClick={() => insertMarkdown('hr')} title="Horizontal Rule" label="─" />
         </div>
