@@ -45,6 +45,8 @@ export interface ModuleData {
   description?: string;
   lessons?: LessonData[];
   order?: number;
+  is_released?: boolean;  // Whether the module is released (visible to students)
+  released_at?: string;   // When the module was released (for manual releases)
 }
 
 export interface CourseData {
@@ -54,6 +56,14 @@ export interface CourseData {
     title: string;
     description?: string;
     modules?: ModuleData[];
+    // Module release metadata (only present when for_student=True)
+    total_module_count?: number;
+    released_module_count?: number;
+    // Module release settings
+    start_date?: string;
+    module_release_count?: number;
+    module_release_interval?: string;
+    module_release_interval_days?: number;
   };
   current_lesson?: LessonData;
   title?: string;

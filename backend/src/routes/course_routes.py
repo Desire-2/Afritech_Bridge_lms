@@ -145,17 +145,21 @@ def get_all_courses_admin(): # Endpoint for admins/instructors to see all course
 @course_bp.route("/<int:course_id>", methods=["GET"])
 def get_course(course_id):
     course = Course.query.get_or_404(course_id)
-    if not course.is_published:
-        # Check if user is admin or instructor of this course to allow viewing unpublished
-        try:
-            current_user_id = get_user_id()
-            user = User.query.get(current_user_id)
-            if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
-                return jsonify({"message": "Course not found or not published"}), 404
-        except Exception: # Catches if no JWT provided (anonymous user)
-             return jsonify({"message": "Course not found or not published"}), 404
+    is_instructor_or_admin = False
+    
+    try:
+        current_user_id = get_user_id()
+        user = User.query.get(current_user_id)
+        if user and (user.role.name == "admin" or (user.role.name == "instructor" and course.instructor_id == user.id)):
+            is_instructor_or_admin = True
+    except Exception:
+        pass  # Anonymous user or no JWT
+    
+    if not course.is_published and not is_instructor_or_admin:
+        return jsonify({"message": "Course not found or not published"}), 404
 
-    return jsonify(course.to_dict(include_modules=True)), 200
+    # For students, filter modules based on release settings; instructors see all
+    return jsonify(course.to_dict(include_modules=True, for_student=not is_instructor_or_admin)), 200
 
 @course_bp.route("/<int:course_id>", methods=["PUT"])
 @role_required(["admin", "instructor"])
@@ -175,6 +179,24 @@ def update_course(course_id):
         course.target_audience = data.get("target_audience", course.target_audience)
         course.estimated_duration = data.get("estimated_duration", course.estimated_duration)
         course.is_published = data.get("is_published", course.is_published)
+        
+        # Module release settings
+        if "start_date" in data:
+            from datetime import datetime
+            if data["start_date"]:
+                course.start_date = datetime.fromisoformat(data["start_date"].replace('Z', '+00:00'))
+            else:
+                course.start_date = None
+        
+        if "module_release_count" in data:
+            course.module_release_count = data["module_release_count"]
+        
+        if "module_release_interval" in data:
+            course.module_release_interval = data["module_release_interval"]
+        
+        if "module_release_interval_days" in data:
+            course.module_release_interval_days = data["module_release_interval_days"]
+        
         # Admin can change instructor, instructor cannot
         if user.role.name == "admin" and "instructor_id" in data:
             if User.query.get(data["instructor_id"]):
@@ -249,6 +271,86 @@ def unpublish_course(course_id):
     db.session.commit()
     return jsonify({"message": "Course unpublished", "course": course.to_dict()}), 200
 
+@course_bp.route("/<int:course_id>/module-release-status", methods=["GET"])
+@role_required(["admin", "instructor"])
+def get_module_release_status(course_id):
+    """Get the module release status for instructor dashboard."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to view this course"}), 403
+
+    all_modules = list(course.modules.order_by(Module.order).all())
+    released_modules = course.get_released_modules()
+    released_module_ids = [m.id for m in released_modules]
+    
+    modules_status = []
+    for module in all_modules:
+        is_auto_released = module.id in released_module_ids and not module.is_released
+        modules_status.append({
+            'id': module.id,
+            'title': module.title,
+            'order': module.order,
+            'is_released': module.id in released_module_ids,
+            'is_manually_released': module.is_released,
+            'is_auto_released': is_auto_released,
+            'released_at': module.released_at.isoformat() if module.released_at else None,
+            'lesson_count': module.lessons.count()
+        })
+    
+    return jsonify({
+        'course_id': course_id,
+        'start_date': course.start_date.isoformat() if course.start_date else None,
+        'module_release_count': course.module_release_count,
+        'module_release_interval': course.module_release_interval,
+        'module_release_interval_days': course.module_release_interval_days,
+        'total_modules': len(all_modules),
+        'released_modules_count': len(released_modules),
+        'modules': modules_status
+    }), 200
+
+@course_bp.route("/<int:course_id>/module-release-settings", methods=["PUT", "PATCH"])
+@role_required(["admin", "instructor"])
+def update_module_release_settings(course_id):
+    """Update module release settings for a course."""
+    from datetime import datetime
+    
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to update this course"}), 403
+
+    data = request.get_json()
+    try:
+        if "start_date" in data:
+            if data["start_date"]:
+                course.start_date = datetime.fromisoformat(data["start_date"].replace('Z', '+00:00'))
+            else:
+                course.start_date = None
+        
+        if "module_release_count" in data:
+            course.module_release_count = data["module_release_count"]
+        
+        if "module_release_interval" in data:
+            course.module_release_interval = data["module_release_interval"]
+        
+        if "module_release_interval_days" in data:
+            course.module_release_interval_days = data["module_release_interval_days"]
+
+        db.session.commit()
+        logger.info(f"Module release settings updated for course {course_id} by user {current_user_id}")
+        return jsonify({
+            "message": "Module release settings updated",
+            "course": course.to_dict()
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not update settings", "error": str(e)}), 500
+
 @course_bp.route("/<int:course_id>/instructor-details", methods=["GET"])
 @role_required(["admin", "instructor"])
 def get_course_instructor_details(course_id):
@@ -312,32 +414,116 @@ def create_module_for_course(course_id):
 # Publicly accessible if course is published, or if user is admin/instructor
 def get_modules_for_course(course_id):
     course = Course.query.get_or_404(course_id)
-    if not course.is_published:
-        try:
-            current_user_id = get_user_id()
-            user = User.query.get(current_user_id)
-            if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
-                return jsonify({"message": "Course not found or not published"}), 404
-        except Exception:
-             return jsonify({"message": "Course not found or not published"}), 404
+    is_instructor_or_admin = False
+    
+    try:
+        current_user_id = get_user_id()
+        user = User.query.get(current_user_id)
+        if user and (user.role.name == "admin" or (user.role.name == "instructor" and course.instructor_id == user.id)):
+            is_instructor_or_admin = True
+    except Exception:
+        pass  # Anonymous user or no JWT
+    
+    if not course.is_published and not is_instructor_or_admin:
+        return jsonify({"message": "Course not found or not published"}), 404
 
-    modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
-    return jsonify([module.to_dict() for module in modules]), 200
+    # For students, return only released modules; for instructors, return all
+    if is_instructor_or_admin:
+        modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+    else:
+        modules = course.get_released_modules()
+    
+    result = [module.to_dict() for module in modules]
+    
+    # Add metadata for students about total vs released modules
+    if not is_instructor_or_admin:
+        all_modules = Module.query.filter_by(course_id=course_id).all()
+        return jsonify({
+            "modules": result,
+            "total_module_count": len(all_modules),
+            "released_module_count": len(modules)
+        }), 200
+    
+    return jsonify(result), 200
 
 @module_bp.route("/<int:module_id>", methods=["GET"])
 # Similar visibility logic as get_modules_for_course based on parent course
 def get_module(module_id):
     module = Module.query.get_or_404(module_id)
     course = Course.query.get_or_404(module.course_id)
-    if not course.is_published:
-        try:
-            current_user_id = get_user_id()
-            user = User.query.get(current_user_id)
-            if not user or (user.role.name not in ["admin", "instructor"] or (user.role.name == "instructor" and course.instructor_id != user.id)):
-                return jsonify({"message": "Module not found or part of an unpublished course"}), 404
-        except Exception:
-             return jsonify({"message": "Module not found or part of an unpublished course"}), 404
+    is_instructor_or_admin = False
+    
+    try:
+        current_user_id = get_user_id()
+        user = User.query.get(current_user_id)
+        if user and (user.role.name == "admin" or (user.role.name == "instructor" and course.instructor_id == user.id)):
+            is_instructor_or_admin = True
+    except Exception:
+        pass  # Anonymous user or no JWT
+    
+    if not course.is_published and not is_instructor_or_admin:
+        return jsonify({"message": "Module not found or part of an unpublished course"}), 404
+    
+    # For students, check if this module is released
+    if not is_instructor_or_admin:
+        released_modules = course.get_released_modules()
+        released_module_ids = [m.id for m in released_modules]
+        if module.id not in released_module_ids:
+            return jsonify({"message": "This module is not available yet"}), 403
+    
     return jsonify(module.to_dict(include_lessons=True)), 200
+
+@module_bp.route("/<int:module_id>/release", methods=["POST", "PATCH"])
+@role_required(["admin", "instructor"])
+def release_module(module_id):
+    """Manually release a module, making it available to students."""
+    from datetime import datetime
+    
+    module = Module.query.get_or_404(module_id)
+    course = Course.query.get_or_404(module.course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to release this module"}), 403
+
+    try:
+        module.is_released = True
+        module.released_at = datetime.utcnow()
+        db.session.commit()
+        logger.info(f"Module {module_id} manually released by user {current_user_id}")
+        return jsonify({
+            "message": "Module released successfully",
+            "module": module.to_dict()
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not release module", "error": str(e)}), 500
+
+@module_bp.route("/<int:module_id>/unrelease", methods=["POST", "PATCH"])
+@role_required(["admin", "instructor"])
+def unrelease_module(module_id):
+    """Revoke manual release of a module."""
+    module = Module.query.get_or_404(module_id)
+    course = Course.query.get_or_404(module.course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "You are not authorized to modify this module"}), 403
+
+    try:
+        module.is_released = False
+        module.released_at = None
+        db.session.commit()
+        logger.info(f"Module {module_id} release revoked by user {current_user_id}")
+        return jsonify({
+            "message": "Module release revoked",
+            "module": module.to_dict()
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not unrelease module", "error": str(e)}), 500
 
 @module_bp.route("/<int:module_id>", methods=["PUT"])
 @role_required(["admin", "instructor"])

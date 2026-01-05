@@ -16,6 +16,12 @@ class Course(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_published = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # Module Release Settings
+    start_date = db.Column(db.DateTime, nullable=True)  # Course start date for module release calculations
+    module_release_count = db.Column(db.Integer, nullable=True)  # Number of modules to release initially (None = all)
+    module_release_interval = db.Column(db.String(50), nullable=True)  # Future: 'weekly', 'bi-weekly', 'monthly', None for manual
+    module_release_interval_days = db.Column(db.Integer, nullable=True)  # Custom interval in days
 
     instructor = db.relationship('User', backref=db.backref('courses_authored', lazy='dynamic'))
     modules = db.relationship('Module', backref='course', lazy='dynamic', cascade="all, delete-orphan")
@@ -24,7 +30,69 @@ class Course(db.Model):
     def __repr__(self):
         return f'<Course {self.title}>'
 
-    def to_dict(self, include_modules=False, include_announcements=False):
+    def get_released_module_count(self):
+        """
+        Calculate how many modules should be released based on settings and current date.
+        Returns None if all modules should be released.
+        """
+        from datetime import datetime
+        
+        # If no release count set, all modules are released
+        if self.module_release_count is None:
+            return None
+        
+        # If no start date, use course creation date or release all
+        start_date = self.start_date or self.created_at
+        if not start_date:
+            return None
+        
+        now = datetime.utcnow()
+        
+        # If course hasn't started yet, return 0
+        if now < start_date:
+            return 0
+        
+        # Start with the initial release count
+        released_count = self.module_release_count
+        
+        # If time-based release is configured, calculate additional releases
+        if self.module_release_interval_days and self.module_release_interval_days > 0:
+            days_since_start = (now - start_date).days
+            additional_releases = days_since_start // self.module_release_interval_days
+            released_count += additional_releases
+        
+        return released_count
+
+    def get_released_modules(self):
+        """
+        Get the list of modules that should be visible to students.
+        Takes into account publication status, release settings and manually released modules.
+        """
+        # First filter for published modules only
+        published_modules = list(self.modules.filter_by(is_published=True).order_by(Module.order).all())
+        released_count = self.get_released_module_count()
+        
+        # If no limit, return all published modules
+        if released_count is None:
+            return published_modules
+        
+        released_modules = []
+        auto_released_count = 0
+        
+        for module in published_modules:
+            # Module is released if it's manually released OR within the auto-release count
+            if module.is_released or auto_released_count < released_count:
+                released_modules.append(module)
+                if not module.is_released:
+                    auto_released_count += 1
+            else:
+                # Check if manually released
+                if module.is_released:
+                    released_modules.append(module)
+        
+        return released_modules
+
+    def to_dict(self, include_modules=False, include_announcements=False, for_student=False):
         data = {
             'id': self.id,
             'title': self.title,
@@ -36,11 +104,26 @@ class Course(db.Model):
             'instructor_name': f"{self.instructor.first_name} {self.instructor.last_name}" if self.instructor else None,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
-            'is_published': self.is_published
+            'is_published': self.is_published,
+            # Module release settings
+            'start_date': self.start_date.isoformat() if self.start_date else None,
+            'module_release_count': self.module_release_count,
+            'module_release_interval': self.module_release_interval,
+            'module_release_interval_days': self.module_release_interval_days
         }
+        
         if include_modules:
-            # Order modules by their 'order' field to preserve reordering after refresh
-            data['modules'] = [module.to_dict(include_lessons=True) for module in self.modules.order_by('order')]
+            # For students, only show released modules; for instructors, show all
+            if for_student:
+                released_modules = self.get_released_modules()
+                all_published_modules = list(self.modules.filter_by(is_published=True).order_by('order').all())
+                data['modules'] = [module.to_dict(include_lessons=True) for module in released_modules]
+                data['total_module_count'] = len(all_published_modules)
+                data['released_module_count'] = len(released_modules)
+            else:
+                # Order modules by their 'order' field to preserve reordering after refresh
+                data['modules'] = [module.to_dict(include_lessons=True) for module in self.modules.order_by('order')]
+        
         if include_announcements:
             data['announcements'] = [ann.to_dict() for ann in self.announcements.order_by(Announcement.created_at.desc())]
         return data
@@ -54,6 +137,8 @@ class Module(db.Model):
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
     order = db.Column(db.Integer, nullable=False, default=0) # For sequencing
     is_published = db.Column(db.Boolean, default=False)
+    is_released = db.Column(db.Boolean, default=False)  # Manual release override by instructor
+    released_at = db.Column(db.DateTime, nullable=True)  # When the module was manually released
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -71,6 +156,8 @@ class Module(db.Model):
             'course_id': self.course_id,
             'order': self.order,
             'is_published': self.is_published,
+            'is_released': self.is_released,
+            'released_at': self.released_at.isoformat() if self.released_at else None,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat()
         }

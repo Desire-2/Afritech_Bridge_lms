@@ -53,6 +53,9 @@ interface LearningSidebarProps {
   lessonCompletionStatus?: { [lessonId: number]: boolean };
   quizCompletionStatus?: { [quizId: number]: { completed: boolean; score: number; passed: boolean } };
   onLockedModuleClick?: (info: LockedModuleInfo) => void;
+  // Module release info
+  totalModuleCount?: number;
+  releasedModuleCount?: number;
 }
 
 export const LearningSidebar: React.FC<LearningSidebarProps> = ({
@@ -67,7 +70,9 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   completedLessons = [],
   lessonCompletionStatus = {},
   quizCompletionStatus = {},
-  onLockedModuleClick
+  onLockedModuleClick,
+  totalModuleCount,
+  releasedModuleCount
 }) => {
   const allLessons = modules?.reduce((total, module) => total + (module.lessons?.length || 0), 0) || 0;
   
@@ -275,6 +280,13 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
           <p className="text-xs sm:text-sm text-gray-400 mt-1">
             {modules?.length || 0} modules • {allLessons} lessons
           </p>
+          {/* Module release progress indicator */}
+          {totalModuleCount && releasedModuleCount !== undefined && totalModuleCount > releasedModuleCount && (
+            <div className="mt-2 text-xs text-amber-400 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30 flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              <span>{releasedModuleCount} of {totalModuleCount} modules available</span>
+            </div>
+          )}
           {currentLessonId && (
             <div className="mt-2 text-xs text-blue-400 bg-blue-900/20 px-2 py-1 rounded border border-blue-700/30">
               📍 Currently viewing lesson

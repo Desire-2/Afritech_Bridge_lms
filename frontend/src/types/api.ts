@@ -65,6 +65,14 @@ export interface Course {
   is_published: boolean;
   modules?: Module[];
   announcements?: Announcement[];
+  // Module release settings
+  start_date?: string;
+  module_release_count?: number | null;
+  module_release_interval?: string | null;
+  module_release_interval_days?: number | null;
+  // Module release metadata (when for_student=True)
+  total_module_count?: number;
+  released_module_count?: number;
 }
 
 export interface CreateCourseRequest {
@@ -85,6 +93,9 @@ export interface Module {
   created_at: string;
   updated_at: string;
   lessons?: Lesson[];
+  // Module release fields
+  is_released?: boolean;
+  released_at?: string;
 }
 
 export interface CreateModuleRequest {

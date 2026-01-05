@@ -17,6 +17,7 @@ import {
 import CourseOverview from '@/components/instructor/course-creation/CourseOverview';
 import ModuleManagement from '@/components/instructor/course-creation/ModuleManagement';
 import AssessmentManagement from '@/components/instructor/course-creation/AssessmentManagement';
+import CourseSettings from '@/components/instructor/course-creation/CourseSettings';
 
 type TabType = 'overview' | 'modules' | 'assessments' | 'settings';
 
@@ -205,14 +206,10 @@ const InstructorCourseDetailsPage = () => {
         )}
         
         {activeTab === 'settings' && (
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-              Course Settings
-            </h3>
-            <p className="text-slate-600 dark:text-slate-400">
-              Course settings functionality will be implemented here.
-            </p>
-          </div>
+          <CourseSettings 
+            course={course}
+            onCourseUpdate={handleCourseUpdate}
+          />
         )}
       </div>
     </div>

@@ -269,7 +269,32 @@ def get_course_for_learning(course_id):
             return jsonify({"error": "Not enrolled in this course"}), 403
         
         # OPTIMIZED: Load modules and lessons in efficient batch queries
-        modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+        # For students: only show published AND released modules
+        # For instructors/admins: show all modules
+        if is_instructor or is_admin:
+            # Instructors and admins see all modules
+            modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+        else:
+            # Students: filter for published modules and apply release settings
+            published_modules = course.modules.filter_by(is_published=True).order_by(Module.order).all()
+            
+            # Apply course release settings to determine which published modules to show
+            released_count = course.get_released_module_count()
+            
+            if released_count is None:
+                # All published modules are released
+                modules = published_modules
+            else:
+                # Apply release logic: show modules that are either manually released or within auto-release count
+                modules = []
+                auto_released_count = 0
+                
+                for module in published_modules:
+                    if module.is_released or auto_released_count < released_count:
+                        modules.append(module)
+                        if not module.is_released:
+                            auto_released_count += 1
+        
         module_ids = [m.id for m in modules]
         
         # Batch load all lessons for these modules
@@ -494,7 +519,30 @@ def get_course_modules(course_id):
         if not enrollment and not is_instructor and not is_admin:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
-        modules = course.modules.order_by(Module.order).all()
+        # Filter modules based on user role and course settings
+        if is_instructor or is_admin:
+            # Instructors and admins see all modules
+            modules = course.modules.order_by(Module.order).all()
+        else:
+            # Students: filter for published modules and apply release settings
+            published_modules = course.modules.filter_by(is_published=True).order_by(Module.order).all()
+            
+            # Apply course release settings to determine which published modules to show
+            released_count = course.get_released_module_count()
+            
+            if released_count is None:
+                # All published modules are released
+                modules = published_modules
+            else:
+                # Apply release logic: show modules that are either manually released or within auto-release count
+                modules = []
+                auto_released_count = 0
+                
+                for module in published_modules:
+                    if module.is_released or auto_released_count < released_count:
+                        modules.append(module)
+                        if not module.is_released:
+                            auto_released_count += 1
         
         # Get progress for each module
         modules_data = []

@@ -1817,20 +1817,84 @@ const LearningPage = () => {
     );
   }
 
-  // Error state
+  // Error state with specific messages based on error type
   if (error) {
+    // Determine error type and customize message
+    const isNotPublished = error.toLowerCase().includes('not available') || error.toLowerCase().includes('not published');
+    const isNotEnrolled = error.toLowerCase().includes('not enrolled');
+    const isNotFound = error.toLowerCase().includes('not found');
+    
+    let errorIcon = <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />;
+    let errorTitle = "Unable to Load Course";
+    let errorMessage = error;
+    let errorDescription = "";
+    let borderColor = "border-red-900/50";
+    let titleColor = "text-red-300";
+    let messageColor = "text-red-200";
+    
+    if (isNotPublished) {
+      errorIcon = <Lock className="h-12 w-12 text-yellow-400 mx-auto mb-4" />;
+      errorTitle = "Course Not Yet Available";
+      errorMessage = "This course has not been published yet.";
+      errorDescription = "The instructor is still preparing this course content. Please check back later or contact your instructor for more information.";
+      borderColor = "border-yellow-900/50";
+      titleColor = "text-yellow-300";
+      messageColor = "text-yellow-200";
+    } else if (isNotEnrolled) {
+      errorIcon = <Lock className="h-12 w-12 text-orange-400 mx-auto mb-4" />;
+      errorTitle = "Enrollment Required";
+      errorMessage = "You are not enrolled in this course.";
+      errorDescription = "To access this course content, you need to enroll first. Visit the course page to enroll.";
+      borderColor = "border-orange-900/50";
+      titleColor = "text-orange-300";
+      messageColor = "text-orange-200";
+    } else if (isNotFound) {
+      errorIcon = <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />;
+      errorTitle = "Course Not Found";
+      errorMessage = "The requested course could not be found.";
+      errorDescription = "This course may have been removed or the link is incorrect. Please check the URL or return to your dashboard.";
+      borderColor = "border-gray-700";
+      titleColor = "text-gray-300";
+      messageColor = "text-gray-400";
+    }
+    
     return (
       <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center p-4">
-        <Card className="w-full max-w-md bg-gray-800/50 border-red-900/50">
+        <Card className={`w-full max-w-md bg-gray-800/50 ${borderColor}`}>
           <CardContent className="p-8 text-center">
-            <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2 text-red-300">Unable to Load Course</h3>
-            <p className="text-red-200 mb-4">{error}</p>
-            <div className="flex gap-2 justify-center">
-              <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
-                <Link href={`/courses/${courseId}`}>Back to Course</Link>
-              </Button>
-              <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">Try Again</Button>
+            {errorIcon}
+            <h3 className={`text-xl font-semibold mb-2 ${titleColor}`}>{errorTitle}</h3>
+            <p className={`${messageColor} mb-2 font-medium`}>{errorMessage}</p>
+            {errorDescription && (
+              <p className="text-gray-400 text-sm mb-6">{errorDescription}</p>
+            )}
+            <div className="flex flex-col sm:flex-row gap-3 justify-center">
+              {isNotEnrolled ? (
+                <>
+                  <Button asChild className="bg-green-600 hover:bg-green-700">
+                    <Link href={`/courses/${courseId}`}>Enroll Now</Link>
+                  </Button>
+                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                    <Link href="/student/dashboard">Back to Dashboard</Link>
+                  </Button>
+                </>
+              ) : isNotPublished ? (
+                <>
+                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                    <Link href="/student/courses">Browse Courses</Link>
+                  </Button>
+                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                    <Link href="/student/dashboard">Back to Dashboard</Link>
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                    <Link href={`/courses/${courseId}`}>View Course</Link>
+                  </Button>
+                  <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">Try Again</Button>
+                </>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -1892,6 +1956,8 @@ const LearningPage = () => {
           lessonCompletionStatus={lessonCompletionStatus}
           quizCompletionStatus={quizCompletionStatus}
           onLockedModuleClick={handleLockedModuleClick}
+          totalModuleCount={courseData?.course?.total_module_count}
+          releasedModuleCount={courseData?.course?.released_module_count}
         />
 
         {currentLesson ? (

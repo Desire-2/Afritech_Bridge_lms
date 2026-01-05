@@ -129,7 +129,15 @@ def get_my_learning():
     
     for enrollment in enrollments:
         course = enrollment.course
-        course_data = course.to_dict(include_modules=True)
+        
+        # Get user for role checking
+        user = User.query.get(current_user_id)
+        is_instructor = user.role.name == 'instructor' and course.instructor_id == current_user_id
+        is_admin = user.role.name == 'admin'
+        
+        # Use for_student=True unless user is instructor/admin viewing their own course
+        for_student = not (is_instructor or is_admin)
+        course_data = course.to_dict(include_modules=True, for_student=for_student)
         course_data['enrollment_id'] = enrollment.id
         course_data['progress'] = enrollment.progress * 100
         course_data['enrollment_date'] = enrollment.enrollment_date.isoformat()
@@ -178,9 +186,39 @@ def get_course_progress(course_id):
     
     completed_lesson_ids = [cl.lesson_id for cl in completed_lessons]
     
-    # Build progress data
+    # Build progress data - only show published and released modules to students
     modules_progress = []
-    for module in course.modules.order_by(Module.order):
+    
+    # Get user for role checking
+    user = User.query.get(current_user_id)
+    is_instructor = user.role.name == 'instructor' and course.instructor_id == current_user_id
+    is_admin = user.role.name == 'admin'
+    
+    if is_instructor or is_admin:
+        # Instructors and admins see all modules
+        modules_to_show = course.modules.order_by(Module.order)
+    else:
+        # Students: filter for published modules and apply release settings
+        published_modules = course.modules.filter_by(is_published=True).order_by(Module.order).all()
+        
+        # Apply course release settings to determine which published modules to show
+        released_count = course.get_released_module_count()
+        
+        if released_count is None:
+            # All published modules are released
+            modules_to_show = published_modules
+        else:
+            # Apply release logic: show modules that are either manually released or within auto-release count
+            modules_to_show = []
+            auto_released_count = 0
+            
+            for module in published_modules:
+                if module.is_released or auto_released_count < released_count:
+                    modules_to_show.append(module)
+                    if not module.is_released:
+                        auto_released_count += 1
+    
+    for module in modules_to_show:
         lessons_progress = []
         for lesson in module.lessons.order_by(Lesson.order):
             lesson_data = lesson.to_dict()
