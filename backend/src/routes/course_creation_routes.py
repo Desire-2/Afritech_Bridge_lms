@@ -10,9 +10,11 @@ from werkzeug.utils import secure_filename
 from ..models.user_models import db, User, Role
 from ..models.course_models import (
     Course, Module, Lesson, Quiz, Question, Answer, 
-    Assignment, AssignmentSubmission, Project, ProjectSubmission, 
+    Assignment, AssignmentSubmission, 
     Enrollment, Submission, Announcement
 )
+from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
+from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 
 # Helper for role checking
 from functools import wraps
@@ -466,8 +468,10 @@ def reorder_lessons(course_id, module_id):
 @course_creation_bp.route("/<int:course_id>/modules/<int:module_id>/lessons/<int:lesson_id>", methods=["DELETE"])
 @course_ownership_required
 def delete_lesson(course_id, module_id, lesson_id):
-    """Delete a lesson"""
+    """Delete a lesson and all associated data"""
     try:
+        print(f"DEBUG DELETION - Starting deletion for lesson {lesson_id}")
+        
         # Verify lesson belongs to module and course
         lesson = Lesson.query.join(Module).filter(
             Lesson.id == lesson_id,
@@ -475,11 +479,70 @@ def delete_lesson(course_id, module_id, lesson_id):
             Module.course_id == course_id
         ).first_or_404()
         
+        print(f"DEBUG DELETION - Lesson found: {lesson.title}")
+        
+        # Delete all related data first to avoid foreign key constraint errors
+        
+        # 1. Delete lesson completions (includes video progress data)
+        print(f"DEBUG DELETION - Deleting lesson completions...")
+        deleted_completions = LessonCompletion.query.filter_by(lesson_id=lesson_id).delete()
+        print(f"DEBUG DELETION - Deleted {deleted_completions} lesson completions")
+        
+        # 2. Delete student notes for this lesson
+        print(f"DEBUG DELETION - Deleting student notes...")
+        deleted_notes = StudentNote.query.filter_by(lesson_id=lesson_id).delete()
+        print(f"DEBUG DELETION - Deleted {deleted_notes} student notes")
+        
+        # 3. Update user progress - remove references to this lesson
+        print(f"DEBUG DELETION - Updating user progress...")
+        updated_progress = UserProgress.query.filter_by(current_lesson_id=lesson_id).update({"current_lesson_id": None})
+        print(f"DEBUG DELETION - Updated {updated_progress} user progress records")
+        
+        # 4. Delete any quizzes linked to this lesson (and their submissions)
+        print(f"DEBUG DELETION - Deleting quizzes...")
+        quizzes = Quiz.query.filter_by(lesson_id=lesson_id).all()
+        print(f"DEBUG DELETION - Found {len(quizzes)} quizzes to delete")
+        for quiz in quizzes:
+            # Delete quiz attempts and their user answers first
+            quiz_attempts = QuizAttempt.query.filter_by(quiz_id=quiz.id).all()
+            print(f"DEBUG DELETION - Found {len(quiz_attempts)} quiz attempts for quiz {quiz.id}")
+            for attempt in quiz_attempts:
+                # Delete user answers for this attempt
+                deleted_answers = UserAnswer.query.filter_by(quiz_attempt_id=attempt.id).delete()
+                print(f"DEBUG DELETION - Deleted {deleted_answers} user answers for attempt {attempt.id}")
+                # Delete the attempt
+                db.session.delete(attempt)
+            
+            # Delete quiz submissions 
+            deleted_submissions = Submission.query.filter_by(quiz_id=quiz.id).delete()
+            print(f"DEBUG DELETION - Deleted {deleted_submissions} quiz submissions for quiz {quiz.id}")
+            # Delete quiz questions and answers
+            deleted_questions = Question.query.filter_by(quiz_id=quiz.id).delete()
+            print(f"DEBUG DELETION - Deleted {deleted_questions} questions for quiz {quiz.id}")
+            # Delete the quiz itself
+            db.session.delete(quiz)
+        
+        # 5. Delete any assignments linked to this lesson
+        print(f"DEBUG DELETION - Deleting assignments...")
+        assignments = Assignment.query.filter_by(lesson_id=lesson_id).all()
+        print(f"DEBUG DELETION - Found {len(assignments)} assignments to delete")
+        for assignment in assignments:
+            # Delete assignment submissions first
+            deleted_assignment_subs = AssignmentSubmission.query.filter_by(assignment_id=assignment.id).delete()
+            print(f"DEBUG DELETION - Deleted {deleted_assignment_subs} assignment submissions for assignment {assignment.id}")
+            db.session.delete(assignment)
+        
+        # Finally, delete the lesson itself
+        print(f"DEBUG DELETION - Deleting lesson...")
         db.session.delete(lesson)
         db.session.commit()
+        print(f"DEBUG DELETION - Lesson deleted successfully")
         
         return jsonify({"message": "Lesson deleted successfully"}), 200
         
     except Exception as e:
+        print(f"DEBUG DELETION ERROR - Exception occurred: {str(e)}")
+        import traceback
+        traceback.print_exc()
         db.session.rollback()
         return jsonify({"message": "Failed to delete lesson", "error": str(e)}), 500
