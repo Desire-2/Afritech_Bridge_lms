@@ -10,7 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock } from 'lucide-react';
+import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -74,31 +74,7 @@ const LearningPage = () => {
   const params = useParams();
   const courseId = parseInt(params.id as string);
   
-  // ⚠️ CRITICAL: Authentication check MUST be first to prevent hooks violations
-  // This prevents the "Rendered fewer hooks than expected" error
-  useEffect(() => {
-    if (authLoading) {
-      // Still loading auth, don't redirect yet
-      return;
-    }
-    
-    if (!isAuthenticated) {
-      // Only redirect after auth loading is complete and user is not authenticated
-      window.location.href = '/auth/login';
-      return;
-    }
-  }, [isAuthenticated, authLoading]);
-  
-  // Early return for non-authenticated users to prevent hook violations
-  if (!authLoading && !isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
-        <div className="text-white text-lg">Redirecting to login...</div>
-      </div>
-    );
-  }
-  
-  // Core state
+  // Core state - ALL HOOKS MUST BE DECLARED FIRST
   const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -214,6 +190,24 @@ const LearningPage = () => {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Mount effect - must be called after all state hooks
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Authentication check effect - must be called after all hooks
+  useEffect(() => {
+    if (!mounted || authLoading) {
+      return;
+    }
+    
+    if (!isAuthenticated) {
+      // Only redirect after component is mounted and auth loading is complete
+      window.location.href = '/auth/login';
+      return;
+    }
+  }, [mounted, isAuthenticated, authLoading]);
   
   // Progressive Learning Hooks
   const progressiveLearning = useProgressiveLearning(courseId);
@@ -1239,15 +1233,49 @@ const LearningPage = () => {
     }
   }, [currentViewMode, currentLesson?.id, contentLoadedForLesson, loadLessonContent]);
 
-  // Handle lesson selection
-  const handleLessonSelect = (lessonId: number, moduleId: number) => {
+  // Enhanced lesson selection with loading states, error handling, and accessibility
+  const handleLessonSelect = async (lessonId: number, moduleId: number) => {
+    // Prevent navigation if lesson is already current or content is loading
+    if (currentLesson?.id === lessonId || contentLoading) {
+      console.warn('⚠️ Navigation blocked: Already on this lesson or content is loading');
+      return;
+    }
+
     const courseModules = courseData?.course?.modules || courseData?.modules || [];
     if (courseModules) {
       const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
       const lesson = allLessons.find((l: any) => l.id === lessonId);
-      if (lesson) {
+      
+      if (!lesson) {
+        console.error('❌ Target lesson not found:', lessonId);
+        setError('Lesson not found. Please refresh and try again.');
+        return;
+      }
+
+      // Check if lesson is accessible
+      const targetModule = courseModules.find((m: any) => m.id === moduleId);
+      if (!targetModule) {
+        console.error('❌ Target module not found:', moduleId);
+        return;
+      }
+
+      try {
         console.log('📍 Navigating to lesson:', lesson.title, '(ID:', lessonId, ')');
         
+        // Show loading state
+        setContentLoading(true);
+        setError(null); // Clear any previous errors
+        
+        // Save current progress before switching
+        if (currentLesson && forceSaveProgress) {
+          try {
+            await forceSaveProgress();
+          } catch (saveError) {
+            console.warn('⚠️ Failed to save current progress, continuing with navigation:', saveError);
+          }
+        }
+        
+        // Update lesson and module state
         setCurrentLesson(lesson);
         setCurrentModuleId(moduleId);
         setLessonNotes('');
@@ -1256,32 +1284,47 @@ const LearningPage = () => {
         // Reset video tracking for new lesson
         setVideoProgress(0);
         setVideoCompleted(false);
+        setVideoCurrentTime(0);
+        setVideoDuration(0);
+        setMixedContentVideoProgress({});
+        setMixedContentVideosCompleted(new Set());
         
-        // Auto-close sidebar on small screens (mobile/tablet)
+        // Auto-close sidebar on small screens for better UX
         if (window.innerWidth < 1024) { // lg breakpoint
           setSidebarOpen(false);
           console.log('📱 Auto-closing sidebar on small screen');
         }
         
-        // Content will be loaded by the useEffect that watches currentLesson.id
-        
-        // Scroll to top after state updates (use setTimeout to ensure DOM is ready)
+        // Smooth scroll to top for better user experience
         setTimeout(() => {
           if (contentRef.current) {
             contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
           }
           window.scrollTo({ top: 0, behavior: 'smooth' });
-        }, 0);
+        }, 100);
         
-        // Save to localStorage for persistence within session
+        // Save to localStorage for session persistence
         saveLastLesson(courseId, lessonId, moduleId);
         
+        // Track navigation analytics
         setInteractionHistory(prev => [...prev, {
           type: 'lesson_select',
           lessonId,
           moduleId,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          metadata: {
+            fromLesson: currentLesson?.id,
+            fromModule: currentModuleId,
+            navigationMethod: 'direct_select'
+          }
         }]);
+
+        console.log('✅ Lesson navigation completed successfully');
+        
+      } catch (error) {
+        console.error('❌ Failed to navigate to lesson:', error);
+        setError('Failed to load lesson. Please try again.');
+        setContentLoading(false);
       }
     }
   };
@@ -1812,6 +1855,21 @@ const LearningPage = () => {
     );
   }
 
+  // Not authenticated - show redirecting state (useEffect will handle redirect)
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
+        <Card className="w-96 bg-gray-800/50 border-gray-700">
+          <CardContent className="p-8 text-center">
+            <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-orange-400" />
+            <h3 className="text-lg font-semibold mb-2 text-white">Access Required</h3>
+            <p className="text-gray-300">Redirecting to login...</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   // Loading state
   if (loading) {
     return (
@@ -1827,12 +1885,13 @@ const LearningPage = () => {
     );
   }
 
-  // Error state with specific messages based on error type
+  // Enhanced error state with specific messages and retry functionality
   if (error) {
     // Determine error type and customize message
     const isNotPublished = error.toLowerCase().includes('not available') || error.toLowerCase().includes('not published');
     const isNotEnrolled = error.toLowerCase().includes('not enrolled');
     const isNotFound = error.toLowerCase().includes('not found');
+    const isNetworkError = error.toLowerCase().includes('network') || error.toLowerCase().includes('fetch') || error.toLowerCase().includes('timeout');
     
     let errorIcon = <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />;
     let errorTitle = "Unable to Load Course";
@@ -1841,8 +1900,18 @@ const LearningPage = () => {
     let borderColor = "border-red-900/50";
     let titleColor = "text-red-300";
     let messageColor = "text-red-200";
+    let showRetry = false;
     
-    if (isNotPublished) {
+    if (isNetworkError) {
+      errorIcon = <Wifi className="h-12 w-12 text-orange-400 mx-auto mb-4" />;
+      errorTitle = "Connection Issue";
+      errorMessage = "Unable to connect to the learning platform.";
+      errorDescription = "Please check your internet connection and try again. If the problem persists, contact support.";
+      borderColor = "border-orange-900/50";
+      titleColor = "text-orange-300";
+      messageColor = "text-orange-200";
+      showRetry = true;
+    } else if (isNotPublished) {
       errorIcon = <Lock className="h-12 w-12 text-yellow-400 mx-auto mb-4" />;
       errorTitle = "Course Not Yet Available";
       errorMessage = "This course has not been published yet.";
@@ -1866,8 +1935,16 @@ const LearningPage = () => {
       borderColor = "border-gray-700";
       titleColor = "text-gray-300";
       messageColor = "text-gray-400";
+    } else {
+      showRetry = true; // Show retry for generic errors
     }
     
+    const handleRetry = () => {
+      setError(null);
+      setLoading(true);
+      window.location.reload();
+    };
+
     return (
       <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center p-4">
         <Card className={`w-full max-w-md bg-gray-800/50 ${borderColor}`}>
@@ -1896,10 +1973,18 @@ const LearningPage = () => {
                 </>
               ) : (
                 <>
+                  {showRetry && (
+                    <Button onClick={handleRetry} className="bg-blue-600 hover:bg-blue-700">
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Try Again
+                    </Button>
+                  )}
                   <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
                     <Link href={`/courses/${courseId}`}>View Course</Link>
                   </Button>
-                  <Button onClick={() => window.location.reload()} className="bg-blue-600 hover:bg-blue-700">Try Again</Button>
+                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                    <Link href="/student/dashboard">Dashboard</Link>
+                  </Button>
                 </>
               )}
             </div>

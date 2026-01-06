@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import applicationService from '@/services/api/application.service';
 import { CourseApplication, ApplicationStatistics } from '@/services/api/types';
+import AdvancedFilters from './AdvancedFilters';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +41,10 @@ export default function AdminApplicationsManager() {
   const [error, setError] = useState<string | null>(null);
   const [courses, setCourses] = useState<Array<{ id: number; title: string; applications_count: number }>>([]);
   
+  // Add debounced search state
+  const [searchInput, setSearchInput] = useState('');
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  
   const [filters, setFilters] = useState({
     status: 'all',
     course_id: '',
@@ -48,7 +53,55 @@ export default function AdminApplicationsManager() {
     sort_order: 'desc' as 'asc' | 'desc',
     page: 1,
     per_page: 20,
+    // Advanced filter fields
+    country: '',
+    city: '',
+    education_level: '',
+    current_status: '',
+    excel_skill_level: '',
+    referral_source: '',
+    date_from: '',
+    date_to: '',
+    min_score: '',
+    max_score: '',
+    score_type: 'final_rank_score',
   });
+
+  // Debounced search function
+  const debouncedSetSearch = useCallback((value: string) => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      setFilters(prev => ({ ...prev, search: value, page: 1 }));
+    }, 300); // 300ms delay
+  }, []);
+
+  // Handle search input changes
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    debouncedSetSearch(value);
+  };
+
+  // Handle advanced filters change
+  const handleAdvancedFiltersChange = (advancedFilters: any) => {
+    setFilters(prev => ({
+      ...prev,
+      ...advancedFilters,
+      page: 1 // Reset page when filters change
+    }));
+  };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [selectedApplication, setSelectedApplication] = useState<CourseApplication | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -124,19 +177,27 @@ export default function AdminApplicationsManager() {
     setLoading(true);
     setError(null);
     try {
-      const response = await applicationService.listApplications(
-        filters.status !== 'all' ? filters.status : undefined,
-        filters.course_id ? parseInt(filters.course_id) : undefined,
-        filters.search || undefined,
-        filters.sort_by,
-        filters.sort_order,
-        filters.page,
-        filters.per_page
-      );
+      // Prepare filters object, excluding empty values
+      const cleanFilters: any = {};
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value !== '' && value !== 'all' && value !== undefined) {
+          cleanFilters[key] = value;
+        }
+      });
+
+      const response = await applicationService.listApplications(cleanFilters);
       
       setApplications(response.applications || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to load applications');
+      // Enhanced error handling
+      if (err.message.includes('Invalid date format')) {
+        setError('Invalid date format in filters. Please check your date inputs.');
+      } else if (err.message.includes('Invalid score filter')) {
+        setError('Invalid score filter. Please check your score range.');
+      } else {
+        setError(err.message || 'Failed to load applications');
+      }
+      console.error('Error loading applications:', err);
     } finally {
       setLoading(false);
     }
@@ -920,10 +981,15 @@ export default function AdminApplicationsManager() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                 <Input
                   placeholder="Search by name or email..."
-                  value={filters.search}
-                  onChange={(e) => setFilters({ ...filters, search: e.target.value, page: 1 })}
+                  value={searchInput}
+                  onChange={handleSearchChange}
                   className="pl-10"
                 />
+                {searchInput && searchInput !== filters.search && (
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                    <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -974,6 +1040,26 @@ export default function AdminApplicationsManager() {
                 <SelectItem value="risk_score">Risk Score</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+
+          {/* Advanced Filters */}
+          <div className="mb-6">
+            <AdvancedFilters 
+              onFiltersChange={handleAdvancedFiltersChange}
+              initialFilters={{
+                country: filters.country,
+                city: filters.city,
+                education_level: filters.education_level,
+                current_status: filters.current_status,
+                excel_skill_level: filters.excel_skill_level,
+                referral_source: filters.referral_source,
+                date_from: filters.date_from,
+                date_to: filters.date_to,
+                min_score: filters.min_score,
+                max_score: filters.max_score,
+                score_type: filters.score_type,
+              }}
+            />
           </div>
 
           {error && (

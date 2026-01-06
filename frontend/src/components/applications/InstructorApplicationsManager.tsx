@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import applicationService from '@/services/api/application.service';
 import instructorService from '@/services/api/instructor.service';
@@ -42,6 +42,10 @@ export default function InstructorApplicationsManager() {
   const [error, setError] = useState<string | null>(null);
   const [courses, setCourses] = useState<Array<{ id: number; title: string; applications_count: number }>>([]);
   
+  // Add debounced search state
+  const [searchInput, setSearchInput] = useState('');
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  
   const [filters, setFilters] = useState({
     status: 'all',
     course_id: '',
@@ -51,6 +55,33 @@ export default function InstructorApplicationsManager() {
     page: 1,
     per_page: 20,
   });
+
+  // Debounced search function
+  const debouncedSetSearch = useCallback((value: string) => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    searchTimeoutRef.current = setTimeout(() => {
+      setFilters(prev => ({ ...prev, search: value, page: 1 }));
+    }, 300); // 300ms delay
+  }, []);
+
+  // Handle search input changes
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchInput(value);
+    debouncedSetSearch(value);
+  };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [selectedApplication, setSelectedApplication] = useState<CourseApplication | null>(null);
   const [detailModalOpen, setDetailModalOpen] = useState(false);
@@ -97,19 +128,27 @@ export default function InstructorApplicationsManager() {
     setError(null);
     try {
       // Backend now handles instructor filtering automatically
-      const response = await applicationService.listApplications(
-        filters.status !== 'all' ? filters.status : undefined,
-        filters.course_id ? parseInt(filters.course_id) : undefined,
-        filters.search || undefined,
-        filters.sort_by,
-        filters.sort_order,
-        filters.page,
-        filters.per_page
-      );
+      const response = await applicationService.listApplications({
+        status: filters.status !== 'all' ? filters.status : undefined,
+        course_id: filters.course_id ? parseInt(filters.course_id) : undefined,
+        search: filters.search || undefined,
+        sort_by: filters.sort_by,
+        sort_order: filters.sort_order,
+        page: filters.page,
+        per_page: filters.per_page
+      });
       
       setApplications(response.applications || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to load applications');
+      // Enhanced error handling
+      if (err.message.includes('Invalid date format')) {
+        setError('Invalid date format in filters. Please check your date inputs.');
+      } else if (err.message.includes('Invalid score filter')) {
+        setError('Invalid score filter. Please check your score range.');
+      } else {
+        setError(err.message || 'Failed to load applications');
+      }
+      console.error('Error loading applications:', err);
     } finally {
       setLoading(false);
     }
@@ -309,10 +348,15 @@ export default function InstructorApplicationsManager() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                 <Input
                   placeholder="Search by name or email..."
-                  value={filters.search}
-                  onChange={(e) => setFilters({ ...filters, search: e.target.value, page: 1 })}
+                  value={searchInput}
+                  onChange={handleSearchChange}
                   className="pl-10"
                 />
+                {searchInput && searchInput !== filters.search && (
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                    <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                )}
               </div>
             </div>
 

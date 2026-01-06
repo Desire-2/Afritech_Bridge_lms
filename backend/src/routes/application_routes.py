@@ -4,7 +4,7 @@ from datetime import datetime
 import threading
 import uuid
 import logging
-from sqlalchemy import or_, func, and_
+from sqlalchemy import or_, func, and_, case
 from ..models.course_application import CourseApplication
 from ..models.user_models import db, User, Role
 from ..models.course_models import Enrollment
@@ -573,12 +573,14 @@ def list_applications():
             
             # Add custom ordering to prioritize exact matches
             # Using CASE WHEN to create a relevance score
-            relevance_score = func.case(
-                (CourseApplication.full_name.ilike(text), 1000),  # Exact name match - highest priority
-                (CourseApplication.email.ilike(text), 900),       # Exact email match
-                (CourseApplication.full_name.ilike(f"{text}%"), 800),  # Name starts with
-                (CourseApplication.email.ilike(f"{text}%"), 700),      # Email starts with
-                (CourseApplication.full_name.ilike(f"% {text} %"), 600), # Word boundary
+            relevance_score = case(
+                {
+                    CourseApplication.full_name.ilike(text): 1000,  # Exact name match - highest priority
+                    CourseApplication.email.ilike(text): 900,       # Exact email match
+                    CourseApplication.full_name.ilike(f"{text}%"): 800,  # Name starts with
+                    CourseApplication.email.ilike(f"{text}%"): 700,      # Email starts with
+                    CourseApplication.full_name.ilike(f"% {text} %"): 600, # Word boundary
+                },
                 else_=0
             )
             
@@ -604,13 +606,18 @@ def list_applications():
     if referral_source:
         query = query.filter(CourseApplication.referral_source.ilike(f"%{referral_source}%"))
     
-    # Apply date range filters
+    # Apply date range filters with improved validation
     if date_from:
         try:
             from_date = datetime.strptime(date_from, "%Y-%m-%d")
             query = query.filter(CourseApplication.created_at >= from_date)
-        except ValueError:
-            return jsonify({"error": "Invalid date_from format. Use YYYY-MM-DD"}), 400
+        except ValueError as ve:
+            logger.warning(f"Invalid date_from format received: {date_from}")
+            return jsonify({
+                "error": "Invalid date_from format. Use YYYY-MM-DD",
+                "details": f"Received: '{date_from}', Expected format: YYYY-MM-DD",
+                "example": "2024-01-15"
+            }), 400
     
     if date_to:
         try:
@@ -618,8 +625,28 @@ def list_applications():
             # Include the entire day
             to_date = to_date.replace(hour=23, minute=59, second=59)
             query = query.filter(CourseApplication.created_at <= to_date)
+        except ValueError as ve:
+            logger.warning(f"Invalid date_to format received: {date_to}")
+            return jsonify({
+                "error": "Invalid date_to format. Use YYYY-MM-DD",
+                "details": f"Received: '{date_to}', Expected format: YYYY-MM-DD",
+                "example": "2024-01-15"
+            }), 400
+            
+    # Validate date range logic
+    if date_from and date_to:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d")
+            to_date = datetime.strptime(date_to, "%Y-%m-%d")
+            if from_date > to_date:
+                return jsonify({
+                    "error": "Invalid date range: date_from cannot be after date_to",
+                    "date_from": date_from,
+                    "date_to": date_to
+                }), 400
         except ValueError:
-            return jsonify({"error": "Invalid date_to format. Use YYYY-MM-DD"}), 400
+            # Already handled above
+            pass
     
     # Apply score range filters
     if min_score is not None or max_score is not None:
@@ -670,19 +697,46 @@ def list_applications():
         for app in pagination.items:
             try:
                 applications_data.append(app.to_dict(include_sensitive=True))
-            except LookupError as e:
-                # Log the error and skip this application or return partial data
+            except (LookupError, AttributeError, ValueError) as e:
+                # Log the error and create a safe representation
                 logger.warning(f"Error converting application {app.id} to dict: {e}")
-                # Try to create a basic dict with safe fields
-                applications_data.append({
+                
+                # Create a safe dict with basic fields, handling potential enum issues
+                safe_app_data = {
                     "id": app.id,
                     "course_id": app.course_id,
-                    "full_name": app.full_name,
-                    "email": app.email,
-                    "status": app.status,
+                    "full_name": getattr(app, 'full_name', 'N/A'),
+                    "email": getattr(app, 'email', 'N/A'),
+                    "phone": getattr(app, 'phone', 'N/A'),
                     "created_at": app.created_at.isoformat() if app.created_at else None,
-                    "error": "Data validation error - please review this application"
-                })
+                    "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+                    "admin_notes": getattr(app, 'admin_notes', ''),
+                    "data_error": f"Enum conversion error: {str(e)}"
+                }
+                
+                # Safely handle status field
+                try:
+                    safe_app_data["status"] = app.status
+                except (LookupError, AttributeError):
+                    safe_app_data["status"] = "unknown"
+                    
+                # Safely handle enum fields
+                enum_fields = ['education_level', 'current_status', 'excel_skill_level']
+                for field in enum_fields:
+                    try:
+                        safe_app_data[field] = getattr(app, field, None)
+                    except (LookupError, AttributeError):
+                        safe_app_data[field] = "unknown"
+                        
+                # Safely handle score fields
+                score_fields = ['application_score', 'final_rank_score', 'readiness_score', 'commitment_score', 'risk_score']
+                for field in score_fields:
+                    try:
+                        safe_app_data[field] = getattr(app, field, None)
+                    except (AttributeError, TypeError):
+                        safe_app_data[field] = None
+                        
+                applications_data.append(safe_app_data)
         
         return jsonify({
             "applications": applications_data,

@@ -125,6 +125,51 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     videoElement?: HTMLVideoElement | null;
   }}>({});
 
+  // Handle YouTube player ready state for video content
+  useEffect(() => {
+    // Reset playerReady for YouTube videos when video URL changes
+    if (lesson.content_type === 'video') {
+      const videoUrl = lesson.content_data;
+      const isYouTube = videoUrl?.includes('youtube.com') || videoUrl?.includes('youtu.be');
+      
+      if (isYouTube) {
+        setPlayerReady(false);
+        
+        // Fallback timeout to hide loading after 10 seconds
+        const timeout = setTimeout(() => {
+          console.warn('⏱️ YouTube loading timeout - forcing playerReady');
+          setPlayerReady(true);
+        }, 10000);
+        
+        return () => clearTimeout(timeout);
+      }
+    } else if (lesson.content_type === 'mixed') {
+      // Handle mixed content with videos
+      try {
+        const mixedContent = JSON.parse(lesson.content_data);
+        if (Array.isArray(mixedContent)) {
+          const hasYouTubeVideos = mixedContent.some(section => 
+            section.type === 'video' && 
+            (section.content?.includes('youtube.com') || section.content?.includes('youtu.be'))
+          );
+          
+          if (hasYouTubeVideos) {
+            setPlayerReady(false);
+            
+            const timeout = setTimeout(() => {
+              console.warn('⏱️ Mixed content YouTube loading timeout - forcing playerReady');
+              setPlayerReady(true);
+            }, 10000);
+            
+            return () => clearTimeout(timeout);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to parse mixed content for YouTube detection:', e);
+      }
+    }
+  }, [lesson.content_data, lesson.content_type]);
+
   // Keyboard navigation for video controls
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -1102,21 +1147,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     const isDirect = !isYouTube && !isVimeo && /\.(mp4|webm|ogg|mov)$/i.test(videoUrl);
     
     console.log('🎬 Video type detection:', { isYouTube, isVimeo, isDirect, videoUrl });
-    
-    // Reset playerReady for YouTube videos in mixed content
-    useEffect(() => {
-      if (isYouTube) {
-        setPlayerReady(false);
-        
-        // Fallback timeout to hide loading after 10 seconds
-        const timeout = setTimeout(() => {
-          console.warn('⏱️ YouTube loading timeout - forcing playerReady');
-          setPlayerReady(true);
-        }, 10000);
-        
-        return () => clearTimeout(timeout);
-      }
-    }, [videoUrl]);
     
     if (isYouTube) {
       // Extract YouTube video ID
