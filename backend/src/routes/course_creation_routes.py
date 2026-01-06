@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 from ..models.user_models import db, User, Role
 from ..models.course_models import (
     Course, Module, Lesson, Quiz, Question, Answer, 
-    Assignment, AssignmentSubmission, 
+    Assignment, AssignmentSubmission, Project, ProjectSubmission,
     Enrollment, Submission, Announcement
 )
 from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
