@@ -55,11 +55,17 @@ Create {num_questions} assessment questions that:
 1. Test understanding of key concepts from the lesson
 2. Use these question types: {', '.join(question_types)}
 3. Have varying difficulty levels (easy, medium, hard)
-4. Include 4 answer options for multiple choice
+4. Include exactly 4 options for multiple choice questions
 5. Clearly mark the correct answer
 6. Provide brief explanations for correct answers
 
-Format as JSON:
+CRITICAL FORMATTING REQUIREMENTS:
+- Return ONLY valid JSON without any markdown formatting
+- NO code blocks, NO extra text, ONLY JSON
+- Use double quotes for all strings
+- Use simple option structure with key and text
+
+Return this exact JSON structure:
 {{
   "title": "{lesson_title} Quiz",
   "description": "Assessment covering key concepts from {lesson_title}",
@@ -67,15 +73,16 @@ Format as JSON:
   "passing_score": 70,
   "questions": [
     {{
-      "text": "Question text here?",
+      "question_text": "Question text here?",
       "question_type": "multiple_choice",
       "points": 10,
+      "correct_answer": "B",
       "explanation": "Explanation of correct answer",
-      "answers": [
-        {{"text": "Option A", "is_correct": false}},
-        {{"text": "Option B", "is_correct": true}},
-        {{"text": "Option C", "is_correct": false}},
-        {{"text": "Option D", "is_correct": false}}
+      "options": [
+        {{"key": "A", "text": "Option A"}},
+        {{"key": "B", "text": "Correct option"}},
+        {{"key": "C", "text": "Option C"}},
+        {{"key": "D", "text": "Option D"}}
       ]
     }}
   ]
@@ -85,15 +92,14 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "quiz questions")
             if parsed:
+                # Validate and fix quiz structure
+                parsed = self._validate_quiz_data(parsed, lesson_title, num_questions)
                 return parsed
+            else:
+                logger.warning(f"Failed to parse AI response for quiz questions, using fallback")
         
-        return {
-            "title": f"{lesson_title} Quiz",
-            "description": f"Test your knowledge of {lesson_title}",
-            "time_limit": 20,
-            "passing_score": 70,
-            "questions": []
-        }
+        # Fallback if AI generation fails
+        return self._generate_fallback_quiz(lesson_title, num_questions)
     
     def generate_quiz_from_content(self, lesson_or_module_content: str, 
                                    content_title: str, content_type: str = "lesson",
@@ -167,15 +173,14 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "quiz from content")
             if parsed:
+                # Validate and fix quiz structure if needed
+                parsed = self._validate_quiz_data(parsed, content_title, num_questions)
                 return parsed
+            else:
+                logger.warning(f"Failed to parse AI response for quiz generation, using fallback")
         
-        return {
-            "title": f"{content_title} Quiz",
-            "description": f"Assessment based on {content_title}",
-            "time_limit": max(15, num_questions * 2),
-            "passing_score": 70,
-            "questions": []
-        }
+        # Fallback if AI generation fails
+        return self._generate_fallback_quiz(content_title, num_questions)
     
     def generate_assignment(self, course_title: str, module_title: str,
                           module_description: str, lessons_summary: str) -> Dict[str, Any]:
@@ -275,9 +280,13 @@ Create a comprehensive assignment that:
 6. Sets realistic timeline
 7. Provides guidance on what to submit
 
-IMPORTANT: Base the assignment ONLY on concepts and skills taught in the content above.
+IMPORTANT: 
+- Base the assignment ONLY on concepts and skills taught in the content above
+- Return ONLY valid JSON without any markdown formatting
+- Use \\n for line breaks in text fields
+- Ensure all quotes are properly escaped
 
-Format as JSON:
+Return valid JSON in this exact format:
 {{
   "title": "Engaging assignment title related to {content_title}",
   "description": "Overview of what students will accomplish (2-3 paragraphs)",
@@ -293,18 +302,14 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "assignment from content")
             if parsed:
+                # Validate required fields and add defaults if missing
+                parsed = self._validate_assignment_data(parsed, content_title)
                 return parsed
+            else:
+                logger.warning(f"Failed to parse AI response for assignment generation, using fallback")
         
-        return {
-            "title": f"{content_title} Assignment",
-            "description": f"Apply concepts from {content_title}",
-            "instructions": "Complete the assignment based on what you learned.",
-            "deliverables": "• Completed assignment\\n• Documentation",
-            "max_points": 100,
-            "due_date_days": 7,
-            "grading_rubric": "• Quality (50%)\\n• Completeness (50%)",
-            "submission_format": "Submit as PDF or document file"
-        }
+        # Fallback if AI generation fails
+        return self._generate_fallback_assignment(content_title, assignment_type)
     
     def generate_final_project(self, course_title: str, course_description: str,
                               course_objectives: str, modules_summary: str) -> Dict[str, Any]:
@@ -439,6 +444,241 @@ Format as JSON:
             "grading_rubric": "• Technical quality (40%)\\n• Documentation (30%)\\n• Presentation (30%)",
             "resources": "Use module materials",
             "submission_format": "Submit as zip file with all deliverables"
+        }
+    
+    def _validate_assignment_data(self, parsed_data: Dict[str, Any], content_title: str) -> Dict[str, Any]:
+        """
+        Validate and ensure assignment data has all required fields with defaults
+        
+        Args:
+            parsed_data: The parsed JSON data from AI
+            content_title: Title of the content for fallbacks
+            
+        Returns:
+            Validated assignment data with all required fields
+        """
+        defaults = {
+            "title": f"{content_title} Assignment",
+            "description": f"Apply concepts learned from {content_title}",
+            "instructions": "Complete the assignment based on what you learned.",
+            "deliverables": "• Completed assignment\\n• Documentation",
+            "max_points": 100,
+            "due_date_days": 7,
+            "grading_rubric": "• Quality (50%)\\n• Completeness (50%)",
+            "submission_format": "Submit as PDF or document file"
+        }
+        
+        # Merge with defaults, keeping AI-generated values when available
+        for key, default_value in defaults.items():
+            if key not in parsed_data or not parsed_data[key]:
+                parsed_data[key] = default_value
+        
+        # Ensure max_points is a number
+        try:
+            parsed_data["max_points"] = int(parsed_data["max_points"])
+        except (ValueError, TypeError):
+            parsed_data["max_points"] = 100
+        
+        # Ensure due_date_days is a number
+        try:
+            parsed_data["due_date_days"] = int(parsed_data["due_date_days"])
+        except (ValueError, TypeError):
+            parsed_data["due_date_days"] = 7
+        
+        return parsed_data
+    
+    def _generate_fallback_assignment(self, content_title: str, assignment_type: str) -> Dict[str, Any]:
+        """
+        Generate a fallback assignment when AI generation fails
+        
+        Args:
+            content_title: Title of the content
+            assignment_type: Type of assignment
+            
+        Returns:
+            Basic assignment structure
+        """
+        assignment_types = {
+            "practical": {
+                "title": f"{content_title} - Practical Application",
+                "description": f"Apply the practical skills and concepts you learned from {content_title} in real-world scenarios.",
+                "instructions": "1. Review the lesson content\\n2. Complete the practical exercises\\n3. Apply concepts to solve problems\\n4. Document your work and findings",
+                "deliverables": "• Completed exercises\\n• Problem solutions\\n• Reflection document"
+            },
+            "theoretical": {
+                "title": f"{content_title} - Conceptual Analysis",
+                "description": f"Demonstrate your understanding of theoretical concepts from {content_title} through analysis and explanation.",
+                "instructions": "1. Analyze key concepts from the lesson\\n2. Explain relationships between ideas\\n3. Provide examples and applications\\n4. Write a comprehensive analysis",
+                "deliverables": "• Conceptual analysis paper\\n• Examples and applications\\n• Summary of key insights"
+            },
+            "project": {
+                "title": f"{content_title} - Project Work",
+                "description": f"Create a comprehensive project that demonstrates mastery of concepts from {content_title}.",
+                "instructions": "1. Plan your project approach\\n2. Apply lesson concepts in your project\\n3. Create documentation\\n4. Present your results",
+                "deliverables": "• Project files\\n• Technical documentation\\n• Project presentation"
+            },
+            "mixed": {
+                "title": f"{content_title} - Comprehensive Assessment",
+                "description": f"Complete both practical and theoretical components to demonstrate full understanding of {content_title}.",
+                "instructions": "1. Complete practical exercises\\n2. Write theoretical analysis\\n3. Apply concepts to new scenarios\\n4. Reflect on learning outcomes",
+                "deliverables": "• Practical work samples\\n• Analysis document\\n• Application examples\\n• Learning reflection"
+            }
+        }
+        
+        template = assignment_types.get(assignment_type, assignment_types["mixed"])
+        
+        return {
+            "title": template["title"],
+            "description": template["description"],
+            "instructions": template["instructions"],
+            "deliverables": template["deliverables"],
+            "max_points": 100,
+            "due_date_days": 7,
+            "grading_rubric": "• Quality and accuracy (40%)\\n• Completeness (30%)\\n• Presentation and organization (30%)",
+            "submission_format": "Submit as PDF document or zip file with all components"
+        }
+    
+    def _validate_quiz_data(self, parsed_data: Dict[str, Any], content_title: str, num_questions: int) -> Dict[str, Any]:
+        """
+        Validate and ensure quiz data has all required fields with defaults
+        
+        Args:
+            parsed_data: The parsed JSON data from AI
+            content_title: Title of the content for fallbacks
+            num_questions: Expected number of questions
+            
+        Returns:
+            Validated quiz data with all required fields
+        """
+        defaults = {
+            "title": f"{content_title} Quiz",
+            "description": f"Test your knowledge of {content_title}",
+            "time_limit": max(15, num_questions * 2),
+            "passing_score": 70,
+            "questions": []
+        }
+        
+        # Merge with defaults, keeping AI-generated values when available
+        for key, default_value in defaults.items():
+            if key not in parsed_data or not parsed_data[key]:
+                parsed_data[key] = default_value
+        
+        # Validate questions array
+        if not isinstance(parsed_data.get("questions"), list):
+            parsed_data["questions"] = []
+        
+        # Validate each question structure
+        validated_questions = []
+        for i, question in enumerate(parsed_data["questions"]):
+            if isinstance(question, dict):
+                validated_question = self._validate_question_data(question, i + 1)
+                validated_questions.append(validated_question)
+        
+        parsed_data["questions"] = validated_questions
+        
+        # Ensure numeric fields are properly typed
+        try:
+            parsed_data["time_limit"] = int(parsed_data["time_limit"])
+        except (ValueError, TypeError):
+            parsed_data["time_limit"] = max(15, num_questions * 2)
+        
+        try:
+            parsed_data["passing_score"] = int(parsed_data["passing_score"])
+        except (ValueError, TypeError):
+            parsed_data["passing_score"] = 70
+        
+        return parsed_data
+    
+    def _validate_question_data(self, question: Dict[str, Any], question_num: int) -> Dict[str, Any]:
+        """
+        Validate individual question data structure
+        
+        Args:
+            question: Question data dictionary
+            question_num: Question number for fallback text
+            
+        Returns:
+            Validated question data
+        """
+        defaults = {
+            "question_text": f"Question {question_num}?",
+            "question_type": "multiple_choice",
+            "points": 10,
+            "correct_answer": "A",
+            "explanation": "Explanation for the correct answer.",
+            "options": [
+                {"key": "A", "text": "Option A"},
+                {"key": "B", "text": "Option B"},
+                {"key": "C", "text": "Option C"},
+                {"key": "D", "text": "Option D"}
+            ]
+        }
+        
+        # Apply defaults for missing fields
+        for key, default_value in defaults.items():
+            if key not in question:
+                question[key] = default_value
+        
+        # Validate options array
+        if not isinstance(question.get("options"), list) or len(question["options"]) < 2:
+            question["options"] = defaults["options"]
+        
+        # Ensure each option has key and text
+        validated_options = []
+        for i, option in enumerate(question["options"]):
+            if isinstance(option, dict) and "key" in option and "text" in option:
+                validated_options.append(option)
+            else:
+                # Create fallback option
+                key = chr(65 + i) if i < 26 else f"Option {i+1}"
+                validated_options.append({
+                    "key": key,
+                    "text": f"Option {key}"
+                })
+        
+        question["options"] = validated_options
+        
+        # Ensure numeric fields
+        try:
+            question["points"] = int(question["points"])
+        except (ValueError, TypeError):
+            question["points"] = 10
+        
+        return question
+    
+    def _generate_fallback_quiz(self, content_title: str, num_questions: int) -> Dict[str, Any]:
+        """
+        Generate a fallback quiz when AI generation fails
+        
+        Args:
+            content_title: Title of the content
+            num_questions: Number of questions to generate
+            
+        Returns:
+            Basic quiz structure
+        """
+        questions = []
+        for i in range(min(num_questions, 5)):  # Limit fallback questions
+            questions.append({
+                "question_text": f"What is a key concept from {content_title}? (Question {i+1})",
+                "question_type": "multiple_choice",
+                "points": 100 // max(num_questions, 1),
+                "correct_answer": "A",
+                "explanation": f"This question tests your understanding of concepts from {content_title}.",
+                "options": [
+                    {"key": "A", "text": "Correct concept from the content"},
+                    {"key": "B", "text": "Incorrect option B"},
+                    {"key": "C", "text": "Incorrect option C"},
+                    {"key": "D", "text": "Incorrect option D"}
+                ]
+            })
+        
+        return {
+            "title": f"{content_title} - Knowledge Check",
+            "description": f"Test your understanding of key concepts from {content_title}. This quiz was generated automatically.",
+            "time_limit": max(15, num_questions * 2),
+            "passing_score": 70,
+            "questions": questions
         }
 
 

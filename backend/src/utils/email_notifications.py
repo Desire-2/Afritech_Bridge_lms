@@ -28,7 +28,14 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
         passed = grade >= (points_possible * 0.6)  # 60% passing grade
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
-        course_title = assignment.course.title if hasattr(assignment, 'course') else "Your Course"
+        
+        # Fix: Safely get course title
+        course_title = "Your Course"  # Default
+        try:
+            if hasattr(assignment, 'course') and assignment.course:
+                course_title = assignment.course.title
+        except (AttributeError, TypeError):
+            pass  # Use default
         
         email_html = assignment_graded_email(
             student_name=student_name,
@@ -68,7 +75,16 @@ def send_quiz_grade_notification(student, quiz, score, total_points):
         passed = percentage >= 60  # 60% passing
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
-        course_title = quiz.course.title if hasattr(quiz, 'course') else "Your Course"
+        
+        # Fix: Safely get course title from quiz via module relationship
+        course_title = "Your Course"  # Default
+        try:
+            if hasattr(quiz, 'module') and quiz.module:
+                course_title = quiz.module.course.title
+            elif hasattr(quiz, 'course') and quiz.course:
+                course_title = quiz.course.title
+        except (AttributeError, TypeError):
+            pass  # Use default
         
         email_html = quiz_graded_email(
             student_name=student_name,
@@ -152,7 +168,14 @@ def send_project_graded_notification(submission, project, student, grade, feedba
         passed = grade >= (points_possible * 0.6)
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
-        course_title = project.course.title if hasattr(project, 'course') else "Your Course"
+        
+        # Fix: Safely get course title
+        course_title = "Your Course"  # Default
+        try:
+            if hasattr(project, 'course') and project.course:
+                course_title = project.course.title
+        except (AttributeError, TypeError):
+            pass  # Use default
         
         email_html = assignment_graded_email(
             student_name=student_name,

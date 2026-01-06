@@ -30,6 +30,7 @@ import {
   Pause,
   RefreshCw,
   FileText,
+  Send,
 } from 'lucide-react';
 
 export default function AdminApplicationsManager() {
@@ -81,6 +82,28 @@ export default function AdminApplicationsManager() {
   const [statusChangeModalOpen, setStatusChangeModalOpen] = useState(false);
   const [newStatus, setNewStatus] = useState<string>('');
   const [statusChangeReason, setStatusChangeReason] = useState('');
+  
+  // Custom email state
+  const [customEmailModalOpen, setCustomEmailModalOpen] = useState(false);
+  const [customEmailSubject, setCustomEmailSubject] = useState('');
+  const [customEmailMessage, setCustomEmailMessage] = useState('');
+  const [customEmailLoading, setCustomEmailLoading] = useState(false);
+  
+  // Background task tracking
+  const [customEmailTaskId, setCustomEmailTaskId] = useState<string | null>(null);
+  const [customEmailProgress, setCustomEmailProgress] = useState<{
+    processed: number;
+    total: number;
+  } | null>(null);
+  
+  const [failedEmails, setFailedEmails] = useState<Array<{
+    email: string;
+    recipient_name: string;
+    error: string;
+    application_id?: number;
+  }>>([]);
+  const [showFailedEmailsModal, setShowFailedEmailsModal] = useState(false);
+  const [retryEmailsLoading, setRetryEmailsLoading] = useState(false);
 
   useEffect(() => {
     loadApplications();
@@ -276,6 +299,169 @@ export default function AdminApplicationsManager() {
       );
     } catch (err: any) {
       setError(err.message || 'Failed to export applications');
+    }
+  };
+
+  const handleCustomEmail = async () => {
+    if (!customEmailSubject.trim() || !customEmailMessage.trim()) {
+      setActionError('Subject and message are required');
+      return;
+    }
+
+    setCustomEmailLoading(true);
+    setActionError(null);
+    
+    try {
+      // Start background task
+      const result = await applicationService.sendCustomEmail({
+        subject: customEmailSubject.trim(),
+        message: customEmailMessage.trim(),
+        course_id: filters.course_id ? parseInt(filters.course_id) : undefined,
+        status_filter: filters.status !== 'all' ? filters.status : undefined,
+        include_all: !filters.course_id && filters.status === 'all'
+      });
+
+      // Close modal and start polling
+      setCustomEmailModalOpen(false);
+      setCustomEmailTaskId(result.task_id);
+      setCustomEmailProgress({ processed: 0, total: result.total_applications });
+      
+      // Start polling for status
+      pollCustomEmailTask(result.task_id);
+      
+    } catch (err: any) {
+      setActionError(`❌ Failed to start custom email task\n${err.response?.data?.error || err.message}`);
+      setCustomEmailLoading(false);
+    }
+  };
+
+  // Poll for custom email task status
+  const pollCustomEmailTask = async (taskId: string) => {
+    try {
+      console.log('🔄 Polling custom email task:', taskId);
+      const status = await applicationService.getCustomEmailTaskStatus(taskId);
+      console.log('📊 Task status response:', status);
+      
+      // Update progress
+      if (status.progress) {
+        setCustomEmailProgress(status.progress);
+      }
+      
+      if (status.status === 'completed') {
+        console.log('✅ Task completed, results:', status.results);
+        // Task completed successfully
+        setCustomEmailLoading(false);
+        setCustomEmailTaskId(null);
+        setCustomEmailProgress(null);
+        
+        if (status.results) {
+          // Store failed emails for retry functionality
+          if (status.results.failed_emails && status.results.failed_emails.length > 0) {
+            console.log('❌ Found failed emails:', status.results.failed_emails);
+            setFailedEmails(status.results.failed_emails);
+          } else {
+            console.log('✅ No failed emails');
+            setFailedEmails([]);
+          }
+          
+          // Show success message with option to view failures
+          const successMessage = `✅ Custom Email Sent!\n\nSent to: ${status.results.sent_count} applicants\nFailed: ${status.results.failed_count}\nTotal applications: ${status.results.total_applications}`;
+          
+          if (status.results.failed_count > 0) {
+            console.log('💬 Showing failure confirmation dialog');
+            const showFailures = confirm(`${successMessage}\n\nWould you like to view and retry the failed emails?`);
+            if (showFailures) {
+              console.log('👀 Opening failed emails modal');
+              setShowFailedEmailsModal(true);
+            }
+          } else {
+            alert(successMessage);
+            setCustomEmailSubject('');
+            setCustomEmailMessage('');
+          }
+        }
+      } else if (status.status === 'failed') {
+        console.log('❌ Task failed:', status.error);
+        // Task failed
+        setCustomEmailLoading(false);
+        setCustomEmailTaskId(null);
+        setCustomEmailProgress(null);
+        setActionError(`❌ Custom email task failed: ${status.error || 'Unknown error'}`);
+      } else {
+        console.log(`⏳ Task still in progress (${status.status}), continuing to poll...`);
+        // Task still in progress, continue polling
+        setTimeout(() => pollCustomEmailTask(taskId), 2000); // Poll every 2 seconds
+      }
+      
+    } catch (err: any) {
+      console.error('❌ Error polling custom email task:', err);
+      // Retry polling after a delay
+      setTimeout(() => pollCustomEmailTask(taskId), 3000);
+    }
+  };
+
+  const handleRetryFailedEmails = async () => {
+    if (failedEmails.length === 0) {
+      setActionError('No failed emails to retry');
+      return;
+    }
+
+    setRetryEmailsLoading(true);
+    setActionError(null);
+    
+    try {
+      // Start background retry task
+      const result = await applicationService.retryFailedEmails({
+        failed_emails: failedEmails,
+        subject: customEmailSubject.trim(),
+        message: customEmailMessage.trim()
+      });
+
+      // Start polling for retry task status
+      pollRetryTask(result.task_id);
+      
+    } catch (err: any) {
+      setActionError(`❌ Failed to start email retry\n${err.response?.data?.error || err.message}`);
+      setRetryEmailsLoading(false);
+    }
+  };
+
+  // Poll for retry task status
+  const pollRetryTask = async (taskId: string) => {
+    try {
+      const status = await applicationService.getCustomEmailTaskStatus(taskId);
+      
+      if (status.status === 'completed') {
+        // Task completed successfully
+        setRetryEmailsLoading(false);
+        
+        if (status.results) {
+          // Update failed emails list with still failed ones
+          setFailedEmails(status.results.still_failed || []);
+          
+          // Show retry results
+          alert(`✅ Email Retry Completed!\n\nNewly successful: ${status.results.sent_count}\nStill failed: ${status.results.failed_count}\nTotal retried: ${status.results.total_retried}`);
+          
+          // Close modal if no more failures
+          if (status.results.failed_count === 0) {
+            setShowFailedEmailsModal(false);
+            setCustomEmailSubject('');
+            setCustomEmailMessage('');
+          }
+        }
+      } else if (status.status === 'failed') {
+        // Task failed
+        setRetryEmailsLoading(false);
+        setActionError(`❌ Email retry failed: ${status.error || 'Unknown error'}`);
+      } else {
+        // Task still in progress, continue polling
+        setTimeout(() => pollRetryTask(taskId), 2000);
+      }
+      
+    } catch (err: any) {
+      console.error('Error polling retry task:', err);
+      // Retry polling after a delay
+      setTimeout(() => pollRetryTask(taskId), 3000);
     }
   };
 
@@ -625,7 +811,7 @@ export default function AdminApplicationsManager() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Pending Review</p>
-                  <p className="text-3xl font-bold text-yellow-600">{statistics.pending}</p>
+                  <p className="text-3xl font-bold text-yellow-600">{statistics.status_breakdown.pending}</p>
                 </div>
                 <Clock className="w-10 h-10 text-yellow-500" />
               </div>
@@ -637,7 +823,7 @@ export default function AdminApplicationsManager() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Approved</p>
-                  <p className="text-3xl font-bold text-green-600">{statistics.approved}</p>
+                  <p className="text-3xl font-bold text-green-600">{statistics.status_breakdown.approved}</p>
                 </div>
                 <CheckCircle className="w-10 h-10 text-green-500" />
               </div>
@@ -650,7 +836,9 @@ export default function AdminApplicationsManager() {
                 <div>
                   <p className="text-sm text-gray-600">Avg Score</p>
                   <p className="text-3xl font-bold text-blue-600">
-                    {statistics.average_score?.toFixed(1) || 'N/A'}
+                    {typeof statistics.average_scores?.application_score === 'number' 
+                      ? statistics.average_scores.application_score.toFixed(1) 
+                      : 'N/A'}
                   </p>
                 </div>
                 <TrendingUp className="w-10 h-10 text-blue-500" />
@@ -668,11 +856,62 @@ export default function AdminApplicationsManager() {
               <CardTitle>Course Applications</CardTitle>
               <CardDescription>Review and manage all course applications</CardDescription>
             </div>
-            <Button onClick={handleExport} variant="outline">
-              <Download className="w-4 h-4 mr-2" />
-              Export CSV
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                onClick={() => setCustomEmailModalOpen(true)} 
+                variant="outline" 
+                className="bg-green-50 hover:bg-green-100 border-green-200 text-green-700"
+                disabled={customEmailLoading}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                {customEmailLoading ? 'Sending...' : 'Send Custom Email'}
+              </Button>
+              <Button onClick={handleExport} variant="outline">
+                <Download className="w-4 h-4 mr-2" />
+                Export CSV
+              </Button>
+              {/* Debug button for testing failed emails modal */}
+              <Button 
+                onClick={() => {
+                  setFailedEmails([
+                    { email: 'test1@example.com', recipient_name: 'Test User 1', error: 'SMTP timeout' },
+                    { email: 'test2@example.com', recipient_name: 'Test User 2', error: 'Invalid email address' }
+                  ]);
+                  setShowFailedEmailsModal(true);
+                }} 
+                variant="outline"
+                className="bg-red-50 hover:bg-red-100 border-red-200 text-red-700"
+              >
+                🐛 Test Failed Emails
+              </Button>
+            </div>
           </div>
+          
+          {/* Custom Email Progress */}
+          {customEmailProgress && customEmailTaskId && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-blue-800 font-medium">Sending custom emails...</span>
+                </div>
+                <span className="text-blue-600 text-sm">
+                  {customEmailProgress.processed}/{customEmailProgress.total} processed
+                </span>
+              </div>
+              <div className="w-full bg-blue-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ 
+                    width: `${Math.round((customEmailProgress.processed / customEmailProgress.total) * 100)}%` 
+                  }}
+                ></div>
+              </div>
+              <div className="text-xs text-blue-700 mt-1">
+                Progress: {Math.round((customEmailProgress.processed / customEmailProgress.total) * 100)}%
+              </div>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap gap-4 mb-6">
@@ -1516,6 +1755,224 @@ export default function AdminApplicationsManager() {
                 disabled={actionLoading || !newStatus || newStatus === selectedApplication?.status}
               >
                 {actionLoading ? 'Updating...' : 'Update Status'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Custom Email Modal */}
+      <Dialog open={customEmailModalOpen} onOpenChange={setCustomEmailModalOpen}>
+        <DialogContent className="max-w-[95vw] sm:max-w-[500px] md:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <Send className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" />
+              Send Custom Email to Applicants
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              Send personalized emails to all applicants. First 10 get individual personalized emails, remaining recipients receive a single BCC email to ensure efficient delivery.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 sm:space-y-4">
+            {actionError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="whitespace-pre-line text-sm">
+                  {actionError}
+                </AlertDescription>
+              </Alert>
+            )}
+            
+            {/* Current filters info */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3">
+              <h4 className="font-medium text-blue-900 mb-2 text-sm sm:text-base">Email Recipients & Strategy:</h4>
+              <div className="text-xs sm:text-sm text-blue-700 space-y-1">
+                <div>• Course Filter: {filters.course_id 
+                  ? courses.find(c => c.id.toString() === filters.course_id)?.title || `Course ID: ${filters.course_id}`
+                  : 'All Courses'}</div>
+                <div>• Status Filter: {filters.status === 'all' ? 'All Statuses' : filters.status}</div>
+                <div>• Search Filter: {filters.search || 'None'}</div>
+              </div>
+              {applications.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-xs sm:text-sm font-medium text-blue-900">
+                    Total Recipients: {applications.length} applicant(s)
+                  </div>
+                  <div className="text-xs text-blue-600 mt-1">
+                    {applications.length <= 10 
+                      ? `All ${applications.length} recipients will receive individual personalized emails`
+                      : `First 10 will receive individual personalized emails, remaining ${applications.length - 10} will receive a single BCC email`
+                    }
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="custom-email-subject" className="text-sm">Email Subject *</Label>
+              <Input
+                id="custom-email-subject"
+                placeholder="Enter email subject..."
+                value={customEmailSubject}
+                onChange={(e) => setCustomEmailSubject(e.target.value)}
+                maxLength={200}
+                className="text-sm"
+              />
+              <div className="text-xs text-gray-500">
+                {customEmailSubject.length}/200 characters
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="custom-email-message" className="text-sm">Email Message *</Label>
+              <Textarea
+                id="custom-email-message"
+                placeholder="Enter your message here...&#10;&#10;This message will be included in a professionally formatted email template with header and footer."
+                value={customEmailMessage}
+                onChange={(e) => setCustomEmailMessage(e.target.value)}
+                rows={6}
+                maxLength={2000}
+                className="text-sm resize-none"
+              />
+              <div className="text-xs text-gray-500">
+                {customEmailMessage.length}/2000 characters
+              </div>
+            </div>
+
+            <div className="bg-green-50 border border-green-200 rounded-lg p-2 sm:p-3">
+              <div className="flex items-center gap-2 text-green-700">
+                <span>💬</span>
+                <span className="font-medium text-sm">Auto-Included Features</span>
+              </div>
+              <div className="text-xs sm:text-sm text-green-600 mt-1">
+                <div>• WhatsApp help link (250780784924) for quick support</div>
+                <div>• WhatsApp communication channel invitation to join the learning community</div>
+                <div>• Professional email template with headers and footers</div>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCustomEmailModalOpen(false);
+                  setCustomEmailSubject('');
+                  setCustomEmailMessage('');
+                  setActionError(null);
+                }}
+                disabled={customEmailLoading}
+                className="w-full sm:w-auto text-sm"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCustomEmail}
+                disabled={customEmailLoading || !customEmailSubject.trim() || !customEmailMessage.trim()}
+                className="bg-green-600 hover:bg-green-700 w-full sm:w-auto text-sm"
+              >
+                {customEmailLoading ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 sm:w-4 sm:h-4 mr-2 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
+                    Send Email
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Failed Emails Modal */}
+      <Dialog open={showFailedEmailsModal} onOpenChange={setShowFailedEmailsModal}>
+        <DialogContent className="max-w-[95vw] sm:max-w-[600px] md:max-w-[700px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
+              <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-red-600" />
+              Failed Email Recipients ({failedEmails.length})
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              The following recipients could not receive the email. You can retry sending to these addresses.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {actionError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="whitespace-pre-line text-sm">
+                  {actionError}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Failed emails list */}
+            <div className="border rounded-lg p-3 max-h-60 overflow-y-auto">
+              <h4 className="font-medium text-sm mb-3 text-red-700">Failed Recipients:</h4>
+              <div className="space-y-2">
+                {failedEmails.map((failed, index) => (
+                  <div key={index} className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <p className="font-medium text-sm text-red-900">
+                          {failed.recipient_name}
+                        </p>
+                        <p className="text-xs text-red-700">{failed.email}</p>
+                        <p className="text-xs text-red-600 mt-1">
+                          Error: {failed.error}
+                        </p>
+                      </div>
+                      <span className="text-xs text-red-500 bg-red-100 px-2 py-1 rounded">
+                        Failed
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Email details */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <h4 className="font-medium text-blue-900 mb-2 text-sm">Email Details:</h4>
+              <div className="text-xs text-blue-700 space-y-1">
+                <div><strong>Subject:</strong> {customEmailSubject}</div>
+                <div><strong>Message:</strong> {customEmailMessage.substring(0, 100)}...</div>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex flex-col sm:flex-row justify-end space-y-2 sm:space-y-0 sm:space-x-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowFailedEmailsModal(false);
+                  setActionError(null);
+                }}
+                disabled={retryEmailsLoading}
+                className="w-full sm:w-auto text-sm"
+              >
+                Close
+              </Button>
+              <Button
+                onClick={handleRetryFailedEmails}
+                disabled={retryEmailsLoading || failedEmails.length === 0}
+                className="bg-orange-600 hover:bg-orange-700 w-full sm:w-auto text-sm"
+              >
+                {retryEmailsLoading ? (
+                  <>
+                    <RefreshCw className="w-3 h-3 sm:w-4 sm:h-4 mr-2 animate-spin" />
+                    Retrying...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3 h-3 sm:w-4 sm:h-4 mr-2" />
+                    Retry Failed Emails ({failedEmails.length})
+                  </>
+                )}
               </Button>
             </div>
           </div>

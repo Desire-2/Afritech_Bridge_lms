@@ -432,12 +432,106 @@ export interface ApplicationSubmitData {
 
 export interface ApplicationStatistics {
   total_applications: number;
-  pending: number;
-  approved: number;
-  rejected: number;
-  waitlisted: number;
-  average_score: number;
-  by_course: Record<number, number>;
-  by_country: Record<string, number>;
-  by_excel_level: Record<string, number>;
+  status_breakdown: {
+    pending: number;
+    approved: number;
+    rejected: number;
+    waitlisted: number;
+  };
+  high_risk_count: number;
+  average_scores: {
+    application_score: number;
+    readiness_score: number;
+    commitment_score: number;
+    risk_score: number;
+  };
+}
+
+// Enhanced search types for application management
+export interface ApplicationSearchFilters {
+  // Basic filters
+  status?: string;
+  course_id?: number;
+  
+  // Enhanced search
+  search?: string;
+  
+  // Advanced filters
+  country?: string;
+  city?: string;
+  education_level?: string;
+  current_status?: string;
+  excel_skill_level?: string;
+  referral_source?: string;
+  
+  // Date range filters
+  date_from?: string;
+  date_to?: string;
+  
+  // Score filters
+  min_score?: number;
+  max_score?: number;
+  score_type?: 'application_score' | 'final_rank_score' | 'readiness_score' | 'commitment_score' | 'risk_score';
+  
+  // Sorting and pagination
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  page?: number;
+  per_page?: number;
+}
+
+export interface ApplicationSearchStatistics {
+  filter_options: {
+    countries: string[];
+    cities: string[];
+    education_levels: string[];
+    current_statuses: string[];
+    excel_skill_levels: string[];
+    referral_sources: string[];
+  };
+  status_counts: Record<string, number>;
+  score_statistics: Record<string, {
+    min: number;
+    max: number;
+    avg: number;
+  }>;
+  date_range: {
+    earliest: string | null;
+    latest: string | null;
+  };
+  total_applications: number;
+}
+
+export interface AdvancedSearchConfig {
+  text_search?: string;
+  filters?: Record<string, any>;
+  score_ranges?: Record<string, { min?: number; max?: number }>;
+  date_ranges?: {
+    created_from?: string;
+    created_to?: string;
+  };
+  sort_config?: {
+    field: string;
+    order: 'asc' | 'desc';
+  };
+  pagination?: {
+    page: number;
+    per_page: number;
+  };
+  include_analytics?: boolean;
+  save_search?: boolean;
+  search_name?: string;
+}
+
+export interface SimilarApplication extends CourseApplication {
+  similarity_score: number;
+  similarity_factors: string[];
+}
+
+export interface ApplicationExportConfig {
+  search_config?: any;
+  format?: 'excel' | 'csv';
+  fields?: string[];
+  include_analytics?: boolean;
+  filename?: string;
 }

@@ -1,6 +1,10 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
+import threading
+import uuid
+import logging
+from sqlalchemy import or_, func, and_
 from ..models.course_application import CourseApplication
 from ..models.user_models import db, User, Role
 from ..models.course_models import Enrollment
@@ -13,14 +17,15 @@ from ..utils.application_scoring import (
     evaluate_application,
 )
 from ..utils.user_utils import generate_username, generate_temp_password
-from ..utils.email_utils import send_email
+from ..utils.email_utils import send_email, send_email_with_bcc, send_emails_batch
 from ..utils.email_templates import (
     application_received_email,
     application_approved_email,
     application_rejected_email,
     application_waitlisted_email,
     application_status_pending_email,
-    application_status_withdrawn_email
+    application_status_withdrawn_email,
+    custom_application_email
 )
 import pandas as pd
 import io
@@ -35,6 +40,8 @@ logger = logging.getLogger(__name__)
 
 # In-memory task tracking (use Redis in production)
 bulk_action_tasks = {}
+custom_email_tasks = {}
+custom_email_tasks = {}
 
 application_bp = Blueprint(
     "application_bp", __name__, url_prefix="/api/v1/applications"
@@ -286,14 +293,194 @@ def apply_for_course():
         }), 500
 
 
-# 📋 List applications (Admin/Instructor)
+# � Advanced Application Search with Analytics
+@application_bp.route("/advanced-search", methods=["POST"])
+@jwt_required()
+def advanced_application_search():
+    """
+    Advanced search with complex queries and analytics.
+    Supports saved searches, query building, and result analytics.
+    """
+    data = request.get_json() or {}
+    
+    # Complex query builder
+    search_config = {
+        "text_search": data.get("text_search", ""),
+        "filters": data.get("filters", {}),
+        "score_ranges": data.get("score_ranges", {}),
+        "date_ranges": data.get("date_ranges", {}),
+        "sort_config": data.get("sort_config", {"field": "final_rank_score", "order": "desc"}),
+        "pagination": data.get("pagination", {"page": 1, "per_page": 50}),
+        "include_analytics": data.get("include_analytics", False),
+        "save_search": data.get("save_search", False),
+        "search_name": data.get("search_name", "")
+    }
+    
+    try:
+        # Build base query
+        query = CourseApplication.query
+        
+        # Apply text search with enhanced matching
+        if search_config["text_search"]:
+            text = search_config["text_search"].strip()
+            
+            if text:
+                # Create multiple search patterns for better matching
+                exact_pattern = f"%{text}%"
+                words = text.split()
+                
+                # Build search conditions
+                search_conditions = []
+                
+                # Exact phrase matching in all fields
+                exact_conditions = [
+                    CourseApplication.full_name.ilike(exact_pattern),
+                    CourseApplication.email.ilike(exact_pattern),
+                    CourseApplication.phone.ilike(exact_pattern),
+                    CourseApplication.motivation.ilike(exact_pattern),
+                    CourseApplication.field_of_study.ilike(exact_pattern),
+                    CourseApplication.learning_outcomes.ilike(exact_pattern),
+                    CourseApplication.career_impact.ilike(exact_pattern),
+                    CourseApplication.country.ilike(exact_pattern),
+                    CourseApplication.city.ilike(exact_pattern),
+                    CourseApplication.referral_source.ilike(exact_pattern)
+                ]
+                search_conditions.extend(exact_conditions)
+                
+                # Individual word matching for better results
+                if len(words) > 1:
+                    for word in words:
+                        if len(word) > 2:  # Skip short words
+                            word_pattern = f"%{word}%"
+                            word_conditions = [
+                                CourseApplication.full_name.ilike(word_pattern),
+                                CourseApplication.email.ilike(word_pattern),
+                                CourseApplication.motivation.ilike(word_pattern),
+                                CourseApplication.field_of_study.ilike(word_pattern),
+                                CourseApplication.country.ilike(word_pattern),
+                                CourseApplication.city.ilike(word_pattern)
+                            ]
+                            search_conditions.extend(word_conditions)
+                
+                query = query.filter(or_(*search_conditions))
+        
+        # Apply filters
+        filters = search_config.get("filters", {})
+        for field, value in filters.items():
+            if value and hasattr(CourseApplication, field):
+                column = getattr(CourseApplication, field)
+                if isinstance(value, str):
+                    query = query.filter(column.ilike(f"%{value}%"))
+                else:
+                    query = query.filter(column == value)
+        
+        # Apply score ranges
+        score_ranges = search_config.get("score_ranges", {})
+        for score_field, range_config in score_ranges.items():
+            if hasattr(CourseApplication, score_field):
+                column = getattr(CourseApplication, score_field)
+                if "min" in range_config:
+                    query = query.filter(column >= range_config["min"])
+                if "max" in range_config:
+                    query = query.filter(column <= range_config["max"])
+        
+        # Apply date ranges
+        date_ranges = search_config.get("date_ranges", {})
+        for date_field, range_config in date_ranges.items():
+            if hasattr(CourseApplication, date_field):
+                column = getattr(CourseApplication, date_field)
+                if "from" in range_config:
+                    from_date = datetime.strptime(range_config["from"], "%Y-%m-%d")
+                    query = query.filter(column >= from_date)
+                if "to" in range_config:
+                    to_date = datetime.strptime(range_config["to"], "%Y-%m-%d")
+                    to_date = to_date.replace(hour=23, minute=59, second=59)
+                    query = query.filter(column <= to_date)
+        
+        # Apply sorting
+        sort_config = search_config.get("sort_config", {})
+        sort_field = sort_config.get("field", "final_rank_score")
+        sort_order = sort_config.get("order", "desc")
+        
+        if hasattr(CourseApplication, sort_field):
+            column = getattr(CourseApplication, sort_field)
+            if sort_order == "asc":
+                query = query.order_by(column.asc())
+            else:
+                query = query.order_by(column.desc())
+        
+        # Pagination
+        page_config = search_config.get("pagination", {})
+        page = page_config.get("page", 1)
+        per_page = page_config.get("per_page", 50)
+        
+        pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        
+        # Convert results
+        applications_data = []
+        for app in pagination.items:
+            try:
+                applications_data.append(app.to_dict(include_sensitive=True))
+            except Exception as e:
+                logger.warning(f"Error converting application {app.id} to dict: {e}")
+                applications_data.append({
+                    "id": app.id,
+                    "full_name": app.full_name,
+                    "email": app.email,
+                    "status": app.status,
+                    "error": "Data validation error"
+                })
+        
+        result = {
+            "applications": applications_data,
+            "total": pagination.total,
+            "pages": pagination.pages,
+            "current_page": page,
+            "per_page": per_page,
+            "search_config": search_config
+        }
+        
+        # Add analytics if requested
+        if search_config.get("include_analytics"):
+            # Calculate search analytics
+            total_count = query.count()
+            result["analytics"] = {
+                "total_found": total_count,
+                "search_performance": {
+                    "query_complexity": len([k for k, v in search_config.items() if v]),
+                    "filters_applied": len(filters),
+                    "score_filters": len(score_ranges),
+                    "date_filters": len(date_ranges)
+                }
+            }
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        logger.error(f"Advanced search error: {str(e)}")
+        return jsonify({
+            "error": "Advanced search failed",
+            "details": str(e)
+        }), 500
+
+
+# 🔍 Basic Application Listing with Enhanced Search
 @application_bp.route("", methods=["GET"])
 @jwt_required()
 def list_applications():
     """
-    List and filter applications for a course.
-    Query params: course_id, status, sort_by, order
+    List and filter applications with enhanced search capabilities.
+    
+    Query params:
+    - Basic filters: course_id, status
+    - Text search: search (searches name, email, phone, motivation, field_of_study)
+    - Advanced filters: country, city, education_level, current_status, excel_skill_level, referral_source
+    - Date filters: date_from, date_to (YYYY-MM-DD format)
+    - Score filters: min_score, max_score, score_type (application_score, final_rank_score, etc.)
+    - Sorting: sort_by, order
+    - Pagination: page, per_page
     """
+    # Basic parameters
     course_id = request.args.get("course_id", type=int)
     status = request.args.get("status")
     sort_by = request.args.get("sort_by", "final_rank_score")
@@ -301,13 +488,158 @@ def list_applications():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 50, type=int)
     
+    # Enhanced search parameters
+    search_term = request.args.get("search", "").strip()
+    country = request.args.get("country")
+    city = request.args.get("city")
+    education_level = request.args.get("education_level")
+    current_status = request.args.get("current_status")
+    excel_skill_level = request.args.get("excel_skill_level")
+    referral_source = request.args.get("referral_source")
+    
+    # Date range filters
+    date_from = request.args.get("date_from")  # YYYY-MM-DD
+    date_to = request.args.get("date_to")      # YYYY-MM-DD
+    
+    # Score range filters
+    min_score = request.args.get("min_score", type=float)
+    max_score = request.args.get("max_score", type=float)
+    score_type = request.args.get("score_type", "final_rank_score")  # which score field to filter
+    
     query = CourseApplication.query
     
+    # Apply basic filters
     if course_id:
         query = query.filter_by(course_id=course_id)
     
     if status:
         query = query.filter_by(status=status)
+    
+    # Apply enhanced text search across multiple fields with exact match priority
+    if search_term:
+        text = search_term.strip()
+        
+        if text:
+            # Create search patterns with different priorities
+            exact_match_conditions = [
+                CourseApplication.full_name.ilike(text),  # Exact match
+                CourseApplication.email.ilike(text)       # Exact email match
+            ]
+            
+            starts_with_conditions = [
+                CourseApplication.full_name.ilike(f"{text}%"),  # Starts with
+                CourseApplication.email.ilike(f"{text}%")       # Email starts with
+            ]
+            
+            word_boundary_conditions = [
+                CourseApplication.full_name.ilike(f"% {text} %"),  # Word boundaries
+                CourseApplication.full_name.ilike(f"{text} %"),    # Starts with word
+                CourseApplication.full_name.ilike(f"% {text}")     # Ends with word
+            ]
+            
+            partial_match_conditions = [
+                CourseApplication.full_name.ilike(f"%{text}%"),
+                CourseApplication.email.ilike(f"%{text}%"),
+                CourseApplication.phone.ilike(f"%{text}%"),
+                CourseApplication.motivation.ilike(f"%{text}%"),
+                CourseApplication.field_of_study.ilike(f"%{text}%"),
+                CourseApplication.learning_outcomes.ilike(f"%{text}%"),
+                CourseApplication.career_impact.ilike(f"%{text}%"),
+                CourseApplication.country.ilike(f"%{text}%"),
+                CourseApplication.city.ilike(f"%{text}%"),
+                CourseApplication.referral_source.ilike(f"%{text}%")
+            ]
+            
+            # Combine all conditions with OR
+            all_conditions = exact_match_conditions + starts_with_conditions + word_boundary_conditions + partial_match_conditions
+            
+            # Individual word matching for multi-word searches
+            words = text.split()
+            if len(words) > 1:
+                for word in words:
+                    if len(word) > 2:  # Skip short words
+                        word_pattern = f"%{word}%"
+                        word_conditions = [
+                            CourseApplication.full_name.ilike(word_pattern),
+                            CourseApplication.email.ilike(word_pattern),
+                            CourseApplication.motivation.ilike(word_pattern),
+                            CourseApplication.field_of_study.ilike(word_pattern),
+                            CourseApplication.country.ilike(word_pattern),
+                            CourseApplication.city.ilike(word_pattern)
+                        ]
+                        all_conditions.extend(word_conditions)
+            
+            query = query.filter(or_(*all_conditions))
+            
+            # Add custom ordering to prioritize exact matches
+            # Using CASE WHEN to create a relevance score
+            relevance_score = func.case(
+                (CourseApplication.full_name.ilike(text), 1000),  # Exact name match - highest priority
+                (CourseApplication.email.ilike(text), 900),       # Exact email match
+                (CourseApplication.full_name.ilike(f"{text}%"), 800),  # Name starts with
+                (CourseApplication.email.ilike(f"{text}%"), 700),      # Email starts with
+                (CourseApplication.full_name.ilike(f"% {text} %"), 600), # Word boundary
+                else_=0
+            )
+            
+            # Apply this relevance ordering before other sorting
+            query = query.order_by(relevance_score.desc())
+    
+    # Apply advanced filters
+    if country:
+        query = query.filter(CourseApplication.country.ilike(f"%{country}%"))
+    
+    if city:
+        query = query.filter(CourseApplication.city.ilike(f"%{city}%"))
+    
+    if education_level:
+        query = query.filter_by(education_level=education_level)
+    
+    if current_status:
+        query = query.filter_by(current_status=current_status)
+    
+    if excel_skill_level:
+        query = query.filter_by(excel_skill_level=excel_skill_level)
+    
+    if referral_source:
+        query = query.filter(CourseApplication.referral_source.ilike(f"%{referral_source}%"))
+    
+    # Apply date range filters
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d")
+            query = query.filter(CourseApplication.created_at >= from_date)
+        except ValueError:
+            return jsonify({"error": "Invalid date_from format. Use YYYY-MM-DD"}), 400
+    
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d")
+            # Include the entire day
+            to_date = to_date.replace(hour=23, minute=59, second=59)
+            query = query.filter(CourseApplication.created_at <= to_date)
+        except ValueError:
+            return jsonify({"error": "Invalid date_to format. Use YYYY-MM-DD"}), 400
+    
+    # Apply score range filters
+    if min_score is not None or max_score is not None:
+        valid_score_fields = [
+            "application_score", "final_rank_score", "readiness_score", 
+            "commitment_score", "risk_score"
+        ]
+        
+        if score_type not in valid_score_fields:
+            return jsonify({
+                "error": f"Invalid score_type. Must be one of: {valid_score_fields}"
+            }), 400
+        
+        score_column = getattr(CourseApplication, score_type)
+        
+        if min_score is not None:
+            query = query.filter(score_column >= min_score)
+        
+        if max_score is not None:
+            query = query.filter(score_column <= max_score)
     
     # Map frontend field names to backend column names
     sort_field_map = {
@@ -317,15 +649,17 @@ def list_applications():
     sort_by = sort_field_map.get(sort_by, sort_by)
     
     # Apply sorting with fallback to final_rank_score
-    try:
-        sort_column = getattr(CourseApplication, sort_by, CourseApplication.final_rank_score)
-    except AttributeError:
-        sort_column = CourseApplication.final_rank_score
-        
-    if order == "asc":
-        query = query.order_by(sort_column.asc())
-    else:
-        query = query.order_by(sort_column.desc())
+    # Note: If search_term was provided, relevance ordering is already applied
+    if not search_term or sort_by != "final_rank_score":  # Allow custom sorting even with search
+        try:
+            sort_column = getattr(CourseApplication, sort_by, CourseApplication.final_rank_score)
+        except AttributeError:
+            sort_column = CourseApplication.final_rank_score
+            
+        if order == "asc":
+            query = query.order_by(sort_column.asc())
+        else:
+            query = query.order_by(sort_column.desc())
     
     # Paginate
     try:
@@ -362,16 +696,240 @@ def list_applications():
         return jsonify({"error": str(e)}), 500
 
 
-# 🔍 Get single application details
-@application_bp.route("/<int:app_id>", methods=["GET"])
+# 🔍 Test search functionality with debug information
+@application_bp.route("/search-debug", methods=["POST"])
 @jwt_required()
-def get_application(app_id):
-    """Get detailed information about a specific application"""
-    application = CourseApplication.query.get_or_404(app_id)
-    return jsonify(application.to_dict(include_sensitive=True)), 200
+def debug_search():
+    """
+    Debug search functionality - returns search details and results
+    """
+    data = request.get_json() or {}
+    search_term = data.get("search", "").strip()
+    
+    if not search_term:
+        return jsonify({"error": "Search term is required"}), 400
+    
+    debug_info = {
+        "search_term": search_term,
+        "search_patterns": [],
+        "fields_searched": [
+            "full_name", "email", "phone", "motivation", 
+            "field_of_study", "learning_outcomes", "career_impact",
+            "country", "city", "referral_source"
+        ],
+        "word_breakdown": search_term.split(),
+        "query_details": []
+    }
+    
+    # Build query with debug tracking
+    query = CourseApplication.query
+    
+    if search_term:
+        exact_pattern = f"%{search_term}%"
+        debug_info["search_patterns"].append({"type": "exact", "pattern": exact_pattern})
+        
+        words = search_term.split()
+        search_conditions = []
+        
+        # Exact phrase matching
+        exact_conditions = [
+            CourseApplication.full_name.ilike(exact_pattern),
+            CourseApplication.email.ilike(exact_pattern),
+            CourseApplication.phone.ilike(exact_pattern),
+            CourseApplication.motivation.ilike(exact_pattern),
+            CourseApplication.field_of_study.ilike(exact_pattern),
+            CourseApplication.learning_outcomes.ilike(exact_pattern),
+            CourseApplication.career_impact.ilike(exact_pattern),
+            CourseApplication.country.ilike(exact_pattern),
+            CourseApplication.city.ilike(exact_pattern),
+            CourseApplication.referral_source.ilike(exact_pattern)
+        ]
+        search_conditions.extend(exact_conditions)
+        debug_info["query_details"].append(f"Added {len(exact_conditions)} exact match conditions")
+        
+        # Individual word matching
+        if len(words) > 1:
+            for word in words:
+                if len(word) > 2:
+                    word_pattern = f"%{word}%"
+                    debug_info["search_patterns"].append({"type": "word", "word": word, "pattern": word_pattern})
+                    word_conditions = [
+                        CourseApplication.full_name.ilike(word_pattern),
+                        CourseApplication.email.ilike(word_pattern),
+                        CourseApplication.motivation.ilike(word_pattern),
+                        CourseApplication.field_of_study.ilike(word_pattern),
+                        CourseApplication.country.ilike(word_pattern),
+                        CourseApplication.city.ilike(word_pattern)
+                    ]
+                    search_conditions.extend(word_conditions)
+                    debug_info["query_details"].append(f"Added {len(word_conditions)} conditions for word: '{word}'")
+        
+        query = query.filter(or_(*search_conditions))
+        debug_info["total_conditions"] = len(search_conditions)
+    
+    # Execute query
+    try:
+        applications = query.limit(10).all()  # Limit for debug
+        debug_info["results_count"] = len(applications)
+        debug_info["total_applications"] = CourseApplication.query.count()
+        
+        # Return matched fields for each result
+        results = []
+        for app in applications:
+            matched_fields = []
+            app_dict = app.to_dict(include_sensitive=True)
+            
+            # Check which fields matched
+            for field in debug_info["fields_searched"]:
+                if hasattr(app, field):
+                    field_value = str(getattr(app, field) or "")
+                    if search_term.lower() in field_value.lower():
+                        matched_fields.append({
+                            "field": field,
+                            "value": field_value[:100] + "..." if len(field_value) > 100 else field_value,
+                            "match_type": "exact"
+                        })
+                    else:
+                        # Check word matches
+                        for word in search_term.split():
+                            if len(word) > 2 and word.lower() in field_value.lower():
+                                matched_fields.append({
+                                    "field": field,
+                                    "value": field_value[:100] + "..." if len(field_value) > 100 else field_value,
+                                    "match_type": "word",
+                                    "matched_word": word
+                                })
+                                break
+            
+            results.append({
+                "id": app.id,
+                "full_name": app.full_name,
+                "email": app.email,
+                "matched_fields": matched_fields
+            })
+        
+        debug_info["sample_results"] = results
+        
+        return jsonify({
+            "debug": debug_info,
+            "message": "Search debug completed successfully"
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "debug": debug_info
+        }), 500
 
 
-# 🔄 Change application status
+# � Enhanced Search Statistics
+@application_bp.route("/search-stats", methods=["GET"])
+@jwt_required()
+def get_search_statistics():
+    """
+    Get statistics for enhanced search functionality.
+    Provides filter options and counts for the search UI.
+    """
+    course_id = request.args.get("course_id", type=int)
+    
+    try:
+        # Base query
+        base_query = CourseApplication.query
+        if course_id:
+            base_query = base_query.filter_by(course_id=course_id)
+        
+        # Get unique values for filter dropdowns
+        countries = db.session.query(CourseApplication.country).distinct().filter(
+            CourseApplication.country.isnot(None)
+        )
+        if course_id:
+            countries = countries.filter_by(course_id=course_id)
+        countries = [c[0] for c in countries.all() if c[0]]
+        
+        cities = db.session.query(CourseApplication.city).distinct().filter(
+            CourseApplication.city.isnot(None)
+        )
+        if course_id:
+            cities = cities.filter_by(course_id=course_id)
+        cities = [c[0] for c in cities.all() if c[0]]
+        
+        # Get enum values for dropdowns
+        education_levels = ["high_school", "diploma", "bachelors", "masters", "phd", "other"]
+        current_statuses = ["student", "employed", "self_employed", "unemployed", "freelancer", "other"]
+        excel_skill_levels = ["never_used", "beginner", "intermediate", "advanced", "expert"]
+        application_statuses = ["pending", "approved", "rejected", "waitlisted"]
+        
+        # Get referral sources
+        referral_sources = db.session.query(CourseApplication.referral_source).distinct().filter(
+            CourseApplication.referral_source.isnot(None)
+        )
+        if course_id:
+            referral_sources = referral_sources.filter_by(course_id=course_id)
+        referral_sources = [r[0] for r in referral_sources.all() if r[0]]
+        
+        # Get status counts
+        status_counts = {}
+        for status in application_statuses:
+            count_query = base_query.filter_by(status=status)
+            status_counts[status] = count_query.count()
+        
+        # Get score ranges
+        score_stats = {}
+        score_fields = ["application_score", "final_rank_score", "readiness_score", "commitment_score", "risk_score"]
+        
+        for field in score_fields:
+            column = getattr(CourseApplication, field)
+            result = db.session.query(
+                func.min(column).label('min'),
+                func.max(column).label('max'),
+                func.avg(column).label('avg')
+            ).filter(
+                column.isnot(None)
+            )
+            
+            if course_id:
+                result = result.filter_by(course_id=course_id)
+                
+            stats = result.first()
+            score_stats[field] = {
+                "min": float(stats.min) if stats.min is not None else 0,
+                "max": float(stats.max) if stats.max is not None else 100,
+                "avg": float(stats.avg) if stats.avg is not None else 50
+            }
+        
+        # Get date range
+        date_range = db.session.query(
+            func.min(CourseApplication.created_at).label('earliest'),
+            func.max(CourseApplication.created_at).label('latest')
+        )
+        if course_id:
+            date_range = date_range.filter_by(course_id=course_id)
+        
+        date_stats = date_range.first()
+        
+        return jsonify({
+            "filter_options": {
+                "countries": sorted(countries),
+                "cities": sorted(cities),
+                "education_levels": education_levels,
+                "current_statuses": current_statuses,
+                "excel_skill_levels": excel_skill_levels,
+                "referral_sources": sorted(referral_sources)
+            },
+            "status_counts": status_counts,
+            "score_statistics": score_stats,
+            "date_range": {
+                "earliest": date_stats.earliest.isoformat() if date_stats.earliest else None,
+                "latest": date_stats.latest.isoformat() if date_stats.latest else None
+            },
+            "total_applications": base_query.count()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting search statistics: {e}")
+        return jsonify({"error": "Failed to get search statistics"}), 500
+
+# �🔄 Change application status
 @application_bp.route("/<int:app_id>/status", methods=["PUT"])
 @jwt_required()
 def change_application_status(app_id):
@@ -907,10 +1465,10 @@ def get_statistics():
         },
         "high_risk_count": high_risk,
         "average_scores": {
-            "application_score": round(avg_scores.avg_app_score or 0, 2),
-            "readiness_score": round(avg_scores.avg_readiness or 0, 2),
-            "commitment_score": round(avg_scores.avg_commitment or 0, 2),
-            "risk_score": round(avg_scores.avg_risk or 0, 2),
+            "application_score": float(round(avg_scores.avg_app_score or 0, 2)),
+            "readiness_score": float(round(avg_scores.avg_readiness or 0, 2)),
+            "commitment_score": float(round(avg_scores.avg_commitment or 0, 2)),
+            "risk_score": float(round(avg_scores.avg_risk or 0, 2)),
         }
     }), 200
 
@@ -1625,3 +2183,739 @@ def _bulk_waitlist_application(application, custom_message, admin_id, send_email
     except Exception as e:
         logger.error(f"Error in bulk waitlist: {str(e)}")
         return False, str(e)
+
+
+# ✅ Custom Email to Applicants (Admin Only) - Background Processing
+@application_bp.route("/send-custom-email", methods=["POST"])
+@jwt_required()
+def send_custom_email():
+    """
+    Start a custom email sending task in the background.
+    Returns immediately with a task ID that can be polled for status.
+    
+    Request body:
+    {
+        "subject": "Email subject",
+        "message": "Email message body",
+        "course_id": 1,  // Optional: filter by specific course
+        "status_filter": "pending",  // Optional: filter by status
+        "include_all": true  // If true, send to all applicants
+    }
+    
+    Response (Immediate):
+    {
+        "task_id": "uuid",
+        "message": "Custom email task started in background",
+        "status_url": "/api/v1/applications/custom-email/{task_id}/status",
+        "total_applications": 25,
+        "estimated_time": "1-3 minutes"
+    }
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name != "admin":
+        return jsonify({"error": "Unauthorized. Admin access required."}), 403
+    
+    data = request.get_json() or {}
+    subject = data.get("subject", "").strip()
+    message = data.get("message", "").strip()
+    course_id = data.get("course_id")
+    status_filter = data.get("status_filter")
+    include_all = data.get("include_all", False)
+    
+    if not subject or not message:
+        return jsonify({"error": "Subject and message are required"}), 400
+    
+    try:
+        # Build query for applications (same as before)
+        query = CourseApplication.query
+        
+        if not include_all:
+            if course_id:
+                query = query.filter(CourseApplication.course_id == course_id)
+            if status_filter:
+                query = query.filter(CourseApplication.status == status_filter)
+        
+        applications = query.all()
+        
+        if not applications:
+            return jsonify({"error": "No applications found matching the criteria"}), 404
+        
+        # Generate unique task ID
+        task_id = str(uuid.uuid4())
+        
+        # Initialize task tracking
+        custom_email_tasks[task_id] = {
+            "status": "started",
+            "progress": {"processed": 0, "total": len(applications)},
+            "results": {
+                "sent_count": 0,
+                "failed_count": 0,
+                "total_applications": len(applications),
+                "failed_emails": []
+            },
+            "started_at": datetime.utcnow().isoformat(),
+            "admin_id": current_user_id
+        }
+        
+        # Start background task with proper Flask app context
+        application_ids = [app.id for app in applications]
+        
+        try:
+            # Pass the current Flask app context to background thread
+            from flask import current_app
+            thread = threading.Thread(
+                target=process_custom_email_task,
+                args=(task_id, application_ids, subject, message, current_user_id, current_app._get_current_object())
+            )
+            thread.daemon = True
+            thread.start()
+            logger.info(f"🚀 Started background thread for task {task_id}")
+        except Exception as thread_error:
+            logger.error(f"❌ Failed to start background thread: {str(thread_error)}")
+            custom_email_tasks[task_id]["status"] = "failed"
+            custom_email_tasks[task_id]["error"] = f"Failed to start background thread: {str(thread_error)}"
+            return jsonify({"error": f"Failed to start background thread: {str(thread_error)}"}), 500
+        
+        # Return immediate response
+        return jsonify({
+            "task_id": task_id,
+            "message": "Custom email task started in background",
+            "status_url": f"/api/v1/applications/custom-email/{task_id}/status",
+            "total_applications": len(applications),
+            "estimated_time": "1-3 minutes"
+        }), 202  # 202 Accepted
+        
+    except Exception as e:
+        logger.error(f"Error starting custom email task: {str(e)}")
+        return jsonify({"error": f"Failed to start custom email task: {str(e)}"}), 500
+
+
+# ✅ Custom Email Task Status (Admin Only)
+@application_bp.route("/custom-email/<task_id>/status", methods=["GET"])
+@jwt_required()
+def get_custom_email_task_status(task_id):
+    """
+    Get the status of a custom email background task
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ["admin"]:
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    task = custom_email_tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    
+    # Add debug logging
+    logger.info(f"🔍 Task {task_id} status check: {task.get('status')}, progress: {task.get('progress')}")
+    
+    response = {
+        "task_id": task_id,
+        "status": task["status"],
+        "progress": task["progress"]
+    }
+    
+    if task.get("status") == "completed":
+        response["results"] = task.get("results", {})
+        logger.info(f"📋 Task {task_id} completed with results: {task.get('results', {})}")
+    
+    if task.get("status") == "failed":
+        response["error"] = task.get("error")
+    
+    return jsonify(response), 200
+
+
+# 🐛 Debug endpoint to see all tasks (Admin Only - for debugging)
+@application_bp.route("/custom-email/debug/all-tasks", methods=["GET"])
+@jwt_required()
+def debug_all_custom_email_tasks():
+    """
+    Debug endpoint to see all active custom email tasks
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ["admin"]:
+        return jsonify({"error": "Unauthorized"}), 403
+    
+    return jsonify({
+        "total_tasks": len(custom_email_tasks),
+        "tasks": custom_email_tasks
+    }), 200
+
+
+def process_custom_email_task(task_id, application_ids, subject, message, admin_id, app_instance):
+    """
+    Process custom email sending in background with proper Flask context
+    """
+    import time
+    from flask import current_app
+    
+    logger.info(f"🎯 BACKGROUND THREAD STARTED: Task {task_id} with {len(application_ids)} applications")
+    
+    # Initialize counters
+    sent_count = 0
+    failed_count = 0
+    failed_emails = []
+    
+    try:
+        # Get the Flask app from the main module
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        from main import app as flask_app
+        
+        # Create proper Flask application context
+        with flask_app.app_context():
+            logger.info(f"🌐 Flask context created successfully for task {task_id}")
+            
+            # Update task status to processing
+            custom_email_tasks[task_id]["status"] = "processing"
+            logger.info(f"📝 Task {task_id} status updated to 'processing'")
+            
+            # Import models inside the Flask context
+            from ..models.course_application import CourseApplication
+            from ..models.user_models import db
+            
+            try:
+                # Re-query applications with fresh database session
+                applications = CourseApplication.query.filter(
+                    CourseApplication.id.in_(application_ids)
+                ).all()
+                
+                logger.info(f"📄 Retrieved {len(applications)} applications from database for task {task_id}")
+                
+                if not applications:
+                    raise Exception("No applications found in database")
+                
+                # Split applications: first 10 get individual emails, rest get BCC
+                direct_applications = applications[:10]
+                bcc_applications = applications[10:]
+                
+                logger.info(f"📧 Processing emails: {len(direct_applications)} individual, {len(bcc_applications)} BCC")
+                
+                # Process individual emails first
+                direct_emails_data = []
+                for i, app in enumerate(direct_applications):
+                    try:
+                        recipient_name = app.full_name or "Applicant"
+                        email_content = custom_application_email(
+                            recipient_name=recipient_name,
+                            subject=subject,
+                            message=message
+                        )
+                        
+                        direct_emails_data.append({
+                            'email': app.email,
+                            'template': email_content,
+                            'recipient_name': recipient_name,
+                            'application_id': app.id
+                        })
+                        
+                        # Update progress incrementally
+                        processed = i + 1
+                        custom_email_tasks[task_id]["progress"]["processed"] = processed
+                        logger.info(f"📈 Progress: {processed}/{len(applications)} for task {task_id}")
+                        
+                        # Small delay to prevent overwhelming
+                        time.sleep(0.1)
+                        
+                    except Exception as prep_error:
+                        logger.error(f"❌ Error preparing email for {app.email}: {str(prep_error)}")
+                        failed_emails.append({
+                            "email": app.email,
+                            "recipient_name": app.full_name or "Applicant",
+                            "error": f"Email preparation failed: {str(prep_error)}",
+                            "application_id": app.id
+                        })
+                        failed_count += 1
+                
+                # Send individual emails using batch function with enhanced error handling
+                if direct_emails_data:
+                    try:
+                        successful_emails, failed_email_details = send_emails_batch(
+                            direct_emails_data, subject, retries=3
+                        )
+                        
+                        sent_count += len(successful_emails)
+                        failed_count += len(failed_email_details)
+                        failed_emails.extend(failed_email_details)
+                        
+                        logger.info(f"📧 Individual emails: {len(successful_emails)} sent, {len(failed_email_details)} failed")
+                        
+                    except Exception as batch_error:
+                        logger.error(f"❌ Batch email error: {str(batch_error)}")
+                        # Mark all direct emails as failed
+                        for email_data in direct_emails_data:
+                            failed_emails.append({
+                                "email": email_data['email'],
+                                "recipient_name": email_data['recipient_name'],
+                                "error": f"Batch sending failed: {str(batch_error)}",
+                                "application_id": email_data['application_id']
+                            })
+                        failed_count += len(direct_emails_data)
+                
+                # Update progress after individual emails
+                custom_email_tasks[task_id]["progress"]["processed"] = len(direct_applications)
+                
+                # Process BCC emails if any
+                if bcc_applications:
+                    try:
+                        bcc_emails = [app.email for app in bcc_applications]
+                        logger.info(f"📧 Sending BCC email to {len(bcc_emails)} recipients")
+                        
+                        # Use a generic name for BCC email
+                        email_content = custom_application_email(
+                            recipient_name="Applicant",
+                            subject=subject,
+                            message=message
+                        )
+                        
+                        # Use first BCC email as primary recipient for better delivery
+                        primary_recipient = bcc_emails[0]
+                        remaining_bcc = bcc_emails[1:] if len(bcc_emails) > 1 else []
+                        
+                        success = send_email_with_bcc(
+                            to=[primary_recipient],
+                            bcc=remaining_bcc,
+                            subject=subject,
+                            template=email_content
+                        )
+                        
+                        if success:
+                            sent_count += len(bcc_applications)
+                            logger.info(f"✅ BCC custom email sent to {len(bcc_applications)} recipients")
+                        else:
+                            failed_count += len(bcc_applications)
+                            for app in bcc_applications:
+                                failed_emails.append({
+                                    "email": app.email,
+                                    "recipient_name": app.full_name or "Applicant",
+                                    "error": "BCC email delivery failed",
+                                    "application_id": app.id
+                                })
+                            logger.error(f"❌ Failed to send BCC custom email")
+                            
+                    except Exception as bcc_error:
+                        logger.error(f"❌ BCC email error: {str(bcc_error)}")
+                        failed_count += len(bcc_applications)
+                        for app in bcc_applications:
+                            failed_emails.append({
+                                "email": app.email,
+                                "recipient_name": app.full_name or "Applicant",
+                                "error": f"BCC email failed: {str(bcc_error)}",
+                                "application_id": app.id
+                            })
+                
+                # Update final progress
+                custom_email_tasks[task_id]["progress"]["processed"] = len(applications)
+                
+                # Mark task as completed
+                custom_email_tasks[task_id]["status"] = "completed"
+                custom_email_tasks[task_id]["results"] = {
+                    "sent_count": sent_count,
+                    "failed_count": failed_count,
+                    "total_applications": len(applications),
+                    "failed_emails": failed_emails
+                }
+                custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+                
+                logger.info(f"✅ Custom email task {task_id} completed: {sent_count} sent, {failed_count} failed")
+                logger.info(f"💾 Task results stored: {len(failed_emails)} failed emails recorded")
+                
+            except Exception as db_error:
+                logger.error(f"❌ Database error in task {task_id}: {str(db_error)}")
+                custom_email_tasks[task_id]["status"] = "failed"
+                custom_email_tasks[task_id]["error"] = f"Database error: {str(db_error)}"
+                custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+                
+    except Exception as context_error:
+        logger.error(f"❌ Flask context error for task {task_id}: {str(context_error)}")
+        custom_email_tasks[task_id]["status"] = "failed"
+        custom_email_tasks[task_id]["error"] = f"Flask context error: {str(context_error)}"
+        custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+    """
+    Process custom email sending in background
+    """
+    from ..models.course_application import CourseApplication
+    
+    logger.info(f"🎯 BACKGROUND THREAD STARTED: Task {task_id} with {len(application_ids)} applications")
+    
+    # Create Flask application context using the passed app instance
+    try:
+        with app_instance.app_context():
+            logger.info(f"🌐 Flask context created successfully for task {task_id}")
+            
+            logger.info(f"🎯 Starting custom email task {task_id} for {len(application_ids)} applications")
+            
+            # Update task status
+            custom_email_tasks[task_id]["status"] = "processing"
+            logger.info(f"📝 Task {task_id} status updated to 'processing'")
+            
+            # Re-query applications in the new context
+            applications = CourseApplication.query.filter(CourseApplication.id.in_(application_ids)).all()
+            logger.info(f"🔄 Re-queried {len(applications)} applications for task {task_id}")
+            
+            sent_count = 0
+            failed_count = 0
+            failed_emails = []
+            
+            # Split applications: first 10 get individual emails, rest get BCC
+            direct_applications = applications[:10]
+            bcc_applications = applications[10:]
+            
+            # Process individual emails first
+            direct_emails_data = []
+            for i, app in enumerate(direct_applications):
+                recipient_name = app.full_name or "Applicant"
+                email_content = custom_application_email(
+                    recipient_name=recipient_name,
+                    subject=subject,
+                    message=message
+                )
+                direct_emails_data.append({
+                    'email': app.email,
+                    'template': email_content,
+                    'recipient_name': recipient_name,
+                    'application_id': app.id
+                })
+            
+            logger.info(f"📧 Processing {len(direct_emails_data)} direct emails for task {task_id}")
+            
+            # Send individual emails using batch function
+            successful_emails, failed_email_details = send_emails_batch(
+                direct_emails_data, subject, retries=3
+            )
+            
+            sent_count = len(successful_emails)
+            failed_count = len(failed_email_details)
+            failed_emails = failed_email_details
+            
+            # Update progress after direct emails
+            custom_email_tasks[task_id]["progress"]["processed"] = len(direct_applications)
+            logger.info(f"📈 Updated progress for task {task_id}: {len(direct_applications)}/{len(applications)} processed")
+            
+            # Process BCC emails if any
+            if bcc_applications:
+                try:
+                    bcc_emails = [app.email for app in bcc_applications]
+                    
+                    # Use a generic name for BCC email
+                    email_content = custom_application_email(
+                        recipient_name="Applicant",
+                        subject=subject,
+                        message=message
+                    )
+                    
+                    # Use first BCC email as primary recipient
+                    primary_recipient = bcc_emails[0]
+                    remaining_bcc = bcc_emails[1:] if len(bcc_emails) > 1 else []
+                    
+                    success = send_email_with_bcc(
+                        to=[primary_recipient],
+                        bcc=remaining_bcc,
+                        subject=subject,
+                        template=email_content
+                    )
+                    
+                    if success:
+                        sent_count += len(bcc_applications)
+                        logger.info(f"✅ BCC custom email sent to {len(bcc_applications)} recipients")
+                    else:
+                        failed_count += len(bcc_applications)
+                        for app in bcc_applications:
+                            failed_emails.append({
+                                "email": app.email,
+                                "recipient_name": app.full_name or "Applicant",
+                                "error": "BCC email failed",
+                                "application_id": app.id
+                            })
+                        logger.error(f"❌ Failed to send BCC custom email")
+                        
+                except Exception as email_error:
+                    failed_count += len(bcc_applications)
+                    for app in bcc_applications:
+                        failed_emails.append({
+                            "email": app.email,
+                            "recipient_name": app.full_name or "Applicant",
+                            "error": str(email_error),
+                            "application_id": app.id
+                        })
+                    logger.error(f"❌ Error sending BCC custom email: {str(email_error)}")
+            
+            # Update final progress
+            custom_email_tasks[task_id]["progress"]["processed"] = len(applications)
+            logger.info(f"📊 Final progress update for task {task_id}: {len(applications)}/{len(applications)} processed")
+            
+            # Mark task as completed
+            custom_email_tasks[task_id]["status"] = "completed"
+            custom_email_tasks[task_id]["results"] = {
+                "sent_count": sent_count,
+                "failed_count": failed_count,
+                "total_applications": len(applications),
+                "failed_emails": failed_emails
+            }
+            custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+            
+            logger.info(f"✅ Custom email task {task_id} completed: {sent_count} sent, {failed_count} failed")
+            logger.info(f"💾 Task results stored: {len(failed_emails)} failed emails recorded")
+            
+    except Exception as e:
+        logger.error(f"❌ Custom email task {task_id} failed: {str(e)}")
+        custom_email_tasks[task_id]["status"] = "failed"
+        custom_email_tasks[task_id]["error"] = str(e)
+        custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+
+
+# ✅ Retry Failed Custom Emails (Admin Only)
+@application_bp.route("/retry-failed-emails", methods=["POST"])
+@jwt_required()
+def retry_failed_emails():
+    """
+    Retry sending emails to previously failed recipients
+    
+    Request body:
+    {
+        "failed_emails": [
+            {
+                "email": "user@example.com",
+                "recipient_name": "John Doe",
+                "application_id": 123
+            }
+        ],
+        "subject": "Email subject",
+        "message": "Email message body"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "message": "Retry completed",
+        "sent_count": 10,
+        "failed_count": 2,
+        "total_retried": 12,
+        "still_failed": [...],
+        "newly_successful": [...]
+    }
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name != "admin":
+        return jsonify({"error": "Unauthorized. Admin access required."}), 403
+    
+    data = request.get_json() or {}
+    failed_emails_data = data.get("failed_emails", [])
+    subject = data.get("subject", "").strip()
+    message = data.get("message", "").strip()
+    
+    if not failed_emails_data or not subject or not message:
+        return jsonify({"error": "Failed emails list, subject, and message are required"}), 400
+    
+    try:
+        # Prepare email data for retry
+        retry_emails_data = []
+        for failed_email in failed_emails_data:
+            email = failed_email.get("email")
+            recipient_name = failed_email.get("recipient_name", "Applicant")
+            
+            if not email:
+                continue
+                
+            email_content = custom_application_email(
+                recipient_name=recipient_name,
+                subject=subject,
+                message=message
+            )
+            
+            retry_emails_data.append({
+                'email': email,
+                'template': email_content,
+                'recipient_name': recipient_name,
+                'application_id': failed_email.get('application_id')
+            })
+        
+        if not retry_emails_data:
+            return jsonify({"error": "No valid email addresses to retry"}), 400
+        
+        # Generate unique task ID for retry
+        task_id = str(uuid.uuid4())
+        
+        # Initialize retry task tracking
+        custom_email_tasks[task_id] = {
+            "status": "started",
+            "progress": {"processed": 0, "total": len(retry_emails_data)},
+            "results": {
+                "sent_count": 0,
+                "failed_count": 0,
+                "total_retried": len(retry_emails_data),
+                "newly_successful": [],
+                "still_failed": []
+            },
+            "started_at": datetime.utcnow().isoformat(),
+            "admin_id": current_user_id,
+            "task_type": "retry_emails"
+        }
+        
+        # Start background retry task
+        try:
+            thread = threading.Thread(
+                target=process_retry_email_task,
+                args=(task_id, retry_emails_data, subject, current_user_id, current_app._get_current_object())
+            )
+            thread.daemon = True
+            thread.start()
+            logger.info(f"🚀 Started retry email thread for task {task_id}")
+        except Exception as thread_error:
+            logger.error(f"❌ Failed to start retry thread: {str(thread_error)}")
+            custom_email_tasks[task_id]["status"] = "failed"
+            custom_email_tasks[task_id]["error"] = f"Failed to start background thread: {str(thread_error)}"
+            return jsonify({"error": f"Failed to start background thread: {str(thread_error)}"}), 500
+        
+        # Return immediate response
+        return jsonify({
+            "task_id": task_id,
+            "message": "Email retry task started in background",
+            "status_url": f"/api/v1/applications/custom-email/{task_id}/status",
+            "total_emails": len(retry_emails_data),
+            "estimated_time": "30-60 seconds"
+        }), 202  # 202 Accepted
+        
+    except Exception as e:
+        logger.error(f"Error retrying failed emails: {str(e)}")
+        return jsonify({"error": f"Failed to retry emails: {str(e)}"}), 500
+
+
+def process_retry_email_task(task_id, retry_emails_data, subject, admin_id, app_instance):
+    """
+    Process email retry in background
+    """
+    from ..models.user_models import db
+    
+    logger.info(f"🔄 RETRY THREAD STARTED: Task {task_id} with {len(retry_emails_data)} emails")
+    
+    # Create Flask application context
+    try:
+        with app_instance.app_context():
+            logger.info(f"🌐 Flask context created for retry task {task_id}")
+            
+            # Update task status
+            custom_email_tasks[task_id]["status"] = "processing"
+            logger.info(f"📝 Retry task {task_id} status updated to 'processing'")
+            
+            # Retry sending emails with enhanced retry logic
+            successful_emails, still_failed = send_emails_batch(
+                retry_emails_data, subject, retries=5  # More retries for failed emails
+            )
+            
+            # Update task progress
+            custom_email_tasks[task_id]["progress"]["processed"] = len(retry_emails_data)
+            
+            # Mark task as completed
+            custom_email_tasks[task_id]["status"] = "completed"
+            custom_email_tasks[task_id]["results"] = {
+                "sent_count": len(successful_emails),
+                "failed_count": len(still_failed),
+                "total_retried": len(retry_emails_data),
+                "newly_successful": successful_emails,
+                "still_failed": still_failed
+            }
+            custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+            
+            logger.info(f"✅ Retry task {task_id} completed: {len(successful_emails)} successful, {len(still_failed)} still failed")
+            
+    except Exception as e:
+        logger.error(f"❌ Retry task {task_id} failed: {str(e)}")
+        custom_email_tasks[task_id]["status"] = "failed"
+        custom_email_tasks[task_id]["error"] = str(e)
+        custom_email_tasks[task_id]["completed_at"] = datetime.utcnow().isoformat()
+
+
+# 🧪 Test search functionality (for debugging)
+@application_bp.route("/test-search", methods=["POST"])
+@jwt_required()
+def test_search():
+    """
+    Test endpoint to debug search functionality and see what results are returned.
+    """
+    data = request.get_json() or {}
+    search_term = data.get("search", "").strip()
+    
+    if not search_term:
+        return jsonify({
+            "error": "search term is required",
+            "search_term": search_term,
+            "status": "no_search_term"
+        }), 400
+    
+    try:
+        # Get all applications first
+        all_count = CourseApplication.query.count()
+        
+        # Test different search patterns
+        exact_matches = CourseApplication.query.filter(
+            or_(
+                CourseApplication.full_name.ilike(search_term),
+                CourseApplication.email.ilike(search_term)
+            )
+        ).all()
+        
+        starts_with_matches = CourseApplication.query.filter(
+            or_(
+                CourseApplication.full_name.ilike(f"{search_term}%"),
+                CourseApplication.email.ilike(f"{search_term}%")
+            )
+        ).all()
+        
+        partial_matches = CourseApplication.query.filter(
+            or_(
+                CourseApplication.full_name.ilike(f"%{search_term}%"),
+                CourseApplication.email.ilike(f"%{search_term}%")
+            )
+        ).all()
+        
+        # Get sample data from each category
+        def get_match_info(apps, limit=5):
+            return [{
+                "id": app.id,
+                "full_name": app.full_name,
+                "email": app.email,
+                "match_score": "exact" if app in exact_matches else 
+                             "starts_with" if app in starts_with_matches else "partial"
+            } for app in apps[:limit]]
+        
+        return jsonify({
+            "search_term": search_term,
+            "total_applications": all_count,
+            "search_results": {
+                "exact_matches": {
+                    "count": len(exact_matches),
+                    "samples": get_match_info(exact_matches)
+                },
+                "starts_with_matches": {
+                    "count": len(starts_with_matches),
+                    "samples": get_match_info(starts_with_matches)
+                },
+                "partial_matches": {
+                    "count": len(partial_matches),
+                    "samples": get_match_info(partial_matches)
+                }
+            },
+            "debug_info": {
+                "patterns_tested": {
+                    "exact": search_term,
+                    "starts_with": f"{search_term}%",
+                    "partial": f"%{search_term}%"
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "error": "Search test failed",
+            "details": str(e),
+            "search_term": search_term
+        }), 500

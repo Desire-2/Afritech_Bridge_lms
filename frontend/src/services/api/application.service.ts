@@ -49,33 +49,51 @@ class CourseApplicationService extends BaseApiService {
   }
 
   /**
-   * List applications with filters (Admin only)
+   * List applications with enhanced search and filters (Admin only)
    */
-  async listApplications(
-    status?: string,
-    course_id?: number,
-    search?: string,
-    sort_by?: string,
-    sort_order?: 'asc' | 'desc',
-    page?: number,
-    per_page?: number
-  ): Promise<{
+  async listApplications(params: {
+    // Basic filters
+    status?: string;
+    course_id?: number;
+    page?: number;
+    per_page?: number;
+    
+    // Enhanced search
+    search?: string;
+    
+    // Advanced filters
+    country?: string;
+    city?: string;
+    education_level?: string;
+    current_status?: string;
+    excel_skill_level?: string;
+    referral_source?: string;
+    
+    // Date range filters
+    date_from?: string; // YYYY-MM-DD
+    date_to?: string;   // YYYY-MM-DD
+    
+    // Score filters
+    min_score?: number;
+    max_score?: number;
+    score_type?: 'application_score' | 'final_rank_score' | 'readiness_score' | 'commitment_score' | 'risk_score';
+    
+    // Sorting
+    sort_by?: string;
+    sort_order?: 'asc' | 'desc';
+  } = {}): Promise<{
     applications: CourseApplication[];
     total: number;
     pages: number;
     current_page: number;
     per_page: number;
   }> {
-    const params: any = {};
-    if (status) params.status = status;
-    if (course_id) params.course_id = course_id;
-    if (search) params.search = search;
-    if (sort_by) params.sort_by = sort_by;
-    if (sort_order) params.sort_order = sort_order;
-    if (page) params.page = page;
-    if (per_page) params.per_page = per_page;
-
-    return this.get(this.BASE_PATH, { params });
+    // Clean up undefined values
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([_, value]) => value !== undefined && value !== '')
+    );
+    
+    return this.get(this.BASE_PATH, { params: cleanParams });
   }
 
   /**
@@ -151,6 +169,194 @@ class CourseApplicationService extends BaseApiService {
   async getStatistics(course_id?: number): Promise<ApplicationStatistics> {
     const params = course_id ? { course_id } : {};
     return this.get(`${this.BASE_PATH}/statistics`, { params });
+  }
+
+  /**
+   * Get search statistics and filter options (Admin only)
+   */
+  async getSearchStatistics(course_id?: number): Promise<{
+    filter_options: {
+      countries: string[];
+      cities: string[];
+      education_levels: string[];
+      current_statuses: string[];
+      excel_skill_levels: string[];
+      referral_sources: string[];
+    };
+    status_counts: Record<string, number>;
+    score_statistics: Record<string, {
+      min: number;
+      max: number;
+      avg: number;
+    }>;
+    date_range: {
+      earliest: string | null;
+      latest: string | null;
+    };
+    total_applications: number;
+  }> {
+    const params = course_id ? { course_id } : {};
+    return this.get(`${this.BASE_PATH}/search-stats`, { params });
+  }
+
+  /**
+   * Advanced search with complex queries and analytics (Admin only)
+   */
+  async advancedSearch(searchConfig: {
+    text_search?: string;
+    filters?: Record<string, any>;
+    score_ranges?: Record<string, { min?: number; max?: number }>;
+    date_ranges?: {
+      created_from?: string;
+      created_to?: string;
+    };
+    sort_config?: {
+      field: string;
+      order: 'asc' | 'desc';
+    };
+    pagination?: {
+      page: number;
+      per_page: number;
+    };
+    include_analytics?: boolean;
+    save_search?: boolean;
+    search_name?: string;
+  }): Promise<{
+    applications: CourseApplication[];
+    total: number;
+    pages: number;
+    current_page: number;
+    per_page: number;
+    search_config: any;
+    analytics?: any;
+  }> {
+    return this.post(`${this.BASE_PATH}/advanced-search`, searchConfig);
+  }
+
+  /**
+   * Find similar applications to a given one (Admin only)
+   */
+  async findSimilarApplications(applicationId: number, limit: number = 10): Promise<{
+    target_application: CourseApplication;
+    similar_applications: Array<CourseApplication & {
+      similarity_score: number;
+      similarity_factors: string[];
+    }>;
+    total_found: number;
+  }> {
+    const params = { limit };
+    return this.get(`${this.BASE_PATH}/${applicationId}/similar`, { params });
+  }
+
+  /**
+   * Export search results with custom formatting (Admin only)
+   */
+  async exportSearchResults(config: {
+    search_config?: any;
+    format?: 'excel' | 'csv';
+    fields?: string[];
+    include_analytics?: boolean;
+    filename?: string;
+  }): Promise<{
+    message: string;
+    download_url?: string;
+  }> {
+    return this.post(`${this.BASE_PATH}/search-export`, config);
+  }
+
+  /**
+   * Debug search functionality - returns detailed search information
+   */
+  async debugSearch(searchTerm: string): Promise<{
+    debug: {
+      search_term: string;
+      search_patterns: Array<{ type: string; pattern?: string; word?: string }>;
+      fields_searched: string[];
+      word_breakdown: string[];
+      query_details: string[];
+      total_conditions: number;
+      results_count: number;
+      total_applications: number;
+      sample_results: Array<{
+        id: number;
+        full_name: string;
+        email: string;
+        matched_fields: Array<{
+          field: string;
+          value: string;
+          match_type: string;
+          matched_word?: string;
+        }>;
+      }>;
+    };
+    message: string;
+  }> {
+    return this.post(`${this.BASE_PATH}/search-debug`, { search: searchTerm });
+  }
+
+  /**
+   * Quick search across applications (simplified interface)
+   */
+  async quickSearch(query: string, filters?: {
+    course_id?: number;
+    status?: string;
+    limit?: number;
+  }): Promise<{
+    applications: CourseApplication[];
+    total: number;
+    suggestions: string[];
+  }> {
+    const params = {
+      search: query,
+      per_page: filters?.limit || 20,
+      ...(filters || {})
+    };
+    
+    const result = await this.listApplications(params);
+    
+    // Extract search suggestions from results
+    const suggestions = this.extractSearchSuggestions(result.applications, query);
+    
+    return {
+      applications: result.applications,
+      total: result.total,
+      suggestions
+    };
+  }
+
+  /**
+   * Get search suggestions based on existing data
+   */
+  private extractSearchSuggestions(applications: CourseApplication[], query: string): string[] {
+    const suggestions = new Set<string>();
+    const queryLower = query.toLowerCase();
+    
+    applications.forEach(app => {
+      // Add name suggestions
+      if (app.full_name?.toLowerCase().includes(queryLower)) {
+        suggestions.add(app.full_name);
+      }
+      
+      // Add email domain suggestions
+      if (app.email?.toLowerCase().includes(queryLower)) {
+        const domain = app.email.split('@')[1];
+        if (domain) {
+          suggestions.add(domain);
+        }
+      }
+      
+      // Add country suggestions
+      if (app.country?.toLowerCase().includes(queryLower)) {
+        suggestions.add(app.country);
+      }
+      
+      // Add field of study suggestions
+      if (app.field_of_study?.toLowerCase().includes(queryLower)) {
+        suggestions.add(app.field_of_study);
+      }
+    });
+    
+    return Array.from(suggestions).slice(0, 5); // Limit suggestions
   }
 
   /**
@@ -281,6 +487,72 @@ class CourseApplicationService extends BaseApiService {
     data: { id: number; old_status: string; new_status: string };
   }> {
     return this.put(`${this.BASE_PATH}/${id}/status`, data);
+  }
+
+  /**
+   * Send custom email to applicants (Admin only) - Background processing
+   */
+  async sendCustomEmail(data: {
+    subject: string;
+    message: string;
+    course_id?: number;
+    status_filter?: string;
+    include_all?: boolean;
+  }): Promise<{
+    task_id: string;
+    message: string;
+    status_url: string;
+    total_applications: number;
+    estimated_time: string;
+  }> {
+    return this.post(`${this.BASE_PATH}/send-custom-email`, data);
+  }
+
+  /**
+   * Get custom email task status (Admin only)
+   */
+  async getCustomEmailTaskStatus(taskId: string): Promise<{
+    task_id: string;
+    status: 'started' | 'processing' | 'completed' | 'failed';
+    progress: {
+      processed: number;
+      total: number;
+    };
+    results?: {
+      sent_count: number;
+      failed_count: number;
+      total_applications: number;
+      failed_emails: Array<{
+        email: string;
+        recipient_name: string;
+        error: string;
+        application_id?: number;
+      }>;
+    };
+    error?: string;
+  }> {
+    return this.get(`${this.BASE_PATH}/custom-email/${taskId}/status`);
+  }
+
+  /**
+   * Retry failed custom emails (Admin only) - Background processing
+   */
+  async retryFailedEmails(data: {
+    failed_emails: Array<{
+      email: string;
+      recipient_name: string;
+      application_id?: number;
+    }>;
+    subject: string;
+    message: string;
+  }): Promise<{
+    task_id: string;
+    message: string;
+    status_url: string;
+    total_emails: number;
+    estimated_time: string;
+  }> {
+    return this.post(`${this.BASE_PATH}/retry-failed-emails`, data);
   }
 }
 

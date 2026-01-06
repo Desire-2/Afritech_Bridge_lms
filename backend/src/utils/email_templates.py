@@ -148,8 +148,8 @@ def get_email_footer():
                     <a href="mailto:support@afritecbridge.com" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         📧 Support
                     </a>
-                    <a href="#" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
-                        ❓ Help Center
+                    <a href="https://wa.me/250780784924" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(37, 211, 102, 0.2); color: #25d366; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
+                        💬 WhatsApp Help
                     </a>
                     <a href="#" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         🔒 Privacy
@@ -1729,6 +1729,111 @@ def application_status_withdrawn_email(application, course_title, reason=None):
                 <p style="color: #bdc3c7; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0;">
                     We hope to see you again soon.<br>
                     <strong style="color: #ffffff;">The Afritec Bridge Team</strong> 🎓
+                </p>
+            </div>
+    {get_email_footer()}
+    """
+
+def custom_application_email(recipient_name, subject, message):
+    """✨ Custom email template for application management announcements"""
+    return f"""
+    {get_email_header()}
+            
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Header Icon & Title -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">📧</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">
+                        {subject}
+                    </h2>
+                </div>
+                
+                <!-- Personal Greeting -->
+                <div style="margin-bottom: 30px;">
+                    <p style="color: #ffffff; font-size: 18px; margin: 0; font-weight: 600; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">
+                        Hello {recipient_name},
+                    </p>
+                </div>
+                
+                <!-- Custom Message -->
+                <div style="margin: 30px 0; padding: 30px; background: #4a5568; border-radius: 12px; border-left: 5px solid #667eea;">
+                    <div style="color: #ffffff; font-size: 16px; line-height: 1.8; white-space: pre-line;">
+                        {message}
+                    </div>
+                </div>
+                
+                <!-- WhatsApp Community Section -->
+                <div style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); border-radius: 20px; padding: 35px; margin: 35px 0; box-shadow: 0 10px 30px rgba(37, 211, 102, 0.3); border: 3px solid #25D366;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <span class="icon-medium" style="font-size: 50px; display: block; margin-bottom: 15px;">📱</span>
+                        <h2 style="margin: 0; color: #ffffff; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
+                            Join Our Community!
+                        </h2>
+                        <p style="color: rgba(255,255,255,0.95); margin: 10px 0 0 0; font-size: 15px; line-height: 1.6;">
+                            Connect with fellow students, get instant updates, and collaborate with your peers
+                        </p>
+                    </div>
+                    
+                    <div style="background-color: rgba(255,255,255,0.15); backdrop-filter: blur(10px); border-radius: 16px; padding: 25px; margin: 25px 0;">
+                        <table class="responsive-table" style="width: 100%;">
+                            <tr>
+                                <td style="text-align: center; padding: 10px 0;">
+                                    <div style="background-color: rgba(255,255,255,0.2); border-radius: 12px; padding: 20px; margin-bottom: 10px;">
+                                        <p style="color: #ffffff; font-size: 15px; margin: 0 0 8px 0; font-weight: 600;">
+                                            💬 WhatsApp Communication Channel
+                                        </p>
+                                        <p style="color: rgba(255,255,255,0.9); font-size: 13px; margin: 0; line-height: 1.6;">
+                                            • Share resources and study materials<br>
+                                            • Get quick answers to your questions<br>
+                                            • Network with instructors and peers<br>
+                                            • Stay updated on course announcements
+                                        </p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 25px;">
+                        <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #ffffff; color: #128C7E; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); text-transform: uppercase; letter-spacing: 0.5px; mobile-button; border: 3px solid rgba(255,255,255,0.3);">
+                            <span style="font-size: 20px; margin-right: 8px;">💬</span> Join WhatsApp Group
+                        </a>
+                        <p style="color: rgba(255,255,255,0.95); margin: 15px 0 0 0; font-size: 13px; font-weight: 500;">
+                            Click to join our active learning community
+                        </p>
+                    </div>
+                    
+                    <div style="background-color: rgba(255,255,255,0.1); border: 2px dashed rgba(255,255,255,0.4); border-radius: 12px; padding: 18px; margin-top: 25px;">
+                        <p style="color: rgba(255,255,255,0.95); font-size: 13px; margin: 0; line-height: 1.6; text-align: center;">
+                            <strong style="font-size: 14px;">📋 Group Guidelines:</strong><br>
+                            Be respectful, stay on topic, and help create a positive learning environment for everyone!
+                        </p>
+                    </div>
+                </div>
+                
+                <!-- Need Help Section -->
+                <div style="text-align: center; margin: 40px 0 20px 0; padding: 30px 20px; background: linear-gradient(135deg, #3a4c5c 0%, #455a6a 100%); border-radius: 12px;">
+                    <h3 style="color: #ffffff; font-size: 20px; margin: 0 0 15px 0; font-weight: 700;">
+                        💬 Need Quick Help?
+                    </h3>
+                    <p style="color: #ffffff; font-size: 15px; line-height: 1.7; margin: 0 0 20px 0;">
+                        Get instant support through WhatsApp for any questions or concerns.
+                    </p>
+                    <a href="https://wa.me/250780784924" class="mobile-button" style="display: inline-block; background: rgba(255,255,255,0.2); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; border: 2px solid rgba(255,255,255,0.3);">
+                        💬 Chat on WhatsApp
+                    </a>
+                </div>
+                
+                <p style="color: #ffffff; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0; text-shadow: 1px 1px 2px rgba(0,0,0,0.4);">
+                    Best regards,<br>
+                    <strong style="color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">The Afritec Bridge Team</strong> 🎓
                 </p>
             </div>
     {get_email_footer()}

@@ -156,16 +156,20 @@ class AssessmentService:
                     "explanation": question.explanation
                 })
             
-            # Calculate scores
+            # Calculate scores with proper validation
             score = float(correct_answers)
-            percentage = (score / total_questions * 100) if total_questions > 0 else 0
+            percentage = round((score / total_questions * 100), 2) if total_questions > 0 else 0
             
-            # Update attempt
+            # Ensure percentage is within valid range
+            percentage = max(0, min(100, percentage))
+            
+            # Update attempt with validated data
             attempt.score = score
             attempt.percentage = percentage
             attempt.submission_data = json.dumps({
                 "answers": answers,
-                "detailed_results": detailed_results
+                "detailed_results": detailed_results,
+                "timestamp": datetime.utcnow().isoformat()
             })
             attempt.submitted_at = datetime.utcnow()
             attempt.status = 'submitted'
@@ -177,7 +181,7 @@ class AssessmentService:
             
             db.session.commit()
             
-            # Send email notification to student about quiz grade
+            # Send email notification to student about quiz grade with improved error handling
             try:
                 student = User.query.get(attempt.student_id)
                 if student and student.email:
@@ -187,25 +191,33 @@ class AssessmentService:
                         score=int(score),
                         total_points=total_questions
                     )
-                    current_app.logger.info(f"📧 Quiz grade notification email sent to {student.email}")
+                    current_app.logger.info(f"✅ Quiz grade notification sent to {student.email} for quiz '{quiz.title}'")
+                else:
+                    current_app.logger.warning(f"⚠️ Invalid student data for quiz attempt {attempt_id}")
             except Exception as email_error:
-                current_app.logger.warning(f"Failed to send quiz grade notification email: {str(email_error)}")
+                current_app.logger.error(f"❌ Failed to send quiz grade notification: {str(email_error)}")
                 # Don't fail the request if email fails
             
             result_data = {
                 "attempt": attempt.to_dict(),
-                "score": score,
+                "score": int(score),
                 "percentage": percentage,
                 "total_questions": total_questions,
                 "correct_answers": correct_answers,
+                "quiz_title": quiz.title,
+                "passed": percentage >= 60,
                 "detailed_results": detailed_results
             }
             
             return True, "Quiz submitted successfully", result_data
             
+        except ValueError as ve:
+            db.session.rollback()
+            current_app.logger.error(f"❌ Quiz submission validation error: {str(ve)}")
+            return False, f"Validation error: {str(ve)}", {}
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Quiz submission error: {str(e)}")
+            current_app.logger.error(f"❌ Quiz submission error: {str(e)}", exc_info=True)
             return False, "Failed to submit quiz", {}
     
     @staticmethod

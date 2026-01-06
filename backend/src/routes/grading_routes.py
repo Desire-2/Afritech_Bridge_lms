@@ -195,36 +195,39 @@ def grade_assignment_submission(submission_id):
         if submission.assignment.course.instructor_id != current_user_id:
             return jsonify({"message": "Access denied"}), 403
         
-        # Validate grade
+        # Validate grade with improved error handling
         grade = data.get('grade')
         if grade is None:
             return jsonify({"message": "Grade is required"}), 400
         
         try:
             grade = float(grade)
-            if grade < 0 or grade > submission.assignment.points_possible:
+            max_points = submission.assignment.points_possible or 100
+            if grade < 0 or grade > max_points:
                 return jsonify({
-                    "message": f"Grade must be between 0 and {submission.assignment.points_possible}"
+                    "message": f"Grade must be between 0 and {max_points}"
                 }), 400
-        except (ValueError, TypeError):
-            return jsonify({"message": "Invalid grade value"}), 400
+        except (ValueError, TypeError) as e:
+            return jsonify({"message": f"Invalid grade value: {str(e)}"}), 400
         
-        # Update submission
+        # Update submission with validated data
         submission.grade = grade
-        submission.feedback = data.get('feedback', '')
+        submission.feedback = data.get('feedback', '').strip()
         submission.graded_at = datetime.utcnow()
         submission.graded_by = current_user_id
         
-        # Store rubric scores if provided
-        if data.get('rubric_scores'):
-            # Store as JSON in feedback or add rubric_data column
+        # Store rubric scores if provided with better structure
+        rubric_scores = data.get('rubric_scores')
+        if rubric_scores and isinstance(rubric_scores, dict):
             rubric_data = {
                 'feedback': submission.feedback,
-                'rubric_scores': data.get('rubric_scores'),
+                'rubric_scores': rubric_scores,
                 'graded_at': submission.graded_at.isoformat(),
-                'graded_by': current_user_id
+                'graded_by': current_user_id,
+                'version': '1.0'  # For future compatibility
             }
-            submission.feedback = json.dumps(rubric_data)
+            # Store as properly formatted JSON
+            submission.feedback = json.dumps(rubric_data, indent=2)
         
         db.session.commit()
         
@@ -235,19 +238,23 @@ def grade_assignment_submission(submission_id):
             assignment = submission.assignment
             student_id = submission.student_id
             
-            # Calculate percentage score
+            # Calculate percentage score with validation
             points_possible = assignment.points_possible or 100
-            percentage_score = (grade / points_possible) * 100
+            if points_possible > 0:
+                percentage_score = round((grade / points_possible) * 100, 2)
+                percentage_score = max(0, min(100, percentage_score))  # Clamp to 0-100
+            else:
+                percentage_score = 0
             
-            # Get module_id from assignment (either directly or via lesson)
-            module_id = assignment.module_id if hasattr(assignment, 'module_id') else None
+            # Get module_id from assignment (with fallback logic)
+            module_id = getattr(assignment, 'module_id', None)
             if not module_id and hasattr(assignment, 'lesson_id') and assignment.lesson_id:
                 lesson = Lesson.query.get(assignment.lesson_id)
-                if lesson:
+                if lesson and hasattr(lesson, 'module_id'):
                     module_id = lesson.module_id
             
             if module_id:
-                # Get enrollment
+                # Get enrollment with validation
                 enrollment = Enrollment.query.filter_by(
                     student_id=student_id,
                     course_id=assignment.course_id
@@ -263,12 +270,24 @@ def grade_assignment_submission(submission_id):
                     if module_progress:
                         # Use best assignment score (keep the higher score)
                         current_assignment_score = module_progress.assignment_score or 0.0
-                        module_progress.assignment_score = max(current_assignment_score, percentage_score)
-                        module_progress.calculate_cumulative_score()
+                        new_score = max(current_assignment_score, percentage_score)
+                        module_progress.assignment_score = new_score
+                        
+                        # Safely update cumulative score
+                        if hasattr(module_progress, 'calculate_cumulative_score'):
+                            module_progress.calculate_cumulative_score()
+                        
                         db.session.commit()
-                        logger.info(f"Updated module {module_id} assignment score for student {student_id}: {module_progress.assignment_score}%")
+                        logger.info(f"✅ Updated module {module_id} assignment score for student {student_id}: {new_score}%")
+                    else:
+                        logger.warning(f"⚠️ Module progress not found for student {student_id}, module {module_id}")
+                else:
+                    logger.warning(f"⚠️ Enrollment not found for student {student_id}, course {assignment.course_id}")
+            else:
+                logger.warning(f"⚠️ Module ID not found for assignment {assignment.id}")
+                
         except Exception as mp_error:
-            logger.warning(f"Error updating module progress: {str(mp_error)}")
+            logger.error(f"❌ Error updating module progress: {str(mp_error)}")
             # Don't fail the whole request, just log the error
         # ===== END FIX =====
         
@@ -276,7 +295,7 @@ def grade_assignment_submission(submission_id):
         try:
             assignment = submission.assignment
             student_id = submission.student_id
-            lesson_id = assignment.lesson_id if hasattr(assignment, 'lesson_id') else None
+            lesson_id = getattr(assignment, 'lesson_id', None)
             
             if lesson_id:
                 lesson_completion = LessonCompletion.query.filter_by(
@@ -284,16 +303,20 @@ def grade_assignment_submission(submission_id):
                     lesson_id=lesson_id
                 ).first()
                 
-                # Calculate assignment percentage for reference
+                # Calculate assignment percentage for reference with validation
                 points_possible = assignment.points_possible or 100
-                assignment_percentage = (grade / points_possible) * 100
+                if points_possible > 0:
+                    assignment_percentage = round((grade / points_possible) * 100, 2)
+                    assignment_percentage = max(0, min(100, assignment_percentage))
+                else:
+                    assignment_percentage = 0
                 
                 if not lesson_completion:
                     # Create a new LessonCompletion record with reasonable defaults
                     # Since student submitted an assignment, they must have engaged with the lesson
                     # Use assignment score as a proxy for engagement quality
-                    default_reading = min(100.0, 70.0 + (assignment_percentage * 0.3))  # 70-100% based on grade
-                    default_engagement = min(100.0, 60.0 + (assignment_percentage * 0.4))  # 60-100% based on grade
+                    default_reading = min(100.0, max(70.0, 70.0 + (assignment_percentage * 0.3)))
+                    default_engagement = min(100.0, max(60.0, 60.0 + (assignment_percentage * 0.4)))
                     
                     lesson_completion = LessonCompletion(
                         student_id=student_id,
@@ -376,16 +399,43 @@ def grade_assignment_submission(submission_id):
             logger.error(f"❌ Error sending grade notification: {str(email_error)}")
             # Don't fail the request if email fails
         
-        logger.info(f"Assignment submission {submission_id} graded by instructor {current_user_id}")
+        # Send grade notification email with improved error handling
+        try:
+            student = User.query.get(submission.student_id)
+            if student and student.email and hasattr(student, 'first_name'):
+                # Import here to avoid circular imports
+                from ..utils.email_notifications import send_grade_notification
+                
+                send_grade_notification(
+                    submission=submission,
+                    assignment=assignment,
+                    student=student,
+                    grade=grade,
+                    feedback=data.get('feedback', '')
+                )
+                logger.info(f"✅ Assignment grade notification sent to {student.email}")
+            else:
+                logger.warning(f"⚠️ Invalid student data for assignment submission {submission_id}")
+        except Exception as email_error:
+            logger.error(f"❌ Failed to send assignment grade notification: {str(email_error)}")
+            # Don't fail the request if email fails
+        
+        logger.info(f"✅ Assignment submission {submission_id} graded successfully by instructor {current_user_id}")
         
         return jsonify({
             "message": "Assignment graded successfully",
-            "submission": submission.to_dict()
+            "submission": submission.to_dict(),
+            "grade": grade,
+            "percentage": round((grade / (assignment.points_possible or 100)) * 100, 2)
         }), 200
         
+    except ValueError as ve:
+        db.session.rollback()
+        logger.error(f"❌ Validation error in assignment grading: {str(ve)}")
+        return jsonify({"message": "Validation error", "error": str(ve)}), 400
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error grading assignment: {str(e)}", exc_info=True)
+        logger.error(f"❌ Error grading assignment: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to grade assignment", "error": str(e)}), 500
 
 
@@ -667,39 +717,53 @@ def grade_project_submission(submission_id):
         if submission.project.course.instructor_id != current_user_id:
             return jsonify({"message": "Access denied"}), 403
         
-        # Validate grade
+        # Validate grade with improved error handling
         grade = data.get('grade')
         if grade is None:
             return jsonify({"message": "Grade is required"}), 400
         
         try:
             grade = float(grade)
-            if grade < 0 or grade > submission.project.points_possible:
+            max_points = submission.project.points_possible or 100
+            if grade < 0 or grade > max_points:
                 return jsonify({
-                    "message": f"Grade must be between 0 and {submission.project.points_possible}"
+                    "message": f"Grade must be between 0 and {max_points}"
                 }), 400
-        except (ValueError, TypeError):
-            return jsonify({"message": "Invalid grade value"}), 400
+        except (ValueError, TypeError) as e:
+            return jsonify({"message": f"Invalid grade value: {str(e)}"}), 400
         
-        # Update submission
+        # Update submission with validated data
         submission.grade = grade
-        submission.feedback = data.get('feedback', '')
+        submission.feedback = data.get('feedback', '').strip()
         submission.graded_at = datetime.utcnow()
         submission.graded_by = current_user_id
         
-        # Store rubric scores if provided
-        if data.get('rubric_scores'):
+        # Store rubric scores if provided with better structure
+        rubric_scores = data.get('rubric_scores')
+        if rubric_scores and isinstance(rubric_scores, dict):
             rubric_data = {
                 'feedback': submission.feedback,
-                'rubric_scores': data.get('rubric_scores'),
+                'rubric_scores': rubric_scores,
                 'graded_at': submission.graded_at.isoformat(),
-                'graded_by': current_user_id
+                'graded_by': current_user_id,
+                'project_type': 'collaborative' if submission.project.collaboration_allowed else 'individual',
+                'version': '1.0'  # For future compatibility
             }
-            submission.feedback = json.dumps(rubric_data)
+            # Store as properly formatted JSON
+            submission.feedback = json.dumps(rubric_data, indent=2)
+        
+        # Handle team member grading for collaborative projects
+        if submission.project.collaboration_allowed and submission.team_members:
+            try:
+                team_ids = submission.get_team_members() if hasattr(submission, 'get_team_members') else []
+                if team_ids:
+                    logger.info(f"✅ Graded collaborative project for team: {team_ids}")
+            except Exception as team_error:
+                logger.warning(f"⚠️ Error handling team members: {str(team_error)}")
         
         db.session.commit()
         
-        # Send email notification to student about project grade
+        # Send email notification to student about project grade with improved error handling
         try:
             student = User.query.get(submission.student_id)
             if student and student.email:
@@ -710,21 +774,30 @@ def grade_project_submission(submission_id):
                     grade=grade,
                     feedback=data.get('feedback', '')
                 )
-                logger.info(f"📧 Project grade notification email sent to student {student.email}")
+                logger.info(f"✅ Project grade notification email sent to {student.email} for project '{submission.project.title}'")
+            else:
+                logger.warning(f"⚠️ Student not found or has no email for project submission {submission_id}")
         except Exception as email_error:
-            logger.warning(f"Failed to send project grade notification email: {str(email_error)}")
+            logger.error(f"❌ Failed to send project grade notification email: {str(email_error)}")
             # Don't fail the request if email fails
         
-        logger.info(f"Project submission {submission_id} graded by instructor {current_user_id}")
+        logger.info(f"✅ Project submission {submission_id} graded successfully by instructor {current_user_id}")
         
         return jsonify({
             "message": "Project graded successfully",
-            "submission": submission.to_dict()
+            "submission": submission.to_dict(),
+            "grade": grade,
+            "percentage": round((grade / (submission.project.points_possible or 100)) * 100, 2),
+            "is_collaborative": submission.project.collaboration_allowed
         }), 200
         
+    except ValueError as ve:
+        db.session.rollback()
+        logger.error(f"❌ Validation error in project grading: {str(ve)}")
+        return jsonify({"message": "Validation error", "error": str(ve)}), 400
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error grading project: {str(e)}", exc_info=True)
+        logger.error(f"❌ Error grading project: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to grade project", "error": str(e)}), 500
 
 
