@@ -599,6 +599,29 @@ class AIAgentService:
             course_title, module_title, module_description, lessons_summary
         )
     
+    def generate_assignment_from_content(self, lesson_or_module_content: str,
+                                       content_title: str, content_type: str = "lesson",
+                                       assignment_type: str = "practical") -> AIResponse:
+        """Generate assignment based on actual content with enhanced handling"""
+        cache_key = f"assignment_content_{content_title}_{content_type}_{assignment_type}"
+        
+        return self._execute_with_retry_and_cache(
+            cache_key,
+            self.assessment_gen.generate_assignment_from_content,
+            lesson_or_module_content, content_title, content_type, assignment_type
+        )
+    
+    def generate_project_from_content(self, module_contents: list,
+                                    module_title: str, course_title: str) -> AIResponse:
+        """Generate project from module content with enhanced handling"""
+        cache_key = f"project_content_{module_title}_{course_title}"
+        
+        return self._execute_with_retry_and_cache(
+            cache_key,
+            self.assessment_gen.generate_project_from_content,
+            module_contents, module_title, course_title
+        )
+    
     # ===== Enhanced Content Enhancement =====
     
     def enhance_content(self, content_type: str, current_content: str,
