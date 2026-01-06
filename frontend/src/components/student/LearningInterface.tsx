@@ -246,7 +246,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ videoUrl, onTimeUpdate, onCom
 interface LessonSidebarProps {
   course: any;
   currentLessonId: number;
-  onLessonSelect: (lessonId: number) => void;
+  onLessonSelect: (lessonId: number, moduleId: number) => void;
 }
 
 const LessonSidebar: React.FC<LessonSidebarProps> = ({ course, currentLessonId, onLessonSelect }) => {
@@ -308,7 +308,7 @@ const LessonSidebar: React.FC<LessonSidebarProps> = ({ course, currentLessonId, 
                   {module.lessons?.map((lesson: any) => (
                     <button
                       key={lesson.id}
-                      onClick={() => onLessonSelect(lesson.id)}
+                      onClick={() => onLessonSelect(lesson.id, module.id)}
                       className={`w-full text-left p-4 pl-12 hover:bg-muted/50 transition-colors border-b last:border-b-0 ${
                         currentLessonId === lesson.id ? 'bg-primary/10 border-l-4 border-l-primary' : ''
                       }`}
@@ -382,7 +382,7 @@ const LearningInterface: React.FC<LearningInterfaceProps> = ({ courseId }) => {
     fetchCourseData();
   }, [courseId]);
 
-  const handleLessonSelect = (lessonId: number) => {
+  const handleLessonSelect = (lessonId: number, moduleId: number) => {
     const allLessons = course.modules?.flatMap((module: any) => module.lessons) || [];
     const lesson = allLessons.find((l: any) => l.id === lessonId);
     if (lesson && !lesson.is_locked) {

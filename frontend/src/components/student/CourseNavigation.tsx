@@ -99,7 +99,7 @@ interface Course {
 interface CourseNavigationProps {
   course: Course;
   currentLessonId?: number;
-  onLessonSelect: (lessonId: number) => void;
+  onLessonSelect: (lessonId: number, moduleId: number) => void;
   onModuleToggle?: (moduleId: number) => void;
   isCollapsed?: boolean;
   onCollapse?: (collapsed: boolean) => void;
@@ -151,7 +151,7 @@ const DifficultyBadge: React.FC<{ difficulty: string }> = ({ difficulty }) => {
 const LearningPath: React.FC<{ 
   modules: Module[]; 
   currentLessonId?: number; 
-  onLessonSelect: (id: number) => void;
+  onLessonSelect: (lessonId: number, moduleId: number) => void;
 }> = ({ modules, currentLessonId, onLessonSelect }) => {
   const allLessons = modules.flatMap(module => 
     module.lessons.map(lesson => ({ ...lesson, moduleTitle: module.title, moduleId: module.id }))
@@ -187,7 +187,7 @@ const LearningPath: React.FC<{
                   ? 'bg-blue-50 dark:bg-blue-950/20 ring-2 ring-blue-200' 
                   : 'hover:bg-muted/50'
               }`}
-              onClick={() => !lesson.isLocked && onLessonSelect(lesson.id)}
+              onClick={() => !lesson.isLocked && onLessonSelect(lesson.id, lesson.moduleId)}
               whileHover={{ scale: lesson.isLocked ? 1 : 1.02 }}
               whileTap={{ scale: lesson.isLocked ? 1 : 0.98 }}
             >
@@ -483,7 +483,7 @@ const CourseNavigation: React.FC<CourseNavigationProps> = ({
                               ? 'bg-primary/10 border-l-4 border-l-primary' 
                               : 'hover:bg-muted/30'
                           } ${lesson.isLocked ? 'opacity-60 cursor-not-allowed' : ''}`}
-                          onClick={() => !lesson.isLocked && onLessonSelect(lesson.id)}
+                          onClick={() => !lesson.isLocked && onLessonSelect(lesson.id, module.id)}
                           whileHover={{ scale: lesson.isLocked ? 1 : 1.02 }}
                           whileTap={{ scale: lesson.isLocked ? 1 : 0.98 }}
                         >
@@ -618,7 +618,7 @@ const CourseNavigation: React.FC<CourseNavigationProps> = ({
                         className={`flex items-center space-x-2 text-xs p-1 rounded ${
                           lesson.id === currentLessonId ? 'bg-primary/10' : ''
                         }`}
-                        onClick={() => onLessonSelect(lesson.id)}
+                        onClick={() => onLessonSelect(lesson.id, module.id)}
                       >
                         <LessonIcon 
                           type={lesson.type} 

@@ -175,7 +175,7 @@ const EnhancedLearningInterface: React.FC<EnhancedLearningInterfaceProps> = ({ c
     fetchCourseData();
   }, [courseId]);
 
-  const handleLessonSelect = (lessonId: number) => {
+  const handleLessonSelect = (lessonId: number, moduleId: number) => {
     const allLessons = course?.modules?.flatMap((module: any) => module.lessons) || [];
     const lesson = allLessons.find((l: any) => l.id === lessonId);
     if (lesson && !lesson.is_locked) {
