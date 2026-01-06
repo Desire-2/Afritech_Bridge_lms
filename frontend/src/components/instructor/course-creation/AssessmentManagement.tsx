@@ -55,7 +55,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   
   // New filtering and sorting states
   const [filterModuleId, setFilterModuleId] = useState<number | null>(null);
-  const [sortBy, setSortBy] = useState<'title' | 'created_at' | 'module' | 'points' | 'due_date'>('created_at');
+  const [sortBy, setSortBy] = useState<'title' | 'created_at' | 'module' | 'lesson' | 'points' | 'due_date'>('created_at');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
   const [expandedItems, setExpandedItems] = useState<Set<number>>(new Set());
@@ -1718,6 +1718,17 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           aVal = getModuleName(a).toLowerCase();
           bVal = getModuleName(b).toLowerCase();
           break;
+        case 'lesson':
+          // Get lesson name for sorting
+          const getLessonNameForSort = (item: T) => {
+            if (!item.lesson_id) return 'zzz'; // Put items without lessons at end
+            const module = course.modules?.find(m => m.id === item.module_id);
+            const lesson = module?.lessons?.find(l => l.id === item.lesson_id);
+            return lesson?.title || 'zzz';
+          };
+          aVal = getLessonNameForSort(a).toLowerCase();
+          bVal = getLessonNameForSort(b).toLowerCase();
+          break;
         case 'points':
           aVal = a.points_possible || 0;
           bVal = b.points_possible || 0;
@@ -2146,6 +2157,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
               <option value="created_at">📅 Date</option>
               <option value="title">📝 Title</option>
               <option value="module">📚 Module</option>
+              <option value="lesson">📖 Lesson</option>
               <option value="points">🎯 Points</option>
               <option value="due_date">⏰ Due Date</option>
             </select>
@@ -2251,7 +2263,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 )}
                 {sortBy !== 'created_at' && (
                   <span className="px-3 py-1 bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-300 rounded-full text-xs font-medium">
-                    Sort: {sortBy} ({sortOrder})
+                    Sort: {sortBy === 'lesson' ? '📖 Lesson' : sortBy === 'module' ? '📚 Module' : sortBy} ({sortOrder})
                   </span>
                 )}
               </div>

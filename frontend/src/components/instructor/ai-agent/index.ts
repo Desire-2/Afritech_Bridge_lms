@@ -10,9 +10,9 @@ export { AIDashboard } from './AIDashboard';
 export { AIIntegration } from './AIIntegration';
 
 // Enhanced Components
-export { EnhancedAIContentGenerator } from './EnhancedAIContentGenerator';
+export { default as EnhancedAIContentGenerator } from './EnhancedAIContentGenerator';
 export { AIProgressTracker } from './AIProgressTracker';
-export { QualityAssessmentDisplay } from './QualityAssessmentDisplay';
+export { default as QualityAssessmentDisplay } from './QualityAssessmentDisplay';
 
 // Admin Components
 export { AIAdminPanel } from './AIAdminPanel';
