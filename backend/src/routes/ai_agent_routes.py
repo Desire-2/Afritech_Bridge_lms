@@ -45,6 +45,199 @@ def instructor_required(f):
 ai_agent_bp = Blueprint("ai_agent_bp", __name__, url_prefix="/api/v1/ai-agent")
 
 # =====================
+# ENHANCED HEALTH & STATUS
+# =====================
+
+@ai_agent_bp.route("/health", methods=["GET"])
+def health_check():
+    """
+    Enhanced health check for AI Agent services with detailed status information
+    """
+    try:
+        # Get comprehensive provider statistics
+        stats = ai_agent_service.get_provider_stats()
+        
+        # Check if providers are configured
+        openrouter_configured = bool(ai_agent_service.provider.openrouter_api_key)
+        gemini_configured = bool(ai_agent_service.provider.gemini_api_key)
+        
+        # Determine overall health status
+        if openrouter_configured or gemini_configured:
+            status = "healthy"
+            message = "AI Agent service is operational"
+            api_configured = True
+        else:
+            status = "degraded"
+            message = "No AI providers configured"
+            api_configured = False
+        
+        return jsonify({
+            "status": status,
+            "api_configured": api_configured,
+            "message": message,
+            "providers": {
+                "openrouter": {
+                    "configured": openrouter_configured,
+                    "current": ai_agent_service.provider.current_provider == 'openrouter'
+                },
+                "gemini": {
+                    "configured": gemini_configured,
+                    "current": ai_agent_service.provider.current_provider == 'gemini'
+                }
+            },
+            "statistics": stats,
+            "features": {
+                "smart_caching": True,
+                "progress_tracking": True,
+                "quality_validation": True,
+                "retry_logic": True
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            "status": "unhealthy",
+            "api_configured": False,
+            "message": f"Health check failed: {str(e)}",
+            "error": str(e)
+        }), 500
+
+@ai_agent_bp.route("/progress/<session_id>", methods=["GET"])
+def get_progress(session_id):
+    """
+    Get progress for a specific generation session
+    """
+    try:
+        progress = ai_agent_service.get_progress(session_id)
+        if progress:
+            return jsonify({
+                "success": True,
+                "data": progress
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Session not found"
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Failed to get progress: {str(e)}"
+        }), 500
+
+@ai_agent_bp.route("/active-sessions", methods=["GET"])
+@instructor_required
+def get_active_sessions():
+    """
+    Get all active generation sessions for monitoring
+    """
+    try:
+        sessions = ai_agent_service.get_all_active_sessions()
+        return jsonify({
+            "success": True,
+            "data": sessions,
+            "count": len(sessions)
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Failed to get sessions: {str(e)}"
+        }), 500
+
+@ai_agent_bp.route("/cancel-session/<session_id>", methods=["DELETE"])
+@instructor_required
+def cancel_session(session_id):
+    """
+    Cancel a specific generation session
+    """
+    try:
+        cancelled = ai_agent_service.cancel_session(session_id)
+        if cancelled:
+            return jsonify({
+                "success": True,
+                "message": "Session cancelled successfully"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Session not found"
+            }), 404
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Failed to cancel session: {str(e)}"
+        }), 500
+
+@ai_agent_bp.route("/cache/stats", methods=["GET"])
+@instructor_required
+def get_cache_stats():
+    """
+    Get detailed cache statistics
+    """
+    try:
+        stats = ai_agent_service.get_provider_stats()
+        return jsonify({
+            "success": True,
+            "data": stats
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Failed to get cache stats: {str(e)}"
+        }), 500
+
+@ai_agent_bp.route("/cache/clear", methods=["POST"])
+@instructor_required
+def clear_cache():
+    """
+    Clear all caches
+    """
+    try:
+        ai_agent_service.clear_cache()
+        return jsonify({
+            "success": True,
+            "message": "All caches cleared successfully"
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Failed to clear cache: {str(e)}"
+        }), 500
+
+@ai_agent_bp.route("/provider/force", methods=["POST"])
+@instructor_required
+def force_provider():
+    """
+    Force switch to a specific AI provider
+    
+    Request body:
+    {
+        "provider": "openrouter" | "gemini"
+    }
+    """
+    try:
+        data = request.get_json()
+        provider = data.get('provider')
+        
+        if provider not in ['openrouter', 'gemini']:
+            return jsonify({
+                "success": False,
+                "message": "Invalid provider. Use 'openrouter' or 'gemini'"
+            }), 400
+        
+        ai_agent_service.force_provider(provider)
+        return jsonify({
+            "success": True,
+            "message": f"Switched to provider: {provider}"
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Failed to switch provider: {str(e)}"
+        }), 500
+
+# =====================
 # COURSE GENERATION
 # =====================
 
@@ -73,16 +266,19 @@ def generate_course_outline():
         
         logger.info(f"Generating course outline for topic: {topic}")
         
-        result = ai_agent_service.generate_course_outline(
+        ai_response = ai_agent_service.generate_course_outline(
             topic=topic,
             target_audience=target_audience,
             learning_objectives=learning_objectives
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to API response format
+        response_data = ai_response.to_dict()
+        
+        if ai_response.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        else:
+            return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error generating course outline: {e}")
@@ -135,7 +331,7 @@ def generate_multiple_modules():
         
         logger.info(f"Generating {num_modules} modules for course: {course.title} with {len(existing_modules)} existing modules")
         
-        result = ai_agent_service.generate_multiple_modules(
+        ai_response = ai_agent_service.generate_multiple_modules(
             course_title=course.title,
             course_description=course.description or '',
             course_objectives=course.learning_objectives or '',
@@ -143,10 +339,13 @@ def generate_multiple_modules():
             existing_modules=existing_modules_context
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to API response format
+        response_data = ai_response.to_dict()
+        
+        if ai_response.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        else:
+            return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error generating multiple modules: {e}")
@@ -195,7 +394,7 @@ def generate_module_content():
         
         logger.info(f"Generating module content for course: {course.title} with {len(existing_modules)} existing modules")
         
-        result = ai_agent_service.generate_module_content(
+        ai_response = ai_agent_service.generate_module_content(
             course_title=course.title,
             course_description=course.description or '',
             course_objectives=course.learning_objectives or '',
@@ -203,10 +402,13 @@ def generate_module_content():
             existing_modules=existing_modules_context
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to API response format
+        response_data = ai_response.to_dict()
+        
+        if ai_response.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        else:
+            return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error generating module content: {e}")
@@ -275,10 +477,10 @@ def generate_multiple_lessons():
             existing_lessons=existing_lessons_data
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating multiple lessons: {e}")
@@ -336,7 +538,7 @@ def generate_lesson_content():
         
         logger.info(f"Generating lesson content for module: {module.title} (existing lessons: {len(existing_lessons)})")
         
-        result = ai_agent_service.generate_lesson_content(
+        ai_response = ai_agent_service.generate_lesson_content(
             course_title=course.title,
             module_title=module.title,
             module_description=module.description or '',
@@ -346,10 +548,13 @@ def generate_lesson_content():
             existing_lessons=existing_lessons_data
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to API response format
+        response_data = ai_response.to_dict()
+        
+        if ai_response.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        else:
+            return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error generating lesson content: {e}")
@@ -438,11 +643,12 @@ def generate_comprehensive_lesson():
             existing_lessons=existing_lessons_data
         )
         
-        return jsonify({
-            "success": True,
-            "data": result,
-            "message": f"Comprehensive lesson generated successfully with quality score: {result.get('quality_metrics', {}).get('average_score', 0):.1f}/100"
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        if result.data and 'quality_metrics' in result.data:
+            response_data['message'] = f"Comprehensive lesson generated successfully with quality score: {result.data.get('quality_metrics', {}).get('average_score', 0):.1f}/100"
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating comprehensive lesson: {e}", exc_info=True)
@@ -519,10 +725,10 @@ def generate_quiz_questions():
             question_types=question_types
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating quiz questions: {e}")
@@ -583,10 +789,10 @@ def generate_assignment():
             lessons_summary=lessons_summary
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating assignment: {e}")
@@ -640,10 +846,10 @@ def generate_final_project():
             modules_summary=modules_summary
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating final project: {e}")
@@ -744,10 +950,10 @@ def generate_quiz_from_content():
             difficulty=difficulty
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating quiz from content: {e}")
@@ -841,10 +1047,10 @@ def generate_assignment_from_content():
             assignment_type=assignment_type
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating assignment from content: {e}")
@@ -910,10 +1116,10 @@ def generate_project_from_content():
             course_title=course.title
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating project from content: {e}")
@@ -1042,10 +1248,10 @@ def generate_mixed_content():
             existing_sections=existing_sections
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating mixed content: {e}")
@@ -1091,10 +1297,10 @@ def enhance_section_content():
             context=context
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error enhancing section content: {e}")
@@ -1250,10 +1456,10 @@ def execute_task_session(session_id):
             parallel=parallel
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except ValueError as e:
         return jsonify({
@@ -1339,10 +1545,10 @@ def generate_lesson_with_tasks():
             parallel=parallel
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating lesson with tasks: {e}")
@@ -1498,10 +1704,10 @@ def generate_deep_lesson():
             existing_lessons=existing_lessons_data
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating deep lesson: {e}")
@@ -1784,10 +1990,10 @@ def generate_lesson_by_chapters():
             chapter_depth=chapter_depth
         )
         
-        return jsonify({
-            "success": True,
-            "data": result
-        }), 200
+        # Convert AIResponse to dict for JSON serialization
+        response_data = result.to_dict()
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error generating lesson by chapters: {e}")
@@ -1873,20 +2079,3 @@ def stream_chapter_progress(session_id):
             'X-Accel-Buffering': 'no'
         }
     )
-
-
-# =====================
-# HEALTH CHECK
-# =====================
-
-@ai_agent_bp.route("/health", methods=["GET"])
-def health_check():
-    """Check if AI agent service is available"""
-    api_key_configured = ai_agent_service.api_key is not None
-    
-    return jsonify({
-        "status": "operational",
-        "api_configured": api_key_configured,
-        "message": "AI Agent service is running" if api_key_configured 
-                   else "AI Agent service running but API key not configured"
-    }), 200

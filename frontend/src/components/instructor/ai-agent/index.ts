@@ -3,8 +3,19 @@
  * Exports all AI-assisted content generation components
  */
 
+// Main Components
 export { AICourseGenerator } from './AICourseGenerator';
 export { AIContentGenerator } from './AIContentGenerator';
+export { AIDashboard } from './AIDashboard';
+export { AIIntegration } from './AIIntegration';
+
+// Enhanced Components
+export { EnhancedAIContentGenerator } from './EnhancedAIContentGenerator';
+export { AIProgressTracker } from './AIProgressTracker';
+export { QualityAssessmentDisplay } from './QualityAssessmentDisplay';
+
+// Admin Components
+export { AIAdminPanel } from './AIAdminPanel';
 
 // Re-export types
 export type { 
@@ -15,5 +26,7 @@ export type {
   AssignmentRequest,
   FinalProjectRequest,
   EnhanceContentRequest,
-  AIResponse
+  AIResponse,
+  GenerationProgress,
+  QualityAssessment
 } from '@/services/ai-agent.service';

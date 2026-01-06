@@ -381,5 +381,14 @@ if __name__ == '__main__':
     # In development, run with debug mode
     port = int(os.environ.get('PORT', 5000))
     debug_mode = os.environ.get('FLASK_ENV') != 'production'
-    app.run(host='0.0.0.0', port=port, debug=debug_mode)
+    
+    # Allow disabling auto-reload for testing AI generation
+    use_reloader = debug_mode and os.environ.get('DISABLE_RELOADER') != 'true'
+    
+    app.run(
+        host='0.0.0.0', 
+        port=port, 
+        debug=debug_mode,
+        use_reloader=use_reloader
+    )
 

@@ -111,9 +111,106 @@ export interface AIResponse<T = any> {
   data?: T;
   message?: string;
   error?: string;
+  metadata?: {
+    timestamp: string;
+    duration_ms: number;
+    cache_hit: boolean;
+    provider_used: string;
+    session_id: string;
+    quality_score?: number;
+  };
+  status?: 'success' | 'partial_success' | 'error';
+}
+
+// Progress tracking interface
+export interface GenerationProgress {
+  session_id: string;
+  progress: number;
+  stage: string;
+  estimated_remaining: number;
+  can_cancel: boolean;
+}
+
+// Quality assessment interface
+export interface QualityAssessment {
+  overall_score: number;
+  is_valid: boolean;
+  quality_breakdown: {
+    [aspect: string]: {
+      score: number;
+      feedback: string;
+      suggestions: string[];
+    };
+  };
+  critical_issues: string[];
+  warnings: string[];
+  suggestions: string[];
 }
 
 class AIAgentService {
+  private progressCallbacks: Map<string, (progress: GenerationProgress) => void> = new Map();
+  
+  /**
+   * Check AI agent service health and configuration
+   */
+  async healthCheck(): Promise<{
+    status: string;
+    api_configured: boolean;
+    provider_stats?: any;
+    message: string;
+  }> {
+    try {
+      const response = await aiApiClient.get('/ai-agent/health');
+      return response.data;
+    } catch (error: any) {
+      console.error('Health check failed:', error);
+      return {
+        status: 'error',
+        api_configured: false,
+        message: error.response?.data?.message || 'Health check failed'
+      };
+    }
+  }
+  
+  /**
+   * Track generation progress for long-running operations
+   */
+  async trackProgress(sessionId: string, onProgress: (progress: GenerationProgress) => void): Promise<void> {
+    this.progressCallbacks.set(sessionId, onProgress);
+    
+    const pollProgress = async () => {
+      try {
+        const response = await aiApiClient.get(`/ai-agent/progress/${sessionId}`);
+        const progress: GenerationProgress = response.data;
+        
+        onProgress(progress);
+        
+        // Continue polling if not complete
+        if (progress.progress < 100) {
+          setTimeout(pollProgress, 1000); // Poll every second
+        } else {
+          this.progressCallbacks.delete(sessionId);
+        }
+      } catch (error) {
+        console.error('Progress tracking error:', error);
+        this.progressCallbacks.delete(sessionId);
+      }
+    };
+    
+    pollProgress();
+  }
+  
+  /**
+   * Cancel ongoing generation
+   */
+  async cancelGeneration(sessionId: string): Promise<void> {
+    try {
+      await aiApiClient.post(`/ai-agent/cancel/${sessionId}`);
+      this.progressCallbacks.delete(sessionId);
+    } catch (error) {
+      console.error('Cancel generation failed:', error);
+    }
+  }
   /**
    * Generate course outline using AI
    */
@@ -183,17 +280,57 @@ class AIAgentService {
   }
 
   /**
-   * Generate lesson content using AI
+   * Generate lesson content with enhanced quality tracking
    */
-  async generateLessonContent(request: LessonContentRequest): Promise<AIResponse> {
+  async generateLessonContent(
+    request: LessonContentRequest, 
+    onProgress?: (progress: GenerationProgress) => void
+  ): Promise<AIResponse> {
     try {
-      const response = await aiApiClient.post('/ai-agent/generate-lesson-content', request);
+      // Start the generation
+      const response = await aiApiClient.post('/ai-agent/generate-lesson-content', {
+        ...request,
+        track_progress: !!onProgress
+      });
+      
+      // If progress tracking requested and session_id provided
+      if (onProgress && response.data.metadata?.session_id) {
+        this.trackProgress(response.data.metadata.session_id, onProgress);
+      }
+      
       return response.data;
     } catch (error: any) {
       console.error('Error generating lesson content:', error);
       return {
         success: false,
         message: error.response?.data?.message || 'Failed to generate lesson content',
+        error: error.message
+      };
+    }
+  }
+  
+  /**
+   * Generate module content with enhanced features
+   */
+  async generateModuleContentEnhanced(
+    request: ModuleContentRequest,
+    options?: {
+      trackProgress?: boolean;
+      qualityThreshold?: number;
+    }
+  ): Promise<AIResponse> {
+    try {
+      const response = await aiApiClient.post('/ai-agent/generate-module-content', {
+        ...request,
+        ...options
+      });
+      
+      return response.data;
+    } catch (error: any) {
+      console.error('Error generating enhanced module content:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to generate module content',
         error: error.message
       };
     }
