@@ -74,6 +74,30 @@ const LearningPage = () => {
   const params = useParams();
   const courseId = parseInt(params.id as string);
   
+  // ⚠️ CRITICAL: Authentication check MUST be first to prevent hooks violations
+  // This prevents the "Rendered fewer hooks than expected" error
+  useEffect(() => {
+    if (authLoading) {
+      // Still loading auth, don't redirect yet
+      return;
+    }
+    
+    if (!isAuthenticated) {
+      // Only redirect after auth loading is complete and user is not authenticated
+      window.location.href = '/auth/login';
+      return;
+    }
+  }, [isAuthenticated, authLoading]);
+  
+  // Early return for non-authenticated users to prevent hook violations
+  if (!authLoading && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-[#0a0e1a] flex items-center justify-center">
+        <div className="text-white text-lg">Redirecting to login...</div>
+      </div>
+    );
+  }
+  
   // Core state
   const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1064,20 +1088,6 @@ const LearningPage = () => {
       }
     }
   }, [currentLesson?.id]);
-
-  // Authentication check
-  useEffect(() => {
-    if (authLoading) {
-      // Still loading auth, don't redirect yet
-      return;
-    }
-    
-    if (!isAuthenticated) {
-      // Only redirect after auth loading is complete and user is not authenticated
-      window.location.href = '/auth/login';
-      return;
-    }
-  }, [isAuthenticated, authLoading]);
 
   // Load course data
   useEffect(() => {
