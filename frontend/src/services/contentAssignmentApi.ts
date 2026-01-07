@@ -84,6 +84,7 @@ export interface ContentAssignment {
   modification_requested?: boolean;
   modification_request_reason?: string;
   modification_request_at?: string;
+  modification_requested_by?: number;
   can_resubmit?: boolean;
 }
 
@@ -301,10 +302,39 @@ class ContentAssignmentService extends BaseApiService {
   }
 
   /**
-   * Get assignment details (for students)
+   * Get assignment details (for students) with modification request data
    */
   async getAssignmentDetails(assignmentId: number): Promise<ContentAssignment> {
-    return this.get(`/student/assignments/${assignmentId}/details`);
+    try {
+      const response = await this.get(`/student/assignments/${assignmentId}/details`);
+      // Transform backend response to match frontend interface
+      return {
+        ...response,
+        // Ensure boolean fields are properly converted
+        modification_requested: Boolean(response.modification_requested),
+        can_resubmit: Boolean(response.can_resubmit),
+        // Ensure submission_status exists
+        submission_status: response.submission_status || {
+          submitted: false,
+          status: 'not_submitted',
+          grade: null,
+          feedback: null,
+          submitted_at: null,
+          graded_at: null,
+          grader_name: null
+        }
+      };
+    } catch (error) {
+      console.error('Failed to fetch assignment details:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get assignment details (legacy method for compatibility)
+   */
+  async getAssignmentDetailsLegacy(assignmentId: number): Promise<ContentAssignment> {
+    return this.getAssignmentDetails(assignmentId);
   }
 
   /**
@@ -322,17 +352,71 @@ class ContentAssignmentService extends BaseApiService {
   }
 
   /**
-   * Resubmit assignment after modification request
+   * Resubmit assignment after modification request with enhanced error handling
    */
   async resubmitAssignment(assignmentId: number, data: {
     content?: string;
     file_url?: string;
     external_url?: string;
+    files?: any[];
   }): Promise<{
     message: string;
     submission: any;
+    assignment?: ContentAssignment;
   }> {
-    return this.post(`/student/assignments/${assignmentId}/resubmit`, data);
+    try {
+      const result = await this.post(`/student/assignments/${assignmentId}/resubmit`, data);
+      
+      // Refresh assignment data after resubmission to get updated status
+      try {
+        const updatedAssignment = await this.refreshAssignmentData(assignmentId);
+        return {
+          ...result,
+          assignment: updatedAssignment
+        };
+      } catch (refreshError) {
+        console.warn('Failed to refresh assignment data after resubmission:', refreshError);
+        return result;
+      }
+    } catch (error) {
+      console.error('Failed to resubmit assignment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Refresh assignment data (useful after resubmissions or when checking for modification requests)
+   */
+  async refreshAssignmentData(assignmentId: number): Promise<ContentAssignment> {
+    // Add cache-busting parameter to ensure fresh data
+    const timestamp = new Date().getTime();
+    return this.get(`/student/assignments/${assignmentId}/details?_t=${timestamp}`);
+  }
+
+  /**
+   * Check if assignment has pending modification requests
+   */
+  async checkModificationStatus(assignmentId: number): Promise<{
+    hasModificationRequest: boolean;
+    canResubmit: boolean;
+    reason?: string;
+    requestedAt?: string;
+  }> {
+    try {
+      const assignment = await this.getAssignmentDetails(assignmentId);
+      return {
+        hasModificationRequest: Boolean(assignment.modification_requested),
+        canResubmit: Boolean(assignment.can_resubmit),
+        reason: assignment.modification_request_reason,
+        requestedAt: assignment.modification_request_at
+      };
+    } catch (error) {
+      console.error('Failed to check modification status:', error);
+      return {
+        hasModificationRequest: false,
+        canResubmit: false
+      };
+    }
   }
 
   /**

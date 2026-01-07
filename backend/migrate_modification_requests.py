@@ -34,6 +34,10 @@ def migrate_add_modification_request_columns():
             db.session.execute(text('ALTER TABLE assignments ADD COLUMN modification_requested_by INTEGER REFERENCES users(id)'))
             print("✅ Added modification_requested_by column to assignments")
         
+        if 'can_resubmit' not in assignment_columns:
+            db.session.execute(text('ALTER TABLE assignments ADD COLUMN can_resubmit BOOLEAN DEFAULT FALSE'))
+            print("✅ Added can_resubmit column to assignments")
+        
         if 'resubmission_count' not in assignment_columns:
             db.session.execute(text('ALTER TABLE assignments ADD COLUMN resubmission_count INTEGER DEFAULT 0'))
             print("✅ Added resubmission_count column to assignments")

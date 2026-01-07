@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import and_, or_, func, desc
 from sqlalchemy.orm import joinedload
+from sqlalchemy.exc import SQLAlchemyError
 import logging
 from datetime import datetime
 from functools import wraps
@@ -12,6 +13,8 @@ from ..models.user_models import User
 from ..models.course_models import Assignment, Project, Course, Module, Lesson, AssignmentSubmission, ProjectSubmission
 from ..models.student_models import LessonCompletion
 from ..utils.email_notifications import send_modification_request_notification, send_resubmission_notification
+from ..utils.db_utils import safe_db_session, DatabaseManager
+from ..services.modification_analytics_service import ModificationAnalytics, ModificationInsights
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +41,46 @@ def student_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def admin_required(f):
+    @wraps(f)
+    @jwt_required()
+    def decorated_function(*args, **kwargs):
+        current_user_id = int(get_jwt_identity())
+        user = User.query.get(current_user_id)
+        if not user or not user.role or user.role.name != 'admin':
+            return jsonify({"message": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 # Create blueprint for modification requests
 modification_bp = Blueprint('modification', __name__)
+
+@modification_bp.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for modification system"""
+    try:
+        from ..utils.db_utils import check_db_health, get_pool_status
+        
+        db_healthy, db_message = check_db_health()
+        pool_status = get_pool_status()
+        
+        return jsonify({
+            'status': 'healthy' if db_healthy else 'unhealthy',
+            'database': {
+                'healthy': db_healthy,
+                'message': db_message
+            },
+            'connection_pool': pool_status,
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200 if db_healthy else 503
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
 
 @modification_bp.route('/assignments/<int:assignment_id>/request-modification', methods=['POST'])
 def request_assignment_modification(assignment_id):
@@ -439,6 +480,112 @@ def get_student_modification_requests():
         logger.error(f"Error getting student modification requests: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+@modification_bp.route('/assignments/bulk-request-modification', methods=['POST'])
+@jwt_required()
+@instructor_required
+def bulk_request_modification():
+    """Request modifications for multiple assignments/students"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        # Validate request data
+        if not data or 'assignment_ids' not in data or 'student_modifications' not in data:
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        assignment_ids = data['assignment_ids']
+        student_modifications = data['student_modifications']
+        
+        # Import the service
+        from ..services.modification_service import ModificationRequestService
+        
+        # Perform bulk modification request
+        results = ModificationRequestService.bulk_request_modifications(
+            assignment_ids=assignment_ids,
+            instructor_id=user_id,
+            student_modifications=student_modifications
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': f'Processed {results["successful"]} successful and {results["failed"]} failed requests',
+            'data': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error in bulk modification request: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@modification_bp.route('/instructor/modification-stats', methods=['GET'])
+@jwt_required()
+@instructor_required
+def get_modification_stats():
+    """Get modification request statistics for instructor"""
+    try:
+        user_id = get_jwt_identity()
+        
+        from ..services.modification_service import ModificationRequestService
+        
+        stats = ModificationRequestService.get_assignment_modification_stats(user_id)
+        
+        return jsonify({
+            'success': True,
+            'data': stats
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting modification stats: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@modification_bp.route('/instructor/send-reminders', methods=['POST'])
+@jwt_required()
+@instructor_required
+def send_resubmission_reminders():
+    """Send automatic reminders for overdue resubmissions"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        days_overdue = data.get('days_overdue', 7) if data else 7
+        
+        from ..services.modification_service import ModificationRequestService
+        
+        results = ModificationRequestService.auto_remind_pending_resubmissions(user_id, days_overdue)
+        
+        return jsonify({
+            'success': results['success'],
+            'message': f"Sent {results['reminders_sent']} reminders",
+            'data': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error sending reminders: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@modification_bp.route('/student/modification-history', methods=['GET'])
+@jwt_required()
+@student_required
+def get_student_modification_history():
+    """Get modification request history for student"""
+    try:
+        user_id = get_jwt_identity()
+        course_id = request.args.get('course_id', type=int)
+        
+        from ..services.modification_service import ModificationRequestService
+        
+        history = ModificationRequestService.get_student_modification_history(user_id, course_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'modification_history': history,
+                'total': len(history)
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting student modification history: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @modification_bp.route('/instructor/modification-requests', methods=['GET'])
 @jwt_required()
 @instructor_required
@@ -497,4 +644,176 @@ def get_instructor_modification_requests():
         
     except Exception as e:
         logger.error(f"Error getting instructor modification requests: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@modification_bp.route('/analytics/instructor', methods=['GET'])
+@instructor_required
+def get_instructor_modification_analytics():
+    """Get comprehensive analytics for instructor's modification requests"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        # Get query parameters
+        course_id = request.args.get('course_id', type=int)
+        days_back = request.args.get('days_back', default=90, type=int)
+        
+        # Calculate date range
+        from datetime import datetime, timedelta
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days_back)
+        
+        # Get analytics
+        analytics = ModificationAnalytics.get_instructor_modification_analytics(
+            instructor_id=current_user_id,
+            course_id=course_id,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        # Generate insights
+        insights = ModificationInsights.generate_instructor_insights(analytics)
+        improvement_plan = ModificationInsights.generate_improvement_plan(analytics)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'analytics': analytics,
+                'insights': insights,
+                'improvement_plan': improvement_plan
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting instructor analytics: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@modification_bp.route('/analytics/platform', methods=['GET'])
+@admin_required
+def get_platform_modification_analytics():
+    """Get platform-wide modification analytics (admin only)"""
+    try:
+        # Get query parameters
+        days_back = request.args.get('days_back', default=30, type=int)
+        
+        # Calculate date range
+        from datetime import datetime, timedelta
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days_back)
+        
+        # Get analytics
+        analytics = ModificationAnalytics.get_platform_modification_analytics(
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': analytics
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting platform analytics: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@modification_bp.route('/analytics/trends', methods=['GET'])
+@instructor_required
+def get_modification_trends():
+    """Get modification trends over time"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        # Get query parameters
+        course_id = request.args.get('course_id', type=int)
+        period = request.args.get('period', default='weekly')  # daily, weekly, monthly
+        weeks_back = request.args.get('weeks_back', default=12, type=int)
+        
+        # Calculate date range
+        from datetime import datetime, timedelta
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(weeks=weeks_back)
+        
+        # Base query
+        base_query = db.session.query(Assignment).join(Course).filter(
+            Course.instructor_id == current_user_id,
+            Assignment.modification_requested_at.between(start_date, end_date)
+        )
+        
+        if course_id:
+            base_query = base_query.filter(Assignment.course_id == course_id)
+        
+        # Group by time period
+        if period == 'daily':
+            time_format = '%Y-%m-%d'
+            delta = timedelta(days=1)
+        elif period == 'weekly':
+            time_format = '%Y-%W'
+            delta = timedelta(weeks=1)
+        else:  # monthly
+            time_format = '%Y-%m'
+            delta = timedelta(days=30)
+        
+        # Get data
+        modifications = base_query.filter(Assignment.modification_requested == True).all()
+        
+        # Process trends
+        trends = {}
+        current = start_date
+        
+        while current <= end_date:
+            period_key = current.strftime(time_format)
+            trends[period_key] = {
+                'date': current.isoformat(),
+                'modifications': 0,
+                'resubmissions': 0,
+                'success_rate': 0
+            }
+            current += delta
+        
+        # Count modifications by period
+        for mod in modifications:
+            if mod.modification_requested_at:
+                period_key = mod.modification_requested_at.strftime(time_format)
+                if period_key in trends:
+                    trends[period_key]['modifications'] += 1
+                    
+                    # Check for successful resubmission
+                    completion = LessonCompletion.query.filter(
+                        LessonCompletion.lesson_id == mod.lesson_id,
+                        LessonCompletion.assignment_needs_resubmission == False,
+                        LessonCompletion.is_resubmission == True
+                    ).first()
+                    
+                    if completion:
+                        trends[period_key]['resubmissions'] += 1
+        
+        # Calculate success rates
+        for period_data in trends.values():
+            if period_data['modifications'] > 0:
+                period_data['success_rate'] = round(
+                    (period_data['resubmissions'] / period_data['modifications']) * 100, 1
+                )
+        
+        # Convert to list and sort
+        trend_list = [
+            {
+                'period': period,
+                **data
+            }
+            for period, data in sorted(trends.items())
+        ]
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'trends': trend_list,
+                'period': period,
+                'date_range': {
+                    'start': start_date.isoformat(),
+                    'end': end_date.isoformat()
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting modification trends: {e}")
         return jsonify({'error': 'Internal server error'}), 500

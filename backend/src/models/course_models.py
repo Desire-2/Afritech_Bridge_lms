@@ -422,6 +422,13 @@ class Assignment(db.Model):
     is_published = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Modification request fields
+    modification_requested = db.Column(db.Boolean, default=False, nullable=False)
+    modification_request_reason = db.Column(db.Text, nullable=True)
+    modification_requested_at = db.Column(db.DateTime, nullable=True)
+    modification_requested_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    can_resubmit = db.Column(db.Boolean, default=False, nullable=False)
 
     # Relationships
     course = db.relationship('Course', backref=db.backref('assignments', lazy='dynamic', cascade="all, delete-orphan"))
@@ -449,7 +456,13 @@ class Assignment(db.Model):
             'points_possible': self.points_possible,
             'is_published': self.is_published,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'updated_at': self.updated_at.isoformat(),
+            # Modification request fields
+            'modification_requested': self.modification_requested,
+            'modification_request_reason': self.modification_request_reason,
+            'modification_request_at': self.modification_requested_at.isoformat() if self.modification_requested_at else None,
+            'modification_requested_by': self.modification_requested_by,
+            'can_resubmit': self.can_resubmit
         }
 
 class AssignmentSubmission(db.Model):

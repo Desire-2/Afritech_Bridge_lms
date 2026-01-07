@@ -19,7 +19,9 @@ import {
   Edit,
   Loader2,
   ArrowLeft,
-  BookOpen
+  BookOpen,
+  MessageSquare,
+  RefreshCw
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
@@ -56,20 +58,54 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: FileUploadProgress }>({});
   const [error, setError] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [assignmentData, setAssignmentData] = useState<ContentAssignment>(assignment);
 
-  const isFileUpload = assignment.assignment_type === 'file_upload' || assignment.assignment_type === 'both';
-  const isTextResponse = assignment.assignment_type === 'text_response' || assignment.assignment_type === 'both';
+  // Sync assignment data when props change
+  React.useEffect(() => {
+    setAssignmentData(assignment);
+  }, [assignment]);
+
+  const isFileUpload = assignmentData.assignment_type === 'file_upload' || assignmentData.assignment_type === 'both';
+  const isTextResponse = assignmentData.assignment_type === 'text_response' || assignmentData.assignment_type === 'both';
   const isResubmitMode = submissionMode === 'resubmit';
 
-  // Check if assignment has modification request
-  const hasModificationRequest = assignment.modification_requested && assignment.can_resubmit;
+  // Enhanced status checking using latest assignment data
+  const isSubmitted = Boolean(assignmentData.submission_status?.submitted);
+  const isGraded = assignmentData.submission_status?.status === 'graded';
+  const isPendingReview = isSubmitted && !isGraded;
+  
+  // More flexible modification request detection
+  const hasModificationRequest = Boolean(
+    assignmentData.modification_requested || 
+    assignmentData.modification_request_reason ||
+    (assignmentData.submission_status?.status === 'needs_revision')
+  );
+  
+  // Only allow resubmit when instructor specifically requests modifications
+  const canResubmit = hasModificationRequest && isSubmitted && !isGraded;
 
-  const allowedFileTypes = assignment.allowed_file_types 
-    ? assignment.allowed_file_types.split(',').map(t => t.trim()) 
+  const allowedFileTypes = assignmentData.allowed_file_types 
+    ? assignmentData.allowed_file_types.split(',').map(t => t.trim()) 
     : ['*'];
   
-  const maxFileSizeMB = assignment.max_file_size_mb || 10;
+  const maxFileSizeMB = assignmentData.max_file_size_mb || 10;
   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
+
+  // Function to refresh assignment data
+  const refreshAssignmentData = async () => {
+    setRefreshing(true);
+    try {
+      const updatedData = await ContentAssignmentService.refreshAssignmentData(assignmentData.id);
+      setAssignmentData(updatedData);
+      toast.success('Assignment data refreshed');
+    } catch (error) {
+      console.error('Failed to refresh assignment data:', error);
+      toast.error('Failed to refresh assignment data');
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -196,8 +232,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       
       // Choose endpoint based on submission mode
       const endpoint = isResubmitMode 
-        ? `/api/v1/uploads/assignments/${assignment.id}/resubmit-with-files`
-        : `/api/v1/uploads/assignments/${assignment.id}/submit-with-files`;
+        ? `/api/v1/uploads/assignments/${assignmentData.id}/resubmit-with-files`
+        : `/api/v1/uploads/assignments/${assignmentData.id}/submit-with-files`;
       
       // Call backend API with file metadata
       const response = await fetch(endpoint, {
@@ -445,6 +481,123 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               </div>
             </div>
 
+            {/* Assignment Status & Feedback Section */}
+            {isSubmitted && (
+              <div className="bg-gradient-to-r from-slate-50 to-gray-100 dark:from-slate-900/50 dark:to-gray-800/50 rounded-xl p-6 sm:p-7 mb-6 shadow-lg hover:shadow-xl transition-all duration-300 border border-slate-200 dark:border-slate-700">
+                <h4 className="font-bold text-gray-900 dark:text-white text-lg sm:text-xl mb-5 flex items-center">
+                  <div className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg mr-3 shadow-sm">
+                    <FileText className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                  </div>
+                  Assignment Status & Feedback
+                </h4>
+
+                {/* Status Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  {/* Submission Status */}
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-slate-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <h5 className="font-semibold text-gray-900 dark:text-white text-sm">Submission Status</h5>
+                      <div className={`px-2 py-1 rounded-full text-xs font-bold ${
+                        isGraded 
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                          : hasModificationRequest
+                            ? 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300 animate-pulse'
+                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+                      }`}>
+                        {isGraded 
+                          ? '✓ Graded' 
+                          : hasModificationRequest 
+                            ? '⚠️ Needs Revision' 
+                            : '⏳ Under Review'}
+                      </div>
+                    </div>
+                    <p className="text-gray-600 dark:text-gray-400 text-sm">
+                      {assignment.submission_status?.submitted_at && (
+                        <>Submitted on {new Date(assignment.submission_status.submitted_at).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}</>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Grade Status */}
+                  {isGraded && assignment.submission_status?.grade !== undefined && (
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-slate-200 dark:border-gray-700">
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="font-semibold text-gray-900 dark:text-white text-sm">Grade</h5>
+                        <div className="flex items-center gap-2">
+                          <Award className="h-4 w-4 text-green-600 dark:text-green-400" />
+                          <span className="font-bold text-lg text-green-600 dark:text-green-400">
+                            {assignment.submission_status.grade}/{assignment.points_possible}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-gray-600 dark:text-gray-400 text-sm">
+                        {((assignment.submission_status.grade / assignment.points_possible) * 100).toFixed(1)}% 
+                        {assignment.submission_status?.graded_at && (
+                          <> • Graded {new Date(assignment.submission_status.graded_at).toLocaleDateString()}</>
+                        )}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Instructor Feedback */}
+                {(assignment.submission_status?.feedback || assignment.modification_request_reason) && (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-5 shadow-sm border border-slate-200 dark:border-gray-700 mb-4">
+                    <h5 className="font-semibold text-gray-900 dark:text-white text-sm mb-3 flex items-center">
+                      <div className="p-1 bg-blue-100 dark:bg-blue-900/50 rounded mr-2">
+                        <MessageSquare className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      Instructor Feedback
+                    </h5>
+                    
+                    {/* Regular Feedback */}
+                    {assignment.submission_status?.feedback && (
+                      <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-4 border-l-4 border-blue-500 mb-3">
+                        <p className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">
+                          {assignment.submission_status.feedback}
+                        </p>
+                        {assignment.submission_status?.grader_name && (
+                          <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 font-medium">
+                            — {assignment.submission_status.grader_name}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Modification Request Feedback */}
+                    {assignment.modification_request_reason && (
+                      <div className="bg-orange-50 dark:bg-orange-950/30 rounded-lg p-4 border-l-4 border-orange-500">
+                        <div className="flex items-start gap-2 mb-2">
+                          <AlertCircle className="h-4 w-4 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
+                          <h6 className="font-semibold text-orange-800 dark:text-orange-300 text-sm">Modification Request</h6>
+                        </div>
+                        <p className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">
+                          {assignment.modification_request_reason}
+                        </p>
+                        {assignment.modification_request_at && (
+                          <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 font-medium">
+                            Requested on {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Modification Request Alert */}
             {hasModificationRequest && (
               <Alert className="border-2 border-orange-400 bg-orange-50 dark:bg-orange-950/30 shadow-md">
@@ -475,86 +628,138 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             )}
 
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full">
               {assignment.submission_status?.status === 'graded' ? (
                 <>
                   <Button 
                     onClick={() => setSubmissionMode('submitted')}
-                    className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all"
+                    className="flex-1 w-full sm:w-auto bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transition-all min-h-[3rem] sm:min-h-[4rem]"
                   >
-                    <Award className="h-6 w-6 mr-2" />
-                    View Grade & Feedback
+                    <Award className="h-4 w-4 sm:h-5 sm:w-5 md:h-6 md:w-6 mr-2" />
+                    <span className="truncate">View Grade & Feedback</span>
                   </Button>
                   <Button 
                     variant="outline" 
-                    className="sm:w-auto px-6 py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    className="w-full sm:w-auto px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800 min-h-[3rem] sm:min-h-[4rem]"
                     onClick={() => window.open('/student/assessments', '_blank')}
                   >
-                    <FileText className="h-5 w-5 mr-2" />
-                    All Grades
+                    <FileText className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+                    <span className="hidden sm:inline">All Grades</span>
+                    <span className="sm:hidden">Grades</span>
                   </Button>
                 </>
-              ) : assignment.submission_status?.submitted ? (
+              ) : isSubmitted ? (
                 <>
                   <Button 
                     onClick={() => setSubmissionMode('submitted')}
-                    className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all"
+                    className="flex-1 w-full sm:w-auto bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-600 hover:from-blue-700 hover:via-blue-800 hover:to-indigo-700 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 border border-blue-500/20 min-h-[3rem] sm:min-h-[4rem]"
                   >
-                    <CheckCircle className="h-6 w-6 mr-2" />
-                    View Submission
+                    <div className="flex items-center justify-center w-full">
+                      <div className="p-1 bg-white/20 rounded-full mr-2 sm:mr-3">
+                        <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5" />
+                      </div>
+                      <span className="truncate">View Submission</span>
+                      {isPendingReview && (
+                        <div className="ml-2 px-2 py-1 bg-yellow-400/90 text-yellow-900 text-xs rounded-full font-bold animate-pulse">
+                          <span className="hidden sm:inline">Under Review</span>
+                          <span className="sm:hidden">Review</span>
+                        </div>
+                      )}
+                    </div>
                   </Button>
-                  {hasModificationRequest && (
+                  
+                  {canResubmit && (
                     <Button 
                       onClick={() => setSubmissionMode('resubmit')}
-                      className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all"
+                      className="flex-1 w-full sm:w-auto bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 border border-orange-400/30 animate-pulse min-h-[3rem] sm:min-h-[4rem]"
                     >
-                      <Edit className="h-6 w-6 mr-2" />
-                      Resubmit Assignment
+                      <div className="flex items-center justify-center w-full">
+                        <div className="p-1 bg-white/20 rounded-full mr-2 sm:mr-3">
+                          <Edit className="h-4 w-4 sm:h-5 sm:w-5" />
+                        </div>
+                        <span className="truncate hidden sm:inline">Resubmit Assignment</span>
+                        <span className="truncate sm:hidden">Resubmit</span>
+                        <div className="ml-2 px-2 py-1 bg-white/20 text-white text-xs rounded-full font-bold">
+                          Required
+                        </div>
+                      </div>
                     </Button>
                   )}
-                  {!hasModificationRequest && (
-                    <Button 
-                      variant="outline" 
-                      className="sm:w-auto px-6 py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800"
-                    >
-                      <Download className="h-5 w-5 mr-2" />
-                      Resources
-                    </Button>
-                  )}
+                  
+                  <Button 
+                    variant="outline" 
+                    className="group w-full sm:w-auto bg-gradient-to-r from-slate-50 to-gray-100 hover:from-slate-100 hover:to-gray-200 dark:from-gray-800 dark:to-gray-700 dark:hover:from-gray-700 dark:hover:to-gray-600 border-2 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 text-sm sm:text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-[1.02] transition-all duration-300 min-h-[3rem] sm:min-h-[4rem]"
+                  >
+                    <div className="flex items-center justify-center text-gray-700 dark:text-gray-300">
+                      <div className="p-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-lg mr-2 sm:mr-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/50 transition-colors">
+                        <Download className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <span className="hidden sm:inline">Course Resources</span>
+                      <span className="sm:hidden">Resources</span>
+                    </div>
+                  </Button>
                 </>
               ) : isOverdue ? (
                 <>
                   <Button 
                     variant="outline"
-                    className="flex-1 py-6 sm:py-7 text-lg sm:text-xl font-bold opacity-50 cursor-not-allowed"
+                    className="flex-1 w-full sm:w-auto bg-red-50 dark:bg-red-950/30 border-2 border-red-300 dark:border-red-700 text-red-700 dark:text-red-300 py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold cursor-not-allowed opacity-75 min-h-[3rem] sm:min-h-[4rem]"
                     disabled
                   >
-                    <AlertCircle className="h-6 w-6 mr-2" />
-                    Assignment Expired
+                    <div className="flex items-center justify-center w-full">
+                      <div className="p-1 bg-red-100 dark:bg-red-900/50 rounded-full mr-2 sm:mr-3">
+                        <AlertCircle className="h-4 w-4 sm:h-5 sm:w-5 text-red-600 dark:text-red-400" />
+                      </div>
+                      <span className="truncate hidden sm:inline">Assignment Expired</span>
+                      <span className="truncate sm:hidden">Expired</span>
+                      <div className="ml-2 px-2 py-1 bg-red-200 dark:bg-red-900/50 text-red-800 dark:text-red-300 text-xs rounded-full font-bold">
+                        Overdue
+                      </div>
+                    </div>
                   </Button>
+                  
                   <Button 
                     variant="outline" 
-                    className="sm:w-auto px-6 py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    className="group w-full sm:w-auto bg-gradient-to-r from-slate-50 to-gray-100 hover:from-slate-100 hover:to-gray-200 dark:from-gray-800 dark:to-gray-700 dark:hover:from-gray-700 dark:hover:to-gray-600 border-2 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 text-sm sm:text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-[1.02] transition-all duration-300 min-h-[3rem] sm:min-h-[4rem]"
                   >
-                    <Download className="h-5 w-5 mr-2" />
-                    Resources
+                    <div className="flex items-center justify-center text-gray-700 dark:text-gray-300">
+                      <div className="p-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-lg mr-2 sm:mr-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/50 transition-colors">
+                        <Download className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <span className="hidden sm:inline">Course Resources</span>
+                      <span className="sm:hidden">Resources</span>
+                    </div>
                   </Button>
                 </>
               ) : (
                 <>
                   <Button 
                     onClick={() => setSubmissionMode('submit')}
-                    className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all"
+                    className="flex-1 w-full sm:w-auto bg-gradient-to-r from-green-600 via-emerald-600 to-teal-600 hover:from-green-700 hover:via-emerald-700 hover:to-teal-700 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 border border-green-500/20 min-h-[3rem] sm:min-h-[4rem]"
                   >
-                    <Edit className="h-6 w-6 mr-2" />
-                    Start Assignment
+                    <div className="flex items-center justify-center w-full">
+                      <div className="p-1 bg-white/20 rounded-full mr-2 sm:mr-3">
+                        <Edit className="h-4 w-4 sm:h-5 sm:w-5" />
+                      </div>
+                      <span className="truncate hidden sm:inline">Start Assignment</span>
+                      <span className="truncate sm:hidden">Start</span>
+                      <div className="ml-2 px-2 py-1 bg-white/20 text-white text-xs rounded-full font-bold">
+                        New
+                      </div>
+                    </div>
                   </Button>
+                  
                   <Button 
                     variant="outline" 
-                    className="sm:w-auto px-6 py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    className="group w-full sm:w-auto bg-gradient-to-r from-slate-50 to-gray-100 hover:from-slate-100 hover:to-gray-200 dark:from-gray-800 dark:to-gray-700 dark:hover:from-gray-700 dark:hover:to-gray-600 border-2 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 px-3 sm:px-4 md:px-6 py-3 sm:py-4 md:py-6 text-sm sm:text-base font-semibold shadow-md hover:shadow-lg transform hover:scale-[1.02] transition-all duration-300 min-h-[3rem] sm:min-h-[4rem]"
                   >
-                    <Download className="h-5 w-5 mr-2" />
-                    Resources
+                    <div className="flex items-center justify-center text-gray-700 dark:text-gray-300">
+                      <div className="p-1.5 bg-blue-100 dark:bg-blue-900/50 rounded-lg mr-2 sm:mr-3 group-hover:bg-blue-200 dark:group-hover:bg-blue-800/50 transition-colors">
+                        <Download className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400" />
+                      </div>
+                      <span className="hidden sm:inline">Course Resources</span>
+                      <span className="sm:hidden">Resources</span>
+                    </div>
                   </Button>
                 </>
               )}

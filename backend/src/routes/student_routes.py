@@ -1906,21 +1906,40 @@ def get_assignment_details(assignment_id):
             'id': assignment.id,
             'title': assignment.title,
             'description': assignment.description,
+            'instructions': assignment.instructions,
+            'assignment_type': assignment.assignment_type,
+            'max_file_size_mb': assignment.max_file_size_mb,
+            'allowed_file_types': assignment.allowed_file_types,
             'due_date': assignment.due_date.isoformat() if assignment.due_date else None,
-            'max_points': assignment.max_points,
-            'submission_type': assignment.submission_type,
-            'requirements': assignment.requirements if hasattr(assignment, 'requirements') else [],
-            'resources': assignment.resources if hasattr(assignment, 'resources') else [],
-            'submission': {
-                'id': submission.id,
-                'submitted_at': submission.submitted_at.isoformat(),
-                'content': submission.content,
-                'file_path': submission.file_path,
-                'grade': submission.grade,
-                'feedback': submission.feedback,
-                'status': submission.status
-            } if submission else None,
-            'is_overdue': assignment.due_date < datetime.utcnow() if assignment.due_date else False
+            'points_possible': assignment.points_possible,
+            'is_published': assignment.is_published,
+            'created_at': assignment.created_at.isoformat(),
+            'updated_at': assignment.updated_at.isoformat(),
+            
+            # Modification request fields
+            'modification_requested': assignment.modification_requested,
+            'modification_request_reason': assignment.modification_request_reason,
+            'modification_request_at': assignment.modification_requested_at.isoformat() if assignment.modification_requested_at else None,
+            'modification_requested_by': assignment.modification_requested_by,
+            'can_resubmit': assignment.can_resubmit,
+            
+            'submission_status': {
+                'submitted': submission is not None,
+                'status': 'graded' if submission and submission.grade is not None else ('submitted' if submission else 'not_submitted'),
+                'grade': submission.grade if submission else None,
+                'feedback': submission.feedback if submission else None,
+                'submitted_at': submission.submitted_at.isoformat() if submission else None,
+                'graded_at': submission.graded_at.isoformat() if submission and submission.graded_at else None,
+                'grader_name': submission.grader.name if submission and hasattr(submission, 'grader') and submission.grader else None,
+            } if submission else {
+                'submitted': False,
+                'status': 'not_submitted',
+                'grade': None,
+                'feedback': None,
+                'submitted_at': None,
+                'graded_at': None,
+                'grader_name': None,
+            }
         }
         
         return jsonify(assignment_data), 200
