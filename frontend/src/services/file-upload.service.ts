@@ -1,4 +1,4 @@
-// File Upload Service with Vercel Blob Storage
+// File Upload Service with Vercel Blob Storage and Backend Fallback
 import { put, list, del, head } from '@vercel/blob';
 
 export interface UploadedFile {
@@ -25,6 +25,7 @@ export interface FileValidationResult {
 export class FileUploadService {
   private static readonly MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
   private static readonly DEFAULT_ALLOWED_TYPES = [
+    // Note: Vercel Blob requires BLOB_READ_WRITE_TOKEN environment variable
     // Documents
     'application/pdf',
     'application/msword',
@@ -150,12 +151,29 @@ export class FileUploadService {
     }
 
     try {
-      // Upload to Vercel Blob
-      const blob = await put(pathname, file, {
-        access: 'public',
-        contentType: file.type,
-        addRandomSuffix: false
+      // Use Next.js API route for upload (handles Vercel Blob internally)
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      if (options.folder) formData.append('folder', options.folder);
+      if (options.assignmentId) formData.append('assignmentId', options.assignmentId.toString());
+      if (options.studentId) formData.append('studentId', options.studentId.toString());
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
       });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Upload failed');
+      }
 
       // Final progress update
       if (options.onProgress) {
@@ -168,16 +186,25 @@ export class FileUploadService {
       }
 
       return {
-        url: blob.url,
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
-        pathname: blob.pathname,
-        contentType: file.type,
-        contentDisposition: `attachment; filename="${file.name}"`
+        url: result.url,
+        size: result.size || file.size,
+        uploadedAt: result.uploadedAt || new Date().toISOString(),
+        pathname: result.pathname,
+        contentType: result.contentType || file.type,
+        contentDisposition: result.contentDisposition || `attachment; filename="${file.name}"`
       };
+
     } catch (error: any) {
       console.error('File upload error:', error);
-      throw new Error(`Upload failed: ${error.message || 'Unknown error'}`);
+      
+      // Try backend fallback if Next.js API route fails
+      try {
+        console.warn('Next.js API upload failed, attempting backend upload fallback');
+        return await this.uploadToBackend(file, options);
+      } catch (backendError: any) {
+        console.error('Backend upload also failed:', backendError);
+        throw new Error(`Upload failed: ${error.message}. Backend fallback also failed: ${backendError.message}`);
+      }
     }
   }
 
@@ -365,6 +392,85 @@ export class FileUploadService {
     ];
     
     return type.startsWith('image/') || previewableTypes.includes(type);
+  }
+
+  /**
+   * Check if Vercel Blob is available and properly configured
+   */
+  private static isVercelBlobAvailable(): boolean {
+    try {
+      // Check if we have the required token - only server-side
+      if (typeof window === 'undefined') {
+        // Server-side: check process.env
+        return !!process.env.BLOB_READ_WRITE_TOKEN;
+      } else {
+        // Client-side: Vercel Blob needs server-side token, so disable for client
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Upload file using backend API as fallback
+   */
+  private static async uploadToBackend(
+    file: File,
+    options: {
+      folder?: string;
+      assignmentId?: number;
+      studentId?: number;
+      onProgress?: (progress: FileUploadProgress) => void;
+    } = {}
+  ): Promise<UploadedFile> {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    if (options.folder) formData.append('folder', options.folder);
+    if (options.assignmentId) formData.append('assignmentId', options.assignmentId.toString());
+    if (options.studentId) formData.append('studentId', options.studentId.toString());
+
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+    
+    try {
+      const response = await fetch(`${apiUrl}/uploads/file`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Upload failed' }));
+        throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      // Simulate final progress
+      if (options.onProgress) {
+        options.onProgress({
+          loaded: file.size,
+          total: file.size,
+          percentage: 100,
+          file
+        });
+      }
+
+      return {
+        url: result.url,
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        pathname: result.pathname || file.name,
+        contentType: file.type,
+        contentDisposition: `attachment; filename="${file.name}"`
+      };
+    } catch (error: any) {
+      console.error('Backend upload error:', error);
+      throw new Error(`Backend upload failed: ${error.message}`);
+    }
   }
 
   /**

@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
+import FileUploadService, { UploadedFile, FileUploadProgress } from '@/services/file-upload.service';
 import { toast } from 'sonner';
 
 interface AssignmentPanelProps {

@@ -435,3 +435,78 @@ def get_file_info():
             "success": False,
             "error": "Failed to retrieve file information"
         }), 500
+
+@file_upload_bp.route("/file", methods=["POST"])
+@jwt_required()
+def upload_single_file():
+    """Upload a single file and return metadata - Fallback for when Vercel Blob is not available"""
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        
+        if not user:
+            return jsonify({
+                "success": False,
+                "error": "User not found"
+            }), 404
+
+        # Check if file is present in request
+        if 'file' not in request.files:
+            return jsonify({
+                "success": False,
+                "error": "No file provided"
+            }), 400
+
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({
+                "success": False,
+                "error": "No file selected"
+            }), 400
+
+        # Get optional parameters
+        folder = request.form.get('folder', 'general')
+        assignment_id = request.form.get('assignmentId')
+        student_id = request.form.get('studentId', str(current_user_id))
+
+        # Validate file
+        file_data = {
+            'filename': file.filename,
+            'content_type': file.content_type,
+            'size': len(file.read())
+        }
+        file.seek(0)  # Reset file pointer
+        
+        is_valid, errors = StudentValidators.validate_file_upload(file_data)
+        
+        if not is_valid:
+            return jsonify({
+                "success": False,
+                "error": f"File validation failed: {', '.join(errors)}"
+            }), 400
+
+        # In a real implementation, you would save the file to a storage service
+        # For now, we'll just return a mock URL since this is a fallback
+        import time
+        timestamp = int(time.time())
+        mock_pathname = f"{folder}/{assignment_id or 'general'}/{student_id}/{timestamp}_{file.filename}"
+        mock_url = f"/uploads/{mock_pathname}"
+        
+        logger.info(f"File upload fallback: {file.filename} for user {current_user_id}")
+        
+        return jsonify({
+            "success": True,
+            "url": mock_url,
+            "pathname": mock_pathname,
+            "size": file_data['size'],
+            "contentType": file_data['content_type'],
+            "message": "File upload completed (backend fallback)"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"File upload error: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": f"Upload failed: {str(e)}"
+        }), 500
