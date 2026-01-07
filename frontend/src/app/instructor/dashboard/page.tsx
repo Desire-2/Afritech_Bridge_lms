@@ -91,23 +91,28 @@ const InstructorDashboardPage = () => {
   );
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between mb-2">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+    <div className="space-y-4 sm:space-y-6 lg:space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4 mb-2">
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold text-slate-900 dark:text-white leading-tight">
           Welcome back, {user?.first_name || 'Instructor'}
         </h1>
-        <div className="text-sm text-slate-500 dark:text-slate-400">
-          Today is {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+        <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 shrink-0">
+          <span className="hidden sm:inline">
+            Today is {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </span>
+          <span className="sm:hidden">
+            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          </span>
         </div>
       </div>
 
       {/* Key Stats Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+        <div className="bg-white dark:bg-slate-800 p-4 sm:p-5 lg:p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 hover:shadow-md transition-shadow duration-200">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Courses Taught</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{Array.isArray(courses) ? courses.length : 0}</p>
+              <h3 className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400">Courses Taught</h3>
+              <p className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mt-1">{Array.isArray(courses) ? courses.length : 0}</p>
             </div>
             <div className="rounded-full bg-sky-100 dark:bg-sky-900/30 p-3">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-sky-600 dark:text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -120,11 +125,11 @@ const InstructorDashboardPage = () => {
           </div>
         </div>
         
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700">
+        <div className="bg-white dark:bg-slate-800 p-4 sm:p-5 lg:p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 hover:shadow-md transition-shadow duration-200">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Total Students</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData?.totalStudents || 0}</p>
+              <h3 className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400">Total Students</h3>
+              <p className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData?.totalStudents || 0}</p>
             </div>
             <div className="rounded-full bg-emerald-100 dark:bg-emerald-900/30 p-3">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -137,11 +142,11 @@ const InstructorDashboardPage = () => {
           </div>
         </div>
         
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700">
+        <div className="bg-white dark:bg-slate-800 p-4 sm:p-5 lg:p-6 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 hover:shadow-md transition-shadow duration-200">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Pending Grading</h3>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData?.pendingGradingItems || 0}</p>
+              <h3 className="text-xs sm:text-sm font-medium text-slate-500 dark:text-slate-400">Pending Grading</h3>
+              <p className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white mt-1">{dashboardData?.pendingGradingItems || 0}</p>
             </div>
             <div className="rounded-full bg-amber-100 dark:bg-amber-900/30 p-3">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -156,8 +161,8 @@ const InstructorDashboardPage = () => {
       </div>
 
       {/* My Courses Summary Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6">
+        <div className="xl:col-span-2 space-y-4 sm:space-y-6">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">My Courses</h2>
@@ -169,35 +174,36 @@ const InstructorDashboardPage = () => {
             {Array.isArray(courses) && courses.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-700">
                 {courses.map(course => (
-                  <div key={course.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="font-medium text-slate-900 dark:text-white mb-1">{course.title}</h3>
-                        <div className="flex gap-4">
+                  <div key={course.id} className="p-3 sm:p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-medium text-slate-900 dark:text-white mb-1 truncate">{course.title}</h3>
+                        <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
                           <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 mr-1 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
                             </svg>
-                            Published: {course.is_published ? 'Yes' : 'No'}
+                            <span className="hidden sm:inline">Published: </span>{course.is_published ? 'Yes' : 'No'}
                           </span>
                           <span className="text-xs text-slate-500 dark:text-slate-400">
-                            Created: {new Date(course.created_at).toLocaleDateString()}
+                            <span className="hidden sm:inline">Created: </span>{new Date(course.created_at).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Link href={`/instructor/courses/${course.id}/preview`} className="text-xs bg-gradient-to-r from-blue-500 to-indigo-600 px-2.5 py-1 rounded text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-sm hover:shadow-md flex items-center gap-1" title="Preview Course">
+                      <div className="flex flex-wrap gap-1.5 sm:gap-2 sm:shrink-0">
+                        <Link href={`/instructor/courses/${course.id}/preview`} className="text-xs bg-gradient-to-r from-blue-500 to-indigo-600 px-2.5 py-1.5 rounded text-white hover:from-blue-600 hover:to-indigo-700 transition-all shadow-sm hover:shadow-md flex items-center gap-1 whitespace-nowrap" title="Preview Course">
                           <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
-                          Preview
+                          <span className="hidden sm:inline">Preview</span>
                         </Link>
-                        <Link href={`/instructor/courses/${course.id}`} className="text-xs bg-slate-100 dark:bg-slate-700 px-2.5 py-1 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+                        <Link href={`/instructor/courses/${course.id}`} className="text-xs bg-slate-100 dark:bg-slate-700 px-2.5 py-1.5 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors whitespace-nowrap">
                           Manage
                         </Link>
-                        <Link href={`/instructor/courses/${course.id}/analytics`} className="text-xs bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors">
-                          Analytics
+                        <Link href={`/instructor/courses/${course.id}/analytics`} className="text-xs bg-blue-100 dark:bg-blue-900/30 px-2.5 py-1.5 rounded text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors whitespace-nowrap">
+                          <span className="hidden sm:inline">Analytics</span>
+                          <span className="sm:hidden">📊</span>
                         </Link>
                       </div>
                     </div>
@@ -232,11 +238,11 @@ const InstructorDashboardPage = () => {
         </div>
         
         {/* Recent Announcements Section */}
-        <div className="lg:col-span-1">
+        <div className="xl:col-span-1 order-first xl:order-last">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden h-full">
-            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Recent Announcements</h2>
-              <Link href="/instructor/announcements" className="text-sm text-sky-600 dark:text-sky-400 hover:underline">
+            <div className="px-4 sm:px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+              <h2 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white">Recent Announcements</h2>
+              <Link href="/instructor/announcements" className="text-xs sm:text-sm text-sky-600 dark:text-sky-400 hover:underline">
                 View all
               </Link>
             </div>
@@ -244,18 +250,17 @@ const InstructorDashboardPage = () => {
             {dashboardData?.recentAnnouncements && Array.isArray(dashboardData.recentAnnouncements) && dashboardData.recentAnnouncements.length > 0 ? (
               <div className="divide-y divide-slate-100 dark:divide-slate-700">
                 {dashboardData.recentAnnouncements.map(announcement => (
-                  <div key={announcement.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60">
-                    <h3 className="font-medium text-slate-800 dark:text-slate-200 text-sm">{announcement.title}</h3>
-                    <div className="flex gap-2 mt-1.5 items-center text-xs">
-                      <span className="text-slate-500 dark:text-slate-400">{announcement.course_title}</span>
-                      <span className="h-1 w-1 rounded-full bg-slate-300 dark:bg-slate-600"></span>
+                  <div key={announcement.id} className="p-3 sm:p-4 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors">
+                    <h3 className="font-medium text-slate-800 dark:text-slate-200 text-sm leading-tight mb-2">{announcement.title}</h3>
+                    <div className="flex flex-col gap-1.5 text-xs">
+                      <span className="text-slate-500 dark:text-slate-400 truncate">{announcement.course_title}</span>
                       <span className="text-slate-500 dark:text-slate-400">{new Date(announcement.created_at).toLocaleDateString()}</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="p-6 text-slate-500 dark:text-slate-400">No recent announcements.</p>
+              <p className="p-4 sm:p-6 text-sm text-slate-500 dark:text-slate-400 text-center">No recent announcements.</p>
             )}
           </div>
         </div>
