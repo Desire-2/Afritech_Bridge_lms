@@ -40,11 +40,14 @@ from src.routes.learning_routes import learning_bp # Import learning blueprint
 from src.routes.content_assignment_routes import content_assignment_bp # Import content assignment blueprint
 from src.routes.achievement_routes import achievement_bp # Import achievement blueprint
 from src.routes.grading_routes import grading_bp # Import grading blueprint
+from src.routes.enhanced_grading_routes import enhanced_grading_bp # Import enhanced grading blueprint
+from src.routes.modification_routes import modification_bp # Import modification request blueprint
 from src.routes.progress_routes import progress_bp # Import progress blueprint
 from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
 from src.routes.forum_routes import forum_bp # Import forum blueprint
 from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
 from src.routes.admin_routes import admin_bp # Import admin blueprint
+from src.routes.file_upload_routes import file_upload_bp # Import file upload blueprint
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from flask_cors import CORS
 
@@ -258,12 +261,15 @@ app.register_blueprint(learning_bp) # Register learning blueprint
 app.register_blueprint(content_assignment_bp) # Register content assignment blueprint
 app.register_blueprint(achievement_bp) # Register achievement blueprint
 app.register_blueprint(grading_bp) # Register grading blueprint
+app.register_blueprint(enhanced_grading_bp) # Register enhanced grading blueprint
+app.register_blueprint(modification_bp, url_prefix='/api/v1/modification') # Register modification request blueprint
 app.register_blueprint(progress_bp) # Register progress blueprint
 app.register_blueprint(certificate_bp) # Register certificate blueprint
 app.register_blueprint(forum_bp) # Register forum blueprint
 app.register_blueprint(ai_agent_bp) # Register AI agent blueprint
 app.register_blueprint(application_bp) # Register application blueprint
 app.register_blueprint(admin_bp) # Register admin blueprint
+app.register_blueprint(file_upload_bp) # Register file upload blueprint
 
 with app.app_context():
     db.create_all()

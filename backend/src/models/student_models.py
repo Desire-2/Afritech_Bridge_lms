@@ -32,6 +32,20 @@ class LessonCompletion(db.Model):
     # Mixed content video tracking (JSON: {videoIndex: {progress, currentTime, completed}})
     mixed_video_progress = db.Column(db.Text)  # JSON string for tracking multiple videos
     
+    # Assignment submission and grading fields
+    assignment_submitted = db.Column(db.Boolean, default=False)
+    assignment_submission = db.Column(db.Text)  # Student's assignment submission text
+    assignment_file_url = db.Column(db.String(500))  # URL to uploaded assignment file
+    assignment_submitted_at = db.Column(db.DateTime)  # When assignment was submitted
+    assignment_graded = db.Column(db.Boolean, default=False)  # Whether assignment is graded
+    assignment_grade = db.Column(db.Float)  # Assignment grade (0-100)
+    assignment_feedback = db.Column(db.Text)  # Instructor feedback on assignment
+    assignment_graded_at = db.Column(db.DateTime)  # When assignment was graded
+    assignment_needs_resubmission = db.Column(db.Boolean, default=False)  # Modification requested
+    modification_request_reason = db.Column(db.Text)  # Reason for modification request
+    is_resubmission = db.Column(db.Boolean, default=False)  # Is this a resubmission?
+    resubmission_reason = db.Column(db.Text)  # Reason for resubmission
+    
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
     

@@ -198,3 +198,153 @@ def send_project_graded_notification(submission, project, student, grade, feedba
     except Exception as e:
         logger.error(f"❌ Failed to send project grade notification: {str(e)}")
         return False
+
+def send_modification_request_notification(student_email, student_name, assignment_title, instructor_name, reason, course_title, is_project=False):
+    """
+    Send email notification when instructor requests modifications
+    
+    Args:
+        student_email: str - student email
+        student_name: str - student name
+        assignment_title: str - assignment/project title
+        instructor_name: str - instructor name
+        reason: str - reason for modification request
+        course_title: str - course title
+        is_project: bool - whether it's a project or assignment
+    """
+    try:
+        item_type = "project" if is_project else "assignment"
+        subject = f"📝 Modification Requested: {assignment_title}"
+        
+        email_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Modification Request</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }}
+                .header {{ background: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; }}
+                .content {{ padding: 20px; }}
+                .highlight {{ background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 15px 0; }}
+                .footer {{ background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }}
+                .btn {{ background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>📝 Modification Request</h2>
+            </div>
+            <div class="content">
+                <p>Dear <strong>{student_name}</strong>,</p>
+                
+                <p>Your instructor <strong>{instructor_name}</strong> has requested modifications to your {item_type} submission.</p>
+                
+                <div class="highlight">
+                    <h4>Assignment Details:</h4>
+                    <ul>
+                        <li><strong>Course:</strong> {course_title}</li>
+                        <li><strong>{item_type.title()}:</strong> {assignment_title}</li>
+                        <li><strong>Modification Reason:</strong> {reason}</li>
+                    </ul>
+                </div>
+                
+                <p>Please review the feedback and resubmit your {item_type} with the requested modifications.</p>
+                
+                <p><a href="#" class="btn">Resubmit {item_type.title()}</a></p>
+                
+                <p>If you have any questions, please don't hesitate to contact your instructor.</p>
+                
+                <p>Best regards,<br>Afritec Bridge LMS Team</p>
+            </div>
+            <div class="footer">
+                <p>This is an automated message from Afritec Bridge LMS</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        send_email(
+            to=student_email,
+            subject=subject,
+            template=email_html
+        )
+        logger.info(f"📧 Modification request notification sent to {student_email}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send modification request notification: {str(e)}")
+        return False
+
+def send_resubmission_notification(instructor_email, instructor_name, student_name, assignment_title, course_title, is_project=False):
+    """
+    Send email notification when student resubmits after modification request
+    
+    Args:
+        instructor_email: str - instructor email
+        instructor_name: str - instructor name
+        student_name: str - student name
+        assignment_title: str - assignment/project title
+        course_title: str - course title
+        is_project: bool - whether it's a project or assignment
+    """
+    try:
+        item_type = "project" if is_project else "assignment"
+        subject = f"🔄 {item_type.title()} Resubmitted: {assignment_title}"
+        
+        email_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Assignment Resubmitted</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }}
+                .header {{ background: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; }}
+                .content {{ padding: 20px; }}
+                .highlight {{ background: #d1ecf1; padding: 15px; border-left: 4px solid #17a2b8; margin: 15px 0; }}
+                .footer {{ background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }}
+                .btn {{ background: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>🔄 {item_type.title()} Resubmitted</h2>
+            </div>
+            <div class="content">
+                <p>Dear <strong>{instructor_name}</strong>,</p>
+                
+                <p><strong>{student_name}</strong> has resubmitted their {item_type} with the requested modifications.</p>
+                
+                <div class="highlight">
+                    <h4>Submission Details:</h4>
+                    <ul>
+                        <li><strong>Course:</strong> {course_title}</li>
+                        <li><strong>{item_type.title()}:</strong> {assignment_title}</li>
+                        <li><strong>Student:</strong> {student_name}</li>
+                        <li><strong>Status:</strong> Awaiting Review</li>
+                    </ul>
+                </div>
+                
+                <p>The {item_type} is now ready for review and grading.</p>
+                
+                <p><a href="#" class="btn">Review Submission</a></p>
+                
+                <p>Best regards,<br>Afritec Bridge LMS Team</p>
+            </div>
+            <div class="footer">
+                <p>This is an automated message from Afritec Bridge LMS</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        send_email(
+            to=instructor_email,
+            subject=subject,
+            template=email_html
+        )
+        logger.info(f"📧 Resubmission notification sent to {instructor_email}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send resubmission notification: {str(e)}")
+        return False

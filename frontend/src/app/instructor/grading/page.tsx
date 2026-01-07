@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import GradingService, {
   AssignmentSubmission,
   ProjectSubmission,
@@ -11,6 +11,7 @@ import GradingService, {
   SubmissionFilters
 } from '@/services/grading.service';
 import { Course } from '@/types/api';
+import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award } from 'lucide-react';
 
 type GradingItem = {
   id: number;
@@ -29,8 +30,9 @@ type GradingItem = {
 };
 
 const ImprovedGradingPage = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const searchParams = useSearchParams();
+  const router = useRouter();
   
   // State
   const [courses, setCourses] = useState<Course[]>([]);
@@ -43,13 +45,31 @@ const ImprovedGradingPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     if (token) {
+      fetchCourses();
       fetchGradingData();
       fetchSummary();
     }
   }, [token, selectedCourse, selectedStatus, selectedType, currentPage]);
+
+  useEffect(() => {
+    // Handle URL query params
+    const status = searchParams.get('status');
+    if (status && ['pending', 'graded', 'all'].includes(status)) {
+      setSelectedStatus(status as any);
+    }
+    const type = searchParams.get('type');
+    if (type && ['all', 'assignment', 'project'].includes(type)) {
+      setSelectedType(type as any);
+    }
+    const course = searchParams.get('course_id');
+    if (course) {
+      setSelectedCourse(course);
+    }
+  }, [searchParams]);
 
   const fetchGradingData = async () => {
     setLoading(true);
@@ -70,49 +90,63 @@ const ImprovedGradingPage = () => {
 
       // Fetch assignments
       if (selectedType === 'all' || selectedType === 'assignment') {
-        const assignmentData = await GradingService.getAssignmentSubmissions(filters);
-        items.push(...assignmentData.submissions.map(sub => ({
-          id: sub.id,
-          type: 'assignment' as const,
-          title: sub.assignment_title,
-          course_title: sub.course_title,
-          course_id: sub.course_id,
-          student_name: sub.student_name,
-          student_id: sub.student_id,
-          submitted_at: sub.submitted_at,
-          due_date: sub.due_date,
-          days_late: sub.days_late,
-          points_possible: sub.assignment_points,
-          grade: sub.grade,
-          graded_at: sub.graded_at
-        })));
-        
-        if (selectedType === 'assignment') {
-          setTotalPages(assignmentData.pagination.pages);
+        try {
+          const assignmentData = await GradingService.getAssignmentSubmissions(filters);
+          items.push(...assignmentData.submissions.map(sub => ({
+            id: sub.id,
+            type: 'assignment' as const,
+            title: sub.assignment_title,
+            course_title: sub.course_title,
+            course_id: sub.course_id,
+            student_name: sub.student_name,
+            student_id: sub.student_id,
+            submitted_at: sub.submitted_at,
+            due_date: sub.due_date,
+            days_late: sub.days_late,
+            points_possible: sub.assignment_points,
+            grade: sub.grade,
+            graded_at: sub.graded_at
+          })));
+          
+          if (selectedType === 'assignment') {
+            setTotalPages(assignmentData.pagination.pages);
+          }
+        } catch (err) {
+          console.error('Failed to fetch assignment submissions:', err);
+          if (selectedType === 'assignment') {
+            setError('Failed to load assignment submissions');
+          }
         }
       }
 
       // Fetch projects
       if (selectedType === 'all' || selectedType === 'project') {
-        const projectData = await GradingService.getProjectSubmissions(filters);
-        items.push(...projectData.submissions.map(sub => ({
-          id: sub.id,
-          type: 'project' as const,
-          title: sub.project_title,
-          course_title: sub.course_title,
-          course_id: sub.course_id,
-          student_name: sub.student_name,
-          student_id: sub.student_id,
-          submitted_at: sub.submitted_at,
-          due_date: sub.due_date,
-          days_late: sub.days_late,
-          points_possible: sub.project_points,
-          grade: sub.grade,
-          graded_at: sub.graded_at
-        })));
-        
-        if (selectedType === 'project') {
-          setTotalPages(projectData.pagination.pages);
+        try {
+          const projectData = await GradingService.getProjectSubmissions(filters);
+          items.push(...projectData.submissions.map(sub => ({
+            id: sub.id,
+            type: 'project' as const,
+            title: sub.project_title,
+            course_title: sub.course_title,
+            course_id: sub.course_id,
+            student_name: sub.student_name,
+            student_id: sub.student_id,
+            submitted_at: sub.submitted_at,
+            due_date: sub.due_date,
+            days_late: sub.days_late,
+            points_possible: sub.project_points,
+            grade: sub.grade,
+            graded_at: sub.graded_at
+          })));
+          
+          if (selectedType === 'project') {
+            setTotalPages(projectData.pagination.pages);
+          }
+        } catch (err) {
+          console.error('Failed to fetch project submissions:', err);
+          if (selectedType === 'project') {
+            setError('Failed to load project submissions');
+          }
         }
       }
 
@@ -124,20 +158,6 @@ const ImprovedGradingPage = () => {
       });
 
       setGradingItems(items);
-
-      // Fetch courses if not already loaded
-      if (courses.length === 0) {
-        const response = await fetch('/api/v1/instructor/courses', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        if (response.ok) {
-          const coursesData = await response.json();
-          setCourses(coursesData);
-        }
-      }
     } catch (err: any) {
       setError(err.message || 'Failed to load grading data');
     } finally {
@@ -155,23 +175,79 @@ const ImprovedGradingPage = () => {
     }
   };
 
+  const fetchCourses = async () => {
+    try {
+      const response = await fetch('/api/v1/instructor/courses', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (response.ok) {
+        const coursesData = await response.json();
+        setCourses(coursesData);
+      }
+    } catch (err) {
+      console.error('Failed to fetch courses:', err);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([
+      fetchGradingData(),
+      fetchSummary()
+    ]);
+    setRefreshing(false);
+  };
+
+  const updateURL = () => {
+    const params = new URLSearchParams();
+    if (selectedStatus !== 'pending') params.set('status', selectedStatus);
+    if (selectedType !== 'all') params.set('type', selectedType);
+    if (selectedCourse !== 'all') params.set('course_id', selectedCourse);
+    
+    const newURL = `/instructor/grading${params.toString() ? '?' + params.toString() : ''}`;
+    router.push(newURL, { scroll: false });
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     });
   };
 
   const getGradeColor = (grade: number, maxPoints: number) => {
-    const percentage = (grade / maxPoints) * 100;
+    const percentage = GradingService.calculatePercentage(grade, maxPoints);
     if (percentage >= 90) return 'text-green-600 dark:text-green-400';
     if (percentage >= 80) return 'text-blue-600 dark:text-blue-400';
     if (percentage >= 70) return 'text-yellow-600 dark:text-yellow-400';
-    if (percentage >= 60) return 'text-orange-600 dark:text-orange-400';
     return 'text-red-600 dark:text-red-400';
+  };
+
+
+
+  const getStatusIcon = (item: GradingItem) => {
+    if (item.grade !== undefined) {
+      return <CheckCircle className="w-4 h-4 text-green-600" />;
+    }
+    if (item.days_late > 0) {
+      return <AlertCircle className="w-4 h-4 text-red-600" />;
+    }
+    return <Clock className="w-4 h-4 text-orange-600" />;
+  };
+
+  const getStatusText = (item: GradingItem) => {
+    if (item.grade !== undefined) {
+      return `Graded on ${formatDate(item.graded_at!)}`;
+    }
+    if (item.days_late > 0) {
+      return `${item.days_late} day${item.days_late > 1 ? 's' : ''} overdue`;
+    }
+    return 'Awaiting grade';
   };
 
   if (loading && gradingItems.length === 0) {
@@ -186,19 +262,41 @@ const ImprovedGradingPage = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Grading Center</h1>
           <p className="text-slate-600 dark:text-slate-400 mt-1">
-            Manage and grade student submissions
+            Review and grade student submissions
+            {user?.role?.name === 'instructor' && (
+              <span className="ml-2 px-2 py-1 bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 rounded-full text-xs font-medium">
+                Instructor
+              </span>
+            )}
           </p>
         </div>
-        <Link
-          href="/instructor/grading/analytics"
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          View Analytics
-        </Link>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+          >
+            {refreshing ? (
+              <div className="flex items-center space-x-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-slate-500"></div>
+                <span>Refreshing...</span>
+              </div>
+            ) : (
+              'Refresh'
+            )}
+          </button>
+          <Link
+            href="/instructor/grading/analytics"
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Award className="w-4 h-4 inline mr-2" />
+            View Analytics
+          </Link>
+        </div>
       </div>
 
       {error && (
@@ -287,7 +385,11 @@ const ImprovedGradingPage = () => {
             </label>
             <select
               value={selectedCourse}
-              onChange={(e) => { setSelectedCourse(e.target.value); setCurrentPage(1); }}
+              onChange={(e) => { 
+                setSelectedCourse(e.target.value); 
+                setCurrentPage(1);
+                updateURL();
+              }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Courses</option>
@@ -306,7 +408,11 @@ const ImprovedGradingPage = () => {
             </label>
             <select
               value={selectedStatus}
-              onChange={(e) => { setSelectedStatus(e.target.value as any); setCurrentPage(1); }}
+              onChange={(e) => { 
+                setSelectedStatus(e.target.value as any); 
+                setCurrentPage(1);
+                updateURL();
+              }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
               <option value="pending">Pending</option>
@@ -322,7 +428,11 @@ const ImprovedGradingPage = () => {
             </label>
             <select
               value={selectedType}
-              onChange={(e) => { setSelectedType(e.target.value as any); setCurrentPage(1); }}
+              onChange={(e) => { 
+                setSelectedType(e.target.value as any); 
+                setCurrentPage(1);
+                updateURL();
+              }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Types</option>
@@ -360,7 +470,7 @@ const ImprovedGradingPage = () => {
                 <div key={`${item.type}-${item.id}`} className="p-6 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <div className="flex items-center space-x-3 mb-2">
+                      <div className="flex items-center space-x-3 mb-3">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                           item.type === 'assignment'
                             ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
@@ -368,47 +478,45 @@ const ImprovedGradingPage = () => {
                         }`}>
                           {item.type.charAt(0).toUpperCase() + item.type.slice(1)}
                         </span>
+                        <div className="flex items-center space-x-1">
+                          {getStatusIcon(item)}
+                          <span className="text-xs text-slate-600 dark:text-slate-400">
+                            {getStatusText(item)}
+                          </span>
+                        </div>
                         {item.days_late > 0 && (
                           <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400">
                             {item.days_late} day{item.days_late > 1 ? 's' : ''} late
                           </span>
                         )}
-                        {item.grade !== undefined && (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">
-                            Graded
-                          </span>
-                        )}
                       </div>
 
-                      <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-1">
+                      <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">
                         {item.title}
                       </h3>
 
                       <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-400">
                         <span className="flex items-center">
-                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                          </svg>
+                          <User className="w-4 h-4 mr-1" />
                           {item.student_name}
                         </span>
                         <span className="flex items-center">
-                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-                          </svg>
+                          <BookOpen className="w-4 h-4 mr-1" />
                           {item.course_title}
                         </span>
                         <span className="flex items-center">
-                          <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                          </svg>
+                          <Calendar className="w-4 h-4 mr-1" />
                           Submitted {formatDate(item.submitted_at)}
                         </span>
-                        {item.grade !== undefined && (
+                        {item.grade !== undefined ? (
                           <span className={`flex items-center font-medium ${getGradeColor(item.grade, item.points_possible)}`}>
-                            <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
+                            <Award className="w-4 h-4 mr-1" />
                             {GradingService.formatGrade(item.grade, item.points_possible)}
+                          </span>
+                        ) : (
+                          <span className="flex items-center text-orange-600 dark:text-orange-400 font-medium">
+                            <Clock className="w-4 h-4 mr-1" />
+                            Pending Grade
                           </span>
                         )}
                       </div>

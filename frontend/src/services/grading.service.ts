@@ -411,6 +411,7 @@ export class GradingService {
    * Calculate grade percentage
    */
   static calculatePercentage(grade: number, maxPoints: number): number {
+    if (grade === null || grade === undefined || maxPoints === null || maxPoints === undefined) return 0;
     if (maxPoints === 0) return 0;
     return (grade / maxPoints) * 100;
   }

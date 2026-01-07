@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
@@ -70,6 +70,12 @@ const StudentSidebar = () => {
           label: 'Assignments', 
           description: 'View & submit assignments',
           icon: <FileText size={iconSize} /> 
+        },
+        { 
+          href: '/student/modifications', 
+          label: 'Modifications', 
+          description: 'Review change requests',
+          icon: <AlertTriangle size={iconSize} /> 
         },
       ]
     },

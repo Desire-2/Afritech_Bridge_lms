@@ -477,6 +477,17 @@ class AssignmentSubmission(db.Model):
         return f'<AssignmentSubmission {self.id} for Assignment {self.assignment_id}>'
 
     def to_dict(self):
+        # Parse files data if available
+        files_data = []
+        if self.file_url:
+            try:
+                import json
+                files_data = json.loads(self.file_url) if self.file_url else []
+                if not isinstance(files_data, list):
+                    files_data = []
+            except (json.JSONDecodeError, TypeError):
+                files_data = []
+        
         return {
             'id': self.id,
             'assignment_id': self.assignment_id,
@@ -485,6 +496,8 @@ class AssignmentSubmission(db.Model):
             'text_content': self.content,  # Alias for backward compatibility
             'file_url': self.file_url,
             'file_path': self.file_url,  # Alias for backward compatibility
+            'files': files_data,  # Parsed file metadata
+            'files_count': len(files_data),
             'external_url': self.external_url,
             'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
             'grade': self.grade,
@@ -494,6 +507,55 @@ class AssignmentSubmission(db.Model):
             'student_name': f"{self.student.first_name} {self.student.last_name}" if self.student else None,
             'grader_name': f"{self.grader.first_name} {self.grader.last_name}" if self.grader else None
         }
+    
+    def get_files(self):
+        """Get parsed file metadata"""
+        if not self.file_url:
+            return []
+        
+        try:
+            import json
+            files_data = json.loads(self.file_url)
+            return files_data if isinstance(files_data, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+    
+    def set_files(self, files_data):
+        """Set file metadata as JSON string"""
+        if not files_data:
+            self.file_url = None
+            return
+        
+        try:
+            import json
+            self.file_url = json.dumps(files_data)
+        except (TypeError, ValueError):
+            self.file_url = None
+    
+    def add_file(self, file_metadata):
+        """Add a file to the submission"""
+        files = self.get_files()
+        files.append(file_metadata)
+        self.set_files(files)
+    
+    def remove_file(self, file_url_or_index):
+        """Remove a file from the submission by URL or index"""
+        files = self.get_files()
+        
+        if isinstance(file_url_or_index, int):
+            # Remove by index
+            if 0 <= file_url_or_index < len(files):
+                files.pop(file_url_or_index)
+        else:
+            # Remove by URL
+            files = [f for f in files if f.get('url') != file_url_or_index]
+        
+        self.set_files(files)
+    
+    def get_total_file_size(self):
+        """Get total size of all uploaded files"""
+        files = self.get_files()
+        return sum(file.get('size', 0) for file in files)
 
 class Project(db.Model):
     __tablename__ = 'projects'

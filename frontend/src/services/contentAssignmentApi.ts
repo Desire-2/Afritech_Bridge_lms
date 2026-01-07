@@ -80,6 +80,11 @@ export interface ContentAssignment {
     graded_at?: string;
     grader_name?: string;
   };
+  // Modification request fields
+  modification_requested?: boolean;
+  modification_request_reason?: string;
+  modification_request_at?: string;
+  can_resubmit?: boolean;
 }
 
 export interface ContentProject {
@@ -314,6 +319,20 @@ class ContentAssignmentService extends BaseApiService {
     submission: any;
   }> {
     return this.post(`/student/assignments/${assignmentId}/submit`, data);
+  }
+
+  /**
+   * Resubmit assignment after modification request
+   */
+  async resubmitAssignment(assignmentId: number, data: {
+    content?: string;
+    file_url?: string;
+    external_url?: string;
+  }): Promise<{
+    message: string;
+    submission: any;
+  }> {
+    return this.post(`/student/assignments/${assignmentId}/resubmit`, data);
   }
 
   /**

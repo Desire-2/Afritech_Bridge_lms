@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
 import GradingService, { SubmissionDetail, FeedbackTemplate } from '@/services/grading.service';
+import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
 
 const AssignmentGradingDetail = () => {
   const params = useParams();
@@ -22,6 +23,7 @@ const AssignmentGradingDetail = () => {
   const [grade, setGrade] = useState<string>('');
   const [feedback, setFeedback] = useState<string>('');
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showModificationModal, setShowModificationModal] = useState(false);
 
   useEffect(() => {
     if (token && submissionId) {
@@ -37,7 +39,7 @@ const AssignmentGradingDetail = () => {
       setSubmission(data);
       
       // Pre-fill if already graded
-      if (data.grade !== undefined) {
+      if (data.grade !== undefined && data.grade !== null) {
         setGrade(data.grade.toString());
         setFeedback(data.feedback || '');
       }
@@ -269,7 +271,7 @@ const AssignmentGradingDetail = () => {
                   className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
                   placeholder="Enter grade"
                 />
-                {grade && (
+                {grade && submission.assignment_points && (
                   <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
                     Percentage: {GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points).toFixed(1)}%
                     {' '}({GradingService.getLetterGrade(GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points))})
@@ -326,6 +328,20 @@ const AssignmentGradingDetail = () => {
                 >
                   {grading ? 'Submitting...' : submission.grade !== undefined ? 'Update Grade' : 'Submit Grade'}
                 </button>
+                
+                {/* Request Modification Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowModificationModal(true)}
+                  className="px-4 py-3 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors font-medium flex items-center"
+                  title="Request student to modify and resubmit"
+                >
+                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Request Modification
+                </button>
+                
                 <button
                   type="button"
                   onClick={() => router.back()}
@@ -370,7 +386,7 @@ const AssignmentGradingDetail = () => {
           )}
 
           {/* Current Grade */}
-          {submission.grade !== undefined && (
+          {submission.grade !== undefined && submission.grade !== null && submission.assignment_points && (
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
               <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
                 Current Grade
@@ -426,6 +442,27 @@ const AssignmentGradingDetail = () => {
           )}
         </div>
       </div>
+      
+      {/* Request Modification Modal */}
+      {submission && (
+        <RequestModificationModal
+          isOpen={showModificationModal}
+          onClose={() => setShowModificationModal(false)}
+          submission={{
+            id: submission.id,
+            student_name: submission.student_info?.name || 'Unknown Student',
+            student_id: submission.student_info?.id || 0,
+            assignment_title: submission.assignment_title,
+            assignment_id: submission.assignment_id,
+            submission_type: 'assignment'
+          }}
+          onSuccess={() => {
+            setShowModificationModal(false);
+            // Optionally refresh the submission data
+            fetchSubmission();
+          }}
+        />
+      )}
     </div>
   );
 };

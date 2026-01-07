@@ -47,15 +47,22 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   onSubmit,
   onSubmitComplete
 }) => {
-  const [submissionMode, setSubmissionMode] = useState<'view' | 'submit' | 'submitted'>('view');
+  const [submissionMode, setSubmissionMode] = useState<'view' | 'submit' | 'submitted' | 'resubmit'>('view');
   const [textResponse, setTextResponse] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: FileUploadProgress }>({});
   const [error, setError] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<any>(null);
 
   const isFileUpload = assignment.assignment_type === 'file_upload' || assignment.assignment_type === 'both';
   const isTextResponse = assignment.assignment_type === 'text_response' || assignment.assignment_type === 'both';
+  const isResubmitMode = submissionMode === 'resubmit';
+
+  // Check if assignment has modification request
+  const hasModificationRequest = assignment.modification_requested && assignment.can_resubmit;
 
   const allowedFileTypes = assignment.allowed_file_types 
     ? assignment.allowed_file_types.split(',').map(t => t.trim()) 
@@ -64,33 +71,95 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const maxFileSizeMB = assignment.max_file_size_mb || 10;
   const maxFileSizeBytes = maxFileSizeMB * 1024 * 1024;
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     
-    // Validate file types
-    const invalidFiles = files.filter(file => {
-      if (allowedFileTypes.includes('*')) return false;
-      const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
-      return !allowedFileTypes.some(type => type.toLowerCase() === fileExt);
-    });
+    if (files.length === 0) return;
     
-    if (invalidFiles.length > 0) {
-      alert(`Invalid file types: ${invalidFiles.map(f => f.name).join(', ')}\nAllowed types: ${allowedFileTypes.join(', ')}`);
-      return;
+    setUploading(true);
+    setError(null);
+    
+    try {
+      // Convert file types for validation
+      const allowedMimeTypes = allowedFileTypes.includes('*') 
+        ? undefined 
+        : allowedFileTypes.map(ext => FileUploadService.getContentType('file' + ext));
+      
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fileKey = `${file.name}-${file.size}`;
+        
+        try {
+          const uploadedFile = await FileUploadService.uploadFile(file, {
+            folder: 'assignments',
+            assignmentId: assignment.id,
+            allowedTypes: allowedMimeTypes,
+            maxSize: maxFileSizeBytes,
+            onProgress: (progress) => {
+              setUploadProgress(prev => ({ ...prev, [fileKey]: progress }));
+            }
+          });
+          
+          setUploadedFiles(prev => [...prev, {
+            ...uploadedFile,
+            originalName: file.name,
+            size: file.size
+          } as UploadedFile & { originalName: string }]);
+          
+          toast.success(`File "${file.name}" uploaded successfully`);
+        } catch (error: any) {
+          console.error(`Failed to upload ${file.name}:`, error);
+          toast.error(`Failed to upload "${file.name}": ${error.message}`);
+        } finally {
+          // Clear progress for this file
+          setUploadProgress(prev => {
+            const newProgress = { ...prev };
+            delete newProgress[fileKey];
+            return newProgress;
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error('File upload error:', error);
+      setError(`Upload failed: ${error.message}`);
+      toast.error('File upload failed');
+    } finally {
+      setUploading(false);
+      // Clear the input
+      if (event.target) {
+        event.target.value = '';
+      }
     }
-    
-    // Validate file sizes
-    const oversizedFiles = files.filter(file => file.size > maxFileSizeBytes);
-    if (oversizedFiles.length > 0) {
-      alert(`Files too large: ${oversizedFiles.map(f => f.name).join(', ')}\nMax size: ${maxFileSizeMB}MB`);
-      return;
-    }
-    
-    setSelectedFiles(prev => [...prev, ...files]);
   };
 
-  const removeFile = (index: number) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+  const removeFile = async (index: number) => {
+    const fileToRemove = uploadedFiles[index];
+    if (!fileToRemove) return;
+    
+    try {
+      await FileUploadService.deleteFile(fileToRemove.url);
+      setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+      toast.success('File removed successfully');
+    } catch (error: any) {
+      console.error('Failed to remove file:', error);
+      toast.error('Failed to remove file');
+    }
+  };
+  
+  const getFileIcon = (filename: string) => {
+    const ext = FileUploadService.getFileExtension(filename).toLowerCase();
+    
+    if (FileUploadService.isImageFile(filename)) {
+      return <Image className="h-4 w-4" />;
+    } else if (['mp4', 'webm', 'mov', 'avi'].includes(ext)) {
+      return <Video className="h-4 w-4" />;
+    } else if (['mp3', 'wav', 'ogg'].includes(ext)) {
+      return <Music className="h-4 w-4" />;
+    } else if (['zip', 'tar', 'gz', 'rar'].includes(ext)) {
+      return <Archive className="h-4 w-4" />;
+    } else {
+      return <File className="h-4 w-4" />;
+    }
   };
 
   const handleSubmit = async () => {
@@ -101,9 +170,14 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       return;
     }
     
-    if (isFileUpload && selectedFiles.length === 0 && !isTextResponse) {
-      setError('Please select at least one file');
+    if (isFileUpload && uploadedFiles.length === 0 && !isTextResponse) {
+      setError('Please upload at least one file');
       toast.error('File upload is required');
+      return;
+    }
+    
+    if (uploading) {
+      toast.error('Please wait for file uploads to complete');
       return;
     }
     
@@ -111,13 +185,39 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     setError(null);
     
     try {
-      // Call backend API
-      const result = await ContentAssignmentService.submitAssignment(assignment.id, {
-        content: textResponse || undefined,
-        // Note: File upload would need to be handled separately via a file upload endpoint
-        // For now, we'll just send the text content
-        external_url: selectedFiles.length > 0 ? `Files: ${selectedFiles.map(f => f.name).join(', ')}` : undefined
+      // Prepare file metadata for submission
+      const filesMetadata = uploadedFiles.map(file => ({
+        url: file.url,
+        filename: (file as any).originalName || file.pathname.split('/').pop(),
+        size: file.size,
+        contentType: file.contentType,
+        uploadedAt: file.uploadedAt
+      }));
+      
+      // Choose endpoint based on submission mode
+      const endpoint = isResubmitMode 
+        ? `/api/v1/uploads/assignments/${assignment.id}/resubmit-with-files`
+        : `/api/v1/uploads/assignments/${assignment.id}/submit-with-files`;
+      
+      // Call backend API with file metadata
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          content: textResponse || undefined,
+          files: filesMetadata,
+          external_url: undefined
+        })
       });
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Submission failed');
+      }
       
       setSubmissionResult(result);
       setSubmissionMode('submitted');
@@ -125,20 +225,20 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       // Call parent callbacks
       onSubmit({
         text: textResponse || undefined,
-        files: selectedFiles.length > 0 ? selectedFiles : undefined
+        files: uploadedFiles.length > 0 ? uploadedFiles as any : undefined
       });
       
       if (onSubmitComplete) {
         onSubmitComplete();
       }
 
-      toast.success('Assignment Submitted!', {
-        description: result.message || 'Your assignment has been submitted successfully'
+      toast.success(isResubmitMode ? 'Assignment Resubmitted!' : 'Assignment Submitted!', {
+        description: result.message || (isResubmitMode ? 'Your assignment has been resubmitted successfully' : 'Your assignment has been submitted successfully')
       });
       
     } catch (error: any) {
       console.error('Submission error:', error);
-      const errorMessage = error.response?.data?.message || error.message || 'Failed to submit assignment';
+      const errorMessage = error.message || 'Failed to submit assignment';
       setError(errorMessage);
       toast.error('Submission Failed', {
         description: errorMessage
@@ -345,8 +445,38 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               </div>
             </div>
 
+            {/* Modification Request Alert */}
+            {hasModificationRequest && (
+              <Alert className="border-2 border-orange-400 bg-orange-50 dark:bg-orange-950/30 shadow-md">
+                <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                <AlertTitle className="text-orange-800 dark:text-orange-300 font-bold">
+                  Modification Requested
+                </AlertTitle>
+                <AlertDescription className="text-orange-700 dark:text-orange-200">
+                  Your instructor has requested modifications to your assignment submission.
+                  {assignment.modification_request_reason && (
+                    <div className="mt-2 p-3 bg-white/50 dark:bg-gray-800/50 rounded border-l-4 border-orange-400">
+                      <strong>Reason:</strong> {assignment.modification_request_reason}
+                    </div>
+                  )}
+                  {assignment.modification_request_at && (
+                    <p className="text-sm mt-2 text-orange-600 dark:text-orange-400">
+                      Requested on {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </p>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+
             {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-3">{assignment.submission_status?.status === 'graded' ? (
+            <div className="flex flex-col sm:flex-row gap-3">
+              {assignment.submission_status?.status === 'graded' ? (
                 <>
                   <Button 
                     onClick={() => setSubmissionMode('submitted')}
@@ -373,13 +503,24 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     <CheckCircle className="h-6 w-6 mr-2" />
                     View Submission
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    className="sm:w-auto px-6 py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800"
-                  >
-                    <Download className="h-5 w-5 mr-2" />
-                    Resources
-                  </Button>
+                  {hasModificationRequest && (
+                    <Button 
+                      onClick={() => setSubmissionMode('resubmit')}
+                      className="flex-1 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white py-6 sm:py-7 text-lg sm:text-xl font-bold shadow-lg hover:shadow-xl transition-all"
+                    >
+                      <Edit className="h-6 w-6 mr-2" />
+                      Resubmit Assignment
+                    </Button>
+                  )}
+                  {!hasModificationRequest && (
+                    <Button 
+                      variant="outline" 
+                      className="sm:w-auto px-6 py-6 border-2 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    >
+                      <Download className="h-5 w-5 mr-2" />
+                      Resources
+                    </Button>
+                  )}
                 </>
               ) : isOverdue ? (
                 <>
@@ -571,38 +712,59 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     );
   }
 
-  // Submit Mode
-  return (
-    <div className="space-y-6">
-      {/* Error Alert */}
-      {error && (
-        <Alert className="border-2 border-red-400 bg-red-50 dark:bg-red-950/30 shadow-md animate-in slide-in-from-top">
-          <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
-          <AlertTitle className="text-red-800 dark:text-red-300 font-bold">Submission Error</AlertTitle>
-          <AlertDescription className="text-red-700 dark:text-red-200">{error}</AlertDescription>
-        </Alert>
-      )}
+  // Submit/Resubmit Mode
+  if (submissionMode === 'submit' || submissionMode === 'resubmit') {
+    return (
+      <div className="space-y-6">
+        {/* Error Alert */}
+        {error && (
+          <Alert className="border-2 border-red-400 bg-red-50 dark:bg-red-950/30 shadow-md animate-in slide-in-from-top">
+            <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+            <AlertTitle className="text-red-800 dark:text-red-300 font-bold">
+              {isResubmitMode ? 'Resubmission Error' : 'Submission Error'}
+            </AlertTitle>
+            <AlertDescription className="text-red-700 dark:text-red-200">{error}</AlertDescription>
+          </Alert>
+        )}
 
-      <Card className="border-2 border-green-200 bg-gradient-to-br from-green-50 via-white to-emerald-50 dark:from-green-950 dark:via-gray-900 dark:to-emerald-950 shadow-xl">
-        <CardHeader className="border-b dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">{assignment.title}</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-2">
-                <Edit className="h-4 w-4" />
-                Complete and submit your assignment
-              </p>
+        {/* Modification Request Notice for Resubmit Mode */}
+        {isResubmitMode && hasModificationRequest && (
+          <Alert className="border-2 border-orange-400 bg-orange-50 dark:bg-orange-950/30 shadow-md">
+            <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+            <AlertTitle className="text-orange-800 dark:text-orange-300 font-bold">
+              Resubmitting Assignment
+            </AlertTitle>
+            <AlertDescription className="text-orange-700 dark:text-orange-200">
+              You are resubmitting this assignment based on your instructor's feedback.
+              {assignment.modification_request_reason && (
+                <div className="mt-2 p-3 bg-white/50 dark:bg-gray-800/50 rounded border-l-4 border-orange-400">
+                  <strong>Instructor's Request:</strong> {assignment.modification_request_reason}
+                </div>
+              )}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <Card className="border-2 border-green-200 bg-gradient-to-br from-green-50 via-white to-emerald-50 dark:from-green-950 dark:via-gray-900 dark:to-emerald-950 shadow-xl">
+          <CardHeader className="border-b dark:border-gray-700">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">{assignment.title}</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1 flex items-center gap-2">
+                  <Edit className="h-4 w-4" />
+                  {isResubmitMode ? 'Update and resubmit your assignment' : 'Complete and submit your assignment'}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => setSubmissionMode('view')}
+                disabled={submitting}
+                className="hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <X className="h-5 w-5" />
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              onClick={() => setSubmissionMode('view')}
-              disabled={submitting}
-              className="hover:bg-gray-100 dark:hover:bg-gray-800"
-            >
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
-        </CardHeader>
+          </CardHeader>
         
         <CardContent className="space-y-6 p-6 sm:p-8">
           {/* Due Date Warning */}
@@ -758,12 +920,12 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               {submitting ? (
                 <>
                   <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                  Submitting...
+                  {isResubmitMode ? 'Resubmitting...' : 'Submitting...'}
                 </>
               ) : (
                 <>
                   <Send className="h-5 w-5 mr-2" />
-                  Submit Assignment
+                  {isResubmitMode ? 'Resubmit Assignment' : 'Submit Assignment'}
                 </>
               )}
             </Button>
@@ -772,4 +934,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       </Card>
     </div>
   );
+  }
+
+  // This should not be reached
+  return null;
 };

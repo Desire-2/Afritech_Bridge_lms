@@ -1,0 +1,397 @@
+// File Upload Service with Vercel Blob Storage
+import { put, list, del, head } from '@vercel/blob';
+
+export interface UploadedFile {
+  url: string;
+  size: number;
+  uploadedAt: string;
+  pathname: string;
+  contentType: string;
+  contentDisposition: string;
+}
+
+export interface FileUploadProgress {
+  loaded: number;
+  total: number;
+  percentage: number;
+  file: File;
+}
+
+export interface FileValidationResult {
+  isValid: boolean;
+  errors: string[];
+}
+
+export class FileUploadService {
+  private static readonly MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+  private static readonly DEFAULT_ALLOWED_TYPES = [
+    // Documents
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain',
+    'application/rtf',
+    
+    // Images
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/bmp',
+    'image/svg+xml',
+    
+    // Code files
+    'text/html',
+    'text/css',
+    'text/javascript',
+    'text/typescript',
+    'text/x-python',
+    'text/x-java-source',
+    'text/x-c',
+    'text/x-c++src',
+    'application/json',
+    'application/xml',
+    
+    // Archives
+    'application/zip',
+    'application/x-tar',
+    'application/gzip',
+    'application/x-rar-compressed',
+    
+    // Spreadsheets & Presentations
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    
+    // Audio & Video (for media assignments)
+    'audio/mpeg',
+    'audio/wav',
+    'audio/ogg',
+    'video/mp4',
+    'video/webm',
+    'video/quicktime'
+  ];
+
+  /**
+   * Validate a file before upload
+   */
+  static validateFile(
+    file: File, 
+    allowedTypes?: string[], 
+    maxSize?: number
+  ): FileValidationResult {
+    const errors: string[] = [];
+    const types = allowedTypes || this.DEFAULT_ALLOWED_TYPES;
+    const size = maxSize || this.MAX_FILE_SIZE;
+
+    // Check file size
+    if (file.size > size) {
+      errors.push(`File size ${this.formatBytes(file.size)} exceeds maximum allowed size of ${this.formatBytes(size)}`);
+    }
+
+    // Check file type
+    if (!types.includes(file.type)) {
+      errors.push(`File type "${file.type}" is not allowed. Allowed types: ${types.join(', ')}`);
+    }
+
+    // Check file name
+    if (file.name.length > 255) {
+      errors.push('File name is too long (maximum 255 characters)');
+    }
+
+    // Check for potentially dangerous file names
+    const dangerousPatterns = [/\.\./g, /[<>:"|?*]/g, /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i];
+    if (dangerousPatterns.some(pattern => pattern.test(file.name))) {
+      errors.push('File name contains invalid characters or reserved names');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }
+
+  /**
+   * Upload a single file to Vercel Blob
+   */
+  static async uploadFile(
+    file: File,
+    options: {
+      folder?: string;
+      assignmentId?: number;
+      studentId?: number;
+      onProgress?: (progress: FileUploadProgress) => void;
+      allowedTypes?: string[];
+      maxSize?: number;
+    } = {}
+  ): Promise<UploadedFile> {
+    // Validate file
+    const validation = this.validateFile(file, options.allowedTypes, options.maxSize);
+    if (!validation.isValid) {
+      throw new Error(`File validation failed: ${validation.errors.join(', ')}`);
+    }
+
+    // Generate unique file path
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(2);
+    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const folder = options.folder || 'assignments';
+    const pathname = `${folder}/${options.assignmentId || 'general'}/${options.studentId || 'unknown'}/${timestamp}_${randomId}_${sanitizedFileName}`;
+
+    // Simulate progress if callback provided
+    if (options.onProgress) {
+      options.onProgress({
+        loaded: 0,
+        total: file.size,
+        percentage: 0,
+        file
+      });
+    }
+
+    try {
+      // Upload to Vercel Blob
+      const blob = await put(pathname, file, {
+        access: 'public',
+        contentType: file.type,
+        addRandomSuffix: false
+      });
+
+      // Final progress update
+      if (options.onProgress) {
+        options.onProgress({
+          loaded: file.size,
+          total: file.size,
+          percentage: 100,
+          file
+        });
+      }
+
+      return {
+        url: blob.url,
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        pathname: blob.pathname,
+        contentType: file.type,
+        contentDisposition: `attachment; filename="${file.name}"`
+      };
+    } catch (error: any) {
+      console.error('File upload error:', error);
+      throw new Error(`Upload failed: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Upload multiple files with progress tracking
+   */
+  static async uploadFiles(
+    files: File[],
+    options: {
+      folder?: string;
+      assignmentId?: number;
+      studentId?: number;
+      onFileProgress?: (fileIndex: number, progress: FileUploadProgress) => void;
+      onOverallProgress?: (completed: number, total: number) => void;
+      allowedTypes?: string[];
+      maxSize?: number;
+      maxFiles?: number;
+    } = {}
+  ): Promise<UploadedFile[]> {
+    if (options.maxFiles && files.length > options.maxFiles) {
+      throw new Error(`Too many files. Maximum allowed: ${options.maxFiles}`);
+    }
+
+    const results: UploadedFile[] = [];
+    let completed = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const uploadedFile = await this.uploadFile(files[i], {
+          ...options,
+          onProgress: options.onFileProgress 
+            ? (progress) => options.onFileProgress!(i, progress)
+            : undefined
+        });
+        
+        results.push(uploadedFile);
+        completed++;
+        
+        if (options.onOverallProgress) {
+          options.onOverallProgress(completed, files.length);
+        }
+      } catch (error: any) {
+        // Continue with other files, but record the error
+        console.error(`Failed to upload file ${files[i].name}:`, error);
+        throw new Error(`Failed to upload "${files[i].name}": ${error.message}`);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Delete a file from Vercel Blob
+   */
+  static async deleteFile(url: string): Promise<void> {
+    try {
+      await del(url);
+    } catch (error: any) {
+      console.error('File deletion error:', error);
+      throw new Error(`Delete failed: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Get file metadata
+   */
+  static async getFileInfo(url: string): Promise<any> {
+    try {
+      return await head(url);
+    } catch (error: any) {
+      console.error('File info error:', error);
+      throw new Error(`Failed to get file info: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * List files in a folder
+   */
+  static async listFiles(prefix: string = ''): Promise<any[]> {
+    try {
+      const { blobs } = await list({ prefix });
+      return blobs;
+    } catch (error: any) {
+      console.error('List files error:', error);
+      throw new Error(`Failed to list files: ${error.message || 'Unknown error'}`);
+    }
+  }
+
+  /**
+   * Format bytes to human readable format
+   */
+  static formatBytes(bytes: number, decimals: number = 2): string {
+    if (bytes === 0) return '0 Bytes';
+
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  }
+
+  /**
+   * Get file extension from filename
+   */
+  static getFileExtension(filename: string): string {
+    return filename.slice((filename.lastIndexOf('.') - 1 >>> 0) + 2);
+  }
+
+  /**
+   * Get content type from file extension
+   */
+  static getContentType(filename: string): string {
+    const ext = this.getFileExtension(filename).toLowerCase();
+    const mimeTypes: { [key: string]: string } = {
+      'pdf': 'application/pdf',
+      'doc': 'application/msword',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'txt': 'text/plain',
+      'rtf': 'application/rtf',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'webp': 'image/webp',
+      'bmp': 'image/bmp',
+      'svg': 'image/svg+xml',
+      'html': 'text/html',
+      'css': 'text/css',
+      'js': 'text/javascript',
+      'ts': 'text/typescript',
+      'py': 'text/x-python',
+      'java': 'text/x-java-source',
+      'c': 'text/x-c',
+      'cpp': 'text/x-c++src',
+      'json': 'application/json',
+      'xml': 'application/xml',
+      'zip': 'application/zip',
+      'tar': 'application/x-tar',
+      'gz': 'application/gzip',
+      'rar': 'application/x-rar-compressed',
+      'xls': 'application/vnd.ms-excel',
+      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'ppt': 'application/vnd.ms-powerpoint',
+      'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'ogg': 'audio/ogg',
+      'mp4': 'video/mp4',
+      'webm': 'video/webm',
+      'mov': 'video/quicktime'
+    };
+
+    return mimeTypes[ext] || 'application/octet-stream';
+  }
+
+  /**
+   * Check if file is an image
+   */
+  static isImageFile(file: File | string): boolean {
+    const type = typeof file === 'string' 
+      ? this.getContentType(file)
+      : file.type;
+    
+    return type.startsWith('image/');
+  }
+
+  /**
+   * Check if file can be previewed in browser
+   */
+  static canPreviewFile(file: File | string): boolean {
+    const type = typeof file === 'string' 
+      ? this.getContentType(file)
+      : file.type;
+    
+    const previewableTypes = [
+      'application/pdf',
+      'text/plain',
+      'text/html',
+      'text/css',
+      'text/javascript',
+      'application/json',
+      'application/xml'
+    ];
+    
+    return type.startsWith('image/') || previewableTypes.includes(type);
+  }
+
+  /**
+   * Generate a download URL for a file
+   */
+  static getDownloadUrl(blobUrl: string, filename: string): string {
+    try {
+      const url = new URL(blobUrl);
+      url.searchParams.set('download', '1');
+      url.searchParams.set('filename', filename);
+      return url.toString();
+    } catch {
+      return blobUrl;
+    }
+  }
+
+  /**
+   * Create a shareable link for a file
+   */
+  static createShareableLink(blobUrl: string, options: {
+    expiresIn?: number; // minutes
+    password?: string;
+  } = {}): string {
+    // For now, return the blob URL directly
+    // In a production environment, you might want to create temporary links
+    return blobUrl;
+  }
+}
+
+export default FileUploadService;

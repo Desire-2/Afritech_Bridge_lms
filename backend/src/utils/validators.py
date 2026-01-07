@@ -334,19 +334,100 @@ class StudentValidators:
         if 'size' not in file_data or not isinstance(file_data['size'], int):
             errors.append("File size must be specified as an integer")
         
-        # Validate file size (max 10MB)
-        if file_data.get('size', 0) > 10 * 1024 * 1024:
-            errors.append("File size cannot exceed 10MB")
+        filename = file_data.get('filename', '')
+        content_type = file_data.get('content_type', '')
+        size = file_data.get('size', 0)
         
-        # Validate file extension
-        if file_data.get('filename'):
+        # Validate file size (max 50MB for assignments)
+        max_size = 50 * 1024 * 1024  # 50MB
+        if size > max_size:
+            errors.append(f"File size cannot exceed {max_size // (1024 * 1024)}MB")
+        
+        # Minimum file size check (prevent empty files)
+        if size <= 0:
+            errors.append("File cannot be empty")
+        
+        # Validate filename
+        if len(filename) > 255:
+            errors.append("Filename is too long (maximum 255 characters)")
+        
+        # Check for dangerous file names and patterns
+        import re
+        dangerous_patterns = [
+            r'\.\.',  # Directory traversal
+            r'[<>:"|?*]',  # Invalid filename characters
+            r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$',  # Windows reserved names
+            r'^\\.+$',  # Hidden files that are only dots
+            r'^\\s+$',  # Whitespace-only names
+        ]
+        
+        for pattern in dangerous_patterns:
+            if re.search(pattern, filename, re.IGNORECASE):
+                errors.append("Filename contains invalid characters or patterns")
+                break
+        
+        # Validate file extension with enhanced security
+        if filename:
+            # Enhanced list of allowed extensions
             allowed_extensions = [
-                '.pdf', '.doc', '.docx', '.txt', '.py', '.js', '.html', '.css',
-                '.jpg', '.jpeg', '.png', '.gif', '.zip', '.tar', '.gz'
+                # Documents
+                '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt',
+                
+                # Code files
+                '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml',
+                '.java', '.cpp', '.c', '.h', '.hpp', '.cs', '.php', '.rb', '.go',
+                '.rs', '.kt', '.swift', '.ts', '.jsx', '.tsx', '.vue', '.scss', '.sass',
+                '.sql', '.md', '.markdown', '.rst', '.ini', '.cfg', '.conf',
+                
+                # Images
+                '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.ico',
+                
+                # Archives
+                '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z',
+                
+                # Spreadsheets & Presentations
+                '.xls', '.xlsx', '.csv', '.ods',
+                '.ppt', '.pptx', '.odp',
+                
+                # Media (limited)
+                '.mp3', '.wav', '.ogg', '.m4a',
+                '.mp4', '.webm', '.mov', '.avi'
             ]
             
-            filename = file_data['filename'].lower()
-            if not any(filename.endswith(ext) for ext in allowed_extensions):
-                errors.append(f"File type not allowed. Allowed types: {', '.join(allowed_extensions)}")
+            # Blacklisted extensions (security risk)
+            blacklisted_extensions = [
+                '.exe', '.bat', '.cmd', '.com', '.pif', '.scr', '.vbs', '.jse',
+                '.jar', '.msi', '.dll', '.sys', '.bin', '.app', '.deb', '.rpm',
+                '.dmg', '.pkg', '.sh', '.bash', '.fish', '.zsh', '.ps1', '.psm1'
+            ]
+            
+            filename_lower = filename.lower()
+            file_ext = None
+            
+            # Find the file extension
+            for ext in allowed_extensions + blacklisted_extensions:
+                if filename_lower.endswith(ext):
+                    file_ext = ext
+                    break
+            
+            if file_ext in blacklisted_extensions:
+                errors.append(f"File type '{file_ext}' is not allowed for security reasons")
+            elif file_ext not in allowed_extensions:
+                errors.append(f"File type not allowed. Allowed types: {', '.join(allowed_extensions[:20])}... and more")
+        
+        # Additional security checks
+        if filename:
+            # Check for suspicious filename patterns
+            suspicious_patterns = [
+                r'\\.(php|asp|aspx|jsp|cgi)\\.',  # Double extension attacks
+                r'\\.(php|asp|aspx|jsp|cgi)$',   # Server-side script files
+                r'\\.exe\\.',                    # Disguised executables
+                r'[\\x00-\\x1f]',               # Control characters
+            ]
+            
+            for pattern in suspicious_patterns:
+                if re.search(pattern, filename, re.IGNORECASE):
+                    errors.append("Filename contains suspicious patterns")
+                    break
         
         return len(errors) == 0, errors
