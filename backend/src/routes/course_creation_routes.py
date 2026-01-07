@@ -516,7 +516,14 @@ def delete_lesson(course_id, module_id, lesson_id):
             # Delete quiz submissions 
             deleted_submissions = Submission.query.filter_by(quiz_id=quiz.id).delete()
             print(f"DEBUG DELETION - Deleted {deleted_submissions} quiz submissions for quiz {quiz.id}")
-            # Delete quiz questions and answers
+            
+            # Delete answers for all questions in this quiz first
+            questions = Question.query.filter_by(quiz_id=quiz.id).all()
+            for question in questions:
+                deleted_answers = Answer.query.filter_by(question_id=question.id).delete()
+                print(f"DEBUG DELETION - Deleted {deleted_answers} answers for question {question.id}")
+            
+            # Now delete quiz questions 
             deleted_questions = Question.query.filter_by(quiz_id=quiz.id).delete()
             print(f"DEBUG DELETION - Deleted {deleted_questions} questions for quiz {quiz.id}")
             # Delete the quiz itself

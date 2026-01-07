@@ -225,10 +225,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      // Reduced timeout for better user experience on refresh
+      // Increased timeout for better reliability with slower connections
       const userPromise = AuthService.getCurrentUser();
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Profile fetch timeout')), 4000)
+        setTimeout(() => reject(new Error('Profile fetch timeout')), 8000)
       );
       
       const userData = await Promise.race([userPromise, timeoutPromise]);
