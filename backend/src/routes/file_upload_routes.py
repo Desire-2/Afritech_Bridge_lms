@@ -10,6 +10,7 @@ from ..models.course_models import (
     Assignment, AssignmentSubmission, Project, ProjectSubmission,
     Course, Enrollment
 )
+from ..models.student_models import LessonCompletion
 from ..utils.validators import StudentValidators
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,127 @@ def submit_assignment_with_files(assignment_id):
         return jsonify({
             "success": False,
             "error": "Submission failed. Please try again."
+        }), 500
+
+@file_upload_bp.route("/assignments/<int:assignment_id>/resubmit-with-files", methods=["POST"])
+@student_required
+def resubmit_assignment_with_files(assignment_id):
+    """Resubmit assignment with file metadata (for modification requests)"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        # Get assignment
+        assignment = Assignment.query.get_or_404(assignment_id)
+        
+        # Check if student is enrolled
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=assignment.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({
+                "success": False,
+                "error": "Not enrolled in this course"
+            }), 403
+        
+        # Get existing submission
+        existing = AssignmentSubmission.query.filter_by(
+            assignment_id=assignment_id,
+            student_id=current_user_id
+        ).first()
+        
+        if not existing:
+            return jsonify({
+                "success": False,
+                "error": "No previous submission found to resubmit"
+            }), 400
+        
+        # Check if modification was requested
+        if not assignment.modification_requested:
+            return jsonify({
+                "success": False,
+                "error": "No modification request found for this assignment"
+            }), 400
+        
+        # Validate submission data
+        if not data:
+            return jsonify({
+                "success": False,
+                "error": "Submission data is required"
+            }), 400
+        
+        # Validate files if provided
+        files_data = data.get('files', [])
+        if assignment.assignment_type in ['file_upload', 'both'] and not files_data and not data.get('content'):
+            return jsonify({
+                "success": False,
+                "error": "File submission is required for this assignment"
+            }), 400
+        
+        # Validate file count and sizes
+        if files_data:
+            total_size = sum(file.get('size', 0) for file in files_data)
+            max_total_size = (assignment.max_file_size_mb or 50) * 1024 * 1024
+            
+            if total_size > max_total_size:
+                return jsonify({
+                    "success": False,
+                    "error": f"Total file size exceeds limit of {assignment.max_file_size_mb or 50}MB"
+                }), 400
+        
+        # Update existing submission
+        existing.content = data.get('content')
+        existing.file_url = json.dumps(files_data) if files_data else None
+        existing.external_url = data.get('external_url')
+        existing.submitted_at = datetime.utcnow()
+        existing.grade = None  # Reset grade since this is a resubmission
+        existing.feedback = None  # Reset feedback
+        existing.graded_at = None
+        existing.graded_by = None
+        
+        # Clear modification request status
+        assignment.modification_requested = False
+        assignment.modification_request_reason = None
+        assignment.modification_requested_at = None
+        assignment.modification_requested_by = None
+        
+        # Update lesson completion if exists
+        if assignment.lesson_id:
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=current_user_id,
+                lesson_id=assignment.lesson_id
+            ).first()
+            
+            if lesson_completion:
+                lesson_completion.assignment_needs_resubmission = False
+                lesson_completion.is_resubmission = True
+                lesson_completion.completed_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        logger.info(f"Assignment {assignment_id} resubmitted by user {current_user_id} with {len(files_data)} files")
+        
+        return jsonify({
+            "success": True,
+            "message": "Assignment resubmitted successfully",
+            "submission": {
+                "id": existing.id,
+                "assignment_id": assignment_id,
+                "submitted_at": existing.submitted_at.isoformat(),
+                "files_count": len(files_data),
+                "has_text": bool(data.get('content')),
+                "status": "resubmitted"
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Assignment resubmission error: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Resubmission failed. Please try again."
         }), 500
 
 @file_upload_bp.route("/projects/<int:project_id>/submit-with-files", methods=["POST"])

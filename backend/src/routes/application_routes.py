@@ -574,13 +574,11 @@ def list_applications():
             # Add custom ordering to prioritize exact matches
             # Using CASE WHEN to create a relevance score
             relevance_score = case(
-                {
-                    CourseApplication.full_name.ilike(text): 1000,  # Exact name match - highest priority
-                    CourseApplication.email.ilike(text): 900,       # Exact email match
-                    CourseApplication.full_name.ilike(f"{text}%"): 800,  # Name starts with
-                    CourseApplication.email.ilike(f"{text}%"): 700,      # Email starts with
-                    CourseApplication.full_name.ilike(f"% {text} %"): 600, # Word boundary
-                },
+                (CourseApplication.full_name.ilike(text), 1000),  # Exact name match - highest priority
+                (CourseApplication.email.ilike(text), 900),       # Exact email match
+                (CourseApplication.full_name.ilike(f"{text}%"), 800),  # Name starts with
+                (CourseApplication.email.ilike(f"{text}%"), 700),      # Email starts with
+                (CourseApplication.full_name.ilike(f"% {text} %"), 600), # Word boundary
                 else_=0
             )
             

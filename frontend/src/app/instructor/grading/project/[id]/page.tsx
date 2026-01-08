@@ -3,8 +3,33 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import FileViewer from '@/components/FileViewer';
+import DocumentAnalysis from '@/components/DocumentAnalysis';
+import SubmissionReview from '@/components/SubmissionReview';
 import GradingService, { SubmissionDetail, FeedbackTemplate } from '@/services/grading.service';
 import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
+import { 
+  FileText, 
+  User, 
+  Calendar, 
+  Clock, 
+  BookOpen, 
+  Download, 
+  ExternalLink, 
+  Star, 
+  MessageSquare, 
+  History, 
+  AlertTriangle,
+  CheckCircle,
+  Eye,
+  Award,
+  Target,
+  Info,
+  Users,
+  Layers,
+  RefreshCw,
+  AlertCircle
+} from 'lucide-react';
 
 const ProjectGradingDetail = () => {
   const params = useParams();
@@ -116,20 +141,42 @@ const ProjectGradingDetail = () => {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <button
-            onClick={() => router.back()}
-            className="text-blue-600 hover:text-blue-700 mb-2 flex items-center"
-          >
-            <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
-            Back to Grading Center
-          </button>
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Grade Project</h1>
+    <div className="max-w-7xl mx-auto space-y-6 p-6">
+      {/* Enhanced Header */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => router.back()}
+              className="flex items-center px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+            >
+              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to Grading Center
+            </button>
+            <div className="border-l border-slate-200 dark:border-slate-700 pl-4">
+              <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center">
+                <Layers className="w-7 h-7 mr-3 text-purple-600" />
+                Project Grading
+              </h1>
+              <p className="text-slate-600 dark:text-slate-400 mt-1">Review and grade student project submission</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            {submission?.days_late === 0 ? (
+              <div className="flex items-center bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-400 px-3 py-2 rounded-lg">
+                <CheckCircle className="w-4 h-4 mr-2" />
+                <span className="font-medium">On Time</span>
+              </div>
+            ) : submission?.days_late && submission.days_late > 0 ? (
+              <div className="flex items-center bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-400 px-3 py-2 rounded-lg">
+                <AlertTriangle className="w-4 h-4 mr-2" />
+                <span className="font-medium">{submission.days_late} Day{submission.days_late > 1 ? 's' : ''} Late</span>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -142,39 +189,121 @@ const ProjectGradingDetail = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column - Project Details */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Project Info */}
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">
-              {submission.project_title}
-            </h2>
+          {/* Project Overview Card */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="bg-gradient-to-r from-purple-500 to-indigo-600 px-6 py-4">
+              <div className="flex items-center space-x-2">
+                <Layers className="w-6 h-6 text-white" />
+                <h2 className="text-xl font-bold text-white">
+                  {submission.project_title}
+                </h2>
+                {submission.project?.is_published && (
+                  <CheckCircle className="w-5 h-5 text-green-200" />
+                )}
+              </div>
+              <p className="text-purple-100 mt-1">{submission.course_title}</p>
+            </div>
             
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Course:</span>
-                <span className="font-medium text-slate-900 dark:text-white">
-                  {submission.course_title}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Points Possible:</span>
-                <span className="font-medium text-slate-900 dark:text-white">
-                  {submission.project_points}
-                </span>
-              </div>
-              {submission.due_date && (
-                <div className="flex justify-between">
-                  <span className="text-slate-600 dark:text-slate-400">Due Date:</span>
-                  <span className="font-medium text-slate-900 dark:text-white">
-                    {new Date(submission.due_date).toLocaleString()}
-                  </span>
+            <div className="p-6">
+              {/* Project Description */}
+              {submission.project?.description && (
+                <div className="mb-6">
+                  <div className="flex items-center mb-2">
+                    <Info className="w-4 h-4 text-slate-500 mr-2" />
+                    <h3 className="font-medium text-slate-900 dark:text-white">Description</h3>
+                  </div>
+                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border border-slate-200 dark:border-slate-700">
+                    <p className="text-slate-900 dark:text-white whitespace-pre-wrap text-sm">
+                      {submission.project.description}
+                    </p>
+                  </div>
                 </div>
               )}
-              {submission.project && submission.project.objectives && (
-                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Project Objectives:</span>
-                  <p className="mt-2 text-slate-600 dark:text-slate-400 whitespace-pre-wrap">
-                    {submission.project.objectives}
-                  </p>
+
+              {/* Project Objectives */}
+              {submission.project?.objectives && (
+                <div className="mb-6">
+                  <div className="flex items-center mb-2">
+                    <Target className="w-4 h-4 text-purple-500 mr-2" />
+                    <h3 className="font-medium text-slate-900 dark:text-white">Project Objectives</h3>
+                  </div>
+                  <div className="bg-purple-50 dark:bg-purple-900/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+                    <p className="text-slate-900 dark:text-white whitespace-pre-wrap text-sm">
+                      {submission.project.objectives}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Project Details Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <Award className="w-4 h-4 text-yellow-500 mr-2" />
+                      <span className="text-slate-600 dark:text-slate-400">Points Possible</span>
+                    </div>
+                    <span className="font-semibold text-slate-900 dark:text-white">
+                      {submission.project_points}
+                    </span>
+                  </div>
+                  
+                  {submission.due_date && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <Calendar className="w-4 h-4 text-red-500 mr-2" />
+                        <span className="text-slate-600 dark:text-slate-400">Due Date</span>
+                      </div>
+                      <span className={`font-medium ${
+                        submission.days_late > 0 
+                          ? 'text-red-600 dark:text-red-400'
+                          : 'text-slate-900 dark:text-white'
+                      }`}>
+                        {new Date(submission.due_date).toLocaleDateString()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <FileText className="w-4 h-4 text-green-500 mr-2" />
+                      <span className="text-slate-600 dark:text-slate-400">Format</span>
+                    </div>
+                    <span className="font-medium text-slate-900 dark:text-white capitalize">
+                      {submission.project?.submission_format?.replace('_', ' ') || 'Mixed'}
+                    </span>
+                  </div>
+                  
+                  {submission.project?.collaboration_allowed && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <Users className="w-4 h-4 text-blue-500 mr-2" />
+                        <span className="text-slate-600 dark:text-slate-400">Team Size</span>
+                      </div>
+                      <span className="font-medium text-slate-900 dark:text-white">
+                        Up to {submission.project.max_team_size} members
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Covered Modules */}
+              {submission.project?.modules && submission.project.modules.length > 0 && (
+                <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center mb-3">
+                    <BookOpen className="w-4 h-4 text-slate-500 mr-2" />
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Covered Modules:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {submission.project.modules.map((module: any) => (
+                      <div key={module.id} className="px-3 py-1 bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 rounded-full text-sm font-medium">
+                        {module.title}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -201,6 +330,42 @@ const ProjectGradingDetail = () => {
                 </p>
               </div>
 
+              {/* Submission Status */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Submission Status
+                </label>
+                <div className="flex items-center space-x-2">
+                  {submission.submission_status?.is_first ? (
+                    <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400">
+                      <CheckCircle className="w-4 h-4 mr-1.5" />
+                      First Submission
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400">
+                      <RefreshCw className="w-4 h-4 mr-1.5" />
+                      Resubmission #{submission.submission_status?.count || 1}
+                    </span>
+                  )}
+                </div>
+                {/* Resubmission Notes */}
+                {submission.submission_status && !submission.submission_status.is_first && submission.submission_status.notes && (
+                  <div className="mt-3 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                    <div className="flex items-start space-x-2">
+                      <AlertCircle className="w-4 h-4 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium text-orange-800 dark:text-orange-300 mb-1">
+                          Resubmission Note:
+                        </p>
+                        <p className="text-sm text-orange-700 dark:text-orange-400">
+                          {submission.submission_status.notes}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {submission.team_members_info && submission.team_members_info.length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -224,35 +389,20 @@ const ProjectGradingDetail = () => {
                 </div>
               )}
 
-              {submission.text_content && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                    Project Description
-                  </label>
-                  <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4 whitespace-pre-wrap text-slate-900 dark:text-white">
-                    {submission.text_content}
-                  </div>
-                </div>
-              )}
-
-              {submission.file_path && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Project Files
-                  </label>
-                  <a
-                    href={submission.file_path}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Download Project: {submission.file_name || 'project-files.zip'}
-                  </a>
-                </div>
-              )}
+              {/* Comprehensive Project Submission Review */}
+              <SubmissionReview
+                textContent={submission.text_content}
+                files={submission.file_path ? [{
+                  id: 'project-file',
+                  filename: submission.file_name || 'project-files.zip',
+                  file_path: submission.file_path
+                }] : []}
+                submissionType="project"
+                expectedLength={submission.project?.expected_length}
+                maxFiles={submission.project?.max_files}
+                allowedFileTypes={submission.project?.allowed_file_types?.split(',')}
+                className="mb-6"
+              />
             </div>
           </div>
 

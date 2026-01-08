@@ -10,6 +10,13 @@ export interface UploadedFile {
   contentDisposition: string;
 }
 
+export interface StagedFile {
+  file: File;
+  id: string;
+  preview?: string;
+  validationResult: FileValidationResult;
+}
+
 export interface FileUploadProgress {
   loaded: number;
   total: number;
@@ -20,6 +27,13 @@ export interface FileUploadProgress {
 export interface FileValidationResult {
   isValid: boolean;
   errors: string[];
+}
+
+export interface BatchUploadResult {
+  successful: UploadedFile[];
+  failed: { file: File; error: string }[];
+  totalUploaded: number;
+  totalFailed: number;
 }
 
 export class FileUploadService {
@@ -478,6 +492,19 @@ export class FileUploadService {
    */
   static getDownloadUrl(blobUrl: string, filename: string): string {
     try {
+      // Handle different URL types
+      if (blobUrl.startsWith('/uploads/')) {
+        // Local file - serve directly
+        return blobUrl;
+      }
+      
+      if (blobUrl.startsWith('/mock-uploads/')) {
+        // Mock URL - warn user
+        console.warn('Attempted to download mock file URL:', blobUrl);
+        return blobUrl;
+      }
+      
+      // Vercel Blob or other external URL
       const url = new URL(blobUrl);
       url.searchParams.set('download', '1');
       url.searchParams.set('filename', filename);
@@ -485,6 +512,19 @@ export class FileUploadService {
     } catch {
       return blobUrl;
     }
+  }
+
+  /**
+   * Check if file URL is valid for preview
+   */
+  static isValidPreviewUrl(url: string): boolean {
+    // Mock URLs are not valid for preview
+    if (url.startsWith('/mock-uploads/')) {
+      return false;
+    }
+    
+    // Local uploads and Vercel Blob URLs are valid
+    return url.startsWith('/uploads/') || url.startsWith('https://') || url.startsWith('http://');
   }
 
   /**
@@ -497,6 +537,193 @@ export class FileUploadService {
     // For now, return the blob URL directly
     // In a production environment, you might want to create temporary links
     return blobUrl;
+  }
+
+  /**
+   * Format file size for display
+   */
+  static formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  /**
+   * Stage files for later upload (validate and prepare without uploading)
+   */
+  static stageFiles(
+    files: File[],
+    options: {
+      allowedTypes?: string[];
+      maxSize?: number;
+      maxFiles?: number;
+    } = {}
+  ): StagedFile[] {
+    if (options.maxFiles && files.length > options.maxFiles) {
+      throw new Error(`Too many files. Maximum allowed: ${options.maxFiles}`);
+    }
+
+    const stagedFiles: StagedFile[] = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const id = `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).substring(2)}`;
+      const validationResult = this.validateFile(file, options.allowedTypes, options.maxSize);
+      
+      // Create preview for images
+      let preview: string | undefined;
+      if (this.isImageFile(file.name)) {
+        preview = URL.createObjectURL(file);
+      }
+      
+      stagedFiles.push({
+        file,
+        id,
+        preview,
+        validationResult
+      });
+    }
+    
+    return stagedFiles;
+  }
+
+  /**
+   * Upload multiple staged files with comprehensive progress tracking
+   */
+  static async uploadStagedFiles(
+    stagedFiles: StagedFile[],
+    options: {
+      folder?: string;
+      assignmentId?: number;
+      projectId?: number;
+      studentId?: number;
+      onFileProgress?: (fileId: string, progress: FileUploadProgress) => void;
+      onOverallProgress?: (completed: number, total: number, failed: number) => void;
+      onFileComplete?: (fileId: string, result: UploadedFile | null, error?: string) => void;
+    } = {}
+  ): Promise<BatchUploadResult> {
+    const successful: UploadedFile[] = [];
+    const failed: { file: File; error: string }[] = [];
+    let completed = 0;
+
+    // Only upload valid files
+    const validFiles = stagedFiles.filter(sf => sf.validationResult.isValid);
+    const invalidFiles = stagedFiles.filter(sf => !sf.validationResult.isValid);
+    
+    // Add invalid files to failed list immediately
+    for (const invalidFile of invalidFiles) {
+      const error = `Validation failed: ${invalidFile.validationResult.errors.join(', ')}`;
+      failed.push({ file: invalidFile.file, error });
+      
+      if (options.onFileComplete) {
+        options.onFileComplete(invalidFile.id, null, error);
+      }
+    }
+
+    for (let i = 0; i < validFiles.length; i++) {
+      const stagedFile = validFiles[i];
+      
+      try {
+        const uploadedFile = await this.uploadFile(stagedFile.file, {
+          folder: options.folder,
+          assignmentId: options.assignmentId,
+          studentId: options.studentId,
+          onProgress: options.onFileProgress 
+            ? (progress) => options.onFileProgress!(stagedFile.id, progress) 
+            : undefined
+        });
+        
+        successful.push(uploadedFile);
+        
+        if (options.onFileComplete) {
+          options.onFileComplete(stagedFile.id, uploadedFile);
+        }
+        
+      } catch (error: any) {
+        console.error(`Failed to upload ${stagedFile.file.name}:`, error);
+        const errorMessage = error.message || `Upload failed: ${error}`;
+        failed.push({ file: stagedFile.file, error: errorMessage });
+        
+        if (options.onFileComplete) {
+          options.onFileComplete(stagedFile.id, null, errorMessage);
+        }
+      } finally {
+        completed++;
+        
+        if (options.onOverallProgress) {
+          options.onOverallProgress(successful.length, validFiles.length, failed.length);
+        }
+      }
+    }
+
+    return {
+      successful,
+      failed,
+      totalUploaded: successful.length,
+      totalFailed: failed.length + invalidFiles.length
+    };
+  }
+
+  /**
+   * Clean up staged file previews (revoke blob URLs)
+   */
+  static cleanupStagedFiles(stagedFiles: StagedFile[]): void {
+    stagedFiles.forEach(stagedFile => {
+      if (stagedFile.preview && stagedFile.preview.startsWith('blob:')) {
+        URL.revokeObjectURL(stagedFile.preview);
+      }
+    });
+  }
+
+  /**
+   * Get total size of staged files
+   */
+  static getTotalStagedSize(stagedFiles: StagedFile[]): number {
+    return stagedFiles.reduce((total, stagedFile) => total + stagedFile.file.size, 0);
+  }
+
+  /**
+   * Get valid staged files (only files that pass validation)
+   */
+  static getValidStagedFiles(stagedFiles: StagedFile[]): StagedFile[] {
+    return stagedFiles.filter(sf => sf.validationResult.isValid);
+  }
+
+  /**
+   * Get invalid staged files with their errors
+   */
+  static getInvalidStagedFiles(stagedFiles: StagedFile[]): { stagedFile: StagedFile; errors: string[] }[] {
+    return stagedFiles
+      .filter(sf => !sf.validationResult.isValid)
+      .map(sf => ({ stagedFile: sf, errors: sf.validationResult.errors }));
+  }
+
+  /**
+   * Verify that all staging methods are available (for debugging)
+   */
+  static verifyStagingMethods(): boolean {
+    const methods = [
+      'stageFiles',
+      'uploadStagedFiles', 
+      'cleanupStagedFiles',
+      'getTotalStagedSize',
+      'getValidStagedFiles',
+      'getInvalidStagedFiles'
+    ];
+    
+    const missing = methods.filter(method => typeof FileUploadService[method] !== 'function');
+    
+    if (missing.length > 0) {
+      console.error('Missing FileUploadService methods:', missing);
+      return false;
+    }
+    
+    console.log('All staging methods are available');
+    return true;
   }
 }
 

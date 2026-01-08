@@ -14,6 +14,11 @@ export interface SubmissionFilters {
   student_id?: number;
   page?: number;
   per_page?: number;
+  search_query?: string;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  date_start?: string;
+  date_end?: string;
 }
 
 export interface AssignmentSubmission {
@@ -36,6 +41,22 @@ export interface AssignmentSubmission {
   graded_at?: string;
   graded_by?: number;
   grader_name?: string;
+  is_resubmission?: boolean;
+  resubmission_count?: number;
+  submission_notes?: string;
+  submission_status?: {
+    type: 'first_submission' | 'resubmission';
+    count: number;
+    is_first: boolean;
+    notes?: string;
+    original_submission_id?: number;
+  };
+  // Enhanced fields
+  student_email?: string;
+  word_count?: number;
+  reading_time?: number;
+  priority_level?: 'low' | 'medium' | 'high';
+  estimated_grading_time?: number;
 }
 
 export interface ProjectSubmission {
@@ -64,6 +85,16 @@ export interface ProjectSubmission {
   graded_at?: string;
   graded_by?: number;
   grader_name?: string;
+  is_resubmission?: boolean;
+  resubmission_count?: number;
+  submission_notes?: string;
+  submission_status?: {
+    type: 'first_submission' | 'resubmission';
+    count: number;
+    is_first: boolean;
+    notes?: string;
+    original_submission_id?: number;
+  };
 }
 
 export interface SubmissionDetail extends AssignmentSubmission {
@@ -78,6 +109,18 @@ export interface SubmissionDetail extends AssignmentSubmission {
     name: string;
     email: string;
     username: string;
+  };
+  team_members_info?: Array<{
+    id: number;
+    name: string;
+    email: string;
+  }>;
+  submission_status?: {
+    type: 'first_submission' | 'resubmission';
+    count: number;
+    is_first: boolean;
+    notes?: string;
+    original_submission_id?: number;
   };
   previous_attempts?: Array<{
     id: number;
@@ -159,6 +202,26 @@ export interface PaginatedSubmissions<T> {
     per_page: number;
     total: number;
     pages: number;
+  };
+  analytics?: {
+    summary: {
+      total_pending: number;
+      total_graded: number;
+      average_grade: number;
+      completion_rate: number;
+      overdue_count: number;
+      due_soon_count: number;
+    };
+    insights: {
+      suggested_actions: string[];
+      priority_items: Array<{
+        id: number;
+        title: string;
+        student_name: string;
+        days_late: number;
+        priority: 'low' | 'medium' | 'high';
+      }>;
+    };
   };
 }
 

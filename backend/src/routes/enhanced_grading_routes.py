@@ -121,10 +121,8 @@ def get_enhanced_assignment_submissions():
         
         # Calculate priority scores for sorting
         priority_score = case(
-            [
-                (and_(Assignment.due_date < datetime.utcnow(), AssignmentSubmission.grade.is_(None)), 3),  # Overdue
-                (Assignment.due_date < datetime.utcnow() + timedelta(days=1), 2),  # Due soon
-            ],
+            (and_(Assignment.due_date < datetime.utcnow(), AssignmentSubmission.grade.is_(None)), 3),  # Overdue
+            (Assignment.due_date < datetime.utcnow() + timedelta(days=1), 2),  # Due soon
             else_=1
         )
         

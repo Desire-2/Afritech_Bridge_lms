@@ -471,17 +471,24 @@ class AssignmentSubmission(db.Model):
     assignment_id = db.Column(db.Integer, db.ForeignKey('assignments.id'), nullable=False)
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     content = db.Column(db.Text, nullable=True)  # For text responses (matches DB schema)
-    file_url = db.Column(db.String(255), nullable=True)  # URL or path to uploaded file
+    file_url = db.Column(db.Text, nullable=True)  # JSON metadata for uploaded files
     external_url = db.Column(db.String(255), nullable=True)  # External URL submission
     submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
     grade = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
     graded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    
+    # Submission tracking fields
+    is_resubmission = db.Column(db.Boolean, default=False, nullable=False)
+    original_submission_id = db.Column(db.Integer, db.ForeignKey('assignment_submissions.id'), nullable=True)
+    resubmission_count = db.Column(db.Integer, default=0, nullable=False)
+    submission_notes = db.Column(db.Text, nullable=True)  # Notes about why this is a resubmission
 
     # Relationships
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('assignment_submissions', lazy='dynamic'))
     grader = db.relationship('User', foreign_keys=[graded_by], backref=db.backref('graded_assignments', lazy='dynamic'))
+    original_submission = db.relationship('AssignmentSubmission', remote_side=[id], backref='resubmissions')
     
     # Add unique constraint for assignment-student combination
     __table_args__ = (db.UniqueConstraint('assignment_id', 'student_id', name='_assignment_student_submission_uc'),)
@@ -518,7 +525,12 @@ class AssignmentSubmission(db.Model):
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,
             'graded_by': self.graded_by,
             'student_name': f"{self.student.first_name} {self.student.last_name}" if self.student else None,
-            'grader_name': f"{self.grader.first_name} {self.grader.last_name}" if self.grader else None
+            'grader_name': f"{self.grader.first_name} {self.grader.last_name}" if self.grader else None,
+            # Submission tracking fields
+            'is_resubmission': self.is_resubmission,
+            'original_submission_id': self.original_submission_id,
+            'resubmission_count': self.resubmission_count,
+            'submission_notes': self.submission_notes
         }
     
     def get_files(self):
@@ -569,6 +581,50 @@ class AssignmentSubmission(db.Model):
         """Get total size of all uploaded files"""
         files = self.get_files()
         return sum(file.get('size', 0) for file in files)
+    
+    def get_submission_status(self):
+        """Get comprehensive submission status information"""
+        status = {
+            'is_first_submission': not self.is_resubmission,
+            'is_resubmission': self.is_resubmission,
+            'resubmission_count': self.resubmission_count,
+            'submission_type': 'resubmission' if self.is_resubmission else 'first_submission',
+            'modification_requested': self.assignment.modification_requested if self.assignment else False,
+            'can_resubmit': self.assignment.can_resubmit if self.assignment else False,
+            'submission_notes': self.submission_notes
+        }
+        
+        # Add modification request details if applicable
+        if self.assignment and self.assignment.modification_requested:
+            status.update({
+                'modification_request_reason': self.assignment.modification_request_reason,
+                'modification_requested_at': self.assignment.modification_requested_at.isoformat() if self.assignment.modification_requested_at else None,
+                'modification_requested_by': self.assignment.modification_requested_by
+            })
+        
+        return status
+    
+    def get_submission_status(self):
+        """Get comprehensive submission status information"""
+        status = {
+            'is_first_submission': not self.is_resubmission,
+            'is_resubmission': self.is_resubmission,
+            'resubmission_count': self.resubmission_count,
+            'submission_type': 'resubmission' if self.is_resubmission else 'first_submission',
+            'modification_requested': self.assignment.modification_requested if self.assignment else False,
+            'can_resubmit': self.assignment.can_resubmit if self.assignment else False,
+            'submission_notes': self.submission_notes
+        }
+        
+        # Add modification request details if applicable
+        if self.assignment and self.assignment.modification_requested:
+            status.update({
+                'modification_request_reason': self.assignment.modification_request_reason,
+                'modification_requested_at': self.assignment.modification_requested_at.isoformat() if self.assignment.modification_requested_at else None,
+                'modification_requested_by': self.assignment.modification_requested_by
+            })
+        
+        return status
 
 class Project(db.Model):
     __tablename__ = 'projects'
@@ -648,10 +704,17 @@ class ProjectSubmission(db.Model):
     feedback = db.Column(db.Text, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
     graded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    
+    # Submission tracking fields
+    is_resubmission = db.Column(db.Boolean, default=False, nullable=False)
+    original_submission_id = db.Column(db.Integer, db.ForeignKey('project_submissions.id'), nullable=True)
+    resubmission_count = db.Column(db.Integer, default=0, nullable=False)
+    submission_notes = db.Column(db.Text, nullable=True)  # Notes about why this is a resubmission
 
     # Relationships
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('project_submissions', lazy='dynamic'))
     grader = db.relationship('User', foreign_keys=[graded_by], backref=db.backref('graded_projects', lazy='dynamic'))
+    original_submission = db.relationship('ProjectSubmission', remote_side=[id], backref='resubmissions')
 
     def __repr__(self):
         return f'<ProjectSubmission {self.id} for Project {self.project_id}>'
@@ -684,8 +747,26 @@ class ProjectSubmission(db.Model):
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,
             'graded_by': self.graded_by,
             'student_name': f"{self.student.first_name} {self.student.last_name}" if self.student else None,
-            'grader_name': f"{self.grader.first_name} {self.grader.last_name}" if self.grader else None
+            'grader_name': f"{self.grader.first_name} {self.grader.last_name}" if self.grader else None,
+            'is_resubmission': self.is_resubmission,
+            'resubmission_count': self.resubmission_count,
+            'submission_notes': self.submission_notes,
+            'submission_status': self.get_submission_status()
         }
+
+    def get_submission_status(self):
+        """Get comprehensive submission status information"""
+        status = {
+            'type': 'resubmission' if self.is_resubmission else 'first_submission',
+            'count': self.resubmission_count + 1,  # Total submissions including original
+            'is_first': not self.is_resubmission,
+            'notes': self.submission_notes
+        }
+        
+        if self.is_resubmission and self.original_submission_id:
+            status['original_submission_id'] = self.original_submission_id
+        
+        return status
 
 class Announcement(db.Model):
     __tablename__ = 'announcements'

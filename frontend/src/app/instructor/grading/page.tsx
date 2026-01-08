@@ -11,7 +11,7 @@ import GradingService, {
   SubmissionFilters
 } from '@/services/grading.service';
 import { Course } from '@/types/api';
-import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award, Search, Filter, RefreshCw } from 'lucide-react';
 
 type GradingItem = {
   id: number;
@@ -46,6 +46,8 @@ const ImprovedGradingPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [analytics, setAnalytics] = useState<any>(null);
 
   useEffect(() => {
     if (token) {
@@ -79,7 +81,10 @@ const ImprovedGradingPage = () => {
       const filters: SubmissionFilters = {
         status: selectedStatus,
         page: currentPage,
-        per_page: 20
+        per_page: 20,
+        search_query: searchQuery || undefined,
+        sort_by: 'priority',
+        sort_order: 'desc'
       };
 
       if (selectedCourse !== 'all') {
@@ -92,6 +97,12 @@ const ImprovedGradingPage = () => {
       if (selectedType === 'all' || selectedType === 'assignment') {
         try {
           const assignmentData = await GradingService.getAssignmentSubmissions(filters);
+          
+          // Store analytics from the first response
+          if (assignmentData.analytics) {
+            setAnalytics(assignmentData.analytics);
+          }
+          
           items.push(...assignmentData.submissions.map(sub => ({
             id: sub.id,
             type: 'assignment' as const,
@@ -374,9 +385,83 @@ const ImprovedGradingPage = () => {
         </div>
       )}
 
+      {/* Enhanced Analytics */}
+      {analytics && (
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Grading Insights</h2>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Quick Stats */}
+            <div>
+              <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Current Status</h3>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600 dark:text-slate-400">Overdue Items</span>
+                  <span className="text-sm font-semibold text-red-600 dark:text-red-400">
+                    {analytics.summary.overdue_count}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600 dark:text-slate-400">Due Soon</span>
+                  <span className="text-sm font-semibold text-orange-600 dark:text-orange-400">
+                    {analytics.summary.due_soon_count}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600 dark:text-slate-400">Completion Rate</span>
+                  <span className="text-sm font-semibold text-green-600 dark:text-green-400">
+                    {analytics.summary.completion_rate}%
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Suggestions */}
+            <div>
+              <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Suggestions</h3>
+              <div className="space-y-2">
+                {analytics.insights.suggested_actions.length > 0 ? (
+                  analytics.insights.suggested_actions.slice(0, 3).map((action: string, index: number) => (
+                    <div key={index} className="flex items-start">
+                      <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                      <p className="text-sm text-slate-600 dark:text-slate-400">{action}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-500 dark:text-slate-500 italic">
+                    All caught up! No urgent actions needed.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
         <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Filters</h2>
+        
+        {/* Search Bar */}
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Search submissions, students, assignments..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  setCurrentPage(1);
+                  fetchGradingData();
+                }
+              }}
+              className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+        
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Course Filter */}
           <div>

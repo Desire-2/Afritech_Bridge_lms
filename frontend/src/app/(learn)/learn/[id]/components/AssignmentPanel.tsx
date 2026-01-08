@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
-import FileUploadService, { UploadedFile, FileUploadProgress } from '@/services/file-upload.service';
+import FileUploadService, { UploadedFile, FileUploadProgress, StagedFile } from '@/services/file-upload.service';
 import { toast } from 'sonner';
 
 interface AssignmentPanelProps {
@@ -52,20 +52,37 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 }) => {
   const [submissionMode, setSubmissionMode] = useState<'view' | 'submit' | 'submitted' | 'resubmit'>('view');
   const [textResponse, setTextResponse] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: FileUploadProgress }>({});
   const [error, setError] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [assignmentData, setAssignmentData] = useState<ContentAssignment>(assignment);
 
   // Sync assignment data when props change
   React.useEffect(() => {
     setAssignmentData(assignment);
   }, [assignment]);
+  
+  // Cleanup staged files on unmount
+  React.useEffect(() => {
+    return () => {
+      // Safety check to ensure method exists
+      if (typeof FileUploadService.cleanupStagedFiles === 'function') {
+        FileUploadService.cleanupStagedFiles(stagedFiles);
+      } else {
+        console.warn('FileUploadService.cleanupStagedFiles is not available');
+        // Manual cleanup as fallback
+        stagedFiles.forEach(stagedFile => {
+          if (stagedFile.preview && stagedFile.preview.startsWith('blob:')) {
+            URL.revokeObjectURL(stagedFile.preview);
+          }
+        });
+      }
+    };
+  }, []);
 
   const isFileUpload = assignmentData.assignment_type === 'file_upload' || assignmentData.assignment_type === 'both';
   const isTextResponse = assignmentData.assignment_type === 'text_response' || assignmentData.assignment_type === 'both';
@@ -108,60 +125,64 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     }
   };
 
-  const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
     
     if (files.length === 0) return;
     
-    setUploading(true);
     setError(null);
+    setValidationErrors([]);
     
     try {
+      // Safety check for staging methods
+      if (typeof FileUploadService.stageFiles !== 'function') {
+        throw new Error('File staging not available. Please refresh the page.');
+      }
+      
       // Convert file types for validation
       const allowedMimeTypes = allowedFileTypes.includes('*') 
         ? undefined 
         : allowedFileTypes.map(ext => FileUploadService.getContentType('file' + ext));
       
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const fileKey = `${file.name}-${file.size}`;
-        
-        try {
-          const uploadedFile = await FileUploadService.uploadFile(file, {
-            folder: 'assignments',
-            assignmentId: assignment.id,
-            allowedTypes: allowedMimeTypes,
-            maxSize: maxFileSizeBytes,
-            onProgress: (progress) => {
-              setUploadProgress(prev => ({ ...prev, [fileKey]: progress }));
-            }
-          });
-          
-          setUploadedFiles(prev => [...prev, {
-            ...uploadedFile,
-            originalName: file.name,
-            size: file.size
-          } as UploadedFile & { originalName: string }]);
-          
-          toast.success(`File "${file.name}" uploaded successfully`);
-        } catch (error: any) {
-          console.error(`Failed to upload ${file.name}:`, error);
-          toast.error(`Failed to upload "${file.name}": ${error.message}`);
-        } finally {
-          // Clear progress for this file
-          setUploadProgress(prev => {
-            const newProgress = { ...prev };
-            delete newProgress[fileKey];
-            return newProgress;
-          });
-        }
+      const newStagedFiles = FileUploadService.stageFiles(files, {
+        allowedTypes: allowedMimeTypes,
+        maxSize: maxFileSizeBytes,
+        maxFiles: 10 // Reasonable limit
+      });
+      
+      // Clean up any previous previews before adding new files
+      if (typeof FileUploadService.cleanupStagedFiles === 'function') {
+        FileUploadService.cleanupStagedFiles(stagedFiles);
       }
+      
+      setStagedFiles(prev => [...prev, ...newStagedFiles]);
+      
+      // Collect validation errors
+      const invalidFiles = typeof FileUploadService.getInvalidStagedFiles === 'function' 
+        ? FileUploadService.getInvalidStagedFiles(newStagedFiles)
+        : [];
+        
+      if (invalidFiles.length > 0) {
+        const errors = invalidFiles.map(({ stagedFile, errors }) => 
+          `${stagedFile.file.name}: ${errors.join(', ')}`
+        );
+        setValidationErrors(errors);
+        toast.error(`${invalidFiles.length} file(s) failed validation`);
+      }
+      
+      const validFiles = typeof FileUploadService.getValidStagedFiles === 'function'
+        ? FileUploadService.getValidStagedFiles(newStagedFiles)
+        : newStagedFiles.filter(sf => sf.validationResult?.isValid);
+        
+      if (validFiles.length > 0) {
+        toast.success(`${validFiles.length} file(s) ready for submission`);
+      }
+      
     } catch (error: any) {
-      console.error('File upload error:', error);
-      setError(`Upload failed: ${error.message}`);
-      toast.error('File upload failed');
+      console.error('File staging error:', error);
+      setError(`File selection failed: ${error.message}`);
+      toast.error('File selection failed');
     } finally {
-      setUploading(false);
       // Clear the input
       if (event.target) {
         event.target.value = '';
@@ -169,18 +190,17 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     }
   };
 
-  const removeFile = async (index: number) => {
-    const fileToRemove = uploadedFiles[index];
+  const removeStagedFile = (index: number) => {
+    const fileToRemove = stagedFiles[index];
     if (!fileToRemove) return;
     
-    try {
-      await FileUploadService.deleteFile(fileToRemove.url);
-      setUploadedFiles(prev => prev.filter((_, i) => i !== index));
-      toast.success('File removed successfully');
-    } catch (error: any) {
-      console.error('Failed to remove file:', error);
-      toast.error('Failed to remove file');
+    // Clean up preview URL if it exists
+    if (fileToRemove.preview && fileToRemove.preview.startsWith('blob:')) {
+      URL.revokeObjectURL(fileToRemove.preview);
     }
+    
+    setStagedFiles(prev => prev.filter((_, i) => i !== index));
+    toast.success('File removed from staging area');
   };
   
   const getFileIcon = (filename: string) => {
@@ -207,34 +227,74 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       return;
     }
     
-    if (isFileUpload && uploadedFiles.length === 0 && !isTextResponse) {
-      setError('Please upload at least one file');
+    const validStagedFiles = typeof FileUploadService.getValidStagedFiles === 'function'
+      ? FileUploadService.getValidStagedFiles(stagedFiles)
+      : stagedFiles.filter(sf => sf.validationResult?.isValid);
+    
+    if (isFileUpload && validStagedFiles.length === 0 && !isTextResponse) {
+      setError('Please select at least one valid file');
       toast.error('File upload is required');
       return;
     }
     
-    if (uploading) {
-      toast.error('Please wait for file uploads to complete');
+    if (submitting) {
+      toast.error('Submission already in progress');
       return;
     }
     
     setSubmitting(true);
     setError(null);
+    setUploadProgress({});
     
     try {
+      let uploadedFiles: UploadedFile[] = [];
+      
+      // Upload files if any are staged
+      if (validStagedFiles.length > 0) {
+        toast.info('Uploading files...', { duration: 2000 });
+        
+        if (typeof FileUploadService.uploadStagedFiles !== 'function') {
+          throw new Error('File upload service not available. Please refresh the page.');
+        }
+        
+        const uploadResult = await FileUploadService.uploadStagedFiles(validStagedFiles, {
+          folder: 'assignments',
+          assignmentId: assignment.id,
+          onFileProgress: (fileId, progress) => {
+            setUploadProgress(prev => ({ ...prev, [fileId]: progress }));
+          },
+          onOverallProgress: (completed, total, failed) => {
+            if (completed + failed === total) {
+              setUploadProgress({});
+            }
+          }
+        });
+        
+        if (uploadResult.totalFailed > 0) {
+          const errorMessages = uploadResult.failed.map(f => `${f.file.name}: ${f.error}`);
+          throw new Error(`Failed to upload ${uploadResult.totalFailed} file(s):\n${errorMessages.join('\n')}`);
+        }
+        
+        uploadedFiles = uploadResult.successful;
+        toast.success(`Successfully uploaded ${uploadResult.totalUploaded} file(s)`);
+      }
+      
       // Prepare file metadata for submission
       const filesMetadata = uploadedFiles.map(file => ({
         url: file.url,
-        filename: (file as any).originalName || file.pathname.split('/').pop(),
+        filename: file.pathname.split('/').pop() || 'unknown',
         size: file.size,
         contentType: file.contentType,
         uploadedAt: file.uploadedAt
       }));
       
+      // Get the correct API base URL
+      const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+      
       // Choose endpoint based on submission mode
       const endpoint = isResubmitMode 
-        ? `/api/v1/uploads/assignments/${assignmentData.id}/resubmit-with-files`
-        : `/api/v1/uploads/assignments/${assignmentData.id}/submit-with-files`;
+        ? `${API_BASE_URL}/uploads/assignments/${assignmentData.id}/resubmit-with-files`
+        : `${API_BASE_URL}/uploads/assignments/${assignmentData.id}/submit-with-files`;
       
       // Call backend API with file metadata
       const response = await fetch(endpoint, {
@@ -253,11 +313,27 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       const result = await response.json();
       
       if (!response.ok) {
+        // Clean up uploaded files on submission failure
+        if (uploadedFiles.length > 0) {
+          try {
+            await Promise.allSettled(
+              uploadedFiles.map(file => FileUploadService.deleteFile(file.url))
+            );
+          } catch (cleanupError) {
+            console.warn('Failed to cleanup uploaded files after submission failure:', cleanupError);
+          }
+        }
         throw new Error(result.error || 'Submission failed');
       }
       
       setSubmissionResult(result);
       setSubmissionMode('submitted');
+      
+      // Clean up staged files after successful submission
+      if (typeof FileUploadService.cleanupStagedFiles === 'function') {
+        FileUploadService.cleanupStagedFiles(stagedFiles);
+      }
+      setStagedFiles([]);
       
       // Call parent callbacks
       onSubmit({
@@ -282,13 +358,12 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       });
     } finally {
       setSubmitting(false);
+      setUploadProgress({});
     }
   };
 
   const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    return FileUploadService.formatFileSize(bytes);
   };
 
   const getDaysUntilDue = () => {
@@ -1071,31 +1146,69 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 </label>
               </div>
 
-              {/* Selected Files */}
-              {selectedFiles.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                    Selected Files ({selectedFiles.length})
-                  </p>
-                  {selectedFiles.map((file, index) => (
+              {/* Staged Files */}
+              {stagedFiles.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Selected Files ({stagedFiles.length})
+                    </p>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      Total: {FileUploadService.formatFileSize(FileUploadService.getTotalStagedSize(stagedFiles))}
+                    </div>
+                  </div>
+                  {stagedFiles.map((stagedFile, index) => (
                     <div
-                      key={index}
-                      className="flex items-center justify-between bg-green-50 dark:bg-green-950/20 rounded-lg p-3 border border-green-200 dark:border-green-800 hover:shadow-md transition-all"
+                      key={stagedFile.id}
+                      className={`flex items-center justify-between p-3 rounded-lg border ${
+                        stagedFile.validationResult.isValid
+                          ? 'bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800'
+                          : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                      } hover:shadow-md transition-all`}
                     >
                       <div className="flex items-center space-x-3 flex-1 min-w-0">
-                        <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg flex-shrink-0">
-                          <Paperclip className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        <div className={`p-2 rounded-lg flex-shrink-0 ${
+                          stagedFile.validationResult.isValid
+                            ? 'bg-green-100 dark:bg-green-900'
+                            : 'bg-red-100 dark:bg-red-900'
+                        }`}>
+                          {stagedFile.preview ? (
+                            <img src={stagedFile.preview} alt={stagedFile.file.name} className="h-4 w-4 object-cover rounded" />
+                          ) : (
+                            <Paperclip className={`h-4 w-4 ${
+                              stagedFile.validationResult.isValid
+                                ? 'text-green-600 dark:text-green-400'
+                                : 'text-red-600 dark:text-red-400'
+                            }`} />
+                          )}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{file.name}</p>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">{formatFileSize(file.size)}</p>
+                          <p className={`text-sm font-medium truncate ${
+                            stagedFile.validationResult.isValid
+                              ? 'text-gray-900 dark:text-white'
+                              : 'text-red-600 dark:text-red-400'
+                          }`}>{stagedFile.file.name}</p>
+                          <div className="flex items-center space-x-2">
+                            <p className="text-xs text-gray-600 dark:text-gray-400">{formatFileSize(stagedFile.file.size)}</p>
+                            {!stagedFile.validationResult.isValid && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-200">
+                                Invalid
+                              </span>
+                            )}
+                          </div>
+                          {!stagedFile.validationResult.isValid && (
+                            <div className="text-xs text-red-600 dark:text-red-400 mt-1">
+                              {stagedFile.validationResult.errors.join(', ')}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => removeFile(index)}
+                        onClick={() => removeStagedFile(index)}
                         className="ml-2 hover:bg-red-100 dark:hover:bg-red-900/30 flex-shrink-0"
+                        title="Remove file"
                       >
                         <X className="h-4 w-4 text-red-600 dark:text-red-400" />
                       </Button>
@@ -1120,7 +1233,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             
             <Button
               onClick={handleSubmit}
-              disabled={submitting || (isTextResponse && !textResponse.trim()) || (isFileUpload && !isTextResponse && selectedFiles.length === 0)}
+              disabled={submitting || (isTextResponse && !textResponse.trim()) || (isFileUpload && !isTextResponse && FileUploadService.getValidStagedFiles(stagedFiles).length === 0)}
               className="w-full sm:w-auto bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed py-6 px-8 text-lg font-bold shadow-lg hover:shadow-xl transition-all"
             >
               {submitting ? (

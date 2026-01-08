@@ -30,7 +30,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { ContentAssignmentService } from '@/services/contentAssignmentApi';
-import FileUploadService, { UploadedFile, FileUploadProgress } from '@/services/file-upload.service';
+import FileUploadService, { UploadedFile, FileUploadProgress, StagedFile } from '@/services/file-upload.service';
 import { toast } from 'sonner';
 import { MarkdownRenderer } from '@/components/content/MarkdownRenderer';
 
@@ -71,6 +71,7 @@ interface FileWithProgress extends UploadedFile {
   progress?: number;
   uploading?: boolean;
   error?: string;
+  fileKey?: string;
 }
 
 export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({ 
@@ -80,12 +81,20 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
 }) => {
   const [submissionMode, setSubmissionMode] = useState<'view' | 'submit' | 'submitted'>('view');
   const [textResponse, setTextResponse] = useState('');
-  const [uploadedFiles, setUploadedFiles] = useState<FileWithProgress[]>([]);
+  const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: FileUploadProgress }>({});
   const [error, setError] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<any>(null);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  
+  // Cleanup staged files on unmount
+  React.useEffect(() => {
+    return () => {
+      FileUploadService.cleanupStagedFiles(stagedFiles);
+    };
+  }, []);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isFileUpload = assignment.assignment_type === 'file_upload' || assignment.assignment_type === 'both';
@@ -113,7 +122,7 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
       
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const fileKey = `${file.name}-${file.size}-${Date.now()}`;
+        const fileKey = `${file.name}-${file.size}-${Date.now()}-${i}`;
         
         // Add file to state with uploading status
         const tempFile: FileWithProgress = {
@@ -125,7 +134,8 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
           contentDisposition: `attachment; filename="${file.name}"`,
           originalName: file.name,
           uploading: true,
-          progress: 0
+          progress: 0,
+          fileKey // Add unique identifier
         };
         
         setUploadedFiles(prev => [...prev, tempFile]);
@@ -138,20 +148,21 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
             maxSize: maxFileSizeBytes,
             onProgress: (progress) => {
               setUploadProgress(prev => ({ ...prev, [fileKey]: progress }));
-              setUploadedFiles(prev => prev.map((f, idx) => 
-                idx === prev.length - 1 ? { ...f, progress: progress.percentage } : f
+              setUploadedFiles(prev => prev.map((f) => 
+                f.fileKey === fileKey ? { ...f, progress: progress.percentage } : f
               ));
             }
           });
           
           // Update the file with upload results
-          setUploadedFiles(prev => prev.map((f, idx) => 
-            idx === prev.length - 1 
+          setUploadedFiles(prev => prev.map((f) => 
+            f.fileKey === fileKey
               ? { 
                   ...uploadedFile, 
                   originalName: file.name,
                   uploading: false,
-                  progress: 100 
+                  progress: 100,
+                  fileKey
                 } as FileWithProgress
               : f
           ));
@@ -161,8 +172,8 @@ export const EnhancedAssignmentPanel: React.FC<AssignmentPanelProps> = ({
           console.error(`Failed to upload ${file.name}:`, error);
           
           // Update file with error status
-          setUploadedFiles(prev => prev.map((f, idx) => 
-            idx === prev.length - 1 
+          setUploadedFiles(prev => prev.map((f) => 
+            f.fileKey === fileKey
               ? { ...f, uploading: false, error: error.message }
               : f
           ));

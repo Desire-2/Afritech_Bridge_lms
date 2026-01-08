@@ -3,10 +3,12 @@
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import func, and_, or_, desc
+from sqlalchemy import func, and_, or_, desc, case
 from datetime import datetime, timedelta
 import logging
 import json
+import math
+import statistics
 
 from ..models.user_models import db, User, Role
 from ..models.course_models import (
@@ -55,6 +57,11 @@ def get_assignment_submissions():
         student_id = request.args.get('student_id', type=int)
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
+        search_query = request.args.get('search_query', type=str)
+        sort_by = request.args.get('sort_by', 'submitted_at')
+        sort_order = request.args.get('sort_order', 'desc')
+        date_start = request.args.get('date_start')
+        date_end = request.args.get('date_end')
         
         # Build query
         query = db.session.query(AssignmentSubmission).join(Assignment).join(Course)
@@ -78,11 +85,54 @@ def get_assignment_submissions():
         elif status == 'graded':
             query = query.filter(AssignmentSubmission.grade.isnot(None))
         
-        # Order by submission date (pending first, then most recent)
-        query = query.order_by(
-            AssignmentSubmission.grade.is_(None).desc(),
-            AssignmentSubmission.submitted_at.desc()
+        # Search functionality
+        if search_query:
+            search_filter = or_(
+                User.first_name.ilike(f'%{search_query}%'),
+                User.last_name.ilike(f'%{search_query}%'),
+                User.email.ilike(f'%{search_query}%'),
+                Assignment.title.ilike(f'%{search_query}%'),
+                AssignmentSubmission.content.ilike(f'%{search_query}%')
+            )
+            query = query.join(User, User.id == AssignmentSubmission.student_id)
+            query = query.filter(search_filter)
+        
+        # Date range filtering
+        if date_start:
+            query = query.filter(AssignmentSubmission.submitted_at >= datetime.fromisoformat(date_start))
+        if date_end:
+            query = query.filter(AssignmentSubmission.submitted_at <= datetime.fromisoformat(date_end))
+        
+        # Calculate priority scores for sorting
+        priority_score = case(
+            (and_(Assignment.due_date < datetime.utcnow(), AssignmentSubmission.grade.is_(None)), 3),  # Overdue
+            (Assignment.due_date < datetime.utcnow() + timedelta(days=1), 2),  # Due soon
+            else_=1
         )
+        
+        # Enhanced sorting options
+        sort_mapping = {
+            'submitted_at': AssignmentSubmission.submitted_at,
+            'due_date': Assignment.due_date,
+            'student_name': User.last_name,
+            'grade': AssignmentSubmission.grade,
+            'priority': priority_score,
+            'days_late': func.greatest(0, func.date_part('day', AssignmentSubmission.submitted_at - Assignment.due_date))
+        }
+        
+        if sort_by in sort_mapping:
+            sort_column = sort_mapping[sort_by]
+            if sort_order == 'desc':
+                query = query.order_by(desc(sort_column))
+            else:
+                query = query.order_by(sort_column)
+        else:
+            # Default order by priority and submission date
+            query = query.order_by(
+                desc(priority_score),
+                AssignmentSubmission.grade.is_(None).desc(),
+                AssignmentSubmission.submitted_at.desc()
+            )
         
         # Paginate
         paginated = query.paginate(page=page, per_page=per_page, error_out=False)
@@ -98,14 +148,39 @@ def get_assignment_submissions():
             submission_dict['course_id'] = submission.assignment.course_id
             submission_dict['due_date'] = submission.assignment.due_date.isoformat() if submission.assignment.due_date else None
             
-            # Calculate days late if applicable
+            # Calculate days late
+            days_late = 0
             if submission.assignment.due_date and submission.submitted_at:
-                days_late = (submission.submitted_at - submission.assignment.due_date).days
-                submission_dict['days_late'] = max(0, days_late)
-            else:
-                submission_dict['days_late'] = 0
+                time_diff = submission.submitted_at - submission.assignment.due_date
+                days_late = max(0, time_diff.days + time_diff.seconds / 86400)
+            
+            # Enhanced metrics
+            content = submission.content or ''
+            word_count = len(content.split()) if content else 0
+            reading_time = max(1, word_count // 200)  # ~200 words per minute
+            
+            # Priority calculation
+            priority_level = 'low'
+            if days_late > 0 and not submission.grade:
+                priority_level = 'high'
+            elif submission.assignment.due_date and submission.assignment.due_date < datetime.utcnow() + timedelta(days=1):
+                priority_level = 'medium'
+            
+            # Estimated grading time
+            estimated_time = max(5, min(30, reading_time + word_count // 100))
+            
+            submission_dict['days_late'] = days_late
+            submission_dict['student_name'] = f"{submission.student.first_name} {submission.student.last_name}"
+            submission_dict['student_email'] = submission.student.email
+            submission_dict['word_count'] = word_count
+            submission_dict['reading_time'] = reading_time
+            submission_dict['priority_level'] = priority_level
+            submission_dict['estimated_grading_time'] = estimated_time
             
             submissions_data.append(submission_dict)
+        
+        # Generate analytics for the current set of submissions
+        analytics = generate_grading_analytics(paginated.items, current_user_id, course_id)
         
         return jsonify({
             'submissions': submissions_data,
@@ -114,7 +189,8 @@ def get_assignment_submissions():
                 'per_page': paginated.per_page,
                 'total': paginated.total,
                 'pages': paginated.pages
-            }
+            },
+            'analytics': analytics
         }), 200
         
     except Exception as e:
@@ -139,19 +215,36 @@ def get_assignment_submission_detail(submission_id):
         
         # Build detailed response
         submission_dict = submission.to_dict()
-        submission_dict['assignment'] = submission.assignment.to_dict()
+        
+        # Add comprehensive assignment details
+        assignment_data = submission.assignment.to_dict()
+        submission_dict['assignment'] = assignment_data
+        submission_dict['assignment_title'] = assignment_data['title']
+        submission_dict['assignment_points'] = assignment_data['points_possible']
+        
+        # Enhanced course information
         submission_dict['course'] = {
             'id': submission.assignment.course.id,
-            'title': submission.assignment.course.title
+            'title': submission.assignment.course.title,
+            'instructor_name': f"{submission.assignment.course.instructor.first_name} {submission.assignment.course.instructor.last_name}" if submission.assignment.course.instructor else None
         }
+        submission_dict['course_title'] = submission.assignment.course.title
         
-        # Add student info
+        # Calculate submission timing
+        submission_dict['days_late'] = 0
+        if submission.assignment.due_date and submission.submitted_at:
+            days_late = (submission.submitted_at - submission.assignment.due_date).days
+            submission_dict['days_late'] = max(0, days_late)
+        
+        # Add comprehensive student info
         student = submission.student
         submission_dict['student_info'] = {
             'id': student.id,
             'name': f"{student.first_name} {student.last_name}",
             'email': student.email,
-            'username': student.username
+            'username': student.username,
+            'first_name': student.first_name,
+            'last_name': student.last_name
         }
         
         # Get student's other submissions for this assignment (attempt history)
@@ -664,19 +757,39 @@ def get_project_submission_detail(submission_id):
         
         # Build detailed response
         submission_dict = submission.to_dict()
-        submission_dict['project'] = submission.project.to_dict(include_modules=True)
+        
+        # Add comprehensive project details
+        project_data = submission.project.to_dict(include_modules=True)
+        submission_dict['project'] = project_data
+        submission_dict['project_title'] = project_data['title']
+        submission_dict['project_points'] = project_data['points_possible']
+        
+        # Enhanced course information
         submission_dict['course'] = {
             'id': submission.project.course.id,
-            'title': submission.project.course.title
+            'title': submission.project.course.title,
+            'instructor_name': f"{submission.project.course.instructor.first_name} {submission.project.course.instructor.last_name}" if submission.project.course.instructor else None
         }
+        submission_dict['course_title'] = submission.project.course.title
         
-        # Add student info
+        # Calculate submission timing
+        submission_dict['days_late'] = 0
+        if submission.project.due_date and submission.submitted_at:
+            days_late = (submission.submitted_at - submission.project.due_date).days
+            submission_dict['days_late'] = max(0, days_late)
+            
+        # Add due date for frontend display
+        submission_dict['due_date'] = submission.project.due_date.isoformat() if submission.project.due_date else None
+        
+        # Add comprehensive student info
         student = submission.student
         submission_dict['student_info'] = {
             'id': student.id,
             'name': f"{student.first_name} {student.last_name}",
             'email': student.email,
-            'username': student.username
+            'username': student.username,
+            'first_name': student.first_name,
+            'last_name': student.last_name
         }
         
         # Add team members info if collaborative project
@@ -1029,3 +1142,71 @@ def get_feedback_templates():
 
 # Register blueprint
 logger.info("Grading routes module loaded successfully")
+
+
+# =====================
+# HELPER FUNCTIONS
+# =====================
+
+def generate_grading_analytics(submissions, instructor_id, course_id=None):
+    """Generate enhanced grading analytics for submissions."""
+    if not submissions:
+        return {
+            'summary': {
+                'total_pending': 0,
+                'total_graded': 0,
+                'average_grade': 0,
+                'completion_rate': 0,
+                'overdue_count': 0,
+                'due_soon_count': 0
+            },
+            'insights': {
+                'suggested_actions': [],
+                'priority_items': []
+            }
+        }
+    
+    graded = [s for s in submissions if s.grade is not None]
+    pending = [s for s in submissions if s.grade is None]
+    overdue = [s for s in pending if s.assignment.due_date and s.assignment.due_date < datetime.utcnow()]
+    due_soon = [s for s in pending if s.assignment.due_date and 
+                s.assignment.due_date > datetime.utcnow() and 
+                s.assignment.due_date < datetime.utcnow() + timedelta(days=1)]
+    
+    average_grade = statistics.mean([s.grade for s in graded]) if graded else 0
+    
+    # Generate insights
+    suggested_actions = []
+    if len(overdue) > 0:
+        suggested_actions.append(f"You have {len(overdue)} overdue submissions that need immediate attention.")
+    if len(due_soon) > 0:
+        suggested_actions.append(f"{len(due_soon)} assignments are due soon and haven't been graded yet.")
+    if len(pending) > len(graded) and len(graded) > 0:
+        suggested_actions.append("Consider using bulk grading for similar assignments to save time.")
+    
+    priority_items = [
+        {
+            'id': s.id,
+            'title': s.assignment.title,
+            'student_name': f"{s.student.first_name} {s.student.last_name}",
+            'days_late': max(0, (datetime.utcnow() - s.assignment.due_date).days) if s.assignment.due_date else 0,
+            'priority': 'high' if s in overdue else 'medium' if s in due_soon else 'low'
+        }
+        for s in sorted(overdue + due_soon, 
+                       key=lambda x: x.assignment.due_date if x.assignment.due_date else datetime.utcnow())[:5]
+    ]
+    
+    return {
+        'summary': {
+            'total_pending': len(pending),
+            'total_graded': len(graded),
+            'average_grade': round(average_grade, 2),
+            'completion_rate': round((len(graded) / len(submissions)) * 100, 2) if submissions else 0,
+            'overdue_count': len(overdue),
+            'due_soon_count': len(due_soon)
+        },
+        'insights': {
+            'suggested_actions': suggested_actions,
+            'priority_items': priority_items
+        }
+    }
