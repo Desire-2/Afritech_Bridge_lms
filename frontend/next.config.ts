@@ -5,10 +5,53 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  output: 'standalone',
+  // Remove standalone output for Vercel
   trailingSlash: false,
-  reactStrictMode: false, // Changed from true to false to help with hydration issues
+  reactStrictMode: false,
   poweredByHeader: false,
+  // Add empty turbopack config to silence warning
+  turbopack: {},
+  // Optimize for Vercel deployment
+  experimental: {
+    optimizePackageImports: ['@radix-ui/react-icons', '@radix-ui/react-slot'],
+  },
+  webpack: (config, { isServer, dev }) => {
+    // Improve chunk loading reliability for production
+    if (!isServer && !dev) {
+      config.output.chunkLoadTimeout = 60000; // Increase timeout for Vercel
+      config.output.crossOriginLoading = 'anonymous';
+      
+      // Optimize chunk splitting for better caching
+      config.optimization.splitChunks = {
+        chunks: 'all',
+        maxInitialRequests: 25,
+        minSize: 20000,
+        cacheGroups: {
+          framework: {
+            chunks: 'all',
+            name: 'framework',
+            test: /(?<!node_modules.*)[\\/\\]node_modules[\\/\\](react|react-dom|scheduler|prop-types|use-subscription)[\\/\\]/,
+            priority: 40,
+            enforce: true,
+          },
+          lib: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'commons',
+            priority: 30,
+            minChunks: 2,
+            reuseExistingChunk: true,
+          },
+          shared: {
+            name: 'shared',
+            minChunks: 2,
+            priority: 10,
+            reuseExistingChunk: true,
+          },
+        },
+      };
+    }
+    return config;
+  },
   images: {
     remotePatterns: [
       {
