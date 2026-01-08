@@ -168,28 +168,28 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 is_postgresql = app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgresql')
 
 if is_postgresql:
-    # Highly optimized for free tier PostgreSQL with VERY limited connections
+    # Optimized for PostgreSQL with better connection handling
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_pre_ping': True,  # Test connections before using them
-        'pool_recycle': 120,  # Aggressively recycle connections after 2 minutes
-        'pool_size': 2,  # CRITICAL: Only 2 persistent connections (free tier limit)
-        'max_overflow': 3,  # CRITICAL: Only 3 overflow connections (total max = 5)
-        'pool_timeout': 20,  # Reduced timeout - fail fast if pool exhausted
+        'pool_recycle': 300,  # Recycle connections after 5 minutes
+        'pool_size': 5,  # Increased base connections
+        'max_overflow': 10,  # Increased overflow connections (total max = 15)
+        'pool_timeout': 30,  # 30 second timeout for high-traffic periods
         'pool_reset_on_return': 'rollback',  # Always rollback on return to prevent locks
         'echo_pool': False,  # Disable pool logging in production
         'connect_args': {
-            'connect_timeout': 10,  # Connection timeout in seconds (PostgreSQL specific)
-            'options': '-c statement_timeout=25000'  # 25 second query timeout
+            'connect_timeout': 30,  # 30 second connection timeout (PostgreSQL specific)
+            'options': '-c statement_timeout=30000'  # 30 second query timeout
         }
     }
-    logger.info("SQLAlchemy configured for FREE TIER PostgreSQL (pool_size=2, max_overflow=3, TOTAL=5)")
+    logger.info("SQLAlchemy configured for PostgreSQL (pool_size=5, max_overflow=10, TOTAL=15)")
 else:
     # SQLite configuration - simpler pool settings
     app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
         'pool_pre_ping': True,  # Test connections before using them
         'pool_size': 5,  # SQLite can handle more local connections
         'max_overflow': 10,  # More overflow for development
-        'pool_timeout': 30,
+        'pool_timeout': 30,  # 30 second timeout
         'pool_reset_on_return': 'rollback',
     }
     logger.info("SQLAlchemy configured for SQLite development (pool_size=5, max_overflow=10)")
@@ -210,6 +210,12 @@ app.config['MAIL_USE_SSL'] = os.getenv('MAIL_USE_SSL', 'False').lower() in ('tru
 app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
 app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'noreply@afritecbridge.online')
+
+# Frontend URL for email links
+app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+# Admin email for notifications
+app.config['ADMIN_EMAIL'] = os.getenv('ADMIN_EMAIL')
 
 if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
     logger.warning("Email credentials not set! Email functionality will not work properly.")

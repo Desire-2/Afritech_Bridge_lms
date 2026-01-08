@@ -208,8 +208,15 @@ class Enrollment(db.Model):
     enrollment_date = db.Column(db.DateTime, default=datetime.utcnow)
     progress = db.Column(db.Float, default=0.0) # Percentage completion, 0.0 to 1.0
     completed_at = db.Column(db.DateTime, nullable=True)
+    
+    # Enrollment status and termination tracking
+    status = db.Column(db.String(20), default='active')  # 'active', 'completed', 'terminated', 'suspended'
+    terminated_at = db.Column(db.DateTime, nullable=True)
+    termination_reason = db.Column(db.String(255), nullable=True)
+    terminated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
-    student = db.relationship('User', backref=db.backref('enrollments', lazy='dynamic'))
+    student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('enrollments', lazy='dynamic'))
+    terminator = db.relationship('User', foreign_keys=[terminated_by])
     # Course relationship is already defined in Course model via backref
 
     __table_args__ = (db.UniqueConstraint('student_id', 'course_id', name='_student_course_uc'),)
@@ -258,6 +265,10 @@ class Enrollment(db.Model):
             'progress': self.progress,
             'course_score': self.calculate_course_score(),  # Overall course score
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'status': self.status,
+            'terminated_at': self.terminated_at.isoformat() if self.terminated_at else None,
+            'termination_reason': self.termination_reason,
+            'terminated_by': self.terminated_by,
             'student_username': self.student.username if self.student else None,
             'course_title': self.course.title if self.course else None
         }

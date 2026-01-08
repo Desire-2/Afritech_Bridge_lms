@@ -28,7 +28,7 @@ class BaseApiService {
   constructor(baseURL: string = API_BASE_URL) {
     this.api = axios.create({
       baseURL,
-      timeout: 30000,
+      timeout: 60000, // Increased to 60 seconds to handle database connection pool issues
       headers: {
         'Content-Type': 'application/json',
       },

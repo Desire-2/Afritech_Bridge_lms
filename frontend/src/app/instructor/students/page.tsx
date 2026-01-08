@@ -3,7 +3,11 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import InstructorService from '@/services/instructor.service';
+import StudentActivityAnalysis from '@/components/instructor/StudentActivityAnalysis';
 import { User, Course } from '@/types/api';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Users, Activity, UserCheck, Search } from 'lucide-react';
 
 interface StudentWithCourse extends User {
   course_title?: string;
@@ -24,6 +28,8 @@ const StudentsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isClient, setIsClient] = useState(false);
   const [unenrolling, setUnenrolling] = useState<number | null>(null);
+  const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
+  const [activeTab, setActiveTab] = useState('overview');
   const [showConfirmDialog, setShowConfirmDialog] = useState<{ show: boolean; student: StudentWithCourse | null }>({ show: false, student: null });
 
   // Handle client-side hydration
@@ -108,6 +114,22 @@ const StudentsPage = () => {
     setShowConfirmDialog({ show: false, student: null });
   };
 
+  const handleActivityAnalysisAction = (action: string, data?: any) => {
+    // Handle actions from activity analysis component
+    if (action === 'terminate') {
+      // Refresh the main students list
+      const fetchData = async () => {
+        try {
+          const studentsData = await InstructorService.getMyStudents();
+          setStudents(Array.isArray(studentsData) ? studentsData : []);
+        } catch (err: any) {
+          console.error('Students refetch error:', err);
+        }
+      };
+      fetchData();
+    }
+  };
+
   // Prevent hydration mismatch
   if (!isClient || loading) {
     return (
@@ -135,82 +157,100 @@ const StudentsPage = () => {
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">My Students</h1>
+        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Student Management</h1>
         <div className="text-sm text-slate-500 dark:text-slate-400">
           Total: {Array.isArray(filteredStudents) ? filteredStudents.length : 0} students
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="search" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              Search Students
-            </label>
-            <input
-              type="text"
-              id="search"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by name, username, or email..."
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-            />
-          </div>
-          <div>
-            <label htmlFor="course" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              Filter by Course
-            </label>
-            <select
-              id="course"
-              value={selectedCourse}
-              onChange={(e) => setSelectedCourse(e.target.value)}
-              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-            >
-              <option value="all">All Courses</option>
-              {Array.isArray(courses) && courses.map(course => (
-                <option key={course.id} value={course.title}>
-                  {course.title}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
+          <TabsTrigger value="overview" className="flex items-center space-x-2">
+            <Users className="w-4 h-4" />
+            <span>Overview</span>
+          </TabsTrigger>
+          <TabsTrigger value="activity" className="flex items-center space-x-2">
+            <Activity className="w-4 h-4" />
+            <span>Activity Analysis</span>
+          </TabsTrigger>
+          <TabsTrigger value="management" className="flex items-center space-x-2">
+            <UserCheck className="w-4 h-4" />
+            <span>Management</span>
+          </TabsTrigger>
+        </TabsList>
 
-      {/* Students List */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-        {!Array.isArray(filteredStudents) || filteredStudents.length === 0 ? (
-          <div className="p-8 text-center">
-            <p className="text-slate-500 dark:text-slate-400">
-              {!Array.isArray(students) || students.length === 0 ? 'No students enrolled in your courses yet.' : 'No students match your search criteria.'}
-            </p>
+        <TabsContent value="overview" className="space-y-6">
+          {/* Student List - existing content */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div>
+                <label htmlFor="search" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  <Search className="w-4 h-4 inline mr-1" />
+                  Search Students
+                </label>
+                <input
+                  type="text"
+                  id="search"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search by name, username, or email..."
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label htmlFor="course-filter" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Filter by Course
+                </label>
+                <select
+                  id="course-filter"
+                  value={selectedCourse}
+                  onChange={(e) => setSelectedCourse(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                >
+                  <option value="all">All Courses</option>
+                  {Array.isArray(courses) && courses.map((course) => (
+                    <option key={course.id} value={course.title}>
+                      {course.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
-              <thead className="bg-slate-50 dark:bg-slate-900">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Student
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Course
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Enrolled
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Progress
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Last Accessed
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
+
+          {/* Students List */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            {!Array.isArray(filteredStudents) || filteredStudents.length === 0 ? (
+              <div className="p-8 text-center">
+                <p className="text-slate-500 dark:text-slate-400">
+                  {!Array.isArray(students) || students.length === 0 ? 'No students enrolled in your courses yet.' : 'No students match your search criteria.'}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
+                  <thead className="bg-slate-50 dark:bg-slate-900">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Student
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Course
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Enrolled
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Progress
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Last Accessed
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
               <tbody className="bg-white dark:bg-slate-800 divide-y divide-slate-200 dark:divide-slate-700">
                 {Array.isArray(filteredStudents) && filteredStudents.map((student) => (
                   <tr key={`${student.id}-${student.enrollment_id || student.course_id}`} className="hover:bg-slate-50 dark:hover:bg-slate-700">
@@ -290,8 +330,39 @@ const StudentsPage = () => {
               </tbody>
             </table>
           </div>
-        )}
-      </div>
+          )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="activity" className="space-y-6">
+          <StudentActivityAnalysis />
+        </TabsContent>
+
+        <TabsContent value="management" className="space-y-6">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+              Student Management Tools
+            </h3>
+            <p className="text-slate-600 dark:text-slate-400 mb-4">
+              Advanced management features will be available here, including bulk operations, detailed analytics, and administrative actions.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg">
+                <h4 className="font-medium text-slate-900 dark:text-white mb-2">Bulk Actions</h4>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Send messages, assign grades, or manage enrollments for multiple students.</p>
+              </div>
+              <div className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg">
+                <h4 className="font-medium text-slate-900 dark:text-white mb-2">Export Data</h4>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Export student data, grades, and progress reports.</p>
+              </div>
+              <div className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg">
+                <h4 className="font-medium text-slate-900 dark:text-white mb-2">Advanced Analytics</h4>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Detailed insights into student performance and engagement.</p>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Confirmation Dialog */}
       {showConfirmDialog.show && showConfirmDialog.student && (

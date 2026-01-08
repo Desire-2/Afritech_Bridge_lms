@@ -86,11 +86,21 @@ class User(db.Model):
     
     # Force password change on first login (for auto-created accounts)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # Activity tracking
+    last_login = db.Column(db.DateTime, nullable=True)
+    last_activity = db.Column(db.DateTime, nullable=True)
+    
+    # Deletion tracking (soft delete)
+    deleted_at = db.Column(db.DateTime, nullable=True)
+    deleted_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    deletion_reason = db.Column(db.String(255), nullable=True)
 
     # Relationships (placeholders, to be expanded with other models)
     # enrollments = db.relationship('Enrollment', backref='student', lazy='dynamic')
     # submissions = db.relationship('Submission', backref='student', lazy='dynamic')
     # courses_authored = db.relationship('Course', backref='author', lazy='dynamic', foreign_keys='Course.instructor_id')
+    deleter = db.relationship('User', remote_side=[id], backref='deleted_users')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -117,6 +127,38 @@ class User(db.Model):
         """Clear the reset token after it's been used"""
         self.reset_token = None
         self.reset_token_expires_at = None
+    
+    def update_last_login(self):
+        """Update last login timestamp"""
+        self.last_login = datetime.utcnow()
+        self.last_activity = datetime.utcnow()
+    
+    def update_last_activity(self):
+        """Update last activity timestamp"""
+        self.last_activity = datetime.utcnow()
+        
+    def get_days_since_last_activity(self):
+        """Get number of days since last activity"""
+        if not self.last_activity:
+            return None
+        return (datetime.utcnow() - self.last_activity).days
+    
+    def is_inactive(self, days_threshold=7):
+        """Check if user is inactive based on threshold"""
+        days_inactive = self.get_days_since_last_activity()
+        return days_inactive is not None and days_inactive >= days_threshold
+
+    @property
+    def full_name(self):
+        """Get user's full name by combining first and last name"""
+        if self.first_name and self.last_name:
+            return f"{self.first_name} {self.last_name}"
+        elif self.first_name:
+            return self.first_name
+        elif self.last_name:
+            return self.last_name
+        else:
+            return self.username
 
     def __repr__(self):
         return f'<User {self.username}>'
@@ -166,6 +208,13 @@ class User(db.Model):
             'show_progress': self.show_progress,
             # Gamification settings
             'enable_gamification': self.enable_gamification,
-            'show_leaderboard': self.show_leaderboard
+            'show_leaderboard': self.show_leaderboard,
+            # Activity tracking
+            'last_login': self.last_login.isoformat() if self.last_login else None,
+            'last_activity': self.last_activity.isoformat() if self.last_activity else None,
+            # Deletion tracking
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
+            'deleted_by': self.deleted_by,
+            'deletion_reason': self.deletion_reason
         }
 

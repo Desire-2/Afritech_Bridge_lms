@@ -3,6 +3,7 @@ Email notification helpers for Afritec Bridge LMS
 Centralizes email sending for various events
 """
 import logging
+from datetime import datetime
 from ..utils.email_utils import send_email
 from ..utils.email_templates import (
     assignment_graded_email,
@@ -199,7 +200,7 @@ def send_project_graded_notification(submission, project, student, grade, feedba
         logger.error(f"❌ Failed to send project grade notification: {str(e)}")
         return False
 
-def send_modification_request_notification(student_email, student_name, assignment_title, instructor_name, reason, course_title, is_project=False):
+def send_modification_request_notification(student_email, student_name, assignment_title, instructor_name, reason, course_title, is_project=False, assignment_id=None, due_date=None, frontend_url=None):
     """
     Send email notification when instructor requests modifications
     
@@ -211,10 +212,23 @@ def send_modification_request_notification(student_email, student_name, assignme
         reason: str - reason for modification request
         course_title: str - course title
         is_project: bool - whether it's a project or assignment
+        assignment_id: int - assignment/project ID for URL generation
+        due_date: str - resubmission deadline (optional)
+        frontend_url: str - frontend base URL for link generation
     """
     try:
         item_type = "project" if is_project else "assignment"
         subject = f"📝 Modification Requested: {assignment_title}"
+        
+        # Generate resubmission URL if frontend_url is provided
+        resubmit_url = "#"
+        if frontend_url and assignment_id:
+            resubmit_url = f"{frontend_url}/student/assignments/{assignment_id}/resubmit"
+        
+        # Format due date if provided
+        due_date_html = ""
+        if due_date:
+            due_date_html = f"<li><strong>Resubmission Deadline:</strong> {due_date}</li>"
         
         email_html = f"""
         <!DOCTYPE html>
@@ -227,8 +241,10 @@ def send_modification_request_notification(student_email, student_name, assignme
                 .header {{ background: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; }}
                 .content {{ padding: 20px; }}
                 .highlight {{ background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 15px 0; }}
+                .urgent {{ background: #f8d7da; padding: 15px; border-left: 4px solid #dc3545; margin: 15px 0; }}
                 .footer {{ background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }}
                 .btn {{ background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0; }}
+                .btn:hover {{ background: #0056b3; }}
             </style>
         </head>
         <body>
@@ -245,15 +261,27 @@ def send_modification_request_notification(student_email, student_name, assignme
                     <ul>
                         <li><strong>Course:</strong> {course_title}</li>
                         <li><strong>{item_type.title()}:</strong> {assignment_title}</li>
-                        <li><strong>Modification Reason:</strong> {reason}</li>
+                        <li><strong>Instructor Feedback:</strong> {reason}</li>
+                        {due_date_html}
                     </ul>
                 </div>
                 
-                <p>Please review the feedback and resubmit your {item_type} with the requested modifications.</p>
+                <div class="urgent">
+                    <p><strong>⚠️ Action Required:</strong> Please review the feedback carefully and resubmit your {item_type} with the requested modifications to avoid any delays in your progress.</p>
+                </div>
                 
-                <p><a href="#" class="btn">Resubmit {item_type.title()}</a></p>
+                <p>Steps to resubmit:</p>
+                <ol>
+                    <li>Log into your student dashboard</li>
+                    <li>Navigate to the assignment</li>
+                    <li>Review the instructor feedback</li>
+                    <li>Make necessary improvements</li>
+                    <li>Upload your revised submission</li>
+                </ol>
                 
-                <p>If you have any questions, please don't hesitate to contact your instructor.</p>
+                <p><a href="{resubmit_url}" class="btn">Resubmit {item_type.title()}</a></p>
+                
+                <p>If you have any questions about the feedback or need clarification, please don't hesitate to contact your instructor <strong>{instructor_name}</strong>.</p>
                 
                 <p>Best regards,<br>Afritec Bridge LMS Team</p>
             </div>
@@ -264,18 +292,218 @@ def send_modification_request_notification(student_email, student_name, assignme
         </html>
         """
         
-        send_email(
+        # Try to send the email with retries
+        success = send_email(
             to=student_email,
             subject=subject,
-            template=email_html
+            template=email_html,
+            retries=3,
+            retry_delay=2
         )
-        logger.info(f"📧 Modification request notification sent to {student_email}")
-        return True
+        
+        if success:
+            logger.info(f"📧 Modification request notification sent to {student_email}")
+            return True
+        else:
+            logger.error(f"❌ Failed to send modification request notification to {student_email} after retries")
+            return False
     except Exception as e:
         logger.error(f"❌ Failed to send modification request notification: {str(e)}")
         return False
 
-def send_resubmission_notification(instructor_email, instructor_name, student_name, assignment_title, course_title, is_project=False):
+def send_admin_modification_alert(admin_email, instructor_name, student_name, assignment_title, course_title, reason, is_project=False):
+    """
+    Send admin notification when modification requests exceed threshold or for tracking
+    
+    Args:
+        admin_email: str - admin email
+        instructor_name: str - instructor who requested modification
+        student_name: str - student name
+        assignment_title: str - assignment/project title
+        course_title: str - course title
+        reason: str - reason for modification
+        is_project: bool - whether it's a project or assignment
+    """
+    try:
+        item_type = "project" if is_project else "assignment"
+        subject = f"⚠️ Admin Alert: Modification Request - {assignment_title}"
+        
+        email_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Admin Alert: Modification Request</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; }}
+                .header {{ background: #dc3545; color: white; padding: 20px; text-align: center; border-radius: 8px; }}
+                .content {{ padding: 20px; }}
+                .alert {{ background: #f8d7da; padding: 15px; border-left: 4px solid #dc3545; margin: 15px 0; }}
+                .details {{ background: #e9ecef; padding: 15px; border-radius: 5px; margin: 15px 0; }}
+                .footer {{ background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>⚠️ Admin Alert: Modification Request</h2>
+            </div>
+            <div class="content">
+                <p>Dear Admin,</p>
+                
+                <p>A new modification request has been initiated in the system.</p>
+                
+                <div class="alert">
+                    <h4>Request Summary:</h4>
+                    <ul>
+                        <li><strong>Instructor:</strong> {instructor_name}</li>
+                        <li><strong>Student:</strong> {student_name}</li>
+                        <li><strong>Course:</strong> {course_title}</li>
+                        <li><strong>{item_type.title()}:</strong> {assignment_title}</li>
+                    </ul>
+                </div>
+                
+                <div class="details">
+                    <h4>Modification Reason:</h4>
+                    <p>{reason}</p>
+                </div>
+                
+                <p>This alert is for tracking and quality assurance purposes. No immediate action is required unless patterns emerge.</p>
+                
+                <p>Best regards,<br>Afritec Bridge LMS System</p>
+            </div>
+            <div class="footer">
+                <p>This is an automated admin alert from Afritec Bridge LMS</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Send admin alert (non-critical, so don't fail if it doesn't work)
+        success = send_email(
+            to=admin_email,
+            subject=subject,
+            template=email_html,
+            retries=2,
+            retry_delay=1,
+            async_send=True  # Send async to not block main process
+        )
+        
+        if success:
+            logger.info(f"📧 Admin modification alert sent to {admin_email}")
+        else:
+            logger.warning(f"⚠️ Could not send admin modification alert to {admin_email}")
+        
+        return success
+    except Exception as e:
+        logger.error(f"❌ Failed to send admin modification alert: {str(e)}")
+        return False
+
+def send_modification_digest(recipient_email, recipient_name, modifications, period="daily"):
+    """
+    Send digest email for multiple modification requests
+    
+    Args:
+        recipient_email: str - recipient email (admin or instructor)
+        recipient_name: str - recipient name
+        modifications: list - list of modification request dictionaries
+        period: str - digest period (daily/weekly)
+    """
+    try:
+        subject = f"📊 {period.title()} Modification Requests Digest"
+        
+        # Generate modification list HTML
+        modifications_html = ""
+        for mod in modifications:
+            modifications_html += f"""
+            <tr>
+                <td style="padding: 8px; border: 1px solid #ddd;">{mod.get('course_title', 'N/A')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{mod.get('assignment_title', 'N/A')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{mod.get('student_name', 'N/A')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{mod.get('instructor_name', 'N/A')}</td>
+                <td style="padding: 8px; border: 1px solid #ddd;">{mod.get('status', 'Pending')}</td>
+            </tr>
+            """
+        
+        email_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>{period.title()} Modification Digest</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; }}
+                .header {{ background: #007bff; color: white; padding: 20px; text-align: center; border-radius: 8px; }}
+                .content {{ padding: 20px; }}
+                .summary {{ background: #e7f3ff; padding: 15px; border-left: 4px solid #007bff; margin: 15px 0; }}
+                .table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+                .table th {{ background: #f8f9fa; padding: 10px; text-align: left; border: 1px solid #ddd; }}
+                .footer {{ background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>📊 {period.title()} Modification Requests Digest</h2>
+            </div>
+            <div class="content">
+                <p>Dear <strong>{recipient_name}</strong>,</p>
+                
+                <div class="summary">
+                    <h4>Summary:</h4>
+                    <ul>
+                        <li><strong>Total Modification Requests:</strong> {len(modifications)}</li>
+                        <li><strong>Period:</strong> {period.title()}</li>
+                        <li><strong>Generated:</strong> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</li>
+                    </ul>
+                </div>
+                
+                <h4>Modification Requests:</h4>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Course</th>
+                            <th>Assignment/Project</th>
+                            <th>Student</th>
+                            <th>Instructor</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {modifications_html}
+                    </tbody>
+                </table>
+                
+                <p>This digest provides an overview of modification request activity for quality monitoring and administrative purposes.</p>
+                
+                <p>Best regards,<br>Afritec Bridge LMS System</p>
+            </div>
+            <div class="footer">
+                <p>This is an automated digest from Afritec Bridge LMS</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Send digest email
+        success = send_email(
+            to=recipient_email,
+            subject=subject,
+            template=email_html,
+            retries=2,
+            retry_delay=1,
+            async_send=True
+        )
+        
+        if success:
+            logger.info(f"📧 {period.title()} modification digest sent to {recipient_email}")
+        else:
+            logger.warning(f"⚠️ Could not send modification digest to {recipient_email}")
+        
+        return success
+    except Exception as e:
+        logger.error(f"❌ Failed to send modification digest: {str(e)}")
+        return False
+
+def send_resubmission_notification(instructor_email, instructor_name, student_name, assignment_title, course_title, is_project=False, assignment_id=None, frontend_url=None, submission_notes=None):
     """
     Send email notification when student resubmits after modification request
     
@@ -286,10 +514,26 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
         assignment_title: str - assignment/project title
         course_title: str - course title
         is_project: bool - whether it's a project or assignment
+        assignment_id: int - assignment/project ID for URL generation
+        frontend_url: str - frontend base URL for link generation
+        submission_notes: str - optional notes from student
     """
     try:
         item_type = "project" if is_project else "assignment"
         subject = f"🔄 {item_type.title()} Resubmitted: {assignment_title}"
+        
+        # Generate review URL if frontend_url is provided
+        review_url = "#"
+        if frontend_url and assignment_id:
+            review_url = f"{frontend_url}/instructor/assignments/{assignment_id}/submissions"
+        
+        # Add submission notes if provided
+        notes_html = ""
+        if submission_notes:
+            notes_html = f"<li><strong>Student Notes:</strong> {submission_notes}</li>"
+        
+        # Import datetime for current timestamp
+        from datetime import datetime
         
         email_html = f"""
         <!DOCTYPE html>
@@ -302,8 +546,10 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
                 .header {{ background: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; }}
                 .content {{ padding: 20px; }}
                 .highlight {{ background: #d1ecf1; padding: 15px; border-left: 4px solid #17a2b8; margin: 15px 0; }}
+                .priority {{ background: #d4edda; padding: 15px; border-left: 4px solid #28a745; margin: 15px 0; }}
                 .footer {{ background: #f8f9fa; padding: 15px; text-align: center; font-size: 0.9em; color: #666; }}
                 .btn {{ background: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0; }}
+                .btn:hover {{ background: #218838; }}
             </style>
         </head>
         <body>
@@ -322,12 +568,20 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
                         <li><strong>{item_type.title()}:</strong> {assignment_title}</li>
                         <li><strong>Student:</strong> {student_name}</li>
                         <li><strong>Status:</strong> Awaiting Review</li>
+                        <li><strong>Submitted:</strong> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</li>
+                        {notes_html}
                     </ul>
                 </div>
                 
-                <p>The {item_type} is now ready for review and grading.</p>
+                <div class="priority">
+                    <p><strong>📋 Review Priority:</strong> This is a resubmission following your modification request. Please review at your earliest convenience to maintain student momentum and progress.</p>
+                </div>
                 
-                <p><a href="#" class="btn">Review Submission</a></p>
+                <p>The {item_type} is now ready for review and grading. You can access the submission through your instructor dashboard.</p>
+                
+                <p><a href="{review_url}" class="btn">Review Submission</a></p>
+                
+                <p>If you have any questions about the resubmission, please don't hesitate to contact the student.</p>
                 
                 <p>Best regards,<br>Afritec Bridge LMS Team</p>
             </div>
@@ -338,13 +592,21 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
         </html>
         """
         
-        send_email(
+        # Try to send the email with retries
+        success = send_email(
             to=instructor_email,
             subject=subject,
-            template=email_html
+            template=email_html,
+            retries=3,
+            retry_delay=2
         )
-        logger.info(f"📧 Resubmission notification sent to {instructor_email}")
-        return True
+        
+        if success:
+            logger.info(f"📧 Resubmission notification sent to {instructor_email}")
+            return True
+        else:
+            logger.error(f"❌ Failed to send resubmission notification to {instructor_email} after retries")
+            return False
     except Exception as e:
         logger.error(f"❌ Failed to send resubmission notification: {str(e)}")
         return False

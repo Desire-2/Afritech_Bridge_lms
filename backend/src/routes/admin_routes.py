@@ -982,3 +982,392 @@ def get_roles():
         logger.error(f"Error getting roles: {str(e)}")
         return jsonify({"error": "Failed to retrieve roles"}), 500
 
+# --- User Inactivity and Auto-Deletion Management ---
+
+@admin_bp.route("/users/inactive", methods=["GET"])
+@admin_required
+def get_inactive_users():
+    """Get users who are inactive for potential auto-deletion"""
+    try:
+        from ..services.inactivity_service import InactivityService
+        
+        # Get query parameters
+        threshold_days = request.args.get('threshold_days', 14, type=int)
+        role_filter = request.args.get('role')
+        
+        # Get inactive users
+        inactive_users = InactivityService.get_inactive_users(threshold_days=threshold_days)
+        
+        # Filter by role if specified
+        if role_filter:
+            inactive_users = [u for u in inactive_users if u['role'] == role_filter]
+        
+        # Group by role for better organization
+        users_by_role = {}
+        for user in inactive_users:
+            role = user['role']
+            if role not in users_by_role:
+                users_by_role[role] = []
+            users_by_role[role].append(user)
+        
+        return jsonify({
+            "success": True,
+            "inactive_users": inactive_users,
+            "users_by_role": users_by_role,
+            "threshold_days": threshold_days,
+            "total_count": len(inactive_users)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting inactive users: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to fetch inactive users",
+            "error": str(e)
+        }), 500
+
+@admin_bp.route("/users/inactivity-analysis", methods=["GET"])
+@admin_required
+def get_inactivity_analysis():
+    """Get comprehensive analysis of user inactivity across the platform"""
+    try:
+        from ..services.inactivity_service import InactivityService
+        
+        # Get inactive users for different thresholds
+        seven_day_inactive = InactivityService.get_inactive_users(threshold_days=7)
+        fourteen_day_inactive = InactivityService.get_inactive_users(threshold_days=14)
+        thirty_day_inactive = InactivityService.get_inactive_users(threshold_days=30)
+        
+        # Get total users by role
+        total_users = User.query.filter_by(is_active=True).count()
+        users_by_role = db.session.query(
+            Role.name, func.count(User.id)
+        ).join(User).filter(User.is_active == True).group_by(Role.name).all()
+        users_by_role = dict(users_by_role)
+        
+        # Calculate inactivity rates
+        inactivity_rates = {
+            "7_days": {
+                "count": len(seven_day_inactive),
+                "rate": (len(seven_day_inactive) / total_users * 100) if total_users > 0 else 0
+            },
+            "14_days": {
+                "count": len(fourteen_day_inactive),
+                "rate": (len(fourteen_day_inactive) / total_users * 100) if total_users > 0 else 0
+            },
+            "30_days": {
+                "count": len(thirty_day_inactive),
+                "rate": (len(thirty_day_inactive) / total_users * 100) if total_users > 0 else 0
+            }
+        }
+        
+        # Group by role for 14-day threshold (deletion candidates)
+        deletion_candidates_by_role = {}
+        for user in fourteen_day_inactive:
+            role = user['role']
+            if role not in deletion_candidates_by_role:
+                deletion_candidates_by_role[role] = {
+                    'count': 0,
+                    'users': []
+                }
+            deletion_candidates_by_role[role]['count'] += 1
+            deletion_candidates_by_role[role]['users'].append(user)
+        
+        # Generate recommendations
+        recommendations = []
+        if len(fourteen_day_inactive) > 0:
+            recommendations.append({
+                'type': 'warning',
+                'title': 'Users Ready for Auto-Deletion',
+                'message': f'{len(fourteen_day_inactive)} users have been inactive for 14+ days',
+                'action': 'Review and approve for auto-deletion'
+            })
+        
+        if len(seven_day_inactive) > len(fourteen_day_inactive):
+            approaching_deletion = len(seven_day_inactive) - len(fourteen_day_inactive)
+            recommendations.append({
+                'type': 'info',
+                'title': 'Users Approaching Deletion Threshold',
+                'message': f'{approaching_deletion} users will be eligible for deletion in 7 days',
+                'action': 'Consider sending reactivation reminders'
+            })
+        
+        if inactivity_rates["14_days"]["rate"] > 20:
+            recommendations.append({
+                'type': 'urgent',
+                'title': 'High Platform Inactivity',
+                'message': 'More than 20% of users are inactive for 14+ days',
+                'action': 'Review user engagement strategies and platform usability'
+            })
+        
+        analysis = {
+            "total_active_users": total_users,
+            "users_by_role": users_by_role,
+            "inactivity_rates": inactivity_rates,
+            "deletion_candidates": deletion_candidates_by_role,
+            "recommendations": recommendations,
+            "last_updated": datetime.utcnow().isoformat()
+        }
+        
+        return jsonify({
+            "success": True,
+            "analysis": analysis
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error generating inactivity analysis: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to generate inactivity analysis",
+            "error": str(e)
+        }), 500
+
+@admin_bp.route("/users/<int:user_id>/auto-delete", methods=["POST"])
+@admin_required
+def auto_delete_user(user_id):
+    """Auto-delete an inactive user"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        from ..services.inactivity_service import InactivityService
+        
+        # Auto-delete user
+        result = InactivityService.auto_delete_inactive_user(
+            user_id=user_id,
+            admin_id=current_user_id
+        )
+        
+        if result['success']:
+            return jsonify({
+                "success": True,
+                "message": result['message'],
+                "user_info": result['user_info']
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "message": result['message']
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error auto-deleting user {user_id}: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to auto-delete user",
+            "error": str(e)
+        }), 500
+
+@admin_bp.route("/users/bulk-auto-delete", methods=["POST"])
+@admin_required
+def bulk_auto_delete_users():
+    """Auto-delete multiple inactive users"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        data = request.get_json() or {}
+        user_ids = data.get('user_ids', [])
+        
+        if not user_ids:
+            return jsonify({
+                "success": False,
+                "message": "No user IDs provided"
+            }), 400
+        
+        from ..services.inactivity_service import InactivityService
+        
+        results = {
+            "successful": [],
+            "failed": [],
+            "total_requested": len(user_ids)
+        }
+        
+        for user_id in user_ids:
+            result = InactivityService.auto_delete_inactive_user(
+                user_id=user_id,
+                admin_id=current_user_id
+            )
+            
+            if result['success']:
+                results["successful"].append({
+                    "user_id": user_id,
+                    "user_info": result['user_info']
+                })
+            else:
+                results["failed"].append({
+                    "user_id": user_id,
+                    "error": result['message']
+                })
+        
+        return jsonify({
+            "success": True,
+            "message": f"Processed {len(user_ids)} users for auto-deletion",
+            "results": results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error bulk auto-deleting users: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to bulk auto-delete users",
+            "error": str(e)
+        }), 500
+
+@admin_bp.route("/system/cleanup-inactive", methods=["POST"])
+@admin_required
+def run_system_cleanup():
+    """Run automated cleanup of inactive users and students"""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        data = request.get_json() or {}
+        dry_run = data.get('dry_run', False)  # If true, only simulate cleanup
+        user_threshold_days = data.get('user_threshold_days', 14)
+        student_threshold_days = data.get('student_threshold_days', 7)
+        
+        from ..services.inactivity_service import InactivityService
+        
+        # Get cleanup candidates
+        inactive_users = InactivityService.get_inactive_users(threshold_days=user_threshold_days)
+        
+        # Filter out admin accounts for safety
+        inactive_users = [u for u in inactive_users if u['role'] != 'admin']
+        
+        # Get inactive students across all instructors
+        inactive_students = InactivityService.get_inactive_students(
+            threshold_days=student_threshold_days
+        )
+        
+        cleanup_summary = {
+            "dry_run": dry_run,
+            "user_threshold_days": user_threshold_days,
+            "student_threshold_days": student_threshold_days,
+            "users_for_deletion": len(inactive_users),
+            "students_for_termination": len(inactive_students),
+            "executed_at": datetime.utcnow().isoformat()
+        }
+        
+        if dry_run:
+            cleanup_summary["note"] = "This was a dry run - no actual changes were made"
+            cleanup_summary["inactive_users_preview"] = inactive_users[:5]  # Show first 5
+            cleanup_summary["inactive_students_preview"] = inactive_students[:5]  # Show first 5
+        else:
+            # Execute actual cleanup
+            deletion_results = {
+                "successful": 0,
+                "failed": 0,
+                "errors": []
+            }
+            
+            termination_results = {
+                "successful": 0,
+                "failed": 0,
+                "errors": []
+            }
+            
+            # Delete inactive users
+            for user in inactive_users:
+                result = InactivityService.auto_delete_inactive_user(
+                    user_id=user['user_id'],
+                    admin_id=current_user_id
+                )
+                
+                if result['success']:
+                    deletion_results["successful"] += 1
+                else:
+                    deletion_results["failed"] += 1
+                    deletion_results["errors"].append({
+                        "user_id": user['user_id'],
+                        "error": result['message']
+                    })
+            
+            # Note: Student termination would typically be done per instructor
+            # For system-wide cleanup, we'll just log the candidates
+            cleanup_summary["deletion_results"] = deletion_results
+            cleanup_summary["student_termination_note"] = f"Found {len(inactive_students)} inactive students - termination should be done by individual instructors"
+        
+        return jsonify({
+            "success": True,
+            "message": "System cleanup completed successfully" if not dry_run else "System cleanup simulation completed",
+            "cleanup_summary": cleanup_summary
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error running system cleanup: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to run system cleanup",
+            "error": str(e)
+        }), 500
+
+@admin_bp.route("/system/background-tasks", methods=["GET"])
+@admin_required
+def get_background_task_status():
+    """Get status of background tasks and scheduler"""
+    try:
+        from ..services.scheduler_service import get_scheduler
+        
+        scheduler = get_scheduler()
+        
+        return jsonify({
+            "success": True,
+            "scheduler_running": scheduler.running,
+            "available_tasks": [
+                "daily_cleanup",
+                "weekly_cleanup", 
+                "send_warnings",
+                "update_stats"
+            ],
+            "schedule_info": {
+                "daily_cleanup": "Daily at 2:00 AM",
+                "weekly_cleanup": "Sundays at 3:00 AM",
+                "send_warnings": "Every 3 days at 10:00 AM",
+                "update_stats": "Every 6 hours"
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting background task status: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get background task status",
+            "error": str(e)
+        }), 500
+
+@admin_bp.route("/system/run-task", methods=["POST"])
+@admin_required
+def run_background_task():
+    """Manually run a background task"""
+    try:
+        data = request.get_json() or {}
+        task_name = data.get('task_name')
+        
+        if not task_name:
+            return jsonify({
+                "success": False,
+                "message": "Task name is required"
+            }), 400
+        
+        from ..services.scheduler_service import get_scheduler
+        
+        scheduler = get_scheduler()
+        success = scheduler.run_task_now(task_name)
+        
+        if success:
+            return jsonify({
+                "success": True,
+                "message": f"Task '{task_name}' executed successfully"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "message": f"Failed to execute task '{task_name}'"
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error running background task: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to run background task",
+            "error": str(e)
+        }), 500
+

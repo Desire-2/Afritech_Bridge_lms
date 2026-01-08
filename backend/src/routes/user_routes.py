@@ -186,6 +186,10 @@ def login():
 
     # Successful login
     try:
+        # Update last login and activity
+        user.update_last_login()
+        db.session.commit()
+        
         access_token = create_access_token(identity=str(user.id), fresh=True, expires_delta=timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1))))
         refresh_token = create_refresh_token(identity=str(user.id), expires_delta=timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30))))
         

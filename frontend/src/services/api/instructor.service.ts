@@ -55,6 +55,62 @@ class InstructorApiService extends BaseApiService {
   async getPendingSubmissions(): Promise<any> {
     return this.get('/instructor/submissions/pending');
   }
+
+  /**
+   * Get student activity analysis
+   */
+  async getStudentAnalysis(): Promise<any> {
+    return this.get('/instructor/students/analysis');
+  }
+
+  /**
+   * Get student activity analysis status (for async tasks)
+   */
+  async getStudentAnalysisStatus(taskId: string): Promise<any> {
+    return this.get(`/instructor/students/analysis/status/${taskId}`);
+  }
+
+  /**
+   * Get inactive students
+   */
+  async getInactiveStudents(): Promise<any> {
+    return this.get('/instructor/students/inactive');
+  }
+
+  /**
+   * Get inactive students status (for async tasks)
+   */
+  async getInactiveStudentsStatus(taskId: string): Promise<any> {
+    return this.get(`/instructor/students/inactive/status/${taskId}`);
+  }
+
+  /**
+   * Terminate a student enrollment
+   */
+  async terminateStudent(studentId: number, reason: string): Promise<any> {
+    return this.post(`/instructor/students/${studentId}/terminate`, { reason });
+  }
+
+  /**
+   * Bulk terminate students
+   */
+  async bulkTerminateStudents(studentIds: number[], reason: string): Promise<any> {
+    return this.post('/instructor/bulk-terminate', { student_ids: studentIds, reason });
+  }
+
+  /**
+   * Send warning emails to inactive students
+   */
+  async sendInactivityWarnings(thresholdDays: number = 5): Promise<any> {
+    return this.post('/instructor/students/send-warnings', { threshold_days: thresholdDays });
+  }
+
+  /**
+   * Get send warnings status (for async tasks)
+   */
+  async getSendWarningsStatus(taskId: string): Promise<any> {
+    return this.get(`/instructor/students/send-warnings/status/${taskId}`);
+  }
 }
 
 export default new InstructorApiService();

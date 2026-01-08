@@ -4,7 +4,7 @@ from sqlalchemy import and_, or_, func, desc
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import SQLAlchemyError
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 # Import models
@@ -209,15 +209,48 @@ def request_assignment_modification(assignment_id):
         # Send email notification to student
         try:
             instructor = User.query.get(user_id)
-            send_modification_request_notification(
+            
+            # Get frontend URL from environment or config
+            frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+            
+            # Calculate resubmission deadline (7 days from now)
+            due_date = (datetime.now() + timedelta(days=7)).strftime('%B %d, %Y')
+            
+            success = send_modification_request_notification(
                 student_email=student.email,
                 student_name=student.full_name,
                 assignment_title=assignment.title,
                 instructor_name=instructor.full_name,
                 reason=reason,
-                course_title=course.title
+                course_title=course.title,
+                is_project=False,
+                assignment_id=assignment_id,
+                due_date=due_date,
+                frontend_url=frontend_url
             )
-            logger.info(f"📧 Modification request notification sent to {student.email}")
+            
+            if success:
+                logger.info(f"📧 Modification request notification sent to {student.email}")
+            else:
+                logger.warning(f"⚠️ Failed to send modification request notification to {student.email}")
+            
+            # Send admin alert if configured
+            admin_email = current_app.config.get('ADMIN_EMAIL')
+            if admin_email:
+                try:
+                    from ..utils.email_notifications import send_admin_modification_alert
+                    send_admin_modification_alert(
+                        admin_email=admin_email,
+                        instructor_name=instructor.full_name,
+                        student_name=student.full_name,
+                        assignment_title=assignment.title,
+                        course_title=course.title,
+                        reason=reason,
+                        is_project=False
+                    )
+                except Exception as admin_e:
+                    logger.warning(f"⚠️ Could not send admin alert: {admin_e}")
+            
         except Exception as e:
             logger.error(f"Failed to send modification request email: {e}")
         
@@ -306,16 +339,48 @@ def request_project_modification(project_id):
         # Send email notification to student
         try:
             instructor = User.query.get(user_id)
-            send_modification_request_notification(
+            
+            # Get frontend URL from environment or config
+            frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+            
+            # Calculate resubmission deadline (7 days from now)
+            due_date = (datetime.now() + timedelta(days=7)).strftime('%B %d, %Y')
+            
+            success = send_modification_request_notification(
                 student_email=student.email,
                 student_name=student.full_name,
                 assignment_title=project.title,
                 instructor_name=instructor.full_name,
                 reason=reason,
                 course_title=course.title,
-                is_project=True
+                is_project=True,
+                assignment_id=project_id,
+                due_date=due_date,
+                frontend_url=frontend_url
             )
-            logger.info(f"📧 Project modification request notification sent to {student.email}")
+            
+            if success:
+                logger.info(f"📧 Project modification request notification sent to {student.email}")
+            else:
+                logger.warning(f"⚠️ Failed to send project modification request notification to {student.email}")
+            
+            # Send admin alert if configured
+            admin_email = current_app.config.get('ADMIN_EMAIL')
+            if admin_email:
+                try:
+                    from ..utils.email_notifications import send_admin_modification_alert
+                    send_admin_modification_alert(
+                        admin_email=admin_email,
+                        instructor_name=instructor.full_name,
+                        student_name=student.full_name,
+                        assignment_title=project.title,
+                        course_title=course.title,
+                        reason=reason,
+                        is_project=True
+                    )
+                except Exception as admin_e:
+                    logger.warning(f"⚠️ Could not send admin alert: {admin_e}")
+                    
         except Exception as e:
             logger.error(f"Failed to send project modification request email: {e}")
         
@@ -401,14 +466,28 @@ def resubmit_assignment(assignment_id):
             instructor = User.query.get(course.instructor_id)
             student = User.query.get(user_id)
             
-            send_resubmission_notification(
+            # Get frontend URL from environment or config
+            frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+            
+            # Get submission notes from request data
+            submission_notes = data.get('resubmission_notes', '')
+            
+            success = send_resubmission_notification(
                 instructor_email=instructor.email,
                 instructor_name=instructor.full_name,
                 student_name=student.full_name,
                 assignment_title=assignment.title,
-                course_title=course.title
+                course_title=course.title,
+                is_project=False,
+                assignment_id=assignment_id,
+                frontend_url=frontend_url,
+                submission_notes=submission_notes
             )
-            logger.info(f"📧 Resubmission notification sent to instructor {instructor.email}")
+            
+            if success:
+                logger.info(f"📧 Resubmission notification sent to instructor {instructor.email}")
+            else:
+                logger.warning(f"⚠️ Failed to send resubmission notification to instructor {instructor.email}")
         except Exception as e:
             logger.error(f"Failed to send resubmission notification: {e}")
         
@@ -662,7 +741,6 @@ def get_instructor_modification_analytics():
         days_back = request.args.get('days_back', default=90, type=int)
         
         # Calculate date range
-        from datetime import datetime, timedelta
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days_back)
         
@@ -700,7 +778,6 @@ def get_platform_modification_analytics():
         days_back = request.args.get('days_back', default=30, type=int)
         
         # Calculate date range
-        from datetime import datetime, timedelta
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days_back)
         
@@ -732,7 +809,6 @@ def get_modification_trends():
         weeks_back = request.args.get('weeks_back', default=12, type=int)
         
         # Calculate date range
-        from datetime import datetime, timedelta
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(weeks=weeks_back)
         

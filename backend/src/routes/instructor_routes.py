@@ -3,10 +3,16 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, and_
+from datetime import datetime
+import logging
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
+from ..services.background_service import background_service
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 # Helper for role checking (decorator)
 from functools import wraps
@@ -354,3 +360,518 @@ def get_pending_submissions():
         
     except Exception as e:
         return jsonify({"message": "Failed to fetch pending submissions", "error": str(e)}), 500
+
+# --- Student Activity Management Routes ---
+
+@instructor_bp.route("/students/analysis", methods=["GET"])
+@instructor_required
+def get_student_analysis():
+    """Get comprehensive analysis of student activity and progress (async version)"""
+    current_user_id = int(get_jwt_identity())
+    
+    # Check if there's a running or recent task
+    task_id = request.args.get('task_id')
+    if task_id:
+        task_status = background_service.get_task_status(task_id)
+        if task_status:
+            if task_status['status'] == 'completed':
+                return jsonify({
+                    "success": True,
+                    "analysis": task_status['result']
+                }), 200
+            elif task_status['status'] == 'failed':
+                return jsonify({
+                    "success": False,
+                    "message": "Analysis failed",
+                    "error": task_status['error']
+                }), 500
+            else:
+                return jsonify({
+                    "success": True,
+                    "status": task_status['status'],
+                    "progress": task_status['progress'],
+                    "message": "Analysis in progress"
+                }), 202
+    
+    # Create new background task
+    try:
+        task_id = background_service.create_task(
+            _perform_student_analysis,
+            current_user_id
+        )
+        
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": "started",
+            "message": "Analysis started in background",
+            "poll_url": f"/api/v1/instructor/students/analysis?task_id={task_id}"
+        }), 202
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to start analysis",
+            "error": str(e)
+        }), 500
+
+@instructor_bp.route("/students/inactive", methods=["GET"])
+@instructor_required
+def get_inactive_students():
+    """Get students who are inactive in instructor's courses (async version)"""
+    current_user_id = int(get_jwt_identity())
+    
+    # Check if there's a running or recent task
+    task_id = request.args.get('task_id')
+    if task_id:
+        task_status = background_service.get_task_status(task_id)
+        if task_status:
+            if task_status['status'] == 'completed':
+                return jsonify({
+                    "success": True,
+                    "inactive_students": task_status['result']['inactive_students'],
+                    "threshold_days": task_status['result']['threshold_days'],
+                    "total_count": task_status['result']['total_count']
+                }), 200
+            elif task_status['status'] == 'failed':
+                return jsonify({
+                    "success": False,
+                    "message": "Failed to fetch inactive students",
+                    "error": task_status['error']
+                }), 500
+            else:
+                return jsonify({
+                    "success": True,
+                    "status": task_status['status'],
+                    "progress": task_status['progress'],
+                    "message": "Fetching inactive students"
+                }), 202
+    
+    # Create new background task
+    try:
+        threshold_days = request.args.get('threshold_days', 7, type=int)
+        
+        task_id = background_service.create_task(
+            _fetch_inactive_students,
+            current_user_id,
+            threshold_days
+        )
+        
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": "started", 
+            "message": "Fetching inactive students in background",
+            "poll_url": f"/api/v1/instructor/students/inactive?task_id={task_id}"
+        }), 202
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to start inactive students fetch",
+            "error": str(e)
+        }), 500
+
+
+@instructor_bp.route("/students/analysis/status/<task_id>", methods=["GET"])
+@instructor_required
+def get_student_analysis_status(task_id):
+    """Check status of student analysis background task"""
+    try:
+        task_status = background_service.get_task_status(task_id)
+        if not task_status:
+            return jsonify({
+                "success": False,
+                "message": "Task not found"
+            }), 404
+        
+        if task_status['status'] == 'completed':
+            return jsonify({
+                "success": True,
+                "status": "completed",
+                "analysis": task_status['result']
+            }), 200
+        elif task_status['status'] == 'failed':
+            return jsonify({
+                "success": False,
+                "status": "failed",
+                "error": task_status['error']
+            }), 500
+        else:
+            return jsonify({
+                "success": True,
+                "status": task_status['status'],
+                "progress": task_status.get('progress', 0)
+            }), 200
+            
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to check task status",
+            "error": str(e)
+        }), 500
+
+
+@instructor_bp.route("/students/inactive/status/<task_id>", methods=["GET"])
+@instructor_required
+def get_inactive_students_status(task_id):
+    """Check status of inactive students background task"""
+    try:
+        task_status = background_service.get_task_status(task_id)
+        if not task_status:
+            return jsonify({
+                "success": False,
+                "message": "Task not found"
+            }), 404
+        
+        if task_status['status'] == 'completed':
+            return jsonify({
+                "success": True,
+                "status": "completed",
+                "inactive_students": task_status['result']['inactive_students'],
+                "threshold_days": task_status['result']['threshold_days'],
+                "total_count": task_status['result']['total_count']
+            }), 200
+        elif task_status['status'] == 'failed':
+            return jsonify({
+                "success": False,
+                "status": "failed",
+                "error": task_status['error']
+            }), 500
+        else:
+            return jsonify({
+                "success": True,
+                "status": task_status['status'],
+                "progress": task_status.get('progress', 0)
+            }), 200
+            
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to check task status",
+            "error": str(e)
+        }), 500
+
+
+def _perform_student_analysis(instructor_id: int):
+    """Background task function for student analysis"""
+    from ..services.inactivity_service import InactivityService
+    from ..services.analytics_service import AnalyticsService
+    
+    # Get all students in instructor's courses
+    courses = Course.query.filter_by(instructor_id=instructor_id).all()
+    course_ids = [c.id for c in courses]
+    
+    if not course_ids:
+        return {
+            "total_students": 0,
+            "active_students": 0,
+            "inactive_students": 0,
+            "at_risk_students": 0,
+            "students_by_course": {},
+            "activity_trends": [],
+            "recommendations": []
+        }
+    
+    # Get enrollments for instructor's courses
+    enrollments = Enrollment.query.filter(
+        Enrollment.course_id.in_(course_ids),
+        Enrollment.status == 'active'
+    ).all()
+    
+    total_students = len(enrollments)
+    
+    # Get inactive students (7+ days)
+    inactive_students = InactivityService.get_inactive_students(
+        instructor_id=instructor_id,
+        threshold_days=7
+    )
+    
+    # Get at-risk students (5-6 days inactive)
+    at_risk_students = InactivityService.get_inactive_students(
+        instructor_id=instructor_id,
+        threshold_days=5
+    )
+    # Filter out already inactive students by student_id
+    inactive_student_ids = {s['student_id'] for s in inactive_students}
+    at_risk_students = [s for s in at_risk_students if s['student_id'] not in inactive_student_ids]
+    
+    # Calculate active students
+    active_students = total_students - len(inactive_students)
+    
+    # Group students by course
+    students_by_course = {}
+    for course in courses:
+        course_enrollments = [e for e in enrollments if e.course_id == course.id]
+        course_inactive = [s for s in inactive_students if any(
+            c['course_id'] == course.id for c in s['enrolled_courses']
+        )]
+        
+        students_by_course[course.title] = {
+            'course_id': course.id,
+            'total': len(course_enrollments),
+            'active': len(course_enrollments) - len(course_inactive),
+            'inactive': len(course_inactive),
+            'inactive_rate': (len(course_inactive) / len(course_enrollments) * 100) if course_enrollments else 0
+        }
+    
+    # Generate recommendations
+    recommendations = []
+    if len(inactive_students) > 0:
+        recommendations.append({
+            'type': 'warning',
+            'title': 'Inactive Students Detected',
+            'message': f'{len(inactive_students)} students have been inactive for 7+ days',
+            'action': 'Consider sending reminders or checking in with these students'
+        })
+    
+    if len(at_risk_students) > 0:
+        recommendations.append({
+            'type': 'info',
+            'title': 'At-Risk Students',
+            'message': f'{len(at_risk_students)} students are showing decreased activity',
+            'action': 'Proactive engagement may prevent these students from becoming inactive'
+        })
+    
+    if len(inactive_students) / total_students > 0.2 if total_students > 0 else False:
+        recommendations.append({
+            'type': 'urgent',
+            'title': 'High Inactivity Rate',
+            'message': 'More than 20% of students are inactive',
+            'action': 'Review course content and engagement strategies'
+        })
+    
+    return {
+        "total_students": total_students,
+        "active_students": active_students,
+        "inactive_students": len(inactive_students),
+        "at_risk_students": len(at_risk_students),
+        "activity_rate": (active_students / total_students * 100) if total_students > 0 else 0,
+        "students_by_course": students_by_course,
+        "recommendations": recommendations,
+        "last_updated": datetime.utcnow().isoformat()
+    }
+
+def _fetch_inactive_students(instructor_id: int, threshold_days: int):
+    """Background task function for fetching inactive students"""
+    from ..services.inactivity_service import InactivityService
+    
+    # Get inactive students for this instructor
+    inactive_students = InactivityService.get_inactive_students(
+        instructor_id=instructor_id,
+        threshold_days=threshold_days
+    )
+    
+    return {
+        "inactive_students": inactive_students,
+        "threshold_days": threshold_days,
+        "total_count": len(inactive_students)
+    }
+
+
+def _send_warnings_task(instructor_id: int, threshold_days: int):
+    """Background task function for sending inactivity warnings"""
+    import time
+    import logging
+    from ..services.inactivity_service import InactivityService
+    
+    # Create logger for this task
+    logger = logging.getLogger(__name__)
+    
+    # Get at-risk students for this instructor
+    at_risk_students = InactivityService.get_inactive_students(
+        instructor_id=instructor_id,
+        threshold_days=threshold_days
+    )
+    
+    warnings_sent = 0
+    total_students = len(at_risk_students)
+    
+    for i, student_data in enumerate(at_risk_students):
+        try:
+            student = User.query.get(student_data['student_id'])
+            InactivityService._send_inactivity_warning(student, student_data)
+            warnings_sent += 1
+            
+            # Add 30-second delay between emails to avoid server overload
+            # Skip delay for the last email
+            if i < total_students - 1:
+                logger.info(f"Sent warning {warnings_sent}/{total_students}. Waiting 30 seconds before next email...")
+                time.sleep(30)
+                
+        except Exception as e:
+            logger.error(f"Failed to send warning to student {student_data['student_id']}: {str(e)}")
+    
+    return {
+        "warnings_sent": warnings_sent,
+        "total_at_risk": len(at_risk_students),
+        "threshold_days": threshold_days
+    }
+
+
+@instructor_bp.route("/students/<int:student_id>/terminate", methods=["POST"])
+@instructor_required
+def terminate_student(student_id):
+    """Terminate a student from instructor's courses due to inactivity"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        from ..services.inactivity_service import InactivityService
+        
+        data = request.get_json() or {}
+        reason = data.get('reason', 'Inactivity')
+        
+        # Terminate student
+        result = InactivityService.terminate_inactive_student(
+            student_id=student_id,
+            instructor_id=current_user_id,
+            reason=reason
+        )
+        
+        if result['success']:
+            return jsonify({
+                "success": True,
+                "message": result['message'],
+                "terminated_courses": result['terminated_courses']
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "message": result['message']
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to terminate student",
+            "error": str(e)
+        }), 500
+
+@instructor_bp.route("/students/bulk-terminate", methods=["POST"])
+@instructor_required
+def bulk_terminate_students():
+    """Terminate multiple inactive students"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        from ..services.inactivity_service import InactivityService
+        
+        data = request.get_json() or {}
+        student_ids = data.get('student_ids', [])
+        reason = data.get('reason', 'Bulk inactivity termination')
+        
+        if not student_ids:
+            return jsonify({
+                "success": False,
+                "message": "No student IDs provided"
+            }), 400
+        
+        results = {
+            "successful": [],
+            "failed": [],
+            "total_requested": len(student_ids)
+        }
+        
+        for student_id in student_ids:
+            result = InactivityService.terminate_inactive_student(
+                student_id=student_id,
+                instructor_id=current_user_id,
+                reason=reason
+            )
+            
+            if result['success']:
+                results["successful"].append({
+                    "student_id": student_id,
+                    "terminated_courses": result['terminated_courses']
+                })
+            else:
+                results["failed"].append({
+                    "student_id": student_id,
+                    "error": result['message']
+                })
+        
+        return jsonify({
+            "success": True,
+            "message": f"Processed {len(student_ids)} students",
+            "results": results
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to bulk terminate students",
+            "error": str(e)
+        }), 500
+
+@instructor_bp.route("/students/send-warnings", methods=["POST"])
+@instructor_required
+def send_inactivity_warnings():
+    """Send inactivity warnings to at-risk students (async version)"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        data = request.get_json() or {}
+        threshold_days = data.get('threshold_days', 5)  # Warn students inactive for 5+ days
+        
+        # Start background task
+        task_id = background_service.create_task(
+            _send_warnings_task,
+            current_user_id,
+            threshold_days
+        )
+        
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": "started",
+            "message": "Warning emails are being sent in background",
+            "poll_url": f"/api/v1/instructor/students/send-warnings/status/{task_id}"
+        }), 202
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to start warning process",
+            "error": str(e)
+        }), 500
+
+
+@instructor_bp.route("/students/send-warnings/status/<task_id>", methods=["GET"])
+@instructor_required
+def get_send_warnings_status(task_id):
+    """Check status of send warnings background task"""
+    try:
+        task_status = background_service.get_task_status(task_id)
+        if not task_status:
+            return jsonify({
+                "success": False,
+                "message": "Task not found"
+            }), 404
+        
+        if task_status['status'] == 'completed':
+            return jsonify({
+                "success": True,
+                "status": "completed",
+                "warnings_sent": task_status['result']['warnings_sent'],
+                "total_at_risk": task_status['result']['total_at_risk'],
+                "message": f"Sent {task_status['result']['warnings_sent']} warning emails"
+            }), 200
+        elif task_status['status'] == 'failed':
+            return jsonify({
+                "success": False,
+                "status": "failed",
+                "error": task_status['error']
+            }), 500
+        else:
+            return jsonify({
+                "success": True,
+                "status": task_status['status'],
+                "progress": task_status.get('progress', 0)
+            }), 200
+            
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": "Failed to check task status",
+            "error": str(e)
+        }), 500
