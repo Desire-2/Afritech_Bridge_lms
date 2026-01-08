@@ -1,24 +1,23 @@
-# Email utility for Afritec Bridge LMS
+# Enhanced Email utility for Afritec Bridge LMS
+# Now powered by Brevo API for reliable email delivery
 from flask import current_app
-from flask_mail import Mail, Message
 import logging
 import time
 import threading
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Union
+from .brevo_email_service import brevo_service
 
 logger = logging.getLogger(__name__)
 
-# This will be initialized in main.py
-mail = Mail()
-
-# Rate limiting for email sending
-EMAIL_RATE_LIMIT = 0.5  # Seconds between emails
+# Rate limiting for email sending (legacy support)
+EMAIL_RATE_LIMIT = 0.1  # 100ms between emails - optimized for Brevo
 last_email_time = 0
 email_lock = threading.Lock()
 
 def send_email_async(app, to, subject, template=None, body=None, retries=3, retry_delay=2):
     """
     Send email in a separate thread to avoid blocking the main request
+    (Legacy function - now uses Brevo service internally)
     """
     with app.app_context():
         _send_email_sync(to, subject, template, body, retries, retry_delay)
@@ -26,6 +25,7 @@ def send_email_async(app, to, subject, template=None, body=None, retries=3, retr
 def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2, async_send=True):
     """
     Send an email with the given subject and content to the recipient
+    Enhanced with Brevo API for improved reliability and deliverability
     
     Args:
         to: Recipient email address (string or list)
@@ -40,11 +40,14 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2, 
         bool: True if email send was initiated successfully, False otherwise
     """
     try:
-        # Check if email configuration is available
-        if not current_app.config.get('MAIL_USERNAME') or not current_app.config.get('MAIL_PASSWORD'):
-            logger.warning(f"Email configuration not complete, skipping email send to {to}")
-            logger.info(f"Would have sent: {subject}")
-            return False
+        # Check if Brevo service is configured
+        if not brevo_service.is_configured:
+            # Fallback: check for basic email config
+            if current_app and (not current_app.config.get('BREVO_API_KEY') and 
+                              not current_app.config.get('MAIL_USERNAME')):
+                logger.warning(f"Email service not configured, skipping email send to {to}")
+                logger.info(f"Would have sent: {subject}")
+                return False
         
         # Convert to list if single email
         recipients = [to] if isinstance(to, str) else to
@@ -54,21 +57,15 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2, 
             logger.error("No valid email recipients provided")
             return False
         
-        # Send email asynchronously to avoid blocking the request
-        if async_send:
-            app = current_app._get_current_object()
-            thread = threading.Thread(
-                target=send_email_async,
-                args=(app, to, subject, template, body, retries, retry_delay)
-            )
-            thread.daemon = True
-            thread.start()
-            logger.info(f"📧 Email queued for async delivery to {', '.join(recipients)}")
-            logger.info(f"   Subject: {subject}")
-            return True
-        else:
-            # Synchronous send for critical emails
-            return _send_email_sync(to, subject, template, body, retries, retry_delay)
+        # Use Brevo service for sending
+        return brevo_service.send_transactional_email(
+            to=recipients,
+            subject=subject,
+            html_content=template,
+            text_content=body,
+            retries=retries,
+            async_send=async_send
+        )
             
     except Exception as e:
         logger.error(f"❌ Unexpected error queueing email to {to}: {str(e)}")
@@ -77,72 +74,21 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2, 
 def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_delay=2):
     """
     Internal synchronous email sending function
+    Enhanced with Brevo API integration
     """
     try:
         # Convert to list if single email
         recipients = [to] if isinstance(to, str) else to
-            
-        sender = current_app.config['MAIL_DEFAULT_SENDER']
         
-        # Attempt to send email with retries and exponential backoff
-        last_error = None
-        for attempt in range(retries):
-            try:
-                msg = Message(
-                    subject,
-                    sender=sender,
-                    recipients=recipients
-                )
-                
-                # Set HTML template if provided, otherwise use plain text
-                if template:
-                    msg.html = template
-                if body:
-                    msg.body = body
-                
-                # Set a shorter timeout for email sending to prevent worker timeouts
-                import socket
-                original_timeout = socket.getdefaulttimeout()
-                socket.setdefaulttimeout(8)  # Reduced to 8 seconds for faster failure detection
-                
-                try:
-                    mail.send(msg)
-                    logger.info(f"✉️ Email sent successfully to {', '.join(recipients)}")
-                    logger.info(f"   Subject: {subject}")
-                    if attempt > 0:
-                        logger.info(f"   Succeeded after {attempt + 1} attempts")
-                    return True
-                finally:
-                    socket.setdefaulttimeout(original_timeout)
-                    
-            except Exception as e:
-                last_error = e
-                error_msg = str(e).lower()
-                logger.warning(f"Email attempt {attempt + 1}/{retries} failed: {str(e)}")
-                
-                # Check for specific SMTP issues
-                if 'timed out' in error_msg:
-                    logger.warning("⚠️ SMTP connection timeout - server may be unreachable")
-                elif 'authentication' in error_msg or 'username' in error_msg or 'password' in error_msg:
-                    logger.error("🔐 SMTP authentication failed - check credentials")
-                    break  # Don't retry auth failures
-                elif 'connection refused' in error_msg:
-                    logger.error("🚫 SMTP connection refused - check server/port")
-                
-                if attempt < retries - 1:  # Don't sleep on last attempt
-                    # Exponential backoff: 2s, 4s, 8s...
-                    wait_time = retry_delay * (2 ** attempt)
-                    logger.info(f"Retrying in {wait_time} seconds with exponential backoff...")
-                    time.sleep(wait_time)
-                    time.sleep(retry_delay)
-                    logger.info(f"Retrying in {retry_delay} seconds...")
-        
-        # All retries failed
-        logger.error(f"❌ Failed to send email after {retries} attempts")
-        logger.error(f"   To: {to}")
-        logger.error(f"   Subject: {subject}")
-        logger.error(f"   Last error: {str(last_error)}")
-        return False
+        # Use Brevo service for synchronous sending
+        return brevo_service.send_transactional_email(
+            to=recipients,
+            subject=subject,
+            html_content=template,
+            text_content=body,
+            retries=retries,
+            async_send=False  # Synchronous
+        )
         
     except Exception as e:
         logger.error(f"❌ Unexpected error sending email to {to}: {str(e)}")
@@ -151,6 +97,7 @@ def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_del
 def send_email_with_bcc(to, bcc, subject, template=None, body=None, retries=3, retry_delay=3, async_send=True):
     """
     Send an email with BCC recipients
+    Enhanced with Brevo API for improved deliverability
     
     Args:
         to: Primary recipients (string or list)
@@ -159,17 +106,18 @@ def send_email_with_bcc(to, bcc, subject, template=None, body=None, retries=3, r
         template: HTML content of the email (preferred)
         body: Plain text content (fallback)
         retries: Number of retry attempts (default: 3)
-        retry_delay: Seconds to wait between retries (default: 3 - increased for stability)
+        retry_delay: Seconds to wait between retries (default: 3)
         async_send: Send email asynchronously to avoid blocking (default: True)
     
     Returns:
         bool: True if email send was initiated successfully, False otherwise
     """
     try:
-        # Check if email configuration is available
-        if not current_app.config.get('MAIL_USERNAME') or not current_app.config.get('MAIL_PASSWORD'):
-            logger.warning(f"Email configuration not complete, skipping email send")
-            return False
+        # Check if Brevo service is configured
+        if not brevo_service.is_configured:
+            if current_app and not current_app.config.get('BREVO_API_KEY'):
+                logger.warning("Brevo email service not configured, skipping BCC email send")
+                return False
         
         # Convert to lists
         to_list = [to] if isinstance(to, str) else (to or [])
@@ -179,71 +127,44 @@ def send_email_with_bcc(to, bcc, subject, template=None, body=None, retries=3, r
             logger.error("No email recipients provided")
             return False
         
-        # Ensure we have at least one direct recipient (email providers prefer this)
+        # For BCC-only emails, move first BCC to direct recipient for better delivery
         if not to_list and bcc_list:
             logger.warning("BCC-only email detected, moving first BCC to direct recipient")
             to_list = [bcc_list[0]]
             bcc_list = bcc_list[1:]
         
-        # Send email asynchronously to avoid blocking
-        if async_send:
-            app = current_app._get_current_object()
-            thread = threading.Thread(
-                target=send_email_bcc_async,
-                args=(app, to_list, bcc_list, subject, template, body, retries, retry_delay)
-            )
-            thread.daemon = True
-            thread.start()
-            logger.info(f"📧 Email with BCC queued for async delivery")
-            logger.info(f"   To: {', '.join(to_list) if to_list else 'None'}")
-            logger.info(f"   BCC: {len(bcc_list)} recipients")
-            logger.info(f"   Subject: {subject}")
-            return True
-        else:
-            return _send_email_bcc_sync(to_list, bcc_list, subject, template, body, retries, retry_delay)
+        # Use Brevo service for BCC emails
+        return brevo_service.send_transactional_email(
+            to=to_list,
+            bcc=bcc_list,
+            subject=subject,
+            html_content=template,
+            text_content=body,
+            retries=retries,
+            async_send=async_send
+        )
             
     except Exception as e:
         logger.error(f"❌ Unexpected error queueing BCC email: {str(e)}")
         return False
 
 def send_email_bcc_async(app, to_list, bcc_list, subject, template=None, body=None, retries=3, retry_delay=2):
-    """Send BCC email in a separate thread"""
+    """Send BCC email in a separate thread (legacy compatibility)"""
     with app.app_context():
-        _send_email_bcc_sync(to_list, bcc_list, subject, template, body, retries, retry_delay)
+        send_email_with_bcc(to_list, bcc_list, subject, template, body, retries, retry_delay, async_send=False)
 
 def _send_email_bcc_sync(to_list, bcc_list, subject, template=None, body=None, retries=3, retry_delay=3):
-    """Internal synchronous BCC email sending function with improved error handling"""
-    try:
-        sender = current_app.config['MAIL_DEFAULT_SENDER']
-        
-        # Limit BCC recipients to avoid provider limits (max 50 BCC per email)
-        max_bcc_per_email = 50
-        if len(bcc_list) > max_bcc_per_email:
-            logger.warning(f"BCC list too large ({len(bcc_list)}), splitting into chunks")
-            # Split into multiple emails
-            for i in range(0, len(bcc_list), max_bcc_per_email):
-                chunk_bcc = bcc_list[i:i + max_bcc_per_email]
-                result = _send_single_bcc_email(to_list, chunk_bcc, subject, template, body, retries, retry_delay)
-                if not result:
-                    return False
-                # Delay between chunks
-                time.sleep(2)
-            return True
-        else:
-            return _send_single_bcc_email(to_list, bcc_list, subject, template, body, retries, retry_delay)
-        
-    except Exception as e:
-        logger.error(f"❌ Unexpected error sending BCC email: {str(e)}")
-        return False
+    """Internal synchronous BCC email sending function (legacy compatibility)"""
+    return send_email_with_bcc(to_list, bcc_list, subject, template, body, retries, retry_delay, async_send=False)
 
-# Rate limiting for email sending
-EMAIL_RATE_LIMIT = 0.5  # Seconds between emails
-last_email_time = 0
-email_lock = threading.Lock()
+def _send_single_bcc_email(to_list, bcc_list, subject, template, body, retries, retry_delay):
+    """Send a single BCC email (legacy compatibility)"""
+    return send_email_with_bcc(to_list, bcc_list, subject, template, body, retries, retry_delay, async_send=False)
 
 def send_emails_batch(emails_data, subject, retries=3):
     """
     Send multiple emails with rate limiting and detailed error tracking
+    Enhanced with Brevo API for improved reliability
     
     Args:
         emails_data: List of {email, template, recipient_name} dicts
@@ -253,6 +174,35 @@ def send_emails_batch(emails_data, subject, retries=3):
     Returns:
         Tuple of (successful_emails, failed_emails_with_details)
     """
+    if not brevo_service.is_configured:
+        logger.warning("Brevo service not configured - falling back to individual sends")
+        return _send_emails_batch_fallback(emails_data, subject, retries)
+    
+    # Use Brevo batch service for better performance
+    try:
+        # Transform data format for Brevo service
+        brevo_emails_data = []
+        for email_data in emails_data:
+            brevo_emails_data.append({
+                'email': email_data['email'],
+                'name': email_data.get('recipient_name', email_data['email'].split('@')[0]),
+                'html_content': email_data['template'],
+                'text_content': email_data.get('body', '')
+            })
+        
+        # Use Brevo batch sending
+        successful_emails, failed_emails = brevo_service.send_batch_emails(
+            brevo_emails_data, subject, retries=retries
+        )
+        
+        return successful_emails, failed_emails
+        
+    except Exception as e:
+        logger.error(f"Error in batch email sending: {e}")
+        return _send_emails_batch_fallback(emails_data, subject, retries)
+
+def _send_emails_batch_fallback(emails_data, subject, retries=3):
+    """Fallback batch email sending using individual sends"""
     successful_emails = []
     failed_emails = []
     
@@ -296,95 +246,120 @@ def send_emails_batch(emails_data, subject, retries=3):
             })
             logger.error(f"❌ Exception sending email to {email}: {str(e)}")
             
-        # Small delay between emails to prevent overwhelming SMTP server
+        # Small delay between emails
         time.sleep(0.1)
     
     return successful_emails, failed_emails
 
-def _send_single_bcc_email(to_list, bcc_list, subject, template, body, retries, retry_delay):
-    """Send a single BCC email with retry logic"""
-    sender = current_app.config['MAIL_DEFAULT_SENDER']
-    
-    # Attempt to send email with retries
-    last_error = None
-    for attempt in range(retries):
-        try:
-            msg = Message(
-                subject,
-                sender=sender,
-                recipients=to_list,
-                bcc=bcc_list
-            )
-            
-            # Set HTML template if provided
-            if template:
-                msg.html = template
-            if body:
-                msg.body = body
-            
-            # Set shorter timeout with rate limiting
-            import socket
-            original_timeout = socket.getdefaulttimeout()
-            socket.setdefaulttimeout(10)  # Increased timeout for BCC emails
-            
-            try:
-                # Rate limiting for BCC emails
-                time.sleep(1)  # 1 second delay before sending BCC
-                mail.send(msg)
-                logger.info(f"✉️ BCC Email sent successfully")
-                logger.info(f"   To: {', '.join(to_list) if to_list else 'None'}")
-                logger.info(f"   BCC: {len(bcc_list)} recipients")
-                logger.info(f"   Subject: {subject}")
-                if attempt > 0:
-                    logger.info(f"   Succeeded after {attempt + 1} attempts")
-                return True
-            finally:
-                socket.setdefaulttimeout(original_timeout)
-                
-        except Exception as e:
-            last_error = e
-            error_msg = str(e).lower()
-            logger.warning(f"BCC Email attempt {attempt + 1}/{retries} failed: {str(e)}")
-            
-            # Check for specific errors
-            if 'authentication' in error_msg or 'username' in error_msg:
-                logger.error("🔐 SMTP authentication failed - stopping retries")
-                break
-            elif 'too many recipients' in error_msg or '554' in error_msg:
-                logger.error("📧 Too many recipients - consider reducing BCC list")
-                break
-            
-            if attempt < retries - 1:
-                wait_time = retry_delay * (2 ** attempt)
-                logger.info(f"Retrying BCC email in {wait_time} seconds...")
-                time.sleep(wait_time)
-    
-    # All retries failed
-    logger.error(f"❌ Failed to send BCC email after {retries} attempts")
-    logger.error(f"   Last error: {str(last_error)}")
-    return False
-        
 def send_password_reset_email(user, reset_url):
     """
     Send a password reset email to the user
+    Enhanced with Brevo API for better deliverability
     
     Args:
         user: User object
         reset_url: URL for password reset
     """
-    subject = "Afritec Bridge LMS - Password Reset"
+    subject = "Afritec Bridge LMS - Password Reset Request"
+    
+    # Enhanced HTML template with better styling
     template = f"""
+    <!DOCTYPE html>
     <html>
-        <body>
-            <h2>Password Reset</h2>
-            <p>Hello {user.username},</p>
-            <p>You requested a password reset for your Afritec Bridge LMS account.</p>
-            <p>Please click the link below to reset your password:</p>
-            <p><a href="{reset_url}">{reset_url}</a></p>
-            <p>This link will expire in 1 hour.</p>
-            <p>If you didn't request this reset, please ignore this email.</p>
-            <p>Regards,<br>The Afritec Bridge LMS Team</p>
-        </body>
+    <head>
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #333; }}
+            .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+            .content {{ background: #f8f9fa; padding: 30px; border-radius: 0 0 8px 8px; }}
+            .btn {{ display: inline-block; padding: 12px 30px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }}
+            .warning {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 20px 0; }}
+            .footer {{ color: #6c757d; font-size: 12px; text-align: center; margin-top: 20px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h2>🔐 Password Reset Request</h2>
+            </div>
+            <div class="content">
+                <p>Hello <strong>{user.username}</strong>,</p>
+                <p>You requested a password reset for your Afritec Bridge LMS account. We're here to help you get back into your learning journey!</p>
+                
+                <div class="warning">
+                    <strong>⚠️ Security Notice:</strong> This link will expire in <strong>1 hour</strong> for your security.
+                </div>
+                
+                <p>Click the button below to reset your password:</p>
+                <a href="{reset_url}" class="btn">Reset My Password</a>
+                
+                <p>Or copy and paste this link into your browser:<br>
+                <small><a href="{reset_url}">{reset_url}</a></small></p>
+                
+                <hr>
+                <p><strong>Didn't request this reset?</strong> No worries! You can safely ignore this email. Your password will remain unchanged.</p>
+                
+                <p>Best regards,<br>
+                <strong>The Afritec Bridge LMS Team</strong></p>
+            </div>
+            <div class="footer">
+                <p>This is an automated message from Afritec Bridge LMS. Please do not reply to this email.</p>
+            </div>
+        </div>
+    </body>
     </html>
     """
-    return send_email(user.email, subject, template)
+    
+    # Plain text fallback
+    text_content = f"""
+    Password Reset - Afritec Bridge LMS
+    
+    Hello {user.username},
+    
+    You requested a password reset for your Afritec Bridge LMS account.
+    
+    Please click the link below to reset your password:
+    {reset_url}
+    
+    This link will expire in 1 hour for security reasons.
+    
+    If you didn't request this reset, please ignore this email.
+    
+    Best regards,
+    The Afritec Bridge LMS Team
+    """
+    
+    return send_email(
+        to=user.email, 
+        subject=subject, 
+        template=template,
+        body=text_content,
+        async_send=False  # Password resets should be synchronous for immediate delivery
+    )
+
+
+# Legacy compatibility functions for smooth migration
+def init_mail_service(app):
+    """Legacy mail service initialization (now uses Brevo)"""
+    from .brevo_email_service import brevo_service
+    return brevo_service.init_app(app)
+
+
+# Export the mail instance for backward compatibility
+class LegacyMailWrapper:
+    """Wrapper to maintain Flask-Mail compatibility during migration"""
+    def __init__(self):
+        pass
+    
+    def init_app(self, app):
+        """Initialize with app - now uses Brevo"""
+        return init_mail_service(app)
+    
+    def send(self, message):
+        """Legacy send method - not recommended for new code"""
+        logger.warning("Using legacy mail.send() - consider migrating to send_email()")
+        # Could implement conversion from Flask-Mail Message to Brevo if needed
+        pass
+
+# Create legacy mail instance
+mail = LegacyMailWrapper()

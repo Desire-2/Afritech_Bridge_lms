@@ -11,7 +11,7 @@ from ..models.user_models import db, User, Role
 from ..models.course_models import Enrollment, Course
 from ..models.student_models import LessonCompletion, UserProgress
 from ..models.achievement_models import LearningStreak
-from ..utils.email_utils import send_email
+from ..utils.brevo_email_service import brevo_service
 
 logger = logging.getLogger(__name__)
 
@@ -447,10 +447,10 @@ class InactivityService:
         {get_email_footer()}
         """
         
-        send_email(
-            to=student.email,
+        brevo_service.send_email(
+            to_emails=[student.email],
             subject=subject,
-            template=html_body
+            html_content=html_body
         )
     
     @staticmethod
@@ -543,10 +543,10 @@ class InactivityService:
         {get_email_footer()}
         """
         
-        send_email(
-            to=user.email,
+        brevo_service.send_email(
+            to_emails=[user.email],
             subject=subject,
-            template=html_body
+            html_content=html_body
         )
     
     @staticmethod
@@ -653,8 +653,8 @@ class InactivityService:
         {get_email_footer()}
         """
         
-        send_email(
-            to=student.email,
+        brevo_service.send_email(
+            to_emails=[user.email],
             subject=subject,
-            template=html_body
+            html_content=html_body
         )

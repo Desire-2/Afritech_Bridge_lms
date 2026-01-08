@@ -5,7 +5,7 @@ from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
 from datetime import timedelta, datetime
-from ..utils.email_utils import send_password_reset_email
+from ..utils.brevo_email_service import brevo_service
 
 # Assuming db and User, Role models are correctly set up and accessible.
 # This might require adjustments based on the actual Flask app structure from create_flask_app
@@ -315,7 +315,68 @@ def forgot_password():
     
     # Send the reset email (with timeout protection)
     try:
-        email_sent = send_password_reset_email(user, reset_url)
+        # Create password reset email content
+        subject = "Afritec Bridge LMS - Password Reset Request"
+        
+        html_content = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Password Reset Request</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <h1 style="color: #2c3e50;">🔐 Password Reset Request</h1>
+                
+                <p>Hello <strong>{user.username}</strong>,</p>
+                
+                <p>You requested a password reset for your Afritec Bridge LMS account. We're here to help you get back into your learning journey!</p>
+                
+                <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 20px 0;">
+                    <strong>⚠️ Security Notice:</strong> This link will expire in <strong>1 hour</strong> for your security.
+                </div>
+                
+                <p>Click the button below to reset your password:</p>
+                
+                <a href="{reset_url}" style="display: inline-block; padding: 12px 30px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;">Reset My Password</a>
+                
+                <p>Or copy and paste this link into your browser:<br>
+                <small><a href="{reset_url}">{reset_url}</a></small></p>
+                
+                <hr>
+                <p><strong>Didn't request this reset?</strong> No worries! You can safely ignore this email. Your password will remain unchanged.</p>
+                
+                <p>Best regards,<br>
+                Afritec Bridge LMS Team</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        text_content = f"""
+        Password Reset Request
+        
+        Hello {user.username},
+        
+        You requested a password reset for your Afritec Bridge LMS account. We're here to help you get back into your learning journey!
+        
+        Security Notice: This link will expire in 1 hour for your security.
+        
+        Click this link to reset your password: {reset_url}
+        
+        Didn't request this reset? No worries! You can safely ignore this email. Your password will remain unchanged.
+        
+        Best regards,
+        Afritec Bridge LMS Team
+        """
+        
+        email_sent = brevo_service.send_email(
+            to_emails=[user.email],
+            subject=subject,
+            html_content=html_content,
+            text_content=text_content
+        )
     except Exception as e:
         current_app.logger.error(f"Exception during password reset email for {email}: {str(e)}")
         email_sent = False

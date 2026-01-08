@@ -23,7 +23,8 @@ from src.models.achievement_models import (
     Achievement, UserAchievement, LearningStreak, StudentPoints, 
     Milestone, UserMilestone, Leaderboard, QuestChallenge, UserQuestProgress
 ) # Import achievement models
-from src.utils.email_utils import mail # Import the mail instance
+from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
+from src.utils.brevo_email_service import brevo_service # Import Brevo service
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
@@ -202,7 +203,12 @@ if not app.config['JWT_SECRET_KEY']:
     if env == 'production' and not app.config['JWT_SECRET_KEY']:
         raise ValueError("JWT_SECRET_KEY must be set in production environment")
         
-# Email configuration
+# Enhanced Email configuration for Brevo API
+# Brevo API Key (preferred method)
+app.config['BREVO_API_KEY'] = os.getenv('BREVO_API_KEY')
+app.config['MAIL_SENDER_NAME'] = os.getenv('MAIL_SENDER_NAME', 'Afritec Bridge LMS')
+
+# Legacy email configuration (fallback for SMTP)
 app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER', 'smtp.gmail.com')
 app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True').lower() in ('true', 'yes', '1')
@@ -217,8 +223,15 @@ app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 # Admin email for notifications
 app.config['ADMIN_EMAIL'] = os.getenv('ADMIN_EMAIL')
 
-if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-    logger.warning("Email credentials not set! Email functionality will not work properly.")
+# Check email service configuration
+if app.config.get('BREVO_API_KEY'):
+    logger.info("🚀 Brevo API key found - enhanced email service will be used")
+elif not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
+    logger.warning("⚠️ No email configuration found (Brevo API key or SMTP credentials)")
+    logger.warning("📧 Email sending will be disabled - check your .env file")
+    logger.warning("   Add BREVO_API_KEY for best performance, or MAIL_USERNAME/MAIL_PASSWORD for SMTP fallback")
+else:
+    logger.info("📧 SMTP email configuration found - legacy mode enabled")
 
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1)))
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30)))
@@ -229,7 +242,10 @@ app.config["JWT_BLOCKLIST_TOKEN_CHECKS"] = ["access", "refresh"]
 # Initialize extensions
 db.init_app(app)
 jwt = JWTManager(app)
+
+# Initialize enhanced email service (Brevo + legacy compatibility)
 mail.init_app(app)
+brevo_service.init_app(app)
 
 @jwt.user_identity_loader
 def user_identity_loader(user_id):

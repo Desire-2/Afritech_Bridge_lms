@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from functools import wraps
 from ..models.user_models import User
-from ..utils.email_utils import send_email
+from ..utils.brevo_email_service import brevo_service
 from marshmallow import Schema, fields, ValidationError, validate
 import logging
 
@@ -99,10 +99,10 @@ This ticket was submitted through the Afritech Bridge LMS student portal.
 
         # Send email to support team
         try:
-            send_email(
-                to=SUPPORT_EMAIL,
+            brevo_service.send_email(
+                to_emails=SUPPORT_EMAIL,
                 subject=email_subject,
-                body=email_body
+                text_content=email_body
             )
         except Exception as email_error:
             logging.error(f"Failed to send support email: {str(email_error)}")
@@ -132,10 +132,10 @@ Afritech Bridge Support Team
 afritech.bridge@yahoo.com
             """.strip()
             
-            send_email(
-                to=user_email,
+            brevo_service.send_email(
+                to_emails=user_email,
                 subject=confirmation_subject,
-                body=confirmation_body
+                text_content=confirmation_body
             )
         except Exception as confirmation_error:
             # Log but don't fail the request if confirmation email fails

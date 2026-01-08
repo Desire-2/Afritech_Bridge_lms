@@ -4,7 +4,7 @@ Centralizes email sending for various events
 """
 import logging
 from datetime import datetime
-from ..utils.email_utils import send_email
+from ..utils.brevo_email_service import brevo_service
 from ..utils.email_templates import (
     assignment_graded_email,
     quiz_graded_email,
@@ -49,10 +49,10 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
             passed=passed
         )
         
-        send_email(
-            to=student.email,
+        brevo_service.send_email(
+            to_emails=[student.email],
             subject=f"📝 Assignment Graded: {assignment.title}",
-            template=email_html
+            html_content=email_html
         )
         logger.info(f"📧 Grade notification sent to {student.email} for assignment {assignment.id}")
         return True
@@ -97,10 +97,10 @@ def send_quiz_grade_notification(student, quiz, score, total_points):
             passed=passed
         )
         
-        send_email(
-            to=student.email,
+        brevo_service.send_email(
+            to_emails=[student.email],
             subject=f"✅ Quiz Results: {quiz.title}",
-            template=email_html
+            html_content=email_html
         )
         logger.info(f"📧 Quiz grade notification sent to {student.email} for quiz {quiz.id}")
         return True
@@ -136,10 +136,10 @@ def send_announcement_notification(announcement, course, students):
                     instructor_name=instructor_name
                 )
                 
-                if send_email(
-                    to=student.email,
+                if brevo_service.send_email(
+                    to_emails=[student.email],
                     subject=f"📢 New Announcement: {announcement.title}",
-                    template=email_html
+                    html_content=email_html
                 ):
                     email_sent_count += 1
                 else:
@@ -189,10 +189,10 @@ def send_project_graded_notification(submission, project, student, grade, feedba
             passed=passed
         )
         
-        send_email(
-            to=student.email,
+        brevo_service.send_email(
+            to_emails=[student.email],
             subject=f"🎯 Project Graded: {project.title}",
-            template=email_html
+            html_content=email_html
         )
         logger.info(f"📧 Project grade notification sent to {student.email}")
         return True
@@ -293,12 +293,10 @@ def send_modification_request_notification(student_email, student_name, assignme
         """
         
         # Try to send the email with retries
-        success = send_email(
-            to=student_email,
+        success = brevo_service.send_email(
+            to_emails=[student_email],
             subject=subject,
-            template=email_html,
-            retries=3,
-            retry_delay=2
+            html_content=email_html
         )
         
         if success:
@@ -379,13 +377,10 @@ def send_admin_modification_alert(admin_email, instructor_name, student_name, as
         """
         
         # Send admin alert (non-critical, so don't fail if it doesn't work)
-        success = send_email(
-            to=admin_email,
+        success = brevo_service.send_email(
+            to_emails=[admin_email],
             subject=subject,
-            template=email_html,
-            retries=2,
-            retry_delay=1,
-            async_send=True  # Send async to not block main process
+            html_content=email_html
         )
         
         if success:
@@ -484,13 +479,10 @@ def send_modification_digest(recipient_email, recipient_name, modifications, per
         """
         
         # Send digest email
-        success = send_email(
-            to=recipient_email,
+        success = brevo_service.send_email(
+            to_emails=[recipient_email],
             subject=subject,
-            template=email_html,
-            retries=2,
-            retry_delay=1,
-            async_send=True
+            html_content=email_html
         )
         
         if success:
@@ -593,12 +585,10 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
         """
         
         # Try to send the email with retries
-        success = send_email(
-            to=instructor_email,
+        success = brevo_service.send_email(
+            to_emails=[instructor_email],
             subject=subject,
-            template=email_html,
-            retries=3,
-            retry_delay=2
+            html_content=email_html
         )
         
         if success:

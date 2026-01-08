@@ -17,7 +17,8 @@ from ..utils.application_scoring import (
     evaluate_application,
 )
 from ..utils.user_utils import generate_username, generate_temp_password
-from ..utils.email_utils import send_email, send_email_with_bcc, send_emails_batch
+from ..utils.brevo_email_service import brevo_service
+from ..utils.brevo_email_service import brevo_service
 from ..utils.email_templates import (
     application_received_email,
     application_approved_email,
@@ -37,6 +38,51 @@ import os
 from flask import current_app
 
 logger = logging.getLogger(__name__)
+
+def send_emails_with_brevo(emails_data, retries=3):
+    """
+    Send multiple emails using Brevo service
+    
+    Args:
+        emails_data: List of dicts with 'to', 'subject', 'content', 'recipient_name'
+        retries: Number of retry attempts
+    
+    Returns:
+        tuple: (successful_emails, failed_emails)
+    """
+    successful_emails = []
+    failed_emails = []
+    
+    for email_data in emails_data:
+        try:
+            success = brevo_service.send_email(
+                to_emails=[email_data['to']],
+                subject=email_data['subject'],
+                html_content=email_data['content']
+            )
+            
+            if success:
+                successful_emails.append({
+                    'email': email_data['to'],
+                    'recipient_name': email_data.get('recipient_name', email_data['to'])
+                })
+            else:
+                failed_emails.append({
+                    'email': email_data['to'],
+                    'recipient_name': email_data.get('recipient_name', email_data['to']),
+                    'error': 'Brevo API send failed',
+                    'application_id': email_data.get('application_id')
+                })
+                
+        except Exception as e:
+            failed_emails.append({
+                'email': email_data['to'],
+                'recipient_name': email_data.get('recipient_name', email_data['to']),
+                'error': str(e),
+                'application_id': email_data.get('application_id')
+            })
+    
+    return successful_emails, failed_emails
 
 # In-memory task tracking (use Redis in production)
 bulk_action_tasks = {}
@@ -258,10 +304,10 @@ def apply_for_course():
             logger.info(f"📧 Preparing confirmation email for application #{application.id}")
             email_html = application_received_email(application, course_title)
             
-            email_sent = send_email(
-                to=application.email,
+            email_sent = brevo_service.send_email(
+                to_emails=[application.email],
                 subject=f"✅ Application Received - {course_title}",
-                template=email_html
+                html_content=email_html
             )
             
             if email_sent:
@@ -1093,10 +1139,10 @@ def change_application_status(app_id):
                 
                 # Send the email
                 if email_content and email_subject:
-                    email_sent = send_email(
-                        to=application.email,
+                    email_sent = brevo_service.send_email(
+                        to_emails=[application.email],
                         subject=email_subject,
-                        template=email_content
+                        html_content=email_content
                     )
                     if email_sent:
                         logger.info(f"✅ Status change email sent to {application.email} (status: {new_status})")
@@ -1281,10 +1327,10 @@ def approve_application(app_id):
                     password_reset_link=reset_link
                 )
                 
-                email_sent = send_email(
-                    to=application.email,
+                email_sent = brevo_service.send_email(
+                    to_emails=[application.email],
                     subject=f"🎉 Congratulations! Welcome to {course.title}",
-                    template=email_html
+                    html_content=email_html
                 )
                 
                 if email_sent:
@@ -1372,10 +1418,10 @@ def reject_application(app_id):
                 reapply_info=True
             )
             
-            email_sent = send_email(
-                to=application.email,
+            email_sent = brevo_service.send_email(
+                to_emails=[application.email],
                 subject=f"Application Status Update - {course_title}",
-                template=email_html
+                html_content=email_html
             )
             
             if email_sent:
@@ -1426,10 +1472,10 @@ def waitlist_application(app_id):
                 estimated_wait=estimated_wait
             )
             
-            email_sent = send_email(
-                to=application.email,
+            email_sent = brevo_service.send_email(
+                to_emails=[application.email],
                 subject=f"⏳ Application Waitlisted - {course_title}",
-                template=email_html
+                html_content=email_html
             )
             
             if email_sent:
@@ -1446,7 +1492,75 @@ def waitlist_application(app_id):
     }), 200
 
 
-# 📝 Update application notes
+# � Resend Approval Email
+@application_bp.route("/<int:app_id>/resend-approval", methods=["POST"])
+@jwt_required()
+def resend_approval_email(app_id):
+    try:
+        logger.info(f"📧 Resending approval email for application {app_id}")
+        
+        # Get application details
+        application = CourseApplication.query.get_or_404(app_id)
+        
+        if not application:
+            logger.warning(f"Application {app_id} not found")
+            return jsonify({"error": "Application not found"}), 404
+        
+        # Get course information
+        from ..models.course_models import Course
+        course = Course.query.get(application.course_id)
+        if not course:
+            return jsonify({"error": "Course not found"}), 404
+        
+        # Find the associated user (for existing account)
+        user = User.query.filter_by(email=application.email).first()
+        username = user.username if user else application.email
+        
+        logger.info(f"📧 Resending approval email to {application.email}")
+        
+        # Prepare email using existing template
+        subject = f"🎉 Reminder: Welcome to {course.title}"
+        
+        # Use the existing application_approved_email template
+        email_html = application_approved_email(
+            application=application,
+            course=course,
+            username=username,
+            temp_password=None,  # No password for reminder
+            custom_message="This is a friendly reminder about your course approval. You can now access your learning dashboard!",
+            is_new_account=False,  # This is a resend
+            password_reset_link=None
+        )
+        
+        # Send email using Brevo API
+        success = brevo_service.send_email(
+            to_emails=[{
+                "email": application.email,
+                "name": getattr(application, 'name', application.email)
+            }],
+            subject=subject,
+            html_content=email_html,
+            text_content=f"Welcome to {course.title}! This is a reminder about your course approval. Please visit study.afritechbridge.online to access your learning dashboard."
+        )
+        
+        if success:
+            logger.info(f"✅ Successfully resent approval email to {application.email}")
+            return jsonify({
+                "message": "Approval email sent successfully",
+                "recipient": application.email
+            }), 200
+        else:
+            logger.warning(f"⚠️ Failed to resend approval email to {application.email}")
+            return jsonify({
+                "error": "Failed to send email. Please check logs for details."
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Error in resend_approval_email: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+# �📝 Update application notes
 @application_bp.route("/<int:app_id>/notes", methods=["PUT"])
 @jwt_required()
 def update_application_notes(app_id):
@@ -2488,8 +2602,8 @@ def process_custom_email_task(task_id, application_ids, subject, message, admin_
                 # Send individual emails using batch function with enhanced error handling
                 if direct_emails_data:
                     try:
-                        successful_emails, failed_email_details = send_emails_batch(
-                            direct_emails_data, subject, retries=3
+                        successful_emails, failed_email_details = send_emails_with_brevo(
+                            direct_emails_data, retries=3
                         )
                         
                         sent_count += len(successful_emails)
@@ -2638,8 +2752,8 @@ def process_custom_email_task(task_id, application_ids, subject, message, admin_
             logger.info(f"📧 Processing {len(direct_emails_data)} direct emails for task {task_id}")
             
             # Send individual emails using batch function
-            successful_emails, failed_email_details = send_emails_batch(
-                direct_emails_data, subject, retries=3
+            successful_emails, failed_email_details = send_emails_with_brevo(
+                direct_emails_data, retries=3
             )
             
             sent_count = len(successful_emails)
@@ -2859,8 +2973,8 @@ def process_retry_email_task(task_id, retry_emails_data, subject, admin_id, app_
             logger.info(f"📝 Retry task {task_id} status updated to 'processing'")
             
             # Retry sending emails with enhanced retry logic
-            successful_emails, still_failed = send_emails_batch(
-                retry_emails_data, subject, retries=5  # More retries for failed emails
+            successful_emails, still_failed = send_emails_with_brevo(
+                retry_emails_data, retries=5  # More retries for failed emails
             )
             
             # Update task progress
