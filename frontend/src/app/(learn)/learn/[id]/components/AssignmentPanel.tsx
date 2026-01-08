@@ -57,6 +57,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: FileUploadProgress }>({});
   const [error, setError] = useState<string | null>(null);
   const [submissionResult, setSubmissionResult] = useState<any>(null);
+  const [resubmittedForCurrentRequest, setResubmittedForCurrentRequest] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [assignmentData, setAssignmentData] = useState<ContentAssignment>(assignment);
@@ -101,7 +102,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   );
   
   // Only allow resubmit when instructor specifically requests modifications
-  const canResubmit = hasModificationRequest && isSubmitted && !isGraded;
+  // Only allow resubmit if not already resubmitted for this modification request
+  const canResubmit = hasModificationRequest && isSubmitted && !isGraded && !resubmittedForCurrentRequest;
 
   const allowedFileTypes = assignmentData.allowed_file_types 
     ? assignmentData.allowed_file_types.split(',').map(t => t.trim()) 
@@ -323,10 +325,22 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
             console.warn('Failed to cleanup uploaded files after submission failure:', cleanupError);
           }
         }
+        // If backend blocks duplicate resubmission, set flag and show message
+        if (isResubmitMode && (result.error || '').toLowerCase().includes('already submitted')) {
+          setResubmittedForCurrentRequest(true);
+          setError('You have already submitted a response for this modification request. Wait for instructor review.');
+          toast.error('Duplicate Resubmission Blocked', {
+            description: 'You have already submitted a response for this modification request. Wait for instructor review.'
+          });
+          return;
+        }
         throw new Error(result.error || 'Submission failed');
       }
       
       setSubmissionResult(result);
+      if (isResubmitMode) {
+        setResubmittedForCurrentRequest(true);
+      }
       setSubmissionMode('submitted');
       
       // Clean up staged files after successful submission
@@ -744,10 +758,11 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     </div>
                   </Button>
                   
-                  {canResubmit && (
-                    <Button 
+                  {hasModificationRequest && isSubmitted && !isGraded && (
+                    <Button
                       onClick={() => setSubmissionMode('resubmit')}
                       className="flex-1 w-full sm:w-auto bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 border border-orange-400/30 animate-pulse min-h-[3rem] sm:min-h-[4rem]"
+                      disabled={resubmittedForCurrentRequest}
                     >
                       <div className="flex items-center justify-center w-full">
                         <div className="p-1 bg-white/20 rounded-full mr-2 sm:mr-3">
@@ -758,6 +773,9 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                         <div className="ml-2 px-2 py-1 bg-white/20 text-white text-xs rounded-full font-bold">
                           Required
                         </div>
+                        {resubmittedForCurrentRequest && (
+                          <span className="ml-2 px-2 py-1 bg-orange-200 text-orange-800 text-xs rounded-full font-bold">Already Resubmitted</span>
+                        )}
                       </div>
                     </Button>
                   )}

@@ -365,9 +365,13 @@ def resubmit_assignment(assignment_id):
         if not lesson_completion:
             return jsonify({'error': 'Assignment record not found'}), 404
         
-        # Check if resubmission is allowed
+        # Check if resubmission is allowed and atomic lockout
         if not getattr(lesson_completion, 'assignment_needs_resubmission', False):
-            return jsonify({'error': 'Resubmission not allowed for this assignment'}), 400
+            return jsonify({'error': 'Resubmission not allowed for this assignment or already submitted.'}), 400
+
+        # Double-check atomicity: if already resubmitted and flag cleared, block
+        if lesson_completion.is_resubmission and not lesson_completion.assignment_needs_resubmission:
+            return jsonify({'error': 'You have already submitted a response for this modification request.'}), 400
         
         # Validate submission data
         submission_text = data.get('submission_text', '').strip()
