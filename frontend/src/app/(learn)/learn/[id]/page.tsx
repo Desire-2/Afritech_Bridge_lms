@@ -109,6 +109,26 @@ const LearningPage = () => {
   const [interactionHistory, setInteractionHistory] = useState<InteractionEvent[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [lessonNotes, setLessonNotes] = useState<string>('');
+  
+  // Auto-close sidebar on small screens when interface loads
+  useEffect(() => {
+    const checkScreenSize = () => {
+      // Close sidebar on screens smaller than lg breakpoint (1024px)
+      if (window.innerWidth < 1024) {
+        setSidebarOpen(false);
+      }
+    };
+
+    // Check on mount
+    checkScreenSize();
+
+    // Add listener for screen resize
+    window.addEventListener('resize', checkScreenSize);
+
+    // Cleanup
+    return () => window.removeEventListener('resize', checkScreenSize);
+  }, []); // Only run on mount
+  
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
@@ -2038,6 +2058,7 @@ const LearningPage = () => {
       <div className="flex">
         <LearningSidebar
           sidebarOpen={sidebarOpen}
+          setSidebarOpen={setSidebarOpen}
           modules={courseModules}
           currentLessonId={currentLesson?.id}
           currentModuleId={currentModuleId}

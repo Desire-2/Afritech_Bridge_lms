@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -53,6 +53,7 @@ interface LearningSidebarProps {
   lessonCompletionStatus?: { [lessonId: number]: boolean };
   quizCompletionStatus?: { [quizId: number]: { completed: boolean; score: number; passed: boolean } };
   onLockedModuleClick?: (info: LockedModuleInfo) => void;
+  setSidebarOpen?: (open: boolean) => void; // Add this prop for mobile close functionality
   // Module release info
   totalModuleCount?: number;
   releasedModuleCount?: number;
@@ -71,6 +72,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   lessonCompletionStatus = {},
   quizCompletionStatus = {},
   onLockedModuleClick,
+  setSidebarOpen,
   totalModuleCount,
   releasedModuleCount
 }) => {
@@ -252,13 +254,35 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
     });
   }, [modules, currentModuleId, currentLessonId, openModules, loadingProgress]);
 
+  // Enhanced lesson selection handler for mobile responsiveness
+  const handleLessonSelection = useCallback((lessonId: number, moduleId: number) => {
+    onLessonSelect(lessonId, moduleId);
+    
+    // Auto-close sidebar on mobile after lesson selection
+    if (setSidebarOpen && window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
+  }, [onLessonSelect, setSidebarOpen]);
+
+  // Enhanced quiz selection handler for mobile responsiveness
+  const handleQuizSelection = useCallback((lessonId: number, moduleId: number, quizId: number) => {
+    if (onQuizSelect) {
+      onQuizSelect(lessonId, moduleId, quizId);
+      
+      // Auto-close sidebar on mobile after quiz selection
+      if (setSidebarOpen && window.innerWidth < 1024) {
+        setSidebarOpen(false);
+      }
+    }
+  }, [onQuizSelect, setSidebarOpen]);
+
   return (
     <>
       {/* Mobile overlay backdrop */}
       {sidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-          onClick={() => {}} 
+          onClick={() => setSidebarOpen?.(false)} 
         />
       )}
       
@@ -488,7 +512,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                   } ${
                                     !canAccessLesson ? 'opacity-40 cursor-not-allowed hover:bg-transparent' : 'cursor-pointer hover:ring-1 hover:ring-blue-500/30 hover:translate-x-0.5'
                                   }`}
-                                  onClick={() => canAccessLesson && onLessonSelect(lesson.id, module.id)}
+                                  onClick={() => canAccessLesson && handleLessonSelection(lesson.id, module.id)}
                                   disabled={!canAccessLesson}
                                 >
                                   <div className="flex items-center space-x-1 sm:space-x-2 flex-1 min-w-0">
@@ -571,12 +595,12 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                 const canAccessQuiz = isLessonCompleted && assessment.type === 'quiz';
                                 
                                 const handleAssessmentClick = () => {
-                                  if (assessment.type === 'quiz' && canAccessQuiz && onQuizSelect) {
-                                    // Switch to quiz view for this lesson
-                                    onQuizSelect(lesson.id, module.id, assessment.id);
+                                  if (assessment.type === 'quiz' && canAccessQuiz) {
+                                    // Use responsive handler that auto-closes sidebar on mobile
+                                    handleQuizSelection(lesson.id, module.id, assessment.id);
                                   } else if (assessment.type === 'assignment' && canAccessLesson) {
-                                    // Could add assignment handling here
-                                    onLessonSelect(lesson.id, module.id);
+                                    // Use responsive handler for lesson selection
+                                    handleLessonSelection(lesson.id, module.id);
                                   }
                                 };
                                 

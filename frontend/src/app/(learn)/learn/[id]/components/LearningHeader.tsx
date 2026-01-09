@@ -55,9 +55,17 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
               variant="ghost"
               size="sm"
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex-shrink-0 hover:bg-blue-900/30 text-gray-300"
+              className="flex-shrink-0 hover:bg-blue-900/30 text-gray-300 lg:hover:bg-gray-800/50 transition-colors duration-200"
+              aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
             >
-              {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              {sidebarOpen ? (
+                <X className="h-5 w-5 sm:h-6 sm:w-6" /> 
+              ) : (
+                <Menu className="h-5 w-5 sm:h-6 sm:w-6" />
+              )}
+              <span className="sr-only">
+                {sidebarOpen ? "Close" : "Open"} course navigation
+              </span>
             </Button>
             <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
               <div className="h-6 w-6 sm:h-8 sm:w-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
