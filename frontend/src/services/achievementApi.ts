@@ -165,7 +165,7 @@ class AchievementApiService {
 
   // ==================== Achievement Methods ====================
 
-  async getAllAchievements(): Promise<{ achievements: Achievement[]; by_category: any; total: number }> {
+  async getAllAchievements(): Promise<{ achievements: Achievement[]; by_category: any; total: number; success: boolean }> {
     const response = await axios.get(
       `${API_BASE_URL}/achievements/`,
       this.getAuthHeaders()
@@ -173,7 +173,7 @@ class AchievementApiService {
     return response.data;
   }
 
-  async getEarnedAchievements(): Promise<{ achievements: UserAchievement[]; total: number }> {
+  async getEarnedAchievements(): Promise<{ achievements: UserAchievement[]; total: number; success: boolean }> {
     const response = await axios.get(
       `${API_BASE_URL}/achievements/earned`,
       this.getAuthHeaders()
@@ -181,15 +181,15 @@ class AchievementApiService {
     return response.data;
   }
 
-  async getAchievementsSummary(): Promise<any> {
+  async getAchievementsSummary(): Promise<{ success: boolean; data: any }> {
     const response = await axios.get(
       `${API_BASE_URL}/achievements/summary`,
       this.getAuthHeaders()
     );
-    return response.data.data;
+    return response.data;
   }
 
-  async showcaseAchievement(achievementId: number, showcase: boolean): Promise<UserAchievement> {
+  async toggleShowcase(achievementId: number, showcase: boolean): Promise<UserAchievement> {
     const response = await axios.post(
       `${API_BASE_URL}/achievements/${achievementId}/showcase`,
       { showcase },
@@ -209,12 +209,12 @@ class AchievementApiService {
 
   // ==================== Streak Methods ====================
 
-  async getStreak(): Promise<LearningStreak> {
+  async getStreak(): Promise<{ streak: LearningStreak; success: boolean }> {
     const response = await axios.get(
       `${API_BASE_URL}/achievements/streak`,
       this.getAuthHeaders()
     );
-    return response.data.streak;
+    return response.data;
   }
 
   async updateStreak(): Promise<{
@@ -232,12 +232,12 @@ class AchievementApiService {
 
   // ==================== Points Methods ====================
 
-  async getPoints(): Promise<StudentPoints> {
+  async getPoints(): Promise<{ points: StudentPoints }> {
     const response = await axios.get(
       `${API_BASE_URL}/achievements/points`,
       this.getAuthHeaders()
     );
-    return response.data.points;
+    return response.data;
   }
 
   async getPointsHistory(): Promise<{ breakdown: any; total: number }> {
@@ -358,5 +358,8 @@ class AchievementApiService {
   }
 }
 
-export const achievementApi = new AchievementApiService();
-export default achievementApi;
+const AchievementApiServiceInstance = new AchievementApiService();
+
+export { AchievementApiServiceInstance as AchievementApiService };
+export { Achievement, UserAchievement, LearningStreak, StudentPoints, Milestone, Quest, QuestProgress, Leaderboard };
+export default AchievementApiServiceInstance;

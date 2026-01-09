@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
+import AchievementProfilePanel from '@/components/achievements/AchievementProfilePanel';
+import { useAchievementSystem } from '@/hooks/useAchievementSystem';
 import { 
   User, 
   Settings, 
@@ -114,6 +116,15 @@ const StudentProfilePage: React.FC = () => {
   const [editingBasic, setEditingBasic] = useState(false);
   const [editingCareer, setEditingCareer] = useState(false);
 
+  // Achievement system integration
+  const { 
+    earnedAchievements, 
+    streak, 
+    points, 
+    loading: achievementsLoading,
+    getQuickStats 
+  } = useAchievementSystem();
+
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
   
   console.log('API_URL:', API_URL); // Debug logging
@@ -164,6 +175,55 @@ const StudentProfilePage: React.FC = () => {
     } catch (error) {
       console.error('Error fetching analytics:', error);
     }
+  };
+
+  // Format achievement data for the profile panel
+  const getProfileAchievementData = () => {
+    if (!earnedAchievements || !points || !streak) return null;
+
+    const quickStats = getQuickStats();
+    
+    // Get recent achievements (last 5)
+    const recentAchievements = earnedAchievements
+      .sort((a, b) => new Date(b.earned_at).getTime() - new Date(a.earned_at).getTime())
+      .slice(0, 5)
+      .map(achievement => ({
+        id: achievement.id,
+        title: achievement.achievement?.name || achievement.achievement?.title || 'Unknown',
+        icon: achievement.achievement?.icon || 'trophy',
+        tier: achievement.achievement?.category || 'bronze',
+        earned_at: achievement.earned_at,
+        is_showcased: achievement.is_showcased || false
+      }));
+
+    // Get showcased achievements
+    const showcasedAchievements = earnedAchievements
+      .filter(achievement => achievement.is_showcased)
+      .map(achievement => ({
+        id: achievement.id,
+        title: achievement.achievement?.name || achievement.achievement?.title || 'Unknown',
+        icon: achievement.achievement?.icon || 'trophy',
+        tier: achievement.achievement?.category || 'bronze',
+        earned_at: achievement.earned_at,
+        is_showcased: true
+      }));
+
+    return {
+      showcased_achievements: showcasedAchievements,
+      recent_achievements: recentAchievements,
+      total_achievements: quickStats.earned_count,
+      total_points: points.total_points || 0,
+      current_level: points.current_level || 1,
+      xp_progress: points.xp_progress || 0,
+      current_streak: streak.current_streak || 0,
+      longest_streak: streak.longest_streak || 0,
+      achievements_this_month: earnedAchievements.filter(achievement => {
+        const earnedDate = new Date(achievement.earned_at);
+        const now = new Date();
+        return earnedDate.getMonth() === now.getMonth() && 
+               earnedDate.getFullYear() === now.getFullYear();
+      }).length
+    };
   };
 
   const updateProfile = async (data: Partial<ExtendedProfile>) => {
@@ -569,7 +629,10 @@ const StudentProfilePage: React.FC = () => {
 
         {/* Achievements Tab */}
         <TabsContent value="achievements" className="space-y-6">
-          <AchievementsView analytics={analytics} />
+          <AchievementProfilePanel 
+            data={getProfileAchievementData()}
+            loading={achievementsLoading}
+          />
         </TabsContent>
 
         {/* Settings Tab */}
@@ -1300,260 +1363,6 @@ const AnalyticsView: React.FC<{ analytics: ProfileAnalytics | null }> = ({ analy
               </div>
             )}
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-};
-
-const AchievementsView: React.FC<{ analytics: ProfileAnalytics | null }> = ({ analytics }) => {
-  // Sample achievements data when no real data is available
-  const sampleAchievements = [
-    {
-      id: 1,
-      title: "First Steps",
-      description: "Complete your first lesson",
-      icon: "🎯",
-      tier: "bronze",
-      earned: false,
-      progress: 0,
-      requirement: "Complete 1 lesson"
-    },
-    {
-      id: 2,
-      title: "Quick Learner",
-      description: "Complete 5 lessons in one week",
-      icon: "⚡",
-      tier: "silver",
-      earned: false,
-      progress: 0,
-      requirement: "Complete 5 lessons in 7 days"
-    },
-    {
-      id: 3,
-      title: "Course Master",
-      description: "Complete your first course",
-      icon: "🏆",
-      tier: "gold",
-      earned: false,
-      progress: 0,
-      requirement: "Complete 1 full course"
-    },
-    {
-      id: 4,
-      title: "Consistent Learner",
-      description: "Maintain a 7-day learning streak",
-      icon: "🔥",
-      tier: "gold",
-      earned: false,
-      progress: 0,
-      requirement: "Study for 7 consecutive days"
-    },
-    {
-      id: 5,
-      title: "Knowledge Seeker",
-      description: "Complete 10 courses",
-      icon: "📚",
-      tier: "platinum",
-      earned: false,
-      progress: 0,
-      requirement: "Complete 10 courses"
-    }
-  ];
-
-  const getTierColor = (tier: string) => {
-    switch (tier) {
-      case 'bronze': return 'text-amber-600 bg-amber-100 border-amber-200';
-      case 'silver': return 'text-gray-600 bg-gray-100 border-gray-200';
-      case 'gold': return 'text-yellow-600 bg-yellow-100 border-yellow-200';
-      case 'platinum': return 'text-purple-600 bg-purple-100 border-purple-200';
-      default: return 'text-gray-600 bg-gray-100 border-gray-200';
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Achievement Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <Trophy className="w-8 h-8 mx-auto text-yellow-500 mb-2" />
-            <div className="text-2xl font-bold text-yellow-600">
-              {analytics?.recent_achievements?.length || 0}
-            </div>
-            <p className="text-sm text-muted-foreground">Earned</p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="p-4 text-center">
-            <Target className="w-8 h-8 mx-auto text-blue-500 mb-2" />
-            <div className="text-2xl font-bold text-blue-600">
-              {sampleAchievements.length}
-            </div>
-            <p className="text-sm text-muted-foreground">Available</p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="p-4 text-center">
-            <Flame className="w-8 h-8 mx-auto text-orange-500 mb-2" />
-            <div className="text-2xl font-bold text-orange-600">
-              {analytics?.streak?.current_streak || 0}
-            </div>
-            <p className="text-sm text-muted-foreground">Day Streak</p>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardContent className="p-4 text-center">
-            <Award className="w-8 h-8 mx-auto text-purple-500 mb-2" />
-            <div className="text-2xl font-bold text-purple-600">
-              {Math.round(((analytics?.recent_achievements?.length || 0) / sampleAchievements.length) * 100)}%
-            </div>
-            <p className="text-sm text-muted-foreground">Completion</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Achievement Categories */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-semibold">Achievement Gallery</h3>
-        
-        {/* Achievement Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sampleAchievements.map((achievement) => (
-            <Card 
-              key={achievement.id} 
-              className={`relative overflow-hidden border-2 transition-all duration-200 ${
-                achievement.earned 
-                  ? 'border-green-200 bg-green-50 shadow-md' 
-                  : 'border-gray-200 bg-white hover:shadow-sm'
-              }`}
-            >
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="text-3xl">{achievement.icon}</div>
-                  <Badge 
-                    variant={achievement.earned ? "default" : "secondary"}
-                    className={`text-xs ${getTierColor(achievement.tier)}`}
-                  >
-                    {achievement.tier.toUpperCase()}
-                  </Badge>
-                </div>
-                
-                <div className="space-y-3">
-                  <div>
-                    <h4 className={`font-semibold ${achievement.earned ? 'text-green-700' : 'text-gray-700'}`}>
-                      {achievement.title}
-                    </h4>
-                    <p className="text-sm text-muted-foreground">
-                      {achievement.description}
-                    </p>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Progress</span>
-                      <span className="font-medium">
-                        {achievement.earned ? '100%' : `${achievement.progress}%`}
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div 
-                        className={`h-2 rounded-full transition-all duration-300 ${
-                          achievement.earned ? 'bg-green-500' : 'bg-blue-500'
-                        }`}
-                        style={{ 
-                          width: `${achievement.earned ? 100 : achievement.progress}%` 
-                        }}
-                      ></div>
-                    </div>
-                  </div>
-                  
-                  <p className="text-xs text-muted-foreground">
-                    {achievement.requirement}
-                  </p>
-                  
-                  {achievement.earned && (
-                    <div className="flex items-center space-x-1 text-green-600">
-                      <CheckCircle className="w-4 h-4" />
-                      <span className="text-xs font-medium">Completed!</span>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-              
-              {achievement.earned && (
-                <div className="absolute top-2 right-2">
-                  <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center">
-                    <CheckCircle className="w-5 h-5 text-white" />
-                  </div>
-                </div>
-              )}
-            </Card>
-          ))}
-        </div>
-      </div>
-
-      {/* Recent Achievements */}
-      {analytics?.recent_achievements?.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Trophy className="w-5 h-5" />
-              Recent Achievements
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {analytics.recent_achievements.map((achievement, index) => (
-                <div key={index} className="flex items-center space-x-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <div className="p-2 bg-green-100 rounded-full">
-                    <Trophy className="w-5 h-5 text-green-600" />
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-medium text-green-700">{achievement.title}</h4>
-                    <p className="text-sm text-green-600">{achievement.description}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Earned {new Date(achievement.earned_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <Award className="w-6 h-6 text-yellow-500" />
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Achievement Tips */}
-      <Card className="bg-blue-50 border-blue-200">
-        <CardHeader>
-          <CardTitle className="text-blue-700 flex items-center gap-2">
-            <Target className="w-5 h-5" />
-            Tips for Earning Achievements
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2 text-sm text-blue-700">
-            <li className="flex items-start gap-2">
-              <span>•</span>
-              <span>Complete lessons consistently to build your learning streak</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span>•</span>
-              <span>Finish entire courses to unlock mastery achievements</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span>•</span>
-              <span>Participate in quizzes and assignments for bonus achievements</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span>•</span>
-              <span>Share your progress to unlock social achievements</span>
-            </li>
-          </ul>
         </CardContent>
       </Card>
     </div>

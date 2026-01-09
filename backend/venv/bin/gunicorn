@@ -1,4 +1,4 @@
-#!/home/desire/My_Project/Client_Project/Afritech_Bridge_lms/backend/venv/bin/python3
+#!/home/desire/My_Project/AB/Afritech_Bridge_lms/backend/venv/bin/python
 import sys
 from gunicorn.app.wsgiapp import run
 if __name__ == '__main__':
