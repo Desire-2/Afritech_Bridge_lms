@@ -302,6 +302,20 @@ class AchievementService:
             ).count()
             return total >= criteria_value
         
+        elif criteria_type == 'course_progress':
+            if milestone.course_id:
+                enrollment = Enrollment.query.filter_by(
+                    student_id=user_id,
+                    course_id=milestone.course_id
+                ).first()
+                if enrollment:
+                    progress_percentage = enrollment.progress * 100
+                    return progress_percentage >= criteria_value
+            else:
+                # For general course progress across all courses
+                progress_percentage = context.get('progress_percentage', 0)
+                return progress_percentage >= criteria_value
+        
         elif criteria_type == 'course_completion':
             if milestone.course_id:
                 enrollment = Enrollment.query.filter_by(
@@ -317,6 +331,10 @@ class AchievementService:
         elif criteria_type == 'total_points':
             points = StudentPoints.query.filter_by(user_id=user_id).first()
             return points and points.total_points >= criteria_value
+        
+        elif criteria_type == 'lesson_streak':
+            streak = LearningStreak.query.filter_by(user_id=user_id).first()
+            return streak and streak.current_streak >= criteria_value
         
         elif criteria_type == 'reach_level':
             points = StudentPoints.query.filter_by(user_id=user_id).first()
@@ -549,3 +567,84 @@ class AchievementService:
         
         db.session.commit()
         return True
+
+    @staticmethod
+    def add_points(user_id: int, category: str, points: int, context: dict = None) -> int:
+        """Add points to user's score"""
+        points_service = StudentPoints.query.filter_by(user_id=user_id).first()
+        
+        if not points_service:
+            points_service = StudentPoints(user_id=user_id)
+            db.session.add(points_service)
+        
+        # Apply engagement bonus for high engagement scores
+        if context and context.get('engagement_score', 0) >= 90:
+            points = int(points * 1.5)  # 50% bonus for high engagement
+        
+        points_service.add_points(points, category)
+        db.session.commit()
+        
+        return points
+    
+    @staticmethod
+    def get_user_achievements_summary(user_id: int) -> dict:
+        """Get comprehensive achievement summary for user"""
+        try:
+            # Get user achievements
+            user_achievements = UserAchievement.query.filter_by(user_id=user_id).all()
+            
+            # Get available achievements
+            all_achievements = Achievement.query.filter_by(is_active=True).all()
+            
+            # Get user's points
+            points = StudentPoints.query.filter_by(user_id=user_id).first()
+            
+            # Get user's streak
+            streak = LearningStreak.query.filter_by(user_id=user_id).first()
+            
+            # Calculate statistics
+            earned_count = len(user_achievements)
+            available_count = len(all_achievements)
+            
+            # Group by category
+            by_category = {}
+            for achievement in all_achievements:
+                category = achievement.category
+                if category not in by_category:
+                    by_category[category] = {'total': 0, 'earned': 0}
+                by_category[category]['total'] += 1
+            
+            for user_achievement in user_achievements:
+                category = user_achievement.achievement.category
+                if category in by_category:
+                    by_category[category]['earned'] += 1
+            
+            # Group by tier
+            by_tier = {}
+            for user_achievement in user_achievements:
+                tier = user_achievement.achievement.tier
+                if tier not in by_tier:
+                    by_tier[tier] = 0
+                by_tier[tier] += 1
+            
+            return {
+                'achievements': {
+                    'earned': earned_count,
+                    'available': available_count,
+                    'percentage': (earned_count / max(available_count, 1)) * 100,
+                    'by_category': by_category,
+                    'by_tier': by_tier
+                },
+                'points': points.to_dict() if points else None,
+                'streak': streak.to_dict() if streak else None,
+                'recent_achievements': [ua.to_dict() for ua in user_achievements[-5:]]  # Last 5
+            }
+            
+        except Exception as e:
+            print(f"Error getting achievement summary: {e}")
+            return {
+                'achievements': {'earned': 0, 'available': 0, 'percentage': 0},
+                'points': None,
+                'streak': None,
+                'recent_achievements': []
+            }

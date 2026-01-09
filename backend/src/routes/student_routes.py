@@ -5,6 +5,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import json
 from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 
 from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission
@@ -14,6 +15,7 @@ from ..models.student_models import (
     StudentBookmark, StudentForum, ForumPost, ModuleProgress,
     Certificate, SkillBadge, StudentSkillBadge
 )
+from ..models.achievement_models import UserAchievement, Achievement
 
 # Helper for role checking
 from functools import wraps
@@ -87,9 +89,11 @@ def get_student_dashboard():
         user_id=current_user_id
     ).scalar() or 0
     
-    # Get achievements/badges
-    user_badges = UserBadge.query.filter_by(user_id=current_user_id).all()
-    achievements = [ub.to_dict() for ub in user_badges]
+    # Get achievements using new achievement system
+    user_achievements = UserAchievement.query.filter_by(user_id=current_user_id)\
+        .options(db.joinedload(UserAchievement.course))\
+        .order_by(UserAchievement.earned_at.desc()).limit(10).all()
+    achievements = [ua.to_dict() for ua in user_achievements]
     
     # Get recent activity (recent lesson completions)
     recent_completions = LessonCompletion.query.filter_by(
@@ -669,12 +673,78 @@ def complete_lesson(lesson_id):
         
         db.session.commit()
         
-        return jsonify({
-            "message": "Lesson completed successfully",
-            "progress": progress_percentage * 100,
-            "completed_lessons": completed_lessons,
-            "total_lessons": total_lessons
-        }), 200
+        # Trigger achievements after successful lesson completion
+        try:
+            from ..services.achievement_service import AchievementService
+            
+            # Prepare event data for achievement checking
+            event_data = {
+                'lesson_id': lesson_id,
+                'course_id': lesson.module.course_id,
+                'module_id': lesson.module_id,
+                'time_spent': data.get('time_spent', 0),
+                'engagement_score': data.get('engagement_score', 75.0),
+                'reading_progress': data.get('reading_progress', 100.0),
+                'scroll_progress': data.get('scroll_progress', 100.0),
+                'completed_lessons': completed_lessons,
+                'total_lessons': total_lessons,
+                'course_progress': progress_percentage,
+                'lesson_title': lesson.title
+            }
+            
+            # Check and award achievements
+            new_achievements = AchievementService.check_and_award_achievements(
+                current_user_id, 'lesson_complete', event_data
+            )
+            
+            # Update learning streak
+            streak_updated = AchievementService.update_learning_streak(current_user_id)
+            
+            # Add points for lesson completion
+            points_awarded = AchievementService.add_points(
+                current_user_id, 
+                'lesson', 
+                10,  # Base points for lesson completion
+                context={'lesson_id': lesson_id, 'engagement_score': event_data['engagement_score']}
+            )
+            
+            # Check for milestone achievements
+            milestones_reached = AchievementService.check_milestones(
+                current_user_id, 
+                'course', 
+                {
+                    'course_id': lesson.module.course_id,
+                    'progress_percentage': progress_percentage * 100,
+                    'completed_lessons': completed_lessons,
+                    'total_lessons': total_lessons
+                }
+            )
+            
+            achievement_results = {
+                'new_achievements': [ua.to_dict() for ua in new_achievements] if new_achievements else [],
+                'milestones_reached': [um.to_dict() for um in milestones_reached] if milestones_reached else [],
+                'streak_updated': streak_updated,
+                'points_awarded': points_awarded
+            }
+            
+            return jsonify({
+                "message": "Lesson completed successfully",
+                "progress": progress_percentage * 100,
+                "completed_lessons": completed_lessons,
+                "total_lessons": total_lessons,
+                "achievements": achievement_results
+            }), 200
+            
+        except Exception as achievement_error:
+            # Don't fail the lesson completion if achievements fail
+            print(f"Achievement processing failed: {str(achievement_error)}")
+            return jsonify({
+                "message": "Lesson completed successfully",
+                "progress": progress_percentage * 100,
+                "completed_lessons": completed_lessons,
+                "total_lessons": total_lessons,
+                "achievements": {"error": "Achievement processing failed"}
+            }), 200
         
     except Exception as e:
         db.session.rollback()

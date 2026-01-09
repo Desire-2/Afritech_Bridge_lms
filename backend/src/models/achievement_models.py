@@ -146,7 +146,12 @@ class UserAchievement(db.Model):
             'context_data': json.loads(self.context_data) if self.context_data else {},
             'is_showcased': self.is_showcased,
             'showcase_order': self.showcase_order,
-            'shared_count': self.shared_count
+            'shared_count': self.shared_count,
+            'course': {
+                'id': self.course.id,
+                'title': self.course.title,
+                'description': self.course.description
+            } if self.course else None
         }
 
 class LearningStreak(db.Model):
@@ -438,6 +443,10 @@ class StudentPoints(db.Model):
     
     def add_points(self, points, category='bonus', apply_multiplier=True):
         """Add points with optional multiplier"""
+        # Ensure point_multiplier is not None
+        if self.point_multiplier is None:
+            self.point_multiplier = 1.0
+        
         if apply_multiplier and self.point_multiplier > 1.0:
             if self.multiplier_expires_at and datetime.utcnow() < self.multiplier_expires_at:
                 points = int(points * self.point_multiplier)
@@ -445,25 +454,25 @@ class StudentPoints(db.Model):
                 self.point_multiplier = 1.0
                 self.multiplier_expires_at = None
         
-        # Add to category
+        # Add to category (ensure fields are not None)
         if category == 'lesson':
-            self.lesson_points += points
+            self.lesson_points = (self.lesson_points or 0) + points
         elif category == 'quiz':
-            self.quiz_points += points
+            self.quiz_points = (self.quiz_points or 0) + points
         elif category == 'assignment':
-            self.assignment_points += points
+            self.assignment_points = (self.assignment_points or 0) + points
         elif category == 'streak':
-            self.streak_points += points
+            self.streak_points = (self.streak_points or 0) + points
         elif category == 'achievement':
-            self.achievement_points += points
+            self.achievement_points = (self.achievement_points or 0) + points
         elif category == 'social':
-            self.social_points += points
+            self.social_points = (self.social_points or 0) + points
         else:
-            self.bonus_points += points
+            self.bonus_points = (self.bonus_points or 0) + points
         
-        self.total_points += points
-        self.points_this_week += points
-        self.points_this_month += points
+        self.total_points = (self.total_points or 0) + points
+        self.points_this_week = (self.points_this_week or 0) + points
+        self.points_this_month = (self.points_this_month or 0) + points
         self.last_points_earned_at = datetime.utcnow()
         
         # Check for level up
@@ -473,11 +482,19 @@ class StudentPoints(db.Model):
     
     def add_xp(self, xp):
         """Add experience points and check for level up"""
-        self.total_xp += xp
+        self.total_xp = (self.total_xp or 0) + xp
         self._check_level_up()
     
     def _check_level_up(self):
         """Check and process level ups"""
+        # Ensure fields are not None
+        if self.total_xp is None:
+            self.total_xp = 0
+        if self.xp_to_next_level is None:
+            self.xp_to_next_level = 100
+        if self.current_level is None:
+            self.current_level = 1
+            
         while self.total_xp >= self.xp_to_next_level:
             self.current_level += 1
             self.total_xp -= self.xp_to_next_level
