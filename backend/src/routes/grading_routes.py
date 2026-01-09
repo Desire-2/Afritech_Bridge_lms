@@ -404,6 +404,14 @@ def grade_assignment_submission(submission_id):
                 else:
                     assignment_percentage = 0
                 
+                # Use the enhanced lesson completion service to handle updates
+                from ..services.lesson_completion_service import LessonCompletionService
+                
+                lesson_completion = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=lesson_id
+                ).first()
+                
                 if not lesson_completion:
                     # Create a new LessonCompletion record with reasonable defaults
                     # Since student submitted an assignment, they must have engaged with the lesson
@@ -414,12 +422,12 @@ def grade_assignment_submission(submission_id):
                     lesson_completion = LessonCompletion(
                         student_id=student_id,
                         lesson_id=lesson_id,
-                        completed=True,
+                        completed=False,  # Don't auto-complete, let service check requirements
                         reading_progress=default_reading,
                         engagement_score=default_engagement,
                         scroll_progress=default_reading,
                         time_spent=300,  # Assume at least 5 minutes to complete assignment
-                        completed_at=datetime.utcnow(),
+                        completed_at=None,  # Will be set by service if requirements met
                         updated_at=datetime.utcnow(),
                         last_accessed=datetime.utcnow()
                     )
@@ -456,9 +464,34 @@ def grade_assignment_submission(submission_id):
                     else:
                         logger.info(f"LessonCompletion already has good scores for lesson {lesson_id}, student {student_id}")
                 
+                # Use the lesson completion service to update score and check completion
+                score_updated = LessonCompletionService.update_lesson_score_after_grading(
+                    student_id, lesson_id
+                )
+                
+                if score_updated:
+                    logger.info(f"Lesson completion score updated after assignment grading")
+                
+                # Check if lesson can now be completed
+                can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
+                    student_id, lesson_id
+                )
+                
+                if can_complete and not lesson_completion.completed:
+                    # Auto-complete the lesson since all requirements are met
+                    success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
+                        student_id, lesson_id
+                    )
+                    if success:
+                        logger.info(f"Lesson {lesson_id} auto-completed for student {student_id} after assignment grading: {message}")
+                
                 # Recalculate and log the new lesson score
                 new_breakdown = lesson_completion.get_score_breakdown()
-                logger.info(f"Lesson {lesson_id} new score breakdown: {new_breakdown}")
+                logger.info(f"Lesson {lesson_id} new score breakdown: total={new_breakdown['total_score']:.1f}%, can_complete={new_breakdown['completion_status']['can_complete']}")
+                
+        except Exception as lc_error:
+            logger.warning(f"Error creating/updating LessonCompletion: {str(lc_error)}")
+            # Don't fail the whole request, just log the error
                 
         except Exception as lc_error:
             logger.warning(f"Error creating/updating LessonCompletion: {str(lc_error)}")

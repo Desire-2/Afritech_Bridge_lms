@@ -10,6 +10,7 @@ from ..models.student_models import ModuleProgress, AssessmentAttempt
 from ..services.dashboard_service import DashboardService
 from ..services.progression_service import ProgressionService
 from ..services.enhanced_learning_service import EnhancedLearningService
+from ..services.enhanced_module_unlock_service import EnhancedModuleUnlockService
 
 # Get db from the extensions - avoid circular import
 def get_db():
@@ -655,10 +656,118 @@ def retake_module(module_id):
             "error": "Failed to initiate module retake"
         }), 500
 
-@learning_bp.route("/module/<int:module_id>/check-completion", methods=["POST"])
+@learning_bp.route("/module/<int:module_id>/unlock-eligibility", methods=["GET"])
 @student_required
+def check_module_unlock_eligibility(module_id):
+    """Check comprehensive module unlock eligibility with detailed feedback"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        # Get enrollment
+        module = Module.query.get(module_id)
+        if not module:
+            return jsonify({"error": "Module not found"}), 404
+        
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id,
+            course_id=module.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Not enrolled in this course"}), 403
+        
+        # Use enhanced service for comprehensive check
+        eligibility_result = EnhancedModuleUnlockService.check_module_unlock_eligibility(
+            student_id, module_id, enrollment.id
+        )
+        
+        return jsonify({
+            "success": True,
+            "eligibility": eligibility_result
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Module unlock eligibility error: {str(e)}")
+        return jsonify({"error": "Failed to check unlock eligibility"}), 500
+
+@learning_bp.route("/module/<int:module_id>/unlock", methods=["POST"])
+@student_required
+def attempt_enhanced_module_unlock(module_id):
+    """Attempt enhanced module unlock with comprehensive validation and feedback"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        # Get enrollment
+        module = Module.query.get(module_id)
+        if not module:
+            return jsonify({"error": "Module not found"}), 404
+        
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id,
+            course_id=module.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Not enrolled in this course"}), 403
+        
+        # Use enhanced service for unlock attempt
+        unlock_result = EnhancedModuleUnlockService.attempt_module_unlock(
+            student_id, module_id, enrollment.id
+        )
+        
+        if unlock_result["success"]:
+            return jsonify({
+                "success": True,
+                "message": "Module unlocked successfully",
+                "result": unlock_result
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": unlock_result.get("error", "Unlock failed"),
+                "details": unlock_result
+            }), 400
+        
+    except Exception as e:
+        current_app.logger.error(f"Enhanced module unlock error: {str(e)}")
+        return jsonify({"error": "Failed to unlock module"}), 500
+
+@learning_bp.route("/course/<int:course_id>/unlock-progress", methods=["GET"])
+@student_required
+def get_course_unlock_progress(course_id):
+    """Get comprehensive unlock progress for entire course"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id,
+            course_id=course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Not enrolled in this course"}), 403
+        
+        # Get comprehensive progress
+        progress_result = EnhancedModuleUnlockService.get_module_unlock_progress(
+            student_id, enrollment.id
+        )
+        
+        if "error" in progress_result:
+            return jsonify({"error": progress_result["error"]}), 500
+        
+        return jsonify({
+            "success": True,
+            "progress": progress_result
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Course unlock progress error: {str(e)}")
+        return jsonify({"error": "Failed to get unlock progress"}), 500
+
+@learning_bp.route("/module/<int:module_id>/check-completion", methods=["POST"])
+@student_required  
 def check_module_completion(module_id):
-    """Check if module can be marked as completed and auto-unlock next module"""
+    """Legacy endpoint - Check if module can be marked as completed and auto-unlock next module"""
     try:
         student_id = int(get_jwt_identity())
         

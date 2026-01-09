@@ -1,4 +1,4 @@
-#!/home/desire/My_Project/AB/Afritech_Bridge_lms/backend/venv/bin/python
+#!/home/desire/My_Project/Client_Project/Afritech_Bridge_lms/backend/venv/bin/python3
 import sys
 from email_validator.__main__ import main
 if __name__ == '__main__':

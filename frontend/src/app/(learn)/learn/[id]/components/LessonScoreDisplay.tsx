@@ -230,9 +230,38 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
           />
           <p className="text-xs text-gray-500 mt-2">
             {hasQuiz || hasAssignment 
-              ? 'Complete reading, stay engaged, and finish assessments to maximize your lesson score.'
-              : 'Complete reading and stay engaged to maximize your lesson score. No quiz or assignment for this lesson.'}
+              ? 'Complete reading (90%+), stay engaged (60%+), and pass all assessments to complete this lesson.'
+              : 'Complete reading (90%+) and stay engaged (60%+) to complete this lesson.'}
           </p>
+          {!isCompleted && (
+            <div className="mt-2 space-y-1">
+              {displayScore < completionThreshold && (
+                <p className="text-xs text-yellow-400">
+                  Need {pointsToCompletion}% more to reach 80% completion threshold
+                </p>
+              )}
+              {hasQuiz && (!quizScore || quizScore < 70) && (
+                <p className="text-xs text-orange-400">
+                  Quiz required: Pass with 70%+ (current: {Math.round(quizScore || 0)}%)
+                </p>
+              )}
+              {hasAssignment && (!assignmentScore || assignmentScore < 70) && (
+                <p className="text-xs text-orange-400">
+                  Assignment required: Pass with 70%+ (current: {Math.round(assignmentScore || 0)}%)
+                </p>
+              )}
+              {readingProgress < 90 && (
+                <p className="text-xs text-blue-400">
+                  Reading progress: {Math.round(readingProgress)}% (need 90%+)
+                </p>
+              )}
+              {engagementScore < 60 && (
+                <p className="text-xs text-green-400">
+                  Engagement: {Math.round(engagementScore)}% (need 60%+)
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

@@ -541,8 +541,8 @@ def get_lesson_progress(lesson_id):
 @student_bp.route("/lessons/<int:lesson_id>/complete", methods=["POST"])
 @student_required
 def complete_lesson(lesson_id):
-    """Mark a lesson as completed"""
-    current_user_id = int(get_jwt_identity())  # Convert string back to int
+    """Mark a lesson as completed with enhanced requirement checking"""
+    current_user_id = int(get_jwt_identity())
     data = request.get_json() or {}
     
     lesson = Lesson.query.get_or_404(lesson_id)
@@ -556,14 +556,29 @@ def complete_lesson(lesson_id):
     if not enrollment:
         return jsonify({"message": "Not enrolled in this course"}), 403
     
-    # Check if already completed
+    # Update lesson progress first (reading, engagement, etc.)
     existing_completion = LessonCompletion.query.filter_by(
         student_id=current_user_id,
         lesson_id=lesson_id
     ).first()
     
-    if existing_completion:
-        # Lesson already completed - only update if new data is better
+    if not existing_completion:
+        # Create new completion record
+        existing_completion = LessonCompletion(
+            student_id=current_user_id,
+            lesson_id=lesson_id,
+            completed=False,  # Don't mark as complete yet
+            reading_progress=data.get('reading_progress', 0.0),
+            engagement_score=data.get('engagement_score', 0.0),
+            scroll_progress=data.get('scroll_progress', 0.0),
+            time_spent=data.get('time_spent', 0),
+            completed_at=None,  # Will be set when actually completed
+            updated_at=datetime.utcnow(),
+            last_accessed=datetime.utcnow()
+        )
+        db.session.add(existing_completion)
+    else:
+        # Update existing completion with better scores only
         updated = False
         
         if data.get('reading_progress') and data.get('reading_progress') > (existing_completion.reading_progress or 0):
@@ -579,11 +594,6 @@ def complete_lesson(lesson_id):
             existing_completion.time_spent = data.get('time_spent')
             updated = True
         
-        # Ensure completed flag is set
-        if not existing_completion.completed:
-            existing_completion.completed = True
-            updated = True
-        
         # If engagement_score is 0 but lesson is completed, use reading_progress or default to 100
         if existing_completion.completed and (existing_completion.engagement_score or 0) == 0:
             existing_completion.engagement_score = existing_completion.reading_progress or 100.0
@@ -592,163 +602,173 @@ def complete_lesson(lesson_id):
         if updated:
             existing_completion.updated_at = datetime.utcnow()
         existing_completion.last_accessed = datetime.utcnow()
+    
+    try:
+        # Commit progress updates first
+        db.session.commit()
         
-        try:
-            db.session.commit()
+        # Now check if lesson can be completed using the enhanced service
+        from ..services.lesson_completion_service import LessonCompletionService
+        
+        # Check requirements
+        can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
+            current_user_id, lesson_id
+        )
+        
+        if can_complete:
+            # Attempt completion
+            success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
+                current_user_id, lesson_id
+            )
             
-            # Update module score after lesson update
-            if updated:
+            if success:
+                # Update module score after successful completion
                 from ..services.progression_service import ProgressionService
                 module_progress = ModuleProgress.query.filter_by(
                     student_id=current_user_id,
                     module_id=lesson.module_id
                 ).first()
+                
                 if module_progress:
                     ProgressionService._update_course_contribution_score(
                         current_user_id, lesson.module_id, enrollment.id
                     )
-                    db.session.commit()
-            
-            return jsonify({
-                "message": "Lesson already completed" if not updated else "Lesson completion updated with better scores", 
-                "already_completed": True,
-                "completion": existing_completion.to_dict(),
-                "updated": updated
-            }), 200
-        except Exception as e:
-            db.session.rollback()
-            return jsonify({"message": f"Failed to update completion: {str(e)}"}), 500
-    
-    try:
-        # Create completion record
-        completion = LessonCompletion(
-            student_id=current_user_id,
-            lesson_id=lesson_id,
-            time_spent=data.get('time_spent', 0),
-            completed=True,
-            reading_progress=data.get('reading_progress', 100.0),
-            engagement_score=data.get('engagement_score', 75.0),
-            scroll_progress=data.get('scroll_progress', 100.0),
-            completed_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-            last_accessed=datetime.utcnow()
-        )
-        db.session.add(completion)
-        
-        # Update user progress
-        user_progress = UserProgress.query.filter_by(
-            user_id=current_user_id,
-            course_id=lesson.module.course_id
-        ).first()
-        
-        if not user_progress:
-            user_progress = UserProgress(
-                user_id=current_user_id,
-                course_id=lesson.module.course_id,
-                total_time_spent=data.get('time_spent', 0)
-            )
-            db.session.add(user_progress)
+                
+                # Update user progress
+                user_progress = UserProgress.query.filter_by(
+                    user_id=current_user_id,
+                    course_id=lesson.module.course_id
+                ).first()
+                
+                if not user_progress:
+                    user_progress = UserProgress(
+                        user_id=current_user_id,
+                        course_id=lesson.module.course_id,
+                        total_time_spent=data.get('time_spent', 0)
+                    )
+                    db.session.add(user_progress)
+                else:
+                    user_progress.total_time_spent += data.get('time_spent', 0)
+                    user_progress.last_accessed = datetime.utcnow()
+                
+                # Calculate overall course progress
+                total_lessons = db.session.query(Lesson).join(Module).filter(
+                    Module.course_id == lesson.module.course_id
+                ).count()
+                
+                completed_lessons = db.session.query(LessonCompletion).join(Lesson).join(Module).filter(
+                    Module.course_id == lesson.module.course_id,
+                    LessonCompletion.student_id == current_user_id,
+                    LessonCompletion.completed == True  # Only count truly completed lessons
+                ).count()
+                
+                progress_percentage = completed_lessons / total_lessons if total_lessons > 0 else 0
+                
+                # Update enrollment progress
+                enrollment.progress = progress_percentage
+                if progress_percentage >= 1.0:
+                    enrollment.completed_at = datetime.utcnow()
+                
+                user_progress.completion_percentage = progress_percentage * 100
+                
+                db.session.commit()
+                
+                # Trigger achievements after successful lesson completion
+                try:
+                    from ..services.achievement_service import AchievementService
+                    
+                    event_data = {
+                        'lesson_id': lesson_id,
+                        'course_id': lesson.module.course_id,
+                        'module_id': lesson.module_id,
+                        'time_spent': data.get('time_spent', 0),
+                        'engagement_score': data.get('engagement_score', 75.0),
+                        'reading_progress': data.get('reading_progress', 100.0),
+                        'scroll_progress': data.get('scroll_progress', 100.0),
+                        'completed_lessons': completed_lessons,
+                        'total_lessons': total_lessons,
+                        'course_progress': progress_percentage,
+                        'lesson_title': lesson.title,
+                        'lesson_score': completion_data.get('final_score', 0)
+                    }
+                    
+                    new_achievements = AchievementService.check_and_award_achievements(
+                        current_user_id, 'lesson_complete', event_data
+                    )
+                    
+                    # Update learning streak
+                    streak_updated = AchievementService.update_learning_streak(current_user_id)
+                    
+                    return jsonify({
+                        "message": message,
+                        "completed": True,
+                        "completion": completion_data.get('completion', {}),
+                        "final_score": completion_data.get('final_score', 0),
+                        "requirements": requirements,
+                        "new_achievements": new_achievements,
+                        "learning_streak": streak_updated.to_dict() if streak_updated else None
+                    }), 200
+                    
+                except Exception as e:
+                    current_app.logger.warning(f"Achievement processing failed: {str(e)}")
+                    return jsonify({
+                        "message": message,
+                        "completed": True,
+                        "completion": completion_data.get('completion', {}),
+                        "final_score": completion_data.get('final_score', 0),
+                        "requirements": requirements
+                    }), 200
+            else:
+                return jsonify({
+                    "message": message,
+                    "completed": False,
+                    "requirements": requirements
+                }), 400
         else:
-            user_progress.total_time_spent += data.get('time_spent', 0)
-            user_progress.last_accessed = datetime.utcnow()
-        
-        # Calculate overall course progress
-        total_lessons = db.session.query(Lesson).join(Module).filter(
-            Module.course_id == lesson.module.course_id
-        ).count()
-        
-        completed_lessons = db.session.query(LessonCompletion).join(Lesson).join(Module).filter(
-            Module.course_id == lesson.module.course_id,
-            LessonCompletion.student_id == current_user_id
-        ).count() + 1  # +1 for the current completion
-        
-        progress_percentage = completed_lessons / total_lessons if total_lessons > 0 else 0
-        
-        # Update enrollment progress
-        enrollment.progress = progress_percentage
-        if progress_percentage >= 1.0:
-            enrollment.completed_at = datetime.utcnow()
-        
-        user_progress.completion_percentage = progress_percentage * 100
-        
-        db.session.commit()
-        
-        # Trigger achievements after successful lesson completion
-        try:
-            from ..services.achievement_service import AchievementService
-            
-            # Prepare event data for achievement checking
-            event_data = {
-                'lesson_id': lesson_id,
-                'course_id': lesson.module.course_id,
-                'module_id': lesson.module_id,
-                'time_spent': data.get('time_spent', 0),
-                'engagement_score': data.get('engagement_score', 75.0),
-                'reading_progress': data.get('reading_progress', 100.0),
-                'scroll_progress': data.get('scroll_progress', 100.0),
-                'completed_lessons': completed_lessons,
-                'total_lessons': total_lessons,
-                'course_progress': progress_percentage,
-                'lesson_title': lesson.title
-            }
-            
-            # Check and award achievements
-            new_achievements = AchievementService.check_and_award_achievements(
-                current_user_id, 'lesson_complete', event_data
-            )
-            
-            # Update learning streak
-            streak_updated = AchievementService.update_learning_streak(current_user_id)
-            
-            # Add points for lesson completion
-            points_awarded = AchievementService.add_points(
-                current_user_id, 
-                'lesson', 
-                10,  # Base points for lesson completion
-                context={'lesson_id': lesson_id, 'engagement_score': event_data['engagement_score']}
-            )
-            
-            # Check for milestone achievements
-            milestones_reached = AchievementService.check_milestones(
-                current_user_id, 
-                'course', 
-                {
-                    'course_id': lesson.module.course_id,
-                    'progress_percentage': progress_percentage * 100,
-                    'completed_lessons': completed_lessons,
-                    'total_lessons': total_lessons
+            # Requirements not met - return detailed requirements
+            return jsonify({
+                "message": reason,
+                "completed": False,
+                "requirements": requirements,
+                "progress_saved": True,
+                "current_scores": {
+                    "reading_progress": existing_completion.reading_progress or 0,
+                    "engagement_score": existing_completion.engagement_score or 0,
+                    "lesson_score": existing_completion.calculate_lesson_score()
                 }
-            )
+            }), 202  # 202 Accepted - progress saved but not complete
             
-            achievement_results = {
-                'new_achievements': [ua.to_dict() for ua in new_achievements] if new_achievements else [],
-                'milestones_reached': [um.to_dict() for um in milestones_reached] if milestones_reached else [],
-                'streak_updated': streak_updated,
-                'points_awarded': points_awarded
-            }
-            
-            return jsonify({
-                "message": "Lesson completed successfully",
-                "progress": progress_percentage * 100,
-                "completed_lessons": completed_lessons,
-                "total_lessons": total_lessons,
-                "achievements": achievement_results
-            }), 200
-            
-        except Exception as achievement_error:
-            # Don't fail the lesson completion if achievements fail
-            print(f"Achievement processing failed: {str(achievement_error)}")
-            return jsonify({
-                "message": "Lesson completed successfully",
-                "progress": progress_percentage * 100,
-                "completed_lessons": completed_lessons,
-                "total_lessons": total_lessons,
-                "achievements": {"error": "Achievement processing failed"}
-            }), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Lesson completion error: {str(e)}")
+        return jsonify({"message": f"Failed to complete lesson: {str(e)}"}), 500
         
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Error completing lesson", "error": str(e)}), 500
+
+# --- Enhanced Lesson Completion Status Route ---
+@student_bp.route("/lessons/<int:lesson_id>/completion-status", methods=["GET"])
+@student_required
+def get_lesson_completion_status(lesson_id):
+    """Get detailed completion status and requirements for a lesson"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        from ..services.lesson_completion_service import LessonCompletionService
+        
+        status = LessonCompletionService.get_lesson_completion_status(
+            current_user_id, lesson_id
+        )
+        
+        return jsonify({
+            "lesson_id": lesson_id,
+            "status": status
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting lesson completion status: {str(e)}")
+        return jsonify({"message": f"Error getting status: {str(e)}"}), 500
 
 # --- Student Notes Routes ---
 @student_bp.route("/notes", methods=["GET"])
@@ -1897,12 +1917,14 @@ def submit_quiz(quiz_id):
         
         db.session.commit()
         
-        # ===== FIX: Update module progress with quiz score =====
+        # ===== ENHANCED: Update module progress and lesson completion with quiz score =====
         # Get the module_id from either the quiz directly or via the lesson
         module_id = quiz.module_id
-        if not module_id and quiz.lesson_id:
+        lesson_id = quiz.lesson_id
+        
+        if not module_id and lesson_id:
             # Quiz is attached to a lesson, get module from lesson
-            lesson = Lesson.query.get(quiz.lesson_id)
+            lesson = Lesson.query.get(lesson_id)
             if lesson:
                 module_id = lesson.module_id
         
@@ -1927,7 +1949,44 @@ def submit_quiz(quiz_id):
             except Exception as mp_error:
                 print(f"⚠️ Error updating module progress: {str(mp_error)}")
                 # Don't fail the whole request, just log the error
-        # ===== END FIX =====
+        
+        # Update lesson completion if this quiz is attached to a lesson
+        if lesson_id:
+            try:
+                from ..services.lesson_completion_service import LessonCompletionService
+                
+                # Update lesson score after quiz completion
+                score_updated = LessonCompletionService.update_lesson_score_after_grading(
+                    current_user_id, lesson_id
+                )
+                
+                if score_updated:
+                    print(f"✅ Lesson completion score updated after quiz submission")
+                
+                # Check if lesson can now be completed
+                can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
+                    current_user_id, lesson_id
+                )
+                
+                if can_complete:
+                    # Get current lesson completion
+                    lesson_completion = LessonCompletion.query.filter_by(
+                        student_id=current_user_id,
+                        lesson_id=lesson_id
+                    ).first()
+                    
+                    if lesson_completion and not lesson_completion.completed:
+                        # Auto-complete the lesson since all requirements are met
+                        success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
+                            current_user_id, lesson_id
+                        )
+                        if success:
+                            print(f"✅ Lesson {lesson_id} auto-completed for student {current_user_id} after quiz submission: {message}")
+                
+            except Exception as lc_error:
+                print(f"⚠️ Error updating lesson completion after quiz: {str(lc_error)}")
+                # Don't fail the whole request, just log the error
+        # ===== END ENHANCED FIX =====
         
         # Calculate remaining attempts
         if quiz.max_attempts and quiz.max_attempts > 0:

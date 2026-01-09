@@ -67,12 +67,19 @@ class LessonCompletion(db.Model):
     def calculate_lesson_score(self):
         """
         Calculate comprehensive lesson score with dynamic weights based on available assessments.
+        Enhanced to enforce completion requirements and passing scores.
         
         Dynamic Scoring System:
         - If lesson has BOTH quiz AND assignment: Reading 25%, Engagement 25%, Quiz 25%, Assignment 25%
         - If lesson has ONLY quiz: Reading 35%, Engagement 35%, Quiz 30%, Assignment 0%
         - If lesson has ONLY assignment: Reading 35%, Engagement 35%, Quiz 0%, Assignment 30%
         - If lesson has NO assessments: Reading 50%, Engagement 50%
+        
+        Enhanced Requirements:
+        - Quiz must be passed (70%+ by default) to contribute to score
+        - Assignment must be graded and passed (70%+) to contribute to score
+        - Reading progress below 90% significantly reduces overall score
+        - Engagement below 60% reduces overall score
         
         Returns a score from 0-100
         """
@@ -83,69 +90,112 @@ class LessonCompletion(db.Model):
         from ..models.quiz_progress_models import QuizAttempt
         from ..models.course_models import Quiz, Assignment, AssignmentSubmission
         
-        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id).first()
+        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
         lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
         
-        # Get quiz score if quiz exists
+        # Get quiz score if quiz exists (with passing requirement)
         quiz_score = 0.0
+        quiz_passed = True  # Default for lessons without quiz
         if has_quiz:
             best_attempt = QuizAttempt.query.filter_by(
                 user_id=self.student_id,
                 quiz_id=lesson_quiz.id
-            ).order_by(QuizAttempt.score.desc()).first()
+            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            
             if best_attempt:
-                quiz_score = best_attempt.score_percentage or 0.0
+                raw_quiz_score = best_attempt.score_percentage or 0.0
+                quiz_passing_score = lesson_quiz.passing_score or 70.0
+                quiz_passed = raw_quiz_score >= quiz_passing_score
+                
+                # Only use quiz score if passed, otherwise 0
+                quiz_score = raw_quiz_score if quiz_passed else 0.0
+            else:
+                quiz_passed = False  # No attempt means not passed
         
-        # Get assignment score if assignment exists
+        # Get assignment score if assignment exists (with passing requirement)
         assignment_score = 0.0
+        assignment_passed = True  # Default for lessons without assignment
         if has_assignment:
-            # Query AssignmentSubmission using the assignment_id
             best_submission = AssignmentSubmission.query.filter_by(
                 student_id=self.student_id,
                 assignment_id=lesson_assignment.id
             ).first()
+            
             if best_submission and best_submission.grade is not None:
-                # Normalize grade to percentage (grade is stored as percentage 0-100)
-                assignment_score = best_submission.grade
+                # Calculate percentage score
+                points_possible = lesson_assignment.points_possible or 100
+                raw_assignment_score = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
+                assignment_passing_score = 70.0  # Standard assignment passing score
+                assignment_passed = raw_assignment_score >= assignment_passing_score
+                
+                # Only use assignment score if passed, otherwise 0
+                assignment_score = raw_assignment_score if assignment_passed else 0.0
+            else:
+                assignment_passed = False  # No graded submission means not passed
+        
+        # Apply reading and engagement penalties for poor performance
+        reading_penalty = 1.0
+        if reading < 90.0:
+            # Significant penalty for low reading progress
+            reading_penalty = 0.5 + (reading / 90.0) * 0.5  # Scale from 0.5 to 1.0
+        
+        engagement_penalty = 1.0
+        if engagement < 60.0:
+            # Penalty for low engagement
+            engagement_penalty = 0.7 + (engagement / 60.0) * 0.3  # Scale from 0.7 to 1.0
         
         # Calculate weighted score based on available assessments
         if has_quiz and has_assignment:
             # Full assessment: 25% each component
-            lesson_score = (
-                (reading * 0.25) +
-                (engagement * 0.25) +
-                (quiz_score * 0.25) +
-                (assignment_score * 0.25)
-            )
+            # If any assessment not passed, significant score reduction
+            if not quiz_passed or not assignment_passed:
+                # Cap score at 60% if assessments not passed
+                base_score = min(60.0, (reading * 0.5) + (engagement * 0.5))
+            else:
+                base_score = (
+                    (reading * 0.25) +
+                    (engagement * 0.25) +
+                    (quiz_score * 0.25) +
+                    (assignment_score * 0.25)
+                )
         elif has_quiz:
             # Quiz only: Reading 35%, Engagement 35%, Quiz 30%
-            lesson_score = (
-                (reading * 0.35) +
-                (engagement * 0.35) +
-                (quiz_score * 0.30)
-            )
+            if not quiz_passed:
+                # Cap score at 65% if quiz not passed
+                base_score = min(65.0, (reading * 0.5) + (engagement * 0.5))
+            else:
+                base_score = (
+                    (reading * 0.35) +
+                    (engagement * 0.35) +
+                    (quiz_score * 0.30)
+                )
         elif has_assignment:
             # Assignment only: Reading 35%, Engagement 35%, Assignment 30%
-            lesson_score = (
-                (reading * 0.35) +
-                (engagement * 0.35) +
-                (assignment_score * 0.30)
-            )
+            if not assignment_passed:
+                # Cap score at 65% if assignment not passed
+                base_score = min(65.0, (reading * 0.5) + (engagement * 0.5))
+            else:
+                base_score = (
+                    (reading * 0.35) +
+                    (engagement * 0.35) +
+                    (assignment_score * 0.30)
+                )
         else:
             # No assessments: Reading 50%, Engagement 50%
-            lesson_score = (
-                (reading * 0.50) +
-                (engagement * 0.50)
-            )
+            base_score = (reading * 0.50) + (engagement * 0.50)
         
-        return lesson_score
+        # Apply penalties for poor reading/engagement
+        final_score = base_score * reading_penalty * engagement_penalty
+        
+        return max(0.0, min(100.0, final_score))  # Clamp between 0-100
     
     def get_score_breakdown(self):
         """
         Get detailed score breakdown with weights based on available assessments.
+        Enhanced to show completion status and requirements.
         Returns a dictionary with component scores and their weights.
         """
         reading = self.reading_progress or 0.0
@@ -154,33 +204,55 @@ class LessonCompletion(db.Model):
         from ..models.quiz_progress_models import QuizAttempt
         from ..models.course_models import Quiz, Assignment, AssignmentSubmission
         
-        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id).first()
+        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
         lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
         
         has_quiz = lesson_quiz is not None
         has_assignment = lesson_assignment is not None
         
-        # Get quiz score if quiz exists
+        # Get quiz score and status if quiz exists
         quiz_score = 0.0
+        quiz_passed = True  # Default for lessons without quiz
+        quiz_status = "not_required"
         if has_quiz:
             best_attempt = QuizAttempt.query.filter_by(
                 user_id=self.student_id,
                 quiz_id=lesson_quiz.id
-            ).order_by(QuizAttempt.score.desc()).first()
+            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            
             if best_attempt:
-                quiz_score = best_attempt.score_percentage or 0.0
+                raw_quiz_score = best_attempt.score_percentage or 0.0
+                quiz_passing_score = lesson_quiz.passing_score or 70.0
+                quiz_passed = raw_quiz_score >= quiz_passing_score
+                quiz_score = raw_quiz_score
+                quiz_status = "passed" if quiz_passed else "failed"
+            else:
+                quiz_status = "not_attempted"
+                quiz_passed = False
         
-        # Get assignment score if assignment exists
+        # Get assignment score and status if assignment exists
         assignment_score = 0.0
+        assignment_passed = True  # Default for lessons without assignment
+        assignment_status = "not_required"
         if has_assignment:
-            # Query AssignmentSubmission using the assignment_id
             best_submission = AssignmentSubmission.query.filter_by(
                 student_id=self.student_id,
                 assignment_id=lesson_assignment.id
             ).first()
+            
             if best_submission and best_submission.grade is not None:
-                # Normalize grade to percentage (grade is stored as percentage 0-100)
-                assignment_score = best_submission.grade
+                points_possible = lesson_assignment.points_possible or 100
+                raw_assignment_score = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
+                assignment_passing_score = 70.0
+                assignment_passed = raw_assignment_score >= assignment_passing_score
+                assignment_score = raw_assignment_score
+                assignment_status = "passed" if assignment_passed else "failed"
+            elif best_submission:
+                assignment_status = "pending_grade"
+                assignment_passed = False
+            else:
+                assignment_status = "not_submitted"
+                assignment_passed = False
         
         # Determine weights based on available assessments
         if has_quiz and has_assignment:
@@ -192,6 +264,10 @@ class LessonCompletion(db.Model):
         else:
             weights = {'reading': 50, 'engagement': 50, 'quiz': 0, 'assignment': 0}
         
+        # Check completion requirements
+        reading_meets_requirement = reading >= 90.0
+        engagement_meets_requirement = engagement >= 60.0
+        
         return {
             'scores': {
                 'reading': reading,
@@ -202,7 +278,30 @@ class LessonCompletion(db.Model):
             'weights': weights,
             'has_quiz': has_quiz,
             'has_assignment': has_assignment,
-            'total_score': self.calculate_lesson_score()
+            'total_score': self.calculate_lesson_score(),
+            'requirements_met': {
+                'reading': reading_meets_requirement,
+                'engagement': engagement_meets_requirement,
+                'quiz': quiz_passed,
+                'assignment': assignment_passed
+            },
+            'completion_status': {
+                'quiz': quiz_status,
+                'assignment': assignment_status,
+                'reading_sufficient': reading_meets_requirement,
+                'engagement_sufficient': engagement_meets_requirement,
+                'can_complete': (reading_meets_requirement and 
+                               engagement_meets_requirement and 
+                               quiz_passed and 
+                               assignment_passed)
+            },
+            'passing_scores': {
+                'quiz': lesson_quiz.passing_score or 70.0 if has_quiz else None,
+                'assignment': 70.0 if has_assignment else None,
+                'reading_minimum': 90.0,
+                'engagement_minimum': 60.0,
+                'overall_minimum': 80.0
+            }
         }
     
     def to_dict(self):

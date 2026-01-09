@@ -276,7 +276,7 @@ export const useProgressTracking = ({
         video_duration: videoDuration,  // Total video duration
         video_completed: videoCompleted,  // Whether 90% threshold reached
         auto_saved: !forceSave
-      });
+      } as any);
       
       console.log('Progress saved successfully', response);
       
@@ -322,13 +322,13 @@ export const useProgressTracking = ({
     return autoSaveProgress(undefined, true);
   }, [autoSaveProgress]);
 
-  // Handle automatic lesson completion
+  // Handle automatic lesson completion with enhanced requirements checking
   const handleAutoLessonCompletion = useCallback(async (
     onComplete: (data: any) => void,
     onError?: (error: any) => void
   ) => {
-    if (!currentLesson || isLessonCompleted || completionInProgress) {
-      console.log('⏭️ Skipping completion:', { isLessonCompleted, completionInProgress });
+    if (!currentLesson || completionInProgress) {
+      console.log('⏭️ Skipping completion:', { currentLesson: !!currentLesson, completionInProgress });
       return;
     }
     
@@ -337,13 +337,14 @@ export const useProgressTracking = ({
       
       const timeSpentSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
       
-      console.log('🎯 Attempting to complete lesson:', {
+      console.log('🎯 Attempting to complete lesson with enhanced requirements check:', {
         lessonId: currentLesson.id,
         progressData: {
           time_spent: timeSpentSeconds,
           reading_progress: readingProgress,
           engagement_score: engagementScore,
           scroll_progress: scrollProgress,
+          video_progress: videoProgress,
           completion_method: 'automatic'
         }
       });
@@ -353,33 +354,79 @@ export const useProgressTracking = ({
         reading_progress: readingProgress,
         engagement_score: engagementScore,
         scroll_progress: scrollProgress,
-        video_progress: videoProgress,  // Include video progress
+        video_progress: videoProgress,
         completion_method: 'automatic'
       });
       
-      // Mark as completed only after successful backend save
-      setIsLessonCompleted(true);
-      
-      console.log('✅ Lesson completion saved to database:', result);
-      
-      onComplete({
-        type: 'lesson_completed',
-        lessonId: currentLesson.id,
-        moduleId: currentModuleId,
-        timestamp: new Date().toISOString(),
-        timeSpent: timeSpentSeconds,
-        engagementScore: engagementScore,
-        backendResult: result
-      });
+      // Check result status
+      if (result.completed) {
+        // Successfully completed with all requirements met
+        setIsLessonCompleted(true);
+        
+        console.log('✅ Lesson completed successfully:', result);
+        
+        onComplete({
+          type: 'lesson_completed',
+          lessonId: currentLesson.id,
+          moduleId: currentModuleId,
+          timestamp: new Date().toISOString(),
+          timeSpent: timeSpentSeconds,
+          engagementScore: engagementScore,
+          finalScore: result.final_score,
+          requirements: result.requirements,
+          backendResult: result,
+          achievements: result.new_achievements || null
+        });
+      } else if (result.progress_saved) {
+        // Progress saved but not complete - requirements not met
+        console.log('📊 Progress saved, but lesson not complete:', result);
+        
+        // Don't mark as completed, but update scores
+        if (result.current_scores?.lesson_score) {
+          setLessonScore(result.current_scores.lesson_score);
+        }
+        
+        if (onError) {
+          onError({
+            type: 'requirements_not_met',
+            message: result.message,
+            requirements: result.requirements,
+            missingRequirements: result.requirements?.missing_requirements || [],
+            currentScores: result.current_scores
+          });
+        }
+      } else {
+        // Other failure case
+        console.log('❌ Lesson completion failed:', result);
+        if (onError) {
+          onError({
+            type: 'completion_failed',
+            message: result.message || 'Failed to complete lesson',
+            requirements: result.requirements
+          });
+        }
+      }
       
     } catch (error: any) {
       console.error('❌ Failed to complete lesson:', error);
       
-      // Check if failure is due to quiz requirement
-      if (error?.response?.status === 402 && error?.response?.data?.quiz_required) {
+      // Handle different error scenarios
+      if (error?.response?.status === 202 && error?.response?.data?.progress_saved) {
+        // Progress saved but requirements not met (202 Accepted)
+        console.log('📊 Progress saved but requirements not met:', error?.response?.data);
+        
+        if (onError) {
+          onError({
+            type: 'requirements_not_met',
+            message: error.response.data.message,
+            requirements: error.response.data.requirements,
+            missingRequirements: error.response.data.requirements?.missing_requirements || [],
+            currentScores: error.response.data.current_scores
+          });
+        }
+      } else if (error?.response?.status === 402 && error?.response?.data?.quiz_required) {
         console.log('📝 Quiz is required for this lesson:', error?.response?.data?.quiz_info);
         
-        // Return quiz requirement info
         if (onError) {
           onError({
             type: 'quiz_required',
@@ -389,16 +436,30 @@ export const useProgressTracking = ({
       } else if (error?.response?.status === 200 || (error?.response?.status === 400 && error?.response?.data?.message?.includes('already completed'))) {
         console.log('✅ Lesson was already completed in database');
         setIsLessonCompleted(true);
+        
+        onComplete({
+          type: 'lesson_already_completed',
+          lessonId: currentLesson.id,
+          moduleId: currentModuleId,
+          timestamp: new Date().toISOString(),
+          timeSpent: timeSpentSeconds,
+          engagementScore: engagementScore,
+          backendResult: error?.response?.data
+        });
       } else {
-        console.error('⚠️ Error completing lesson, will not mark as complete');
-        if (onError) onError(error);
+        console.error('⚠️ Unexpected error completing lesson:', error);
+        if (onError) {
+          onError({
+            type: 'error',
+            message: error?.response?.data?.message || 'Failed to complete lesson',
+            error: error
+          });
+        }
       }
     } finally {
-      setTimeout(() => {
-        setCompletionInProgress(false);
-      }, 1000);
+      setCompletionInProgress(false);
     }
-  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, isLessonCompleted, completionInProgress]);
+  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, completionInProgress]);
 
   // Reset progress and load existing data when lesson changes
   useEffect(() => {

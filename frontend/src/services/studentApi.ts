@@ -403,6 +403,24 @@ export class StudentApiService {
     }
   }
 
+  static async getLessonCompletionStatus(lessonId: number): Promise<any> {
+    try {
+      console.log(`📤 Calling getLessonCompletionStatus API: /student/lessons/${lessonId}/completion-status`);
+      const response = await api.get(`/student/lessons/${lessonId}/completion-status`);
+      console.log(`✅ getLessonCompletionStatus API success:`, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error(`❌ getLessonCompletionStatus API error:`, {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        code: error.code
+      });
+      throw error;
+    }
+  }
+
   static async updateLessonProgress(lessonId: number, progressData: {
     reading_progress?: number;
     engagement_score?: number;
