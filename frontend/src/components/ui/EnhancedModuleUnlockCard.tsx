@@ -207,14 +207,19 @@ export const EnhancedModuleUnlockCard: React.FC<EnhancedModuleUnlockCardProps> =
           <Alert className=\"border-green-200 bg-green-50\">
             <Sparkles className=\"h-4 w-4\" />
             <AlertDescription className=\"text-green-800\">
-              <strong>Excellent!</strong> All requirements met. Ready to unlock the next module!
+              <strong>Excellent!</strong> All requirements met. All {eligibility.lesson_requirements.total_count} lessons satisfy their requirements and module score is {eligibility.total_score.toFixed(1)}%.
             </AlertDescription>
           </Alert>
         ) : (
-          <Alert className=\"border-orange-200 bg-orange-50\">
-            <AlertCircle className=\"h-4 w-4\" />
-            <AlertDescription className=\"text-orange-800\">
-              <strong>Almost there!</strong> {validation.blockers.length} requirement(s) remaining.
+          <Alert className="border-red-200 bg-red-50">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription className="text-red-800">
+              <strong>STRICT ENFORCEMENT - Requirements Missing:</strong> {validation.blockers.length} requirement(s) must be satisfied.
+              {eligibility.lesson_requirements.failed_lessons.length > 0 && (
+                <div className="mt-2">
+                  <strong>BLOCKING LESSONS:</strong> {eligibility.lesson_requirements.failed_lessons.length} of {eligibility.lesson_requirements.total_count} lessons are preventing module completion. ALL must be completed.
+                </div>
+              )}
             </AlertDescription>
           </Alert>
         )}
@@ -303,16 +308,20 @@ export const EnhancedModuleUnlockCard: React.FC<EnhancedModuleUnlockCardProps> =
               </div>
               {eligibility.lesson_requirements.failed_lessons.length > 0 && (
                 <div className=\"text-sm text-gray-600\">
-                  <p className=\"mb-1\">Lessons needing attention:</p>
+                  <div className=\"mb-2 p-2 bg-red-50 border border-red-200 rounded text-red-800\">
+                    <p className=\"text-xs font-medium mb-1\">⚠️ STRICT ENFORCEMENT ACTIVE</p>
+                    <p className=\"text-xs\">ALL lessons must satisfy their requirements before next module unlocks.</p>
+                  </div>
+                  <p className=\"mb-1 font-medium text-red-700\">Blocking lessons (MUST be completed):</p>
                   <ul className=\"list-disc list-inside space-y-1\">
                     {eligibility.lesson_requirements.failed_lessons.slice(0, 3).map((lesson, idx) => (
-                      <li key={idx} className=\"text-orange-700\">
+                      <li key={idx} className=\"text-red-700 font-medium\">
                         {lesson.title} ({lesson.requirements?.join(', ') || lesson.status})
                       </li>
                     ))}
                     {eligibility.lesson_requirements.failed_lessons.length > 3 && (
-                      <li className=\"text-gray-500\">
-                        ...and {eligibility.lesson_requirements.failed_lessons.length - 3} more
+                      <li className=\"text-red-600\">
+                        ...and {eligibility.lesson_requirements.failed_lessons.length - 3} more BLOCKING lessons
                       </li>
                     )}
                   </ul>

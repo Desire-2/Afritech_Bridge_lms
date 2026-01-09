@@ -300,7 +300,12 @@ class ProgressionService:
     @staticmethod
     def check_module_completion(student_id: int, module_id: int, enrollment_id: int) -> Tuple[bool, str]:
         """
-        Check if module can be marked as completed based on cumulative score
+        Check if module can be marked as completed based on STRICT lesson-level requirements.
+        
+        Enhanced with strict validation:
+        1. ALL lessons in module must satisfy individual requirements
+        2. Module cumulative score >= 80%
+        3. No lesson can have unsatisfied quiz/assignment requirements
         
         Args:
             student_id: ID of the student
@@ -308,7 +313,7 @@ class ProgressionService:
             enrollment_id: ID of the enrollment
             
         Returns:
-            Tuple of (can_complete, reason)
+            Tuple of (can_complete, detailed_reason)
         """
         try:
             module_progress = ModuleProgress.query.filter_by(
@@ -321,17 +326,68 @@ class ProgressionService:
                 current_app.logger.warning(f"Module progress not found for student={student_id}, module={module_id}")
                 return False, "Module progress not found"
             
-            # Calculate cumulative score
+            # Get module and lessons
+            module = Module.query.get(module_id)
+            if not module:
+                return False, "Module not found"
+                
+            lessons = module.lessons.order_by(Lesson.order).all()
+            if not lessons:
+                return False, "No lessons found in module"
+            
+            # STRICT LESSON VALIDATION: Check EVERY lesson individually
+            from ..services.lesson_completion_service import LessonCompletionService
+            
+            lesson_failures = []
+            lessons_checked = 0
+            
+            for lesson in lessons:
+                lessons_checked += 1
+                completion = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=lesson.id
+                ).first()
+                
+                if not completion:
+                    lesson_failures.append(f"Lesson '{lesson.title}' not started")
+                    continue
+                
+                # Check comprehensive lesson requirements
+                requirements_status = LessonCompletionService.check_lesson_completion_requirements(
+                    student_id, lesson.id
+                )
+                
+                if not requirements_status["can_complete"]:
+                    missing_reqs = requirements_status.get("missing_requirements", [])
+                    lesson_failures.append(f"Lesson '{lesson.title}': {', '.join(missing_reqs)}")
+                    continue
+                
+                # Check lesson score threshold
+                lesson_score = completion.calculate_lesson_score()
+                if lesson_score < 80.0:
+                    lesson_failures.append(f"Lesson '{lesson.title}' score {lesson_score:.1f}% < 80%")
+            
+            # If ANY lesson fails, module cannot be completed
+            if lesson_failures:
+                failure_summary = f"Module BLOCKED - {len(lesson_failures)} lesson requirement(s) not satisfied: {'; '.join(lesson_failures[:3])}"
+                if len(lesson_failures) > 3:
+                    failure_summary += f" (and {len(lesson_failures) - 3} more)"
+                
+                current_app.logger.info(f"Module {module_id} BLOCKED due to lesson failures: {lesson_failures}")
+                return False, failure_summary
+            
+            # All lessons passed - now check module-level score
             cumulative_score = module_progress.calculate_cumulative_score()
-            current_app.logger.info(f"Module {module_id} cumulative_score={cumulative_score:.2f}% for student {student_id}")
+            current_app.logger.info(f"All lessons passed. Module {module_id} cumulative_score={cumulative_score:.2f}% for student {student_id}")
             
             # Check if meets passing requirement (80%)
             if cumulative_score >= 80.0:
-                current_app.logger.info(f"Module {module_id} PASSED with {cumulative_score:.2f}% - unlocking next module")
+                current_app.logger.info(f"Module {module_id} PASSED with {cumulative_score:.2f}% - all {lessons_checked} lessons satisfied - unlocking next module")
+                
                 # Mark module as completed and save cumulative score
                 module_progress.status = 'completed'
                 module_progress.completed_at = datetime.utcnow()
-                module_progress.cumulative_score = cumulative_score  # Save the calculated score
+                module_progress.cumulative_score = cumulative_score
                 
                 current_app.logger.info(f"🎯 Setting module {module_id} status='completed', completed_at={module_progress.completed_at}, cumulative_score={cumulative_score}")
                 
@@ -340,8 +396,13 @@ class ProgressionService:
                 
                 db.session.commit()
                 current_app.logger.info(f"✅ Module {module_id} completion committed to database")
-                return True, f"Module completed with score: {cumulative_score:.1f}%"
+                
+                return True, f"Module completed successfully! Score: {cumulative_score:.1f}%, All {lessons_checked} lessons satisfied requirements"
+                
             else:
+                # Module score insufficient even though lessons passed
+                current_app.logger.info(f"Module {module_id} lessons passed but score {cumulative_score:.2f}% < 80%")
+                
                 # Check if this is a final attempt that fails
                 if module_progress.attempts_count >= module_progress.max_attempts:
                     # Suspend student from course
@@ -349,20 +410,20 @@ class ProgressionService:
                         student_id, module_id, enrollment_id, module_progress.attempts_count
                     )
                     if success:
-                        return False, f"Insufficient score: {cumulative_score:.1f}%. {suspension_msg}"
+                        return False, f"All lessons satisfied but insufficient module score: {cumulative_score:.1f}%. {suspension_msg}"
                     else:
-                        return False, f"Insufficient score: {cumulative_score:.1f}% and suspension failed: {suspension_msg}"
+                        return False, f"All lessons satisfied but insufficient module score: {cumulative_score:.1f}% and suspension failed: {suspension_msg}"
                 else:
                     # Mark as failed but allow retake
                     module_progress.status = 'failed'
                     module_progress.failed_at = datetime.utcnow()
                     db.session.commit()
                     remaining_attempts = module_progress.max_attempts - module_progress.attempts_count
-                    return False, f"Insufficient score: {cumulative_score:.1f}% (80% required). {remaining_attempts} attempts remaining."
+                    return False, f"All lessons satisfied but module score {cumulative_score:.1f}% < 80% required. {remaining_attempts} attempts remaining."
                 
         except Exception as e:
             current_app.logger.error(f"Module completion check error: {str(e)}")
-            return False, "Error checking module completion"
+            return False, f"Error checking module completion: {str(e)}"
     
     @staticmethod
     def attempt_module_retake(student_id: int, module_id: int, enrollment_id: int) -> Tuple[bool, str]:

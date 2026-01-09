@@ -706,8 +706,129 @@ class ModuleProgress(db.Model):
         return self.calculate_module_weighted_score()
     
     def can_proceed_to_next(self):
-        """Check if student can proceed to next module"""
-        return self.cumulative_score >= 80.0 and self.status == 'completed'
+        """
+        Check if student can proceed to next module with STRICT enforcement.
+        
+        Requirements:
+        1. Module status must be 'completed' 
+        2. Cumulative score >= 80%
+        3. ALL lessons in module must satisfy their individual requirements
+        4. No critical failures in any lesson
+        """
+        if self.status != 'completed':
+            return False
+            
+        if (self.cumulative_score or 0) < 80.0:
+            return False
+        
+        # STRICT CHECK: Verify ALL lessons in module meet requirements
+        from ..services.lesson_completion_service import LessonCompletionService
+        
+        module = self.module
+        lessons = module.lessons.all()
+        
+        for lesson in lessons:
+            completion = LessonCompletion.query.filter_by(
+                student_id=self.student_id,
+                lesson_id=lesson.id
+            ).first()
+            
+            if not completion:
+                # Lesson not started - cannot proceed
+                return False
+            
+            # Check comprehensive lesson requirements
+            requirements_status = LessonCompletionService.check_lesson_completion_requirements(
+                self.student_id, lesson.id
+            )
+            
+            if not requirements_status["can_complete"]:
+                # Lesson requirements not satisfied - cannot proceed
+                return False
+            
+            # Additional check: Lesson score must meet minimum threshold
+            lesson_score = completion.calculate_lesson_score()
+            if lesson_score < 80.0:  # LESSON_PASSING_SCORE threshold
+                return False
+        
+        # All checks passed
+        return True
+    
+    def get_module_completion_blockers(self):
+        """
+        Get detailed information about what's blocking module completion.
+        Returns a dict with blocking issues and recommendations.
+        """
+        blockers = []
+        recommendations = []
+        
+        # Check basic requirements
+        if self.status != 'completed':
+            blockers.append(f"Module status is '{self.status}', needs to be 'completed'")
+            recommendations.append("Complete all module requirements to change status")
+        
+        current_score = self.cumulative_score or 0
+        if current_score < 80.0:
+            gap = 80.0 - current_score
+            blockers.append(f"Module score {current_score:.1f}% is below 80% requirement")
+            recommendations.append(f"Increase module score by {gap:.1f}% points")
+        
+        # Check lesson-level requirements
+        from ..services.lesson_completion_service import LessonCompletionService
+        
+        module = self.module
+        lessons = module.lessons.all()
+        failed_lessons = []
+        
+        for lesson in lessons:
+            completion = LessonCompletion.query.filter_by(
+                student_id=self.student_id,
+                lesson_id=lesson.id
+            ).first()
+            
+            if not completion:
+                failed_lessons.append({
+                    "title": lesson.title,
+                    "issue": "Not started",
+                    "recommendation": "Start and complete the lesson"
+                })
+                continue
+            
+            # Check lesson requirements
+            requirements_status = LessonCompletionService.check_lesson_completion_requirements(
+                self.student_id, lesson.id
+            )
+            
+            if not requirements_status["can_complete"]:
+                missing_reqs = requirements_status.get("missing_requirements", [])
+                failed_lessons.append({
+                    "title": lesson.title,
+                    "issue": f"Requirements not met: {', '.join(missing_reqs)}",
+                    "recommendation": "Satisfy all lesson requirements"
+                })
+                continue
+            
+            # Check lesson score
+            lesson_score = completion.calculate_lesson_score()
+            if lesson_score < 80.0:
+                failed_lessons.append({
+                    "title": lesson.title,
+                    "issue": f"Score {lesson_score:.1f}% below 80% requirement",
+                    "recommendation": f"Improve lesson score by {80.0 - lesson_score:.1f}% points"
+                })
+        
+        if failed_lessons:
+            blockers.append(f"{len(failed_lessons)} lesson(s) have unsatisfied requirements")
+            recommendations.append("Complete all lesson requirements before module unlock")
+        
+        return {
+            "can_proceed": len(blockers) == 0,
+            "blockers": blockers,
+            "recommendations": recommendations,
+            "failed_lessons": failed_lessons,
+            "total_lessons": len(lessons),
+            "passed_lessons": len(lessons) - len(failed_lessons)
+        }
     
     def to_dict(self):
         module_score = self.calculate_module_score()

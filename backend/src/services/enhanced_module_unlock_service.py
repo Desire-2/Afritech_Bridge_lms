@@ -387,12 +387,17 @@ class EnhancedModuleUnlockService:
     
     @staticmethod
     def _check_lesson_requirements(student_id: int, module_id: int) -> Dict[str, Any]:
-        """Check if all lessons in the module meet individual requirements."""
+        """
+        Check if all lessons in the module meet individual requirements with STRICT enforcement.
+        
+        Returns detailed information about each lesson's status and requirements.
+        """
         module = Module.query.get(module_id)
         lessons = module.lessons.order_by(Lesson.order).all()
         
         passed_lessons = []
         failed_lessons = []
+        critical_failures = []
         
         for lesson in lessons:
             completion = LessonCompletion.query.filter_by(
@@ -400,41 +405,98 @@ class EnhancedModuleUnlockService:
                 lesson_id=lesson.id
             ).first()
             
-            if completion:
-                # Use enhanced lesson completion service for validation
-                lesson_score = completion.calculate_lesson_score()
-                requirements_status = LessonCompletionService.check_lesson_completion_requirements(
-                    student_id, lesson.id
-                )
-                
-                if requirements_status["can_complete"]:
+            if not completion:
+                # Lesson not started - critical failure
+                failure_info = {
+                    "id": lesson.id,
+                    "title": lesson.title,
+                    "order": lesson.order,
+                    "status": "not_started",
+                    "requirements": ["lesson_must_be_started"],
+                    "critical": True,
+                    "score": 0.0
+                }
+                failed_lessons.append(failure_info)
+                critical_failures.append(failure_info)
+                continue
+            
+            # Check comprehensive lesson requirements using the service
+            from .lesson_completion_service import LessonCompletionService
+            requirements_status = LessonCompletionService.check_lesson_completion_requirements(
+                student_id, lesson.id
+            )
+            
+            lesson_score = completion.calculate_lesson_score()
+            
+            if requirements_status["can_complete"]:
+                # Additional check: Ensure lesson score meets the passing threshold
+                if lesson_score >= EnhancedModuleUnlockService.LESSON_PASSING_SCORE:
                     passed_lessons.append({
                         "id": lesson.id,
                         "title": lesson.title,
+                        "order": lesson.order,
                         "score": lesson_score,
-                        "completed_at": completion.completed_at.isoformat()
+                        "completed_at": completion.completed_at.isoformat() if completion.completed_at else None,
+                        "status": "passed"
                     })
                 else:
-                    failed_lessons.append({
+                    # Score below threshold - critical failure
+                    failure_info = {
                         "id": lesson.id,
                         "title": lesson.title,
+                        "order": lesson.order,
                         "score": lesson_score,
-                        "requirements": requirements_status["missing_requirements"]
-                    })
+                        "status": "score_below_threshold",
+                        "requirements": [f"lesson_score_must_be_at_least_{EnhancedModuleUnlockService.LESSON_PASSING_SCORE}%"],
+                        "current_score": lesson_score,
+                        "required_score": EnhancedModuleUnlockService.LESSON_PASSING_SCORE,
+                        "critical": True
+                    }
+                    failed_lessons.append(failure_info)
+                    critical_failures.append(failure_info)
             else:
-                failed_lessons.append({
+                # Requirements not met - determine if critical
+                missing_requirements = requirements_status.get("missing_requirements", [])
+                is_critical = any(req in ["quiz_not_passed", "assignment_not_graded", "assignment_not_passed"] for req in missing_requirements)
+                
+                failure_info = {
                     "id": lesson.id,
                     "title": lesson.title,
-                    "status": "not_started",
-                    "requirements": ["lesson_not_started"]
-                })
+                    "order": lesson.order,
+                    "score": lesson_score,
+                    "status": "requirements_not_met",
+                    "requirements": missing_requirements,
+                    "detailed_status": requirements_status,
+                    "critical": is_critical
+                }
+                failed_lessons.append(failure_info)
+                
+                if is_critical:
+                    critical_failures.append(failure_info)
+        
+        # Generate summary
+        all_lessons_passed = len(failed_lessons) == 0
+        has_critical_failures = len(critical_failures) > 0
+        
+        # Create blocking message if there are failures
+        blocking_message = None
+        if not all_lessons_passed:
+            if has_critical_failures:
+                blocking_message = f"Module BLOCKED: {len(critical_failures)} lesson(s) have critical requirement failures that prevent module completion"
+            else:
+                blocking_message = f"Module completion delayed: {len(failed_lessons)} lesson(s) need requirement improvements"
         
         return {
-            "all_lessons_passed": len(failed_lessons) == 0,
+            "all_lessons_passed": all_lessons_passed,
             "passed_count": len(passed_lessons),
             "total_count": len(lessons),
             "failed_lessons": failed_lessons,
-            "passed_lessons": passed_lessons
+            "passed_lessons": passed_lessons,
+            "critical_failures": critical_failures,
+            "has_critical_failures": has_critical_failures,
+            "blocking_message": blocking_message,
+            "can_proceed_to_next_module": all_lessons_passed,  # Only if ALL lessons pass
+            "strict_enforcement": True
         }
     
     @staticmethod
@@ -539,25 +601,157 @@ class EnhancedModuleUnlockService:
     
     @staticmethod
     def _validate_current_module_completion(student_id: int, module_id: int, enrollment_id: int) -> Dict[str, Any]:
-        """Validate that current module is ready for completion."""
-        from .progression_service import ProgressionService
+        """
+        Validate that current module is ready for completion with STRICT lesson requirement enforcement.
         
-        # Use existing progression service logic
-        can_complete, message = ProgressionService.check_module_completion(
-            student_id, module_id, enrollment_id
-        )
-        
-        # Get detailed scoring
-        scoring = EnhancedModuleUnlockService._calculate_comprehensive_module_score(
-            student_id, module_id, enrollment_id
-        )
-        
-        return {
-            "can_complete": can_complete,
-            "message": message,
-            "total_score": scoring["total_score"],
-            "breakdown": scoring["breakdown"]
-        }
+        Module can only be completed if:
+        1. ALL lessons in the module satisfy their individual requirements
+        2. Module overall score >= 80%
+        3. All prerequisites are met
+        """
+        try:
+            # Get module and its lessons
+            module = Module.query.get(module_id)
+            if not module:
+                return {
+                    "can_complete": False,
+                    "message": "Module not found",
+                    "total_score": 0.0,
+                    "breakdown": {},
+                    "failed_lessons": [],
+                    "validation_errors": ["Module not found"]
+                }
+            
+            lessons = module.lessons.order_by(Lesson.order).all()
+            if not lessons:
+                return {
+                    "can_complete": False,
+                    "message": "No lessons found in module",
+                    "total_score": 0.0,
+                    "breakdown": {},
+                    "failed_lessons": [],
+                    "validation_errors": ["No lessons in module"]
+                }
+            
+            # STRICT VALIDATION: Check each lesson individually
+            failed_lessons = []
+            lesson_validation_errors = []
+            all_lessons_satisfied = True
+            
+            for lesson in lessons:
+                # Check if lesson exists in completion table
+                completion = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=lesson.id
+                ).first()
+                
+                if not completion:
+                    failed_lessons.append({
+                        "id": lesson.id,
+                        "title": lesson.title,
+                        "order": lesson.order,
+                        "error": "Lesson not started",
+                        "requirements": ["lesson_not_started"]
+                    })
+                    lesson_validation_errors.append(f"Lesson '{lesson.title}' not started")
+                    all_lessons_satisfied = False
+                    continue
+                
+                # Use the enhanced lesson completion service for strict validation
+                from .lesson_completion_service import LessonCompletionService
+                lesson_requirements = LessonCompletionService.check_lesson_completion_requirements(
+                    student_id, lesson.id
+                )
+                
+                if not lesson_requirements["can_complete"]:
+                    # Get detailed missing requirements
+                    missing_reqs = lesson_requirements.get("missing_requirements", [])
+                    current_scores = lesson_requirements.get("current_scores", {})
+                    
+                    failed_lessons.append({
+                        "id": lesson.id,
+                        "title": lesson.title,
+                        "order": lesson.order,
+                        "error": f"Requirements not satisfied: {', '.join(missing_reqs)}",
+                        "requirements": missing_reqs,
+                        "current_scores": current_scores,
+                        "lesson_score": completion.calculate_lesson_score()
+                    })
+                    lesson_validation_errors.append(
+                        f"Lesson '{lesson.title}': {', '.join(missing_reqs)}"
+                    )
+                    all_lessons_satisfied = False
+                
+                # Additional check: Ensure lesson score meets minimum threshold
+                lesson_score = completion.calculate_lesson_score()
+                if lesson_score < EnhancedModuleUnlockService.LESSON_PASSING_SCORE:
+                    if not any(fl["id"] == lesson.id for fl in failed_lessons):
+                        failed_lessons.append({
+                            "id": lesson.id,
+                            "title": lesson.title,
+                            "order": lesson.order,
+                            "error": f"Lesson score {lesson_score:.1f}% below required {EnhancedModuleUnlockService.LESSON_PASSING_SCORE}%",
+                            "requirements": [f"score_below_{EnhancedModuleUnlockService.LESSON_PASSING_SCORE}%"],
+                            "current_scores": {"lesson_score": lesson_score},
+                            "required_score": EnhancedModuleUnlockService.LESSON_PASSING_SCORE
+                        })
+                        lesson_validation_errors.append(
+                            f"Lesson '{lesson.title}' score {lesson_score:.1f}% < {EnhancedModuleUnlockService.LESSON_PASSING_SCORE}%"
+                        )
+                        all_lessons_satisfied = False
+            
+            # Get module-level scoring
+            scoring = EnhancedModuleUnlockService._calculate_comprehensive_module_score(
+                student_id, module_id, enrollment_id
+            )
+            
+            # STRICT MODULE VALIDATION: Module can only complete if:
+            # 1. ALL lessons satisfy their requirements (already checked above)
+            # 2. Module overall score >= MODULE_PASSING_SCORE
+            module_score_sufficient = scoring["total_score"] >= EnhancedModuleUnlockService.MODULE_PASSING_SCORE
+            
+            # Compile all validation errors
+            validation_errors = []
+            if not all_lessons_satisfied:
+                validation_errors.extend(lesson_validation_errors)
+            
+            if not module_score_sufficient:
+                gap = EnhancedModuleUnlockService.MODULE_PASSING_SCORE - scoring["total_score"]
+                validation_errors.append(f"Module score {scoring['total_score']:.1f}% < {EnhancedModuleUnlockService.MODULE_PASSING_SCORE}% (need {gap:.1f}% more)")
+            
+            # Final determination
+            can_complete = all_lessons_satisfied and module_score_sufficient
+            
+            # Craft appropriate message
+            if can_complete:
+                message = f"Module ready for completion! All {len(lessons)} lessons satisfy requirements and module score is {scoring['total_score']:.1f}%"
+            else:
+                message = f"Module cannot be completed: {len(failed_lessons)} lesson(s) have unsatisfied requirements"
+                if not module_score_sufficient:
+                    message += f" and module score {scoring['total_score']:.1f}% is below {EnhancedModuleUnlockService.MODULE_PASSING_SCORE}%"
+            
+            return {
+                "can_complete": can_complete,
+                "message": message,
+                "total_score": scoring["total_score"],
+                "breakdown": scoring["breakdown"],
+                "failed_lessons": failed_lessons,
+                "validation_errors": validation_errors,
+                "lessons_checked": len(lessons),
+                "lessons_passed": len(lessons) - len(failed_lessons),
+                "strict_validation": True
+            }
+            
+        except Exception as e:
+            current_app.logger.error(f"Module completion validation error: {str(e)}")
+            return {
+                "can_complete": False,
+                "message": f"Validation error: {str(e)}",
+                "total_score": 0.0,
+                "breakdown": {},
+                "failed_lessons": [],
+                "validation_errors": [f"System error: {str(e)}"]
+            }
     
     @staticmethod
     def _complete_current_module(student_id: int, module_id: int, enrollment_id: int) -> Dict[str, Any]:
