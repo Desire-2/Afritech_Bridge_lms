@@ -2326,198 +2326,337 @@ const LearningPage = () => {
         )}
       </AnimatePresence>
 
-      {/* Locked Module Requirements Modal */}
+      {/* Enhanced Locked Module Requirements Modal */}
       <Dialog open={showLockedModuleModal} onOpenChange={setShowLockedModuleModal}>
-        <DialogContent className="bg-gray-900 border-gray-700 text-white max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-xl">
-              <Lock className="h-5 w-5 text-orange-400" />
-              Module Locked
+        <DialogContent className="bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 border-gray-700 text-white max-w-lg sm:max-w-2xl lg:max-w-4xl xl:max-w-5xl w-full max-h-[90vh] overflow-hidden">
+          <DialogHeader className="pb-2 border-b border-gray-700/50">
+            <DialogTitle className="flex items-center gap-3 text-xl sm:text-2xl lg:text-3xl">
+              <div className="p-2 bg-orange-500/20 rounded-lg">
+                <Lock className="h-6 w-6 sm:h-7 sm:w-7 lg:h-8 lg:w-8 text-orange-400" />
+              </div>
+              <div className="flex flex-col">
+                <span className="font-bold bg-gradient-to-r from-orange-400 to-red-400 bg-clip-text text-transparent">
+                  Module Locked
+                </span>
+                <span className="text-sm sm:text-base lg:text-lg font-normal text-gray-300">
+                  Complete requirements to unlock
+                </span>
+              </div>
             </DialogTitle>
-            <DialogDescription className="text-gray-400">
-              Complete the previous module to unlock this one
-            </DialogDescription>
           </DialogHeader>
           
-          {lockedModuleInfo && (
-            <div className="space-y-4 py-2">
-              {/* Target Module */}
-              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
-                <div className="flex items-center gap-2 mb-2">
-                  <Target className="h-4 w-4 text-blue-400" />
-                  <span className="text-sm text-gray-400">Module you want to unlock:</span>
-                </div>
-                <p className="text-white font-medium">
-                  Module {lockedModuleInfo.moduleIndex + 1}: {lockedModuleInfo.moduleTitle}
-                </p>
-              </div>
-
-              {/* Previous Module Requirements */}
-              <div className="bg-orange-900/20 rounded-xl p-4 border border-orange-700/50">
-                <div className="flex items-center gap-2 mb-3">
-                  <AlertCircle className="h-4 w-4 text-orange-400" />
-                  <span className="text-sm text-orange-300 font-medium">Requirements to unlock:</span>
-                </div>
-                
-                <p className="text-gray-300 text-sm mb-3">
-                  Complete <span className="text-white font-medium">Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}</span> with a passing score.
-                </p>
-
-                {/* Previous Module Progress */}
-                <div className="space-y-3">
-                  {/* Lessons Progress */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-gray-400 text-xs">Lessons Completed</span>
-                      <span className={`text-xs font-medium ${
-                        lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons 
-                          ? 'text-green-400' 
-                          : 'text-yellow-400'
-                      }`}>
-                        {lockedModuleInfo.previousModuleLessonsCompleted}/{lockedModuleInfo.previousModuleTotalLessons}
-                      </span>
+          <div className="overflow-y-auto max-h-[calc(90vh-8rem)] pr-2 custom-scrollbar">
+            {lockedModuleInfo && (
+              <div className="space-y-4 sm:space-y-6 py-4">
+                {/* Target Module - Enhanced */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-xl p-4 sm:p-6 border border-blue-700/50 backdrop-blur-sm"
+                >
+                  <div className="flex items-start gap-3 mb-3">
+                    <div className="p-2 bg-blue-500/20 rounded-lg shrink-0">
+                      <Target className="h-5 w-5 sm:h-6 sm:w-6 text-blue-400" />
                     </div>
-                    <Progress 
-                      value={(lockedModuleInfo.previousModuleLessonsCompleted / lockedModuleInfo.previousModuleTotalLessons) * 100} 
-                      className="h-2 bg-gray-700"
-                    />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm sm:text-base text-blue-300 font-medium block mb-1">
+                        🎯 Module you want to unlock
+                      </span>
+                      <h3 className="text-lg sm:text-xl lg:text-2xl font-bold text-white break-words">
+                        Module {lockedModuleInfo.moduleIndex + 1}: {lockedModuleInfo.moduleTitle}
+                      </h3>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <div className="bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/30">
+                          <span className="text-xs sm:text-sm text-blue-300 font-medium">🔒 Currently Locked</span>
+                        </div>
+                        <div className="bg-yellow-500/10 px-3 py-1 rounded-full border border-yellow-500/30">
+                          <span className="text-xs sm:text-sm text-yellow-300 font-medium">⏳ Pending Requirements</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+
+                {/* Previous Module Requirements - Enhanced */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="bg-gradient-to-r from-orange-900/30 to-red-900/30 rounded-xl p-4 sm:p-6 border border-orange-700/50 backdrop-blur-sm"
+                >
+                  <div className="flex items-start gap-3 mb-4">
+                    <div className="p-2 bg-orange-500/20 rounded-lg shrink-0">
+                      <AlertCircle className="h-5 w-5 sm:h-6 sm:w-6 text-orange-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm sm:text-base text-orange-300 font-bold block mb-1">
+                        📋 Requirements to unlock
+                      </span>
+                      <p className="text-sm sm:text-base text-gray-300 mb-4">
+                        Complete <span className="text-white font-bold bg-gradient-to-r from-yellow-400 to-orange-400 bg-clip-text text-transparent">
+                          Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}
+                        </span> with a passing score.
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Score Progress */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-gray-400 text-xs">Module Score</span>
-                      <span className={`text-xs font-medium ${
-                        lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore 
-                          ? 'text-green-400' 
-                          : 'text-yellow-400'
-                      }`}>
-                        {lockedModuleInfo.previousModuleScore.toFixed(1)}% / {lockedModuleInfo.requiredScore}% required
-                      </span>
-                    </div>
-                    <div className="relative">
+                  {/* Enhanced Progress Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    {/* Lessons Progress - Enhanced */}
+                    <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700/50">
+                      <div className="flex justify-between items-center mb-3">
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="h-4 w-4 text-blue-400" />
+                          <span className="text-sm sm:text-base text-gray-300 font-medium">Lessons</span>
+                        </div>
+                        <div className={`px-3 py-1 rounded-full text-xs sm:text-sm font-bold ${
+                          lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons 
+                            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                            : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                        }`}>
+                          {lockedModuleInfo.previousModuleLessonsCompleted}/{lockedModuleInfo.previousModuleTotalLessons}
+                        </div>
+                      </div>
                       <Progress 
-                        value={Math.min(100, lockedModuleInfo.previousModuleScore)} 
-                        className="h-2 bg-gray-700"
+                        value={(lockedModuleInfo.previousModuleLessonsCompleted / lockedModuleInfo.previousModuleTotalLessons) * 100} 
+                        className="h-3 bg-gray-700 mb-2"
                       />
-                      {/* Threshold marker */}
-                      <div 
-                        className="absolute top-0 w-0.5 h-2 bg-green-400"
-                        style={{ left: `${lockedModuleInfo.requiredScore}%` }}
-                      />
+                      <div className="text-xs text-gray-400">
+                        {Math.round((lockedModuleInfo.previousModuleLessonsCompleted / lockedModuleInfo.previousModuleTotalLessons) * 100)}% Complete
+                      </div>
+                    </div>
+
+                    {/* Score Progress - Enhanced */}
+                    <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700/50">
+                      <div className="flex justify-between items-center mb-3">
+                        <div className="flex items-center gap-2">
+                          <Award className="h-4 w-4 text-purple-400" />
+                          <span className="text-sm sm:text-base text-gray-300 font-medium">Score</span>
+                        </div>
+                        <div className={`px-3 py-1 rounded-full text-xs sm:text-sm font-bold ${
+                          lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore 
+                            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                            : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                        }`}>
+                          {lockedModuleInfo.previousModuleScore.toFixed(1)}%
+                        </div>
+                      </div>
+                      <div className="relative mb-2">
+                        <Progress 
+                          value={Math.min(100, lockedModuleInfo.previousModuleScore)} 
+                          className="h-3 bg-gray-700"
+                        />
+                        {/* Enhanced threshold marker */}
+                        <div 
+                          className="absolute top-0 w-1 h-3 bg-green-400 rounded-r-sm shadow-sm"
+                          style={{ left: `${lockedModuleInfo.requiredScore}%` }}
+                        />
+                        <div 
+                          className="absolute -top-6 transform -translate-x-1/2 text-xs text-green-400 font-medium"
+                          style={{ left: `${lockedModuleInfo.requiredScore}%` }}
+                        >
+                          {lockedModuleInfo.requiredScore}%
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        Required: {lockedModuleInfo.requiredScore}% minimum
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* What's Missing */}
-                <div className="mt-4 pt-3 border-t border-orange-700/30">
-                  <h4 className="text-orange-300 text-xs font-medium mb-2">What you need to do:</h4>
-                  <ul className="space-y-1">
-                    {lockedModuleInfo.previousModuleLessonsCompleted < lockedModuleInfo.previousModuleTotalLessons && (
-                      <li className="flex items-center gap-2 text-xs text-gray-300">
-                        <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-                        Complete {lockedModuleInfo.previousModuleTotalLessons - lockedModuleInfo.previousModuleLessonsCompleted} more lesson(s)
-                      </li>
-                    )}
-                    {lockedModuleInfo.previousModuleScore < lockedModuleInfo.requiredScore && (
-                      <li className="flex items-center gap-2 text-xs text-gray-300">
-                        <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-                        Improve score by {(lockedModuleInfo.requiredScore - lockedModuleInfo.previousModuleScore).toFixed(1)}%
-                      </li>
-                    )}
-                    {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                     lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
-                      <li className="flex items-center gap-2 text-xs text-green-300">
-                        <CheckCircle className="h-3 w-3" />
-                        All requirements met! Module should unlock soon.
-                      </li>
-                    )}
-                  </ul>
-                </div>
-              </div>
+                  {/* Detailed Action Items - Enhanced */}
+                  <div className="mt-6 pt-4 border-t border-orange-700/30">
+                    <h4 className="text-orange-300 text-sm sm:text-base font-bold mb-4 flex items-center gap-2">
+                      <span className="text-lg">⚡</span> Action Items
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {lockedModuleInfo.previousModuleLessonsCompleted < lockedModuleInfo.previousModuleTotalLessons && (
+                        <div className="flex items-start gap-3 bg-red-900/20 p-3 rounded-lg border border-red-700/30">
+                          <div className="w-2 h-2 rounded-full bg-red-400 mt-2 shrink-0" />
+                          <div>
+                            <p className="text-sm sm:text-base text-red-300 font-medium">
+                              Complete {lockedModuleInfo.previousModuleTotalLessons - lockedModuleInfo.previousModuleLessonsCompleted} more lesson(s)
+                            </p>
+                            <p className="text-xs text-red-400/70">
+                              All lessons must be completed to proceed
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {lockedModuleInfo.previousModuleScore < lockedModuleInfo.requiredScore && (
+                        <div className="flex items-start gap-3 bg-orange-900/20 p-3 rounded-lg border border-orange-700/30">
+                          <div className="w-2 h-2 rounded-full bg-orange-400 mt-2 shrink-0" />
+                          <div>
+                            <p className="text-sm sm:text-base text-orange-300 font-medium">
+                              Improve score by {(lockedModuleInfo.requiredScore - lockedModuleInfo.previousModuleScore).toFixed(1)}%
+                            </p>
+                            <p className="text-xs text-orange-400/70">
+                              Retake quizzes or improve assignments
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
+                       lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
+                        <div className="flex items-start gap-3 bg-green-900/20 p-3 rounded-lg border border-green-700/30 sm:col-span-2">
+                          <CheckCircle className="h-5 w-5 text-green-400 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-sm sm:text-base text-green-300 font-bold">
+                              🎉 All requirements met!
+                            </p>
+                            <p className="text-xs text-green-400/70">
+                              Module should unlock automatically. Try refreshing or click unlock below.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </motion.div>
 
-              {/* Tips */}
-              <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
-                <h4 className="text-blue-400 font-medium text-xs mb-2">💡 Tips to improve your score</h4>
-                <ul className="text-blue-300 text-xs space-y-1">
-                  <li>• Complete all quizzes with passing scores</li>
-                  <li>• Submit assignments on time</li>
-                  <li>• Read through all lesson content carefully</li>
-                </ul>
-              </div>
+                {/* Enhanced Tips Section */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="bg-gradient-to-r from-blue-900/30 to-cyan-900/30 rounded-lg p-4 sm:p-6 border border-blue-700/30 backdrop-blur-sm"
+                >
+                  <h4 className="text-blue-400 font-bold text-sm sm:text-base mb-3 flex items-center gap-2">
+                    <span className="text-lg">💡</span> Pro Tips to Boost Your Score
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-blue-400 mt-2 shrink-0" />
+                      <div>
+                        <p className="text-sm sm:text-base text-blue-300 font-medium">Master the Quizzes</p>
+                        <p className="text-xs text-blue-400/70">Aim for 80%+ on all quiz attempts</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-blue-400 mt-2 shrink-0" />
+                      <div>
+                        <p className="text-sm sm:text-base text-blue-300 font-medium">Excel in Assignments</p>
+                        <p className="text-xs text-blue-400/70">Submit high-quality work on time</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-blue-400 mt-2 shrink-0" />
+                      <div>
+                        <p className="text-sm sm:text-base text-blue-300 font-medium">Deep Learning</p>
+                        <p className="text-xs text-blue-400/70">Read all content thoroughly for better understanding</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-2 h-2 rounded-full bg-blue-400 mt-2 shrink-0" />
+                      <div>
+                        <p className="text-sm sm:text-base text-blue-300 font-medium">Stay Engaged</p>
+                        <p className="text-xs text-blue-400/70">Participate actively in all lesson activities</p>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
 
-              {/* Action Buttons */}
-              <div className="space-y-2">
-                {/* Unlock Button - Show only when all requirements are met */}
-                {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                 lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
-                  <Button
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-medium"
-                    onClick={async () => {
-                      try {
-                        // Call API to unlock the next module
-                        console.log(`🔓 Manually unlocking module from modal: previous module ${lockedModuleInfo.previousModuleId}`);
-                        const result = await AssessmentApiService.submitModuleCompletion(lockedModuleInfo.previousModuleId);
-                        console.log('🔓 Unlock result:', result);
-                        
-                        // Refresh progress data
-                        await progressiveLearning.refreshProgress();
-                        
-                        // Close modal
-                        setShowLockedModuleModal(false);
-                        
-                        // Show success toast or navigate to the unlocked module
-                        if (result.passed && result.can_proceed) {
-                          // Navigate to the newly unlocked module's first lesson
-                          const unlockedModule = courseModules.find((m: any) => m.id === lockedModuleInfo.moduleId);
-                          const unlockedModuleLessons = unlockedModule?.lessons || [];
-                          if (unlockedModuleLessons.length > 0) {
-                            handleLessonSelect(unlockedModuleLessons[0].id, lockedModuleInfo.moduleId);
-                            handleModuleUnlock(lockedModuleInfo.moduleTitle);
+                {/* Enhanced Action Buttons */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="space-y-3"
+                >
+                  {/* Unlock Button - Show only when all requirements are met */}
+                  {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
+                   lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
+                    <Button
+                      className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 sm:py-4 text-sm sm:text-base transition-all duration-200 shadow-lg hover:shadow-xl"
+                      onClick={async () => {
+                        try {
+                          // Call API to unlock the next module
+                          console.log(`🔓 Manually unlocking module from modal: previous module ${lockedModuleInfo.previousModuleId}`);
+                          const result = await AssessmentApiService.submitModuleCompletion(lockedModuleInfo.previousModuleId);
+                          console.log('🔓 Unlock result:', result);
+                          
+                          // Refresh progress data
+                          await progressiveLearning.refreshProgress();
+                          
+                          // Close modal
+                          setShowLockedModuleModal(false);
+                          
+                          // Show success toast or navigate to the unlocked module
+                          if (result.passed && result.can_proceed) {
+                            // Navigate to the newly unlocked module's first lesson
+                            const unlockedModule = courseModules.find((m: any) => m.id === lockedModuleInfo.moduleId);
+                            const unlockedModuleLessons = unlockedModule?.lessons || [];
+                            if (unlockedModuleLessons.length > 0) {
+                              handleLessonSelect(unlockedModuleLessons[0].id, lockedModuleInfo.moduleId);
+                              handleModuleUnlock(lockedModuleInfo.moduleTitle);
+                            }
                           }
+                        } catch (error: any) {
+                          console.error('Failed to unlock module:', error);
+                          // Still try to refresh and check if it was already unlocked
+                          await progressiveLearning.refreshProgress();
                         }
-                      } catch (error: any) {
-                        console.error('Failed to unlock module:', error);
-                        // Still try to refresh and check if it was already unlocked
-                        await progressiveLearning.refreshProgress();
+                      }}
+                    >
+                      <div className="flex items-center justify-center gap-2 sm:gap-3">
+                        <Unlock className="h-4 w-4 sm:h-5 sm:w-5" />
+                        <span>🚀 Unlock Module {lockedModuleInfo.moduleIndex + 1}</span>
+                      </div>
+                    </Button>
+                  )}
+
+                  {/* Go to Previous Module Button - Enhanced */}
+                  <Button
+                    className={`w-full font-medium py-3 sm:py-4 text-sm sm:text-base transition-all duration-200 ${
+                      lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
+                      lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore
+                        ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 border border-gray-600'
+                        : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl'
+                    }`}
+                    onClick={() => {
+                      setShowLockedModuleModal(false);
+                      // Navigate to the previous module's first incomplete lesson
+                      if (lockedModuleInfo.previousModuleId) {
+                        const previousModule = courseModules.find((m: any) => m.id === lockedModuleInfo.previousModuleId);
+                        const previousModuleLessons = previousModule?.lessons || [];
+                        if (previousModuleLessons.length > 0) {
+                          // Find first incomplete lesson or first lesson
+                          const firstIncompleteLesson = previousModuleLessons.find(
+                            (l: any) => !lessonCompletionStatus[l.id]
+                          ) || previousModuleLessons[0];
+                          handleLessonSelect(firstIncompleteLesson.id, lockedModuleInfo.previousModuleId);
+                        }
                       }
                     }}
                   >
-                    <Unlock className="h-4 w-4 mr-2" />
-                    Unlock Module {lockedModuleInfo.moduleIndex + 1}: {lockedModuleInfo.moduleTitle}
+                    <div className="flex items-center justify-center gap-2 sm:gap-3">
+                      <ArrowRight className="h-4 w-4 sm:h-5 sm:w-5" />
+                      <span>📚 Go to Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}</span>
+                    </div>
                   </Button>
-                )}
-
-                {/* Go to Previous Module Button */}
-                <Button
-                  className={`w-full ${
-                    lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                    lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore
-                      ? 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                      : 'bg-blue-600 hover:bg-blue-700 text-white'
-                  }`}
-                  onClick={() => {
-                    setShowLockedModuleModal(false);
-                    // Navigate to the previous module's first incomplete lesson
-                    if (lockedModuleInfo.previousModuleId) {
-                      const previousModule = courseModules.find((m: any) => m.id === lockedModuleInfo.previousModuleId);
-                      const previousModuleLessons = previousModule?.lessons || [];
-                      if (previousModuleLessons.length > 0) {
-                        // Find first incomplete lesson or first lesson
-                        const firstIncompleteLesson = previousModuleLessons.find(
-                          (l: any) => !lessonCompletionStatus[l.id]
-                        ) || previousModuleLessons[0];
-                        handleLessonSelect(firstIncompleteLesson.id, lockedModuleInfo.previousModuleId);
-                      }
-                    }
-                  }}
-                >
-                  <ArrowRight className="h-4 w-4 mr-2" />
-                  Go to Module {lockedModuleInfo.moduleIndex}: {lockedModuleInfo.previousModuleTitle}
-                </Button>
+                </motion.div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+
+          {/* Custom scrollbar styles */}
+          <style jsx>{`
+            .custom-scrollbar::-webkit-scrollbar {
+              width: 6px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-track {
+              background: rgba(75, 85, 99, 0.3);
+              border-radius: 3px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-thumb {
+              background: rgba(156, 163, 175, 0.5);
+              border-radius: 3px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+              background: rgba(156, 163, 175, 0.7);
+            }
+          `}</style>
         </DialogContent>
       </Dialog>
 
