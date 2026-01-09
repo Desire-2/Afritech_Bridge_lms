@@ -388,6 +388,54 @@ def submit_quiz_attempt(attempt_id):
         attempt.status = QuizAttemptStatus.MANUAL_GRADING_PENDING
 
     db.session.commit()
+    
+    # Update lesson scores after quiz completion
+    try:
+        from ..services.lesson_completion_service import LessonCompletionService
+        
+        # Update lesson score with the new quiz score
+        if attempt.quiz.lesson_id:  # Only update if quiz is associated with a lesson
+            score_updated = LessonCompletionService.update_lesson_score_after_quiz_grading(
+                user_id, attempt.quiz.lesson_id
+            )
+            
+            if score_updated:
+                current_app.logger.info(
+                    f"✅ Lesson score updated after quiz completion - Student: {user_id}, "
+                    f"Lesson: {attempt.quiz.lesson_id}, Quiz Score: {attempt.score:.1f}%"
+                )
+                
+                # Get the updated score breakdown for logging
+                breakdown = LessonCompletionService.get_lesson_score_breakdown(user_id, attempt.quiz.lesson_id)
+                current_app.logger.info(
+                    f"📊 New lesson score breakdown: {breakdown['lesson_score']:.1f}% "
+                    f"(Reading: {breakdown['reading_component']:.1f}%, "
+                    f"Engagement: {breakdown['engagement_component']:.1f}%, "
+                    f"Quiz: {breakdown['quiz_component']:.1f}%)"
+                )
+                
+                # Check if lesson can now be completed with the new scores
+                can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
+                    user_id, attempt.quiz.lesson_id
+                )
+                
+                if can_complete:
+                    # Auto-complete the lesson since all requirements are now met
+                    success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
+                        user_id, attempt.quiz.lesson_id
+                    )
+                    if success:
+                        current_app.logger.info(f"🎯 Lesson {attempt.quiz.lesson_id} auto-completed for student {user_id} after quiz completion: {message}")
+                
+                # Log the current completion status
+                current_app.logger.info(f"📋 Lesson completion status - Can complete: {can_complete}, Reason: {reason}")
+            else:
+                current_app.logger.warning(f"⚠️ Failed to update lesson score after quiz completion")
+                
+    except Exception as e:
+        current_app.logger.warning(f"❌ Error updating lesson completion after quiz: {str(e)}")
+        # Don't fail the whole request, just log the error
+    
     # Trigger progress update if needed
     update_course_progress(user_id, attempt.quiz.course_id)
 

@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ..services.inactivity_service import InactivityService
-from ..models.user_models import db, User
+from ..models.user_models import db, User, Role
 
 logger = logging.getLogger(__name__)
 
@@ -131,12 +131,15 @@ class BackgroundTaskScheduler:
                 deletion_count = 0
                 for user_data in deletion_candidates[:10]:  # Limit to 10 per week for safety
                     try:
-                        # Use system admin account (ID 1) for automated deletions
-                        admin_user = User.query.filter_by(role_id=db.session.query(
-                            db.session.query(User).join(User.role).filter(
-                                User.role.has(name='admin')
-                            ).first().id
-                        )).first()
+                        # Use system admin account for automated deletions
+                        admin_role = Role.query.filter_by(name='admin').first()
+                        if admin_role:
+                            admin_user = User.query.filter_by(
+                                role_id=admin_role.id,
+                                is_active=True
+                            ).first()
+                        else:
+                            admin_user = None
                         
                         if admin_user:
                             result = InactivityService.auto_delete_inactive_user(

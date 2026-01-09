@@ -674,39 +674,55 @@ def _send_warnings_task(instructor_id: int, threshold_days: int):
     import time
     import logging
     from ..services.inactivity_service import InactivityService
+    from ..models.user_models import User  # Import User model in function scope
     
     # Create logger for this task
     logger = logging.getLogger(__name__)
+    logger.info(f"Starting _send_warnings_task for instructor {instructor_id}, threshold {threshold_days}")
     
-    # Get at-risk students for this instructor
-    at_risk_students = InactivityService.get_inactive_students(
-        instructor_id=instructor_id,
-        threshold_days=threshold_days
-    )
-    
-    warnings_sent = 0
-    total_students = len(at_risk_students)
-    
-    for i, student_data in enumerate(at_risk_students):
-        try:
-            student = User.query.get(student_data['student_id'])
-            InactivityService._send_inactivity_warning(student, student_data)
-            warnings_sent += 1
-            
-            # Add 30-second delay between emails to avoid server overload
-            # Skip delay for the last email
-            if i < total_students - 1:
-                logger.info(f"Sent warning {warnings_sent}/{total_students}. Waiting 30 seconds before next email...")
-                time.sleep(30)
+    try:
+        # Get at-risk students for this instructor
+        at_risk_students = InactivityService.get_inactive_students(
+            instructor_id=instructor_id,
+            threshold_days=threshold_days
+        )
+        
+        warnings_sent = 0
+        total_students = len(at_risk_students)
+        
+        logger.info(f"Found {total_students} at-risk students for instructor {instructor_id}")
+        
+        for i, student_data in enumerate(at_risk_students):
+            try:
+                student = User.query.get(student_data['student_id'])
+                if student:
+                    InactivityService._send_inactivity_warning(student, student_data)
+                    warnings_sent += 1
+                    logger.info(f"Sent warning {warnings_sent}/{total_students} to {student.email}")
+                else:
+                    logger.warning(f"Student with ID {student_data['student_id']} not found")
                 
-        except Exception as e:
-            logger.error(f"Failed to send warning to student {student_data['student_id']}: {str(e)}")
-    
-    return {
-        "warnings_sent": warnings_sent,
-        "total_at_risk": len(at_risk_students),
-        "threshold_days": threshold_days
-    }
+                # Add 30-second delay between emails to avoid server overload
+                # Skip delay for the last email
+                if i < total_students - 1:
+                    logger.info(f"Sent warning {warnings_sent}/{total_students}. Waiting 30 seconds before next email...")
+                    time.sleep(30)
+                    
+            except Exception as e:
+                logger.error(f"Failed to send warning to student {student_data['student_id']}: {str(e)}")
+        
+        result = {
+            "warnings_sent": warnings_sent,
+            "total_at_risk": len(at_risk_students),
+            "threshold_days": threshold_days
+        }
+        
+        logger.info(f"Completed _send_warnings_task. Result: {result}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in _send_warnings_task: {str(e)}")
+        raise
 
 
 @instructor_bp.route("/students/<int:student_id>/terminate", methods=["POST"])
@@ -813,12 +829,16 @@ def send_inactivity_warnings():
         data = request.get_json() or {}
         threshold_days = data.get('threshold_days', 5)  # Warn students inactive for 5+ days
         
+        logger.info(f"Starting warning email task for instructor {current_user_id}, threshold: {threshold_days} days")
+        
         # Start background task
         task_id = background_service.create_task(
             _send_warnings_task,
             current_user_id,
             threshold_days
         )
+        
+        logger.info(f"Created warning email task with ID: {task_id}")
         
         return jsonify({
             "success": True,
@@ -840,12 +860,15 @@ def send_inactivity_warnings():
 @instructor_required
 def get_send_warnings_status(task_id):
     """Check status of send warnings background task"""
+    logger.info(f"Checking status for warning task {task_id}")
     try:
         task_status = background_service.get_task_status(task_id)
         if not task_status:
+            logger.warning(f"Warning task {task_id} not found")
             return jsonify({
                 "success": False,
-                "message": "Task not found"
+                "message": "Task not found",
+                "task_id": task_id
             }), 404
         
         if task_status['status'] == 'completed':
@@ -873,5 +896,96 @@ def get_send_warnings_status(task_id):
         return jsonify({
             "success": False,
             "message": "Failed to check task status",
+            "error": str(e)
+        }), 500
+@instructor_bp.route("/debug/tasks", methods=["GET"])
+@instructor_required
+def debug_tasks():
+    """Debug endpoint to list all active background tasks"""
+    try:
+        # Get all tasks from background service for debugging
+        with background_service._lock:
+            all_tasks = {}
+            for task_id, task_info in background_service._tasks.items():
+                all_tasks[task_id] = {
+                    "id": task_id,
+                    "status": task_info["status"],
+                    "created_at": task_info["created_at"].isoformat() if task_info["created_at"] else None,
+                    "started_at": task_info["started_at"].isoformat() if task_info["started_at"] else None,
+                    "completed_at": task_info["completed_at"].isoformat() if task_info["completed_at"] else None,
+                    "progress": task_info.get("progress", 0)
+                }
+        
+        return jsonify({
+            "success": True,
+            "total_tasks": len(all_tasks),
+            "tasks": all_tasks
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting debug tasks: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to get debug tasks",
+            "error": str(e)
+        }), 500@instructor_bp.route("/debug/test-task", methods=["POST"])
+@instructor_required
+def test_background_task():
+    """Test endpoint to verify background task system is working"""
+    def simple_test_task(test_value):
+        import time
+        time.sleep(2)  # Simple 2-second delay
+        return {"test_result": f"Task completed with value: {test_value}"}
+    
+    try:
+        task_id = background_service.create_task(simple_test_task, "test123")
+        
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "message": "Test task created",
+            "poll_url": f"/api/v1/instructor/debug/test-task/status/{task_id}"
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error creating test task: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to create test task",
+            "error": str(e)
+        }), 500
+
+
+@instructor_bp.route("/debug/test-task/status/<task_id>", methods=["GET"])
+@instructor_required
+def get_test_task_status(task_id):
+    """Check status of test background task"""
+    try:
+        task_status = background_service.get_task_status(task_id)
+        
+        if not task_status:
+            return jsonify({
+                "success": False,
+                "message": "Test task not found",
+                "task_id": task_id
+            }), 404
+        
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": task_status['status'],
+            "progress": task_status.get('progress', 0),
+            "result": task_status.get('result'),
+            "error": task_status.get('error'),
+            "created_at": task_status["created_at"].isoformat() if task_status["created_at"] else None,
+            "started_at": task_status["started_at"].isoformat() if task_status["started_at"] else None,
+            "completed_at": task_status["completed_at"].isoformat() if task_status["completed_at"] else None
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error checking test task status: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to check test task status",
             "error": str(e)
         }), 500

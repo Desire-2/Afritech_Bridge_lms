@@ -49,6 +49,7 @@ from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
 from src.routes.admin_routes import admin_bp # Import admin blueprint
 from src.routes.file_upload_routes import file_upload_bp # Import file upload blueprint
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
+from src.services.background_service import background_service # Import background service for initialization
 from flask_cors import CORS
 
 # Configure logging

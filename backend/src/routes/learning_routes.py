@@ -764,6 +764,42 @@ def get_course_unlock_progress(course_id):
         current_app.logger.error(f"Course unlock progress error: {str(e)}")
         return jsonify({"error": "Failed to get unlock progress"}), 500
 
+@learning_bp.route("/lesson/<int:lesson_id>/score-breakdown", methods=["GET"])
+@jwt_required()
+def get_lesson_score_breakdown(lesson_id):
+    """Get detailed lesson score breakdown with component scores"""
+    try:
+        student_id = get_jwt_identity()
+        
+        from ..services.lesson_completion_service import LessonCompletionService
+        
+        # Get comprehensive score breakdown
+        breakdown = LessonCompletionService.get_lesson_score_breakdown(student_id, lesson_id)
+        
+        # Get lesson info for context
+        from ..models.course_models import Lesson
+        lesson = Lesson.query.get_or_404(lesson_id)
+        
+        return jsonify({
+            'success': True,
+            'lesson': {
+                'id': lesson.id,
+                'title': lesson.title,
+                'module_id': lesson.module_id
+            },
+            'score_breakdown': breakdown,
+            'message': f'Score breakdown retrieved for lesson: {lesson.title}'
+        }), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting lesson score breakdown: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to get lesson score breakdown',
+            'message': str(e)
+        }), 500
+
+
 @learning_bp.route("/module/<int:module_id>/check-completion", methods=["POST"])
 @student_required  
 def check_module_completion(module_id):

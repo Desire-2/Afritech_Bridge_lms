@@ -361,3 +361,187 @@ class LessonCompletionService:
                 'lesson_score': 0.0,
                 'completion_percentage': 0.0
             }
+    
+    @staticmethod
+    def update_lesson_score_after_quiz_grading(student_id: int, lesson_id: int) -> bool:
+        """
+        Update lesson score after quiz is graded.
+        
+        Args:
+            student_id: ID of the student
+            lesson_id: ID of the lesson
+            
+        Returns:
+            bool: True if score was updated, False otherwise
+        """
+        try:
+            # Get or create lesson completion record
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=student_id, lesson_id=lesson_id
+            ).first()
+            
+            if not lesson_completion:
+                current_app.logger.warning(f"No lesson completion found for student {student_id}, lesson {lesson_id}")
+                return False
+            
+            # Recalculate and store component scores
+            score_data = lesson_completion.calculate_and_store_component_scores()
+            
+            current_app.logger.info(
+                f"Updated lesson score after quiz grading - Student: {student_id}, "
+                f"Lesson: {lesson_id}, New Score: {score_data['lesson_score']:.1f}%, "
+                f"Quiz Component: {score_data['quiz_component']:.1f}%"
+            )
+            
+            return True
+            
+        except Exception as e:
+            current_app.logger.error(f"Error updating lesson score after quiz grading: {str(e)}")
+            return False
+    
+    @staticmethod
+    def update_lesson_score_after_assignment_grading(student_id: int, lesson_id: int) -> bool:
+        """
+        Update lesson score after assignment is graded.
+        
+        Args:
+            student_id: ID of the student
+            lesson_id: ID of the lesson
+            
+        Returns:
+            bool: True if score was updated, False otherwise
+        """
+        try:
+            # Get or create lesson completion record
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=student_id, lesson_id=lesson_id
+            ).first()
+            
+            if not lesson_completion:
+                current_app.logger.warning(f"No lesson completion found for student {student_id}, lesson {lesson_id}")
+                return False
+            
+            # Recalculate and store component scores
+            score_data = lesson_completion.calculate_and_store_component_scores()
+            
+            current_app.logger.info(
+                f"Updated lesson score after assignment grading - Student: {student_id}, "
+                f"Lesson: {lesson_id}, New Score: {score_data['lesson_score']:.1f}%, "
+                f"Assignment Component: {score_data['assignment_component']:.1f}%"
+            )
+            
+            return True
+            
+        except Exception as e:
+            current_app.logger.error(f"Error updating lesson score after assignment grading: {str(e)}")
+            return False
+            
+    @staticmethod
+    def update_lesson_score_after_reading_engagement(student_id: int, lesson_id: int) -> bool:
+        """
+        Update lesson score after reading/engagement progress changes.
+        
+        Args:
+            student_id: ID of the student
+            lesson_id: ID of the lesson
+            
+        Returns:
+            bool: True if score was updated, False otherwise
+        """
+        try:
+            # Get lesson completion record
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=student_id, lesson_id=lesson_id
+            ).first()
+            
+            if not lesson_completion:
+                # No lesson completion record to update
+                return False
+            
+            # Recalculate and store component scores
+            score_data = lesson_completion.calculate_and_store_component_scores()
+            
+            current_app.logger.info(
+                f"Updated lesson score after reading/engagement - Student: {student_id}, "
+                f"Lesson: {lesson_id}, New Score: {score_data['lesson_score']:.1f}%, "
+                f"Reading: {score_data['reading_component']:.1f}%, "
+                f"Engagement: {score_data['engagement_component']:.1f}%"
+            )
+            
+            return True
+            
+        except Exception as e:
+            current_app.logger.error(f"Error updating lesson score after reading/engagement: {str(e)}")
+            return False
+    
+    @staticmethod
+    def get_lesson_score_breakdown(student_id: int, lesson_id: int) -> Dict:
+        """
+        Get detailed lesson score breakdown with stored component scores.
+        
+        Args:
+            student_id: ID of the student
+            lesson_id: ID of the lesson
+            
+        Returns:
+            dict: Lesson score breakdown with component scores
+        """
+        try:
+            lesson_completion = LessonCompletion.query.filter_by(
+                student_id=student_id, lesson_id=lesson_id
+            ).first()
+            
+            if not lesson_completion:
+                return {
+                    'lesson_score': 0.0,
+                    'reading_component': 0.0,
+                    'engagement_component': 0.0,
+                    'quiz_component': 0.0,
+                    'assignment_component': 0.0,
+                    'has_quiz': False,
+                    'has_assignment': False,
+                    'score_last_updated': None,
+                    'completion_status': 'not_started'
+                }
+            
+            # Check if we have stored component scores
+            if lesson_completion.score_last_updated:
+                # Use stored scores
+                breakdown = {
+                    'lesson_score': lesson_completion.lesson_score or 0.0,
+                    'reading_component': lesson_completion.reading_component_score or 0.0,
+                    'engagement_component': lesson_completion.engagement_component_score or 0.0,
+                    'quiz_component': lesson_completion.quiz_component_score or 0.0,
+                    'assignment_component': lesson_completion.assignment_component_score or 0.0,
+                    'score_last_updated': lesson_completion.score_last_updated.isoformat() if lesson_completion.score_last_updated else None
+                }
+            else:
+                # Calculate fresh scores
+                breakdown = lesson_completion.calculate_and_store_component_scores()
+            
+            # Add assessment availability info
+            from ..models.course_models import Quiz, Assignment
+            has_quiz = Quiz.query.filter_by(lesson_id=lesson_id, is_published=True).first() is not None
+            has_assignment = Assignment.query.filter_by(lesson_id=lesson_id).first() is not None
+            
+            breakdown.update({
+                'has_quiz': has_quiz,
+                'has_assignment': has_assignment,
+                'completion_status': 'completed' if lesson_completion.completed else 'in_progress'
+            })
+            
+            return breakdown
+            
+        except Exception as e:
+            current_app.logger.error(f"Error getting lesson score breakdown: {str(e)}")
+            return {
+                'lesson_score': 0.0,
+                'reading_component': 0.0,
+                'engagement_component': 0.0,
+                'quiz_component': 0.0,
+                'assignment_component': 0.0,
+                'has_quiz': False,
+                'has_assignment': False,
+                'score_last_updated': None,
+                'completion_status': 'error'
+            }

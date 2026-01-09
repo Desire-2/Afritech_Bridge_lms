@@ -291,10 +291,17 @@ def update_lesson_progress(lesson_id):
         db.session.add(lesson_completion)
     
     # Update progress fields
+    reading_or_engagement_updated = False
     if 'reading_progress' in data:
+        old_reading = lesson_completion.reading_progress or 0.0
         lesson_completion.reading_progress = data['reading_progress']
+        if old_reading != data['reading_progress']:
+            reading_or_engagement_updated = True
     if 'engagement_score' in data:
+        old_engagement = lesson_completion.engagement_score or 0.0
         lesson_completion.engagement_score = data['engagement_score']
+        if old_engagement != data['engagement_score']:
+            reading_or_engagement_updated = True
     if 'scroll_progress' in data:
         lesson_completion.scroll_progress = data['scroll_progress']
     if 'video_progress' in data:
@@ -369,14 +376,45 @@ def update_lesson_progress(lesson_id):
         if next_lesson_info:
             next_lesson_unlocked = True
     
+    # Update lesson component scores if reading/engagement changed
+    if reading_or_engagement_updated:
+        try:
+            from ..services.lesson_completion_service import LessonCompletionService
+            
+            # Update stored lesson scores when reading/engagement changes
+            lesson_completion.updated_at = datetime.utcnow()
+            db.session.commit()  # Commit first to save the progress updates
+            
+            # Now update the component scores
+            score_updated = LessonCompletionService.update_lesson_score_after_reading_engagement(
+                current_user_id, lesson_id
+            )
+            
+            if score_updated:
+                current_app.logger.info(
+                    f"✅ Lesson scores updated after reading/engagement change - Student: {current_user_id}, "
+                    f"Lesson: {lesson_id}"
+                )
+                
+        except Exception as e:
+            current_app.logger.warning(f"❌ Error updating lesson scores after reading/engagement: {str(e)}")
+    
     try:
         db.session.commit()
         
         # Refresh lesson completion to ensure we return fresh data
         db.session.refresh(lesson_completion)
         
-        # Recalculate score after refresh to ensure accuracy
-        lesson_score = lesson_completion.calculate_lesson_score()
+        # Get enhanced score breakdown with component scores
+        try:
+            from ..services.lesson_completion_service import LessonCompletionService
+            score_breakdown = LessonCompletionService.get_lesson_score_breakdown(current_user_id, lesson_id)
+            lesson_score = score_breakdown['lesson_score']
+        except Exception as e:
+            # Fallback to old calculation if service fails
+            current_app.logger.warning(f"Error getting score breakdown: {str(e)}")
+            lesson_score = lesson_completion.calculate_lesson_score()
+            score_breakdown = None
         
         response_data = {
             "message": "Lesson progress updated successfully",
@@ -392,6 +430,18 @@ def update_lesson_progress(lesson_id):
             "auto_completed": auto_completed,
             "completion_threshold": COMPLETION_THRESHOLD
         }
+        
+        # Add component score breakdown if available
+        if score_breakdown:
+            response_data["score_breakdown"] = {
+                "reading_component": score_breakdown['reading_component'],
+                "engagement_component": score_breakdown['engagement_component'],
+                "quiz_component": score_breakdown['quiz_component'],
+                "assignment_component": score_breakdown['assignment_component'],
+                "has_quiz": score_breakdown['has_quiz'],
+                "has_assignment": score_breakdown['has_assignment'],
+                "score_last_updated": score_breakdown.get('score_last_updated')
+            }
         
         if auto_completed:
             response_data["completion_message"] = f"🎉 Lesson auto-completed! Score: {lesson_score:.1f}%"

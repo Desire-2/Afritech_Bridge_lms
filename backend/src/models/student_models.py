@@ -21,6 +21,14 @@ class LessonCompletion(db.Model):
     scroll_progress = db.Column(db.Float, default=0.0)  # 0-100 scroll percentage
     video_progress = db.Column(db.Float, default=0.0)  # 0-100 video watch percentage
     
+    # Stored component scores for lessons with assessments
+    reading_component_score = db.Column(db.Float, default=0.0)  # Calculated reading score (0-100)
+    engagement_component_score = db.Column(db.Float, default=0.0)  # Calculated engagement score (0-100)
+    quiz_component_score = db.Column(db.Float, default=0.0)  # Quiz score contribution (0-100)
+    assignment_component_score = db.Column(db.Float, default=0.0)  # Assignment score contribution (0-100)
+    lesson_score = db.Column(db.Float, default=0.0)  # Comprehensive lesson score (0-100)
+    score_last_updated = db.Column(db.DateTime)  # When lesson score was last calculated
+    
     # Enhanced video tracking fields
     video_current_time = db.Column(db.Float, default=0.0)  # Current timestamp in seconds
     video_duration = db.Column(db.Float, default=0.0)  # Total video duration in seconds
@@ -330,6 +338,145 @@ class LessonCompletion(db.Model):
             'has_assignment': score_breakdown['has_assignment'],
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'last_accessed': self.last_accessed.isoformat() if self.last_accessed else None
+        }
+
+    def calculate_and_store_component_scores(self):
+        """
+        Calculate individual component scores and store them in the database.
+        This should be called whenever quiz or assignment grades are updated.
+        
+        Returns:
+            dict: Component scores and overall lesson score
+        """
+        from ..models.quiz_progress_models import QuizAttempt
+        from ..models.course_models import Quiz, Assignment, AssignmentSubmission
+        
+        # Get current progress metrics
+        reading = self.reading_progress or 0.0
+        engagement = self.engagement_score or 0.0
+        
+        # Check what assessments exist for this lesson
+        lesson_quiz = Quiz.query.filter_by(lesson_id=self.lesson_id, is_published=True).first()
+        lesson_assignment = Assignment.query.filter_by(lesson_id=self.lesson_id).first()
+        
+        has_quiz = lesson_quiz is not None
+        has_assignment = lesson_assignment is not None
+        
+        # Calculate reading component score (based on reading progress and engagement)
+        reading_component = reading
+        if reading < 90.0:
+            # Penalty for insufficient reading
+            reading_component *= 0.7
+        
+        # Calculate engagement component score  
+        engagement_component = engagement
+        if engagement < 60.0:
+            # Penalty for low engagement
+            engagement_component *= 0.8
+            
+        # Calculate quiz component score
+        quiz_component = 0.0
+        if has_quiz:
+            best_attempt = QuizAttempt.query.filter_by(
+                user_id=self.student_id,
+                quiz_id=lesson_quiz.id
+            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            
+            if best_attempt:
+                quiz_score = best_attempt.score_percentage or 0.0
+                quiz_passing_score = lesson_quiz.passing_score or 70.0
+                
+                # Quiz component only counts if passed
+                if quiz_score >= quiz_passing_score:
+                    quiz_component = quiz_score
+                else:
+                    quiz_component = 0.0  # Failed quiz contributes 0
+                    
+        # Calculate assignment component score
+        assignment_component = 0.0
+        if has_assignment:
+            best_submission = AssignmentSubmission.query.filter_by(
+                student_id=self.student_id,
+                assignment_id=lesson_assignment.id
+            ).first()
+            
+            if best_submission and best_submission.grade is not None:
+                points_possible = lesson_assignment.points_possible or 100
+                assignment_percentage = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
+                assignment_passing_score = 70.0
+                
+                # Assignment component only counts if passed
+                if assignment_percentage >= assignment_passing_score:
+                    assignment_component = assignment_percentage
+                else:
+                    assignment_component = 0.0  # Failed assignment contributes 0
+        
+        # Calculate overall lesson score with dynamic weights
+        if has_quiz and has_assignment:
+            # Full assessment: 25% each component
+            if quiz_component == 0 or assignment_component == 0:
+                # If any assessment failed, cap score at 60%
+                lesson_score = min(60.0, (reading_component * 0.5) + (engagement_component * 0.5))
+            else:
+                lesson_score = (
+                    (reading_component * 0.25) +
+                    (engagement_component * 0.25) +
+                    (quiz_component * 0.25) +
+                    (assignment_component * 0.25)
+                )
+        elif has_quiz:
+            # Quiz only: Reading 35%, Engagement 35%, Quiz 30%
+            if quiz_component == 0:
+                lesson_score = min(65.0, (reading_component * 0.5) + (engagement_component * 0.5))
+            else:
+                lesson_score = (
+                    (reading_component * 0.35) +
+                    (engagement_component * 0.35) +
+                    (quiz_component * 0.30)
+                )
+        elif has_assignment:
+            # Assignment only: Reading 35%, Engagement 35%, Assignment 30%
+            if assignment_component == 0:
+                lesson_score = min(65.0, (reading_component * 0.5) + (engagement_component * 0.5))
+            else:
+                lesson_score = (
+                    (reading_component * 0.35) +
+                    (engagement_component * 0.35) +
+                    (assignment_component * 0.30)
+                )
+        else:
+            # No assessments: Reading 50%, Engagement 50%
+            lesson_score = (reading_component * 0.50) + (engagement_component * 0.50)
+        
+        # Clamp lesson score between 0-100
+        lesson_score = max(0.0, min(100.0, lesson_score))
+        
+        # Store component scores in database
+        self.reading_component_score = reading_component
+        self.engagement_component_score = engagement_component
+        self.quiz_component_score = quiz_component
+        self.assignment_component_score = assignment_component
+        self.lesson_score = lesson_score
+        self.score_last_updated = datetime.utcnow()
+        
+        # Update the completion status
+        self.updated_at = datetime.utcnow()
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            raise e
+            
+        return {
+            'reading_component': reading_component,
+            'engagement_component': engagement_component,
+            'quiz_component': quiz_component,
+            'assignment_component': assignment_component,
+            'lesson_score': lesson_score,
+            'has_quiz': has_quiz,
+            'has_assignment': has_assignment,
+            'updated_at': self.score_last_updated
         }
 
 class UserProgress(db.Model):

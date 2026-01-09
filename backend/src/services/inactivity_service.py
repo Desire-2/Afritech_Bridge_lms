@@ -544,7 +544,7 @@ class InactivityService:
         """
         
         brevo_service.send_email(
-            to_emails=[user.email],
+            to_emails=[student.email],
             subject=subject,
             html_content=html_body
         )
@@ -654,7 +654,7 @@ class InactivityService:
         """
         
         brevo_service.send_email(
-            to_emails=[user.email],
+            to_emails=[student.email],
             subject=subject,
             html_content=html_body
         )

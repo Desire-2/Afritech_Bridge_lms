@@ -407,94 +407,47 @@ def grade_assignment_submission(submission_id):
                 # Use the enhanced lesson completion service to handle updates
                 from ..services.lesson_completion_service import LessonCompletionService
                 
-                lesson_completion = LessonCompletion.query.filter_by(
-                    student_id=student_id,
-                    lesson_id=lesson_id
-                ).first()
-                
-                if not lesson_completion:
-                    # Create a new LessonCompletion record with reasonable defaults
-                    # Since student submitted an assignment, they must have engaged with the lesson
-                    # Use assignment score as a proxy for engagement quality
-                    default_reading = min(100.0, max(70.0, 70.0 + (assignment_percentage * 0.3)))
-                    default_engagement = min(100.0, max(60.0, 60.0 + (assignment_percentage * 0.4)))
-                    
-                    lesson_completion = LessonCompletion(
-                        student_id=student_id,
-                        lesson_id=lesson_id,
-                        completed=False,  # Don't auto-complete, let service check requirements
-                        reading_progress=default_reading,
-                        engagement_score=default_engagement,
-                        scroll_progress=default_reading,
-                        time_spent=300,  # Assume at least 5 minutes to complete assignment
-                        completed_at=None,  # Will be set by service if requirements met
-                        updated_at=datetime.utcnow(),
-                        last_accessed=datetime.utcnow()
-                    )
-                    db.session.add(lesson_completion)
-                    db.session.commit()
-                    logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {student_id} with reading={default_reading:.1f}%, engagement={default_engagement:.1f}%")
-                else:
-                    # LessonCompletion exists - boost scores if they're too low
-                    # If student completed assignment well, they must have read the content
-                    updated = False
-                    
-                    if lesson_completion.reading_progress < 50.0 and assignment_percentage >= 70:
-                        # Boost reading progress based on assignment quality
-                        new_reading = min(100.0, 70.0 + (assignment_percentage * 0.3))
-                        if new_reading > lesson_completion.reading_progress:
-                            lesson_completion.reading_progress = new_reading
-                            lesson_completion.scroll_progress = new_reading
-                            updated = True
-                            logger.info(f"Boosted reading_progress to {new_reading:.1f}% for lesson {lesson_id}, student {student_id}")
-                    
-                    if lesson_completion.engagement_score < 50.0 and assignment_percentage >= 70:
-                        # Boost engagement score based on assignment quality
-                        new_engagement = min(100.0, 60.0 + (assignment_percentage * 0.4))
-                        if new_engagement > lesson_completion.engagement_score:
-                            lesson_completion.engagement_score = new_engagement
-                            updated = True
-                            logger.info(f"Boosted engagement_score to {new_engagement:.1f}% for lesson {lesson_id}, student {student_id}")
-                    
-                    lesson_completion.updated_at = datetime.utcnow()
-                    db.session.commit()
-                    
-                    if updated:
-                        logger.info(f"Updated LessonCompletion scores for lesson {lesson_id}, student {student_id} (assignment graded at {assignment_percentage:.1f}%)")
-                    else:
-                        logger.info(f"LessonCompletion already has good scores for lesson {lesson_id}, student {student_id}")
-                
-                # Use the lesson completion service to update score and check completion
-                score_updated = LessonCompletionService.update_lesson_score_after_grading(
+                # Update lesson scores using the enhanced scoring system
+                score_updated = LessonCompletionService.update_lesson_score_after_assignment_grading(
                     student_id, lesson_id
                 )
                 
                 if score_updated:
-                    logger.info(f"Lesson completion score updated after assignment grading")
+                    logger.info(f"✅ Lesson score updated after assignment grading - Student: {student_id}, Lesson: {lesson_id}")
+                    
+                    # Get the updated score breakdown for logging
+                    breakdown = LessonCompletionService.get_lesson_score_breakdown(student_id, lesson_id)
+                    logger.info(f"📊 New lesson score breakdown: {breakdown['lesson_score']:.1f}% "
+                              f"(Reading: {breakdown['reading_component']:.1f}%, "
+                              f"Engagement: {breakdown['engagement_component']:.1f}%, "
+                              f"Assignment: {breakdown['assignment_component']:.1f}%)")
+                else:
+                    logger.warning(f"⚠️ Failed to update lesson score after assignment grading")
                 
-                # Check if lesson can now be completed
-                can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
-                    student_id, lesson_id
-                )
+                # Check if lesson can now be completed with the new scores
+                lesson_completion = LessonCompletion.query.filter_by(
+                    student_id=student_id, lesson_id=lesson_id
+                ).first()
                 
-                if can_complete and not lesson_completion.completed:
-                    # Auto-complete the lesson since all requirements are met
-                    success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
+                if lesson_completion:
+                    # Check completion requirements with updated scores
+                    can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
                         student_id, lesson_id
                     )
-                    if success:
-                        logger.info(f"Lesson {lesson_id} auto-completed for student {student_id} after assignment grading: {message}")
-                
-                # Recalculate and log the new lesson score
-                new_breakdown = lesson_completion.get_score_breakdown()
-                logger.info(f"Lesson {lesson_id} new score breakdown: total={new_breakdown['total_score']:.1f}%, can_complete={new_breakdown['completion_status']['can_complete']}")
+                    
+                    if can_complete and not lesson_completion.completed:
+                        # Auto-complete the lesson since all requirements are now met
+                        success, message, completion_data = LessonCompletionService.attempt_lesson_completion(
+                            student_id, lesson_id
+                        )
+                        if success:
+                            logger.info(f"🎯 Lesson {lesson_id} auto-completed for student {student_id} after assignment grading: {message}")
+                    
+                    # Log the current completion status
+                    logger.info(f"📋 Lesson completion status - Can complete: {can_complete}, Reason: {reason}")
                 
         except Exception as lc_error:
-            logger.warning(f"Error creating/updating LessonCompletion: {str(lc_error)}")
-            # Don't fail the whole request, just log the error
-                
-        except Exception as lc_error:
-            logger.warning(f"Error creating/updating LessonCompletion: {str(lc_error)}")
+            logger.warning(f"❌ Error updating lesson completion after assignment grading: {str(lc_error)}")
             # Don't fail the whole request, just log the error
         # ===== END LessonCompletion FIX =====
         

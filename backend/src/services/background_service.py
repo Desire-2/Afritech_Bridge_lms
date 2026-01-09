@@ -38,22 +38,31 @@ class BackgroundTaskService:
         
         with self._lock:
             self._tasks[task_id] = task_info
+            logger.info(f"Stored task {task_id} in memory. Total tasks: {len(self._tasks)}")
         
         # Start the task in a background thread
         thread = threading.Thread(
             target=self._execute_task,
-            args=(task_id, task_func, args, kwargs)
+            args=(task_id, task_func, args, kwargs),
+            name=f"task-{task_id[:8]}"
         )
         thread.daemon = True
         thread.start()
         
-        logger.info(f"Created background task {task_id}")
+        logger.info(f"Created and started background task {task_id}")
         return task_id
     
     def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
         """Get the current status of a task"""
+        logger.debug(f"Getting task status for {task_id}")
         with self._lock:
-            return self._tasks.get(task_id, None)
+            task = self._tasks.get(task_id, None)
+            if task:
+                logger.debug(f"Task {task_id} found with status: {task['status']}")
+            else:
+                logger.warning(f"Task {task_id} not found in {len(self._tasks)} stored tasks")
+                logger.debug(f"Available task IDs: {list(self._tasks.keys())}")
+            return task
     
     def _execute_task(self, task_id: str, task_func: Callable, args: tuple, kwargs: dict):
         """Execute a task in the background"""
@@ -62,8 +71,9 @@ class BackgroundTaskService:
                 if task_id in self._tasks:
                     self._tasks[task_id]['status'] = 'running'
                     self._tasks[task_id]['started_at'] = datetime.utcnow()
+                    logger.info(f"Marked task {task_id} as running")
             
-            logger.info(f"Starting execution of task {task_id}")
+            logger.info(f"Starting execution of task {task_id} with function {task_func.__name__}")
             
             # Execute the task function within Flask application context
             # Get the app instance from the current thread or import it
@@ -117,8 +127,8 @@ class BackgroundTaskService:
         cleanup_thread.start()
     
     def _cleanup_old_tasks(self):
-        """Remove tasks older than 2 hours"""
-        cutoff_time = datetime.utcnow() - timedelta(hours=2)
+        """Remove tasks older than 6 hours"""
+        cutoff_time = datetime.utcnow() - timedelta(hours=6)
         
         with self._lock:
             tasks_to_remove = []
