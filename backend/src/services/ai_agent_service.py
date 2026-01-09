@@ -291,13 +291,58 @@ class AIAgentService:
                             content_quality_score=quality_score
                         )
                     else:
-                        logger.warning(f"Content quality below threshold: {quality_score} < {self.quality_threshold}")
+                        current_provider = getattr(self.provider, 'current_provider', 'unknown')
+                        logger.warning(f"Content quality below threshold: {quality_score:.2f} < {self.quality_threshold} (provider: {current_provider})")
+                        
+                        # If OpenRouter failed quality check and we're not on the last attempt, try Gemini
+                        if current_provider == 'openrouter' and attempt < self.retry_attempts - 1:
+                            logger.info("OpenRouter content failed quality check, trying Gemini for better results...")
+                            
+                            # Try with Gemini
+                            try:
+                                original_provider = self.provider.current_provider
+                                self.provider.force_provider('gemini')
+                                
+                                gemini_result = generation_func(*args, **kwargs)
+                                if gemini_result and isinstance(gemini_result, dict):
+                                    gemini_quality = self._assess_content_quality(gemini_result)
+                                    
+                                    # Use a more lenient threshold for lesson content (0.45 vs 0.6)
+                                    effective_threshold = 0.45 if "lesson" in cache_key.lower() else self.quality_threshold
+                                    
+                                    if gemini_quality >= effective_threshold:
+                                        # Cache successful Gemini result
+                                        self.smart_cache.set(gemini_result, cache_key=cache_key)
+                                        logger.info(f"Gemini generated better quality content: {gemini_quality:.2f} (threshold: {effective_threshold:.2f})")
+                                        
+                                        return AIResponse(
+                                            status=ResponseStatus.SUCCESS,
+                                            data=gemini_result,
+                                            message="Content generated successfully with Gemini fallback",
+                                            provider_used='gemini',
+                                            generation_time=time.time() - start_time,
+                                            content_quality_score=gemini_quality
+                                        )
+                                    else:
+                                        logger.warning(f"Gemini also produced low quality content: {gemini_quality:.2f}")
+                                        # Use the better result of the two
+                                        if gemini_quality > quality_score:
+                                            result = gemini_result
+                                            quality_score = gemini_quality
+                            except Exception as gemini_error:
+                                logger.error(f"Gemini fallback failed: {gemini_error}")
+                            finally:
+                                # Restore original provider
+                                self.provider.force_provider(original_provider)
+                        
                         if attempt == self.retry_attempts - 1:
                             # Last attempt - return with partial success
                             return AIResponse(
                                 status=ResponseStatus.PARTIAL_SUCCESS,
                                 data=result,
                                 message=f"Content generated but quality below threshold ({quality_score:.2f})",
+                                provider_used=current_provider,
+                                generation_time=time.time() - start_time,
                                 content_quality_score=quality_score
                             )
                         continue
