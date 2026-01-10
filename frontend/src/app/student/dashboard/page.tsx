@@ -31,6 +31,7 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { BookingCard } from '@/components/booking/BookingCard';
 
 const StudentDashboardOverviewPage = () => {
   const { user, isAuthenticated } = useAuth();
@@ -458,11 +459,20 @@ const StudentDashboardOverviewPage = () => {
               </Card>
             </motion.div>
 
+            {/* Expert Mentorship Booking */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.45 }}
+            >
+              <BookingCard variant="compact" />
+            </motion.div>
+
             {/* Recent Achievements */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.5 }}
+              transition={{ duration: 0.5, delay: 0.55 }}
             >
               <Card>
                 <CardHeader>
@@ -527,7 +537,7 @@ const StudentDashboardOverviewPage = () => {
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.6 }}
+              transition={{ duration: 0.5, delay: 0.65 }}
             >
               <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950 border-blue-200 dark:border-blue-800">
                 <CardContent className="p-6">
