@@ -69,13 +69,14 @@ class CourseApiService extends BaseApiService {
   /**
    * Get course modules with progression status
    */
-  async getCourseModules(courseId: number): Promise<{
+  async getCourseModules(courseId: number, viewAsStudent: boolean = false): Promise<{
     modules: ModuleData[];
     course_progress: CourseProgress;
     can_proceed: boolean;
     next_unlockable_module?: Module;
   }> {
-    return this.get(`/student/learning/course/${courseId}/modules`);
+    const params = viewAsStudent ? { view_as_student: 'true' } : {};
+    return this.get(`/student/learning/course/${courseId}/modules`, { params });
   }
 
   /**

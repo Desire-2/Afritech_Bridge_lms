@@ -187,7 +187,7 @@ const CoursePreviewPage = () => {
                 Edit Course
               </Link>
               <Link
-                href={`/learn/${courseId}`}
+                href={`/learn/${courseId}?view_as_student=true`}
                 className="px-6 py-3 bg-white/10 backdrop-blur-sm text-white rounded-lg font-semibold hover:bg-white/20 transition-all border border-white/20 flex items-center justify-center gap-2 group"
                 title={course.is_published ? "View course as your students see it" : "Preview course in student view (Draft mode)"}
               >

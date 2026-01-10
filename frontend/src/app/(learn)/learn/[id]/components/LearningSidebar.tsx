@@ -54,6 +54,7 @@ interface LearningSidebarProps {
   quizCompletionStatus?: { [quizId: number]: { completed: boolean; score: number; passed: boolean } };
   onLockedModuleClick?: (info: LockedModuleInfo) => void;
   setSidebarOpen?: (open: boolean) => void; // Add this prop for mobile close functionality
+  viewAsStudent?: boolean; // For instructor preview mode
   // Module release info
   totalModuleCount?: number;
   releasedModuleCount?: number;
@@ -73,6 +74,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   quizCompletionStatus = {},
   onLockedModuleClick,
   setSidebarOpen,
+  viewAsStudent = false,
   totalModuleCount,
   releasedModuleCount
 }) => {
@@ -331,9 +333,12 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
             // FIXED: First module (index 0) should ALWAYS be accessible
             // Also treat current module as accessible regardless of status
             // This prevents all modules from appearing locked while data loads
-            const isLocked = moduleIndex === 0 
+            // In instructor preview mode, no modules should be locked
+            const isLocked = viewAsStudent 
               ? false 
-              : (moduleStatus === 'locked' && !isCurrentModule);
+              : (moduleIndex === 0 
+                ? false 
+                : (moduleStatus === 'locked' && !isCurrentModule));
             
             // Get previous module info for locked module display
             const previousModule = moduleIndex > 0 ? modules[moduleIndex - 1] : null;

@@ -74,6 +74,18 @@ const LearningPage = () => {
   const params = useParams();
   const courseId = parseInt(params.id as string);
   
+  // Check if this is instructor view_as_student mode (client-side only)
+  const [viewAsStudent, setViewAsStudent] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  
+  useEffect(() => {
+    setMounted(true);
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      setViewAsStudent(urlParams.get('view_as_student') === 'true');
+    }
+  }, []);
+  
   // Core state - ALL HOOKS MUST BE DECLARED FIRST
   const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -203,18 +215,10 @@ const LearningPage = () => {
     requiredScore: number;
   } | null>(null);
   
-  // Client-side mounting state to prevent hydration issues
-  const [mounted, setMounted] = useState(false);
-  
   // Refs for tracking
   const contentRef = useRef<HTMLDivElement | null>(null);
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
-
-  // Mount effect - must be called after all state hooks
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // Authentication check effect - must be called after all hooks
   useEffect(() => {
@@ -230,7 +234,7 @@ const LearningPage = () => {
   }, [mounted, isAuthenticated, authLoading]);
   
   // Progressive Learning Hooks
-  const progressiveLearning = useProgressiveLearning(courseId);
+  const progressiveLearning = useProgressiveLearning(courseId, viewAsStudent);
   const moduleAttempts = useModuleAttempts(currentModuleId || 0);
   const moduleScoring = useModuleScoring(currentModuleId || 0);
 
@@ -1418,10 +1422,16 @@ const LearningPage = () => {
     previousModuleTotalLessons: number;
     requiredScore: number;
   }) => {
+    // Don't show locked module modal in instructor preview mode
+    if (viewAsStudent) {
+      console.log('🔒 Locked module clicked in instructor preview mode - ignoring');
+      return;
+    }
+    
     console.log('🔒 Locked module clicked:', info);
     setLockedModuleInfo(info);
     setShowLockedModuleModal(true);
-  }, []);
+  }, [viewAsStudent]);
 
   // Auto-unlock next module when current module is completed with passing score
   const checkAndUnlockNextModule = useCallback(async () => {
@@ -2036,6 +2046,12 @@ const LearningPage = () => {
 
   return (
     <div className="min-h-screen bg-[#0a0e1a]">
+      {/* Instructor Preview Mode Indicator */}
+      {viewAsStudent && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500/90 backdrop-blur-sm text-black px-4 py-2 text-center text-sm font-medium">
+          📚 Instructor Preview Mode - All modules are unlocked for preview
+        </div>
+      )}
       <LearningHeader
         courseTitle={course.title || ''}
         currentLessonTitle={currentLesson?.title}
@@ -2055,7 +2071,7 @@ const LearningPage = () => {
         setHelpDialogOpen={setHelpDialogOpen}
       />
 
-      <div className="flex">
+      <div className={`flex ${viewAsStudent ? 'pt-10' : ''}`}>
         <LearningSidebar
           sidebarOpen={sidebarOpen}
           setSidebarOpen={setSidebarOpen}
@@ -2069,6 +2085,7 @@ const LearningPage = () => {
           lessonCompletionStatus={lessonCompletionStatus}
           quizCompletionStatus={quizCompletionStatus}
           onLockedModuleClick={handleLockedModuleClick}
+          viewAsStudent={viewAsStudent}
           totalModuleCount={courseData?.course?.total_module_count}
           releasedModuleCount={courseData?.course?.released_module_count}
         />

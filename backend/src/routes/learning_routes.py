@@ -239,6 +239,9 @@ def get_course_for_learning(course_id):
     try:
         student_id = int(get_jwt_identity())
         
+        # Check for view_as_student parameter for instructor preview mode
+        view_as_student = request.args.get('view_as_student') == 'true'
+        
         # Import course models here to avoid circular imports
         from ..models.course_models import Course, Enrollment, Module, Lesson
         from ..models.student_models import ModuleProgress, LessonCompletion
@@ -502,6 +505,9 @@ def get_course_modules(course_id):
     try:
         student_id = int(get_jwt_identity())
         
+        # Check for view_as_student parameter for instructor preview mode
+        view_as_student = request.args.get('view_as_student') == 'true'
+        
         # Get course and user
         course = Course.query.get(course_id)
         if not course:
@@ -562,6 +568,14 @@ def get_course_modules(course_id):
                         student_id, module.id, enrollment.id
                     )
                 
+                # Override module status for instructor view_as_student mode
+                if view_as_student and (is_instructor or is_admin):
+                    # Set all modules as unlocked for instructor preview
+                    if module_progress.status == 'locked':
+                        module_progress.status = 'unlocked'
+                        module_progress.unlocked_at = datetime.utcnow()
+                        # Don't commit to database - this is just for preview
+                
                 # Get assessment attempts for this module
                 attempts = AssessmentAttempt.query.filter_by(
                     student_id=student_id,
@@ -572,7 +586,8 @@ def get_course_modules(course_id):
                     "module": module.to_dict(include_lessons=True),
                     "progress": module_progress.to_dict(),
                     "assessment_attempts": [attempt.to_dict() for attempt in attempts],
-                    "can_retake": module_progress.status == 'failed' and module_progress.attempts_count < module_progress.max_attempts
+                    "can_retake": module_progress.status == 'failed' and module_progress.attempts_count < module_progress.max_attempts,
+                    "instructor_preview": view_as_student and (is_instructor or is_admin)
                 }
             else:
                 # Instructor/admin preview mode - no progress data

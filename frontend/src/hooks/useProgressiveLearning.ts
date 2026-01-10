@@ -24,7 +24,7 @@ export interface ProgressionActions {
   refreshProgress: () => Promise<void>;
 }
 
-export const useProgressiveLearning = (courseId: number): ProgressionState & ProgressionActions => {
+export const useProgressiveLearning = (courseId: number, viewAsStudent?: boolean): ProgressionState & ProgressionActions => {
   const [state, setState] = useState<ProgressionState>({
     currentModule: null,
     allModules: [],
@@ -38,7 +38,7 @@ export const useProgressiveLearning = (courseId: number): ProgressionState & Pro
     try {
       setState(prev => ({ ...prev, loading: true, error: null }));
       
-      const response = await CourseApiService.getCourseModules(courseId);
+      const response = await CourseApiService.getCourseModules(courseId, viewAsStudent || false);
       
       // Handle nested data structure from backend
       // Backend returns: { success: true, data: { modules: [...], course: {...} } }
@@ -70,7 +70,7 @@ export const useProgressiveLearning = (courseId: number): ProgressionState & Pro
         error: error.message || 'Failed to load course progression',
       }));
     }
-  }, [courseId]);
+  }, [courseId, viewAsStudent]);
 
   useEffect(() => {
     loadCourseProgression();
