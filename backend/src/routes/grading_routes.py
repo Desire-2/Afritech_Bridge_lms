@@ -53,7 +53,7 @@ def get_assignment_submissions():
         # Get filter parameters
         course_id = request.args.get('course_id', type=int)
         assignment_id = request.args.get('assignment_id', type=int)
-        status = request.args.get('status', 'pending')  # pending, graded, all
+        status = request.args.get('status', 'pending')  # pending, graded, all, resubmitted, modification_requested
         student_id = request.args.get('student_id', type=int)
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
@@ -79,11 +79,35 @@ def get_assignment_submissions():
         if student_id:
             query = query.filter(AssignmentSubmission.student_id == student_id)
         
-        # Status filter
+        # Enhanced status filter
         if status == 'pending':
-            query = query.filter(AssignmentSubmission.grade.is_(None))
+            # Regular pending submissions (not resubmissions, not modification requested)
+            query = query.filter(
+                and_(
+                    AssignmentSubmission.grade.is_(None),
+                    AssignmentSubmission.is_resubmission == False,
+                    Assignment.modification_requested == False
+                )
+            )
+        elif status == 'resubmitted':
+            # Resubmissions that need grading
+            query = query.filter(
+                and_(
+                    AssignmentSubmission.is_resubmission == True,
+                    AssignmentSubmission.grade.is_(None)
+                )
+            )
+        elif status == 'modification_requested':
+            # Assignments with modification requests (but no new submission yet)
+            query = query.filter(
+                and_(
+                    Assignment.modification_requested == True,
+                    AssignmentSubmission.is_resubmission == False
+                )
+            )
         elif status == 'graded':
             query = query.filter(AssignmentSubmission.grade.isnot(None))
+        # 'all' status shows everything - no additional filtering needed
         
         # Search functionality
         if search_query:
@@ -103,10 +127,16 @@ def get_assignment_submissions():
         if date_end:
             query = query.filter(AssignmentSubmission.submitted_at <= datetime.fromisoformat(date_end))
         
-        # Calculate priority scores for sorting
+        # Enhanced priority scores for sorting
         priority_score = case(
-            (and_(Assignment.due_date < datetime.utcnow(), AssignmentSubmission.grade.is_(None)), 3),  # Overdue
-            (Assignment.due_date < datetime.utcnow() + timedelta(days=1), 2),  # Due soon
+            # Highest priority: Resubmissions needing review
+            (and_(AssignmentSubmission.is_resubmission == True, AssignmentSubmission.grade.is_(None)), 5),
+            # High priority: Overdue submissions
+            (and_(Assignment.due_date < datetime.utcnow(), AssignmentSubmission.grade.is_(None)), 4),
+            # Medium priority: Modification requests (waiting for student)
+            (Assignment.modification_requested == True, 3),
+            # Medium priority: Due soon
+            (Assignment.due_date < datetime.utcnow() + timedelta(days=1), 2),
             else_=1
         )
         
@@ -148,6 +178,13 @@ def get_assignment_submissions():
             submission_dict['course_id'] = submission.assignment.course_id
             submission_dict['due_date'] = submission.assignment.due_date.isoformat() if submission.assignment.due_date else None
             
+            # Add assignment-level modification request information
+            submission_dict['modification_requested'] = submission.assignment.modification_requested
+            submission_dict['modification_request_reason'] = submission.assignment.modification_request_reason
+            submission_dict['modification_requested_at'] = submission.assignment.modification_requested_at.isoformat() if submission.assignment.modification_requested_at else None
+            submission_dict['modification_requested_by'] = submission.assignment.modification_requested_by
+            submission_dict['can_resubmit'] = submission.assignment.can_resubmit
+            
             # Calculate days late
             days_late = 0
             if submission.assignment.due_date and submission.submitted_at:
@@ -159,10 +196,14 @@ def get_assignment_submissions():
             word_count = len(content.split()) if content else 0
             reading_time = max(1, word_count // 200)  # ~200 words per minute
             
-            # Priority calculation
+            # Enhanced priority calculation
             priority_level = 'low'
-            if days_late > 0 and not submission.grade:
+            if submission.is_resubmission and not submission.grade:
+                priority_level = 'high'  # Resubmissions have highest priority
+            elif days_late > 0 and not submission.grade:
                 priority_level = 'high'
+            elif submission.assignment.modification_requested:
+                priority_level = 'medium'
             elif submission.assignment.due_date and submission.assignment.due_date < datetime.utcnow() + timedelta(days=1):
                 priority_level = 'medium'
             
@@ -655,7 +696,7 @@ def get_project_submissions():
         # Get filter parameters
         course_id = request.args.get('course_id', type=int)
         project_id = request.args.get('project_id', type=int)
-        status = request.args.get('status', 'pending')
+        status = request.args.get('status', 'pending')  # pending, graded, all, resubmitted, modification_requested
         student_id = request.args.get('student_id', type=int)
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
@@ -676,14 +717,51 @@ def get_project_submissions():
         if student_id:
             query = query.filter(ProjectSubmission.student_id == student_id)
         
-        # Status filter
+        # Enhanced status filter
         if status == 'pending':
-            query = query.filter(ProjectSubmission.grade.is_(None))
+            # Regular pending submissions (not resubmissions, not modification requested)
+            query = query.filter(
+                and_(
+                    ProjectSubmission.grade.is_(None),
+                    ProjectSubmission.is_resubmission == False,
+                    Project.modification_requested == False
+                )
+            )
+        elif status == 'resubmitted':
+            # Resubmissions that need grading
+            query = query.filter(
+                and_(
+                    ProjectSubmission.is_resubmission == True,
+                    ProjectSubmission.grade.is_(None)
+                )
+            )
+        elif status == 'modification_requested':
+            # Projects with modification requests (but no new submission yet)
+            query = query.filter(
+                and_(
+                    Project.modification_requested == True,
+                    ProjectSubmission.is_resubmission == False
+                )
+            )
         elif status == 'graded':
             query = query.filter(ProjectSubmission.grade.isnot(None))
+        # 'all' status shows everything - no additional filtering needed
         
-        # Order by submission date
+        # Enhanced ordering by priority
+        priority_score = case(
+            # Highest priority: Resubmissions needing review
+            (and_(ProjectSubmission.is_resubmission == True, ProjectSubmission.grade.is_(None)), 5),
+            # High priority: Overdue submissions
+            (and_(Project.due_date < datetime.utcnow(), ProjectSubmission.grade.is_(None)), 4),
+            # Medium priority: Modification requests (waiting for student)
+            (Project.modification_requested == True, 3),
+            # Medium priority: Due soon
+            (Project.due_date < datetime.utcnow() + timedelta(days=1), 2),
+            else_=1
+        )
+        
         query = query.order_by(
+            desc(priority_score),
             ProjectSubmission.grade.is_(None).desc(),
             ProjectSubmission.submitted_at.desc()
         )
@@ -702,12 +780,21 @@ def get_project_submissions():
             submission_dict['course_id'] = submission.project.course_id
             submission_dict['due_date'] = submission.project.due_date.isoformat()
             
+            # Add project-level modification request information
+            submission_dict['modification_requested'] = submission.project.modification_requested
+            submission_dict['modification_request_reason'] = submission.project.modification_request_reason
+            submission_dict['modification_requested_at'] = submission.project.modification_requested_at.isoformat() if submission.project.modification_requested_at else None
+            submission_dict['modification_requested_by'] = submission.project.modification_requested_by
+            submission_dict['can_resubmit'] = submission.project.can_resubmit
+            
             # Calculate days late
             if submission.submitted_at:
                 days_late = (submission.submitted_at - submission.project.due_date).days
                 submission_dict['days_late'] = max(0, days_late)
             else:
                 submission_dict['days_late'] = 0
+            
+            submission_dict['student_name'] = f"{submission.student.first_name} {submission.student.last_name}"
             
             submissions_data.append(submission_dict)
         

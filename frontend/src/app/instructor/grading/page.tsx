@@ -11,7 +11,7 @@ import GradingService, {
   SubmissionFilters
 } from '@/services/grading.service';
 import { Course } from '@/types/api';
-import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award, Search, Filter, RefreshCw } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award, Search, Filter, RefreshCw, Repeat, AlertTriangle, FileEdit } from 'lucide-react';
 
 type GradingItem = {
   id: number;
@@ -27,6 +27,15 @@ type GradingItem = {
   points_possible: number;
   grade?: number;
   graded_at?: string;
+  is_resubmission?: boolean;
+  resubmission_count?: number;
+  submission_notes?: string;
+  // Assignment-level modification request fields
+  modification_requested?: boolean;
+  modification_request_reason?: string;
+  modification_requested_at?: string;
+  modification_requested_by?: number;
+  can_resubmit?: boolean;
 };
 
 const ImprovedGradingPage = () => {
@@ -38,8 +47,9 @@ const ImprovedGradingPage = () => {
   const [courses, setCourses] = useState<Course[]>([]);
   const [gradingItems, setGradingItems] = useState<GradingItem[]>([]);
   const [summary, setSummary] = useState<GradingSummary | null>(null);
+  // Enhanced state for submission status filtering
   const [selectedCourse, setSelectedCourse] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'pending' | 'graded' | 'all'>('pending');
+  const [selectedStatus, setSelectedStatus] = useState<'pending' | 'graded' | 'all' | 'resubmitted' | 'modification_requested'>('pending');
   const [selectedType, setSelectedType] = useState<'all' | 'assignment' | 'project'>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +58,15 @@ const ImprovedGradingPage = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [analytics, setAnalytics] = useState<any>(null);
+
+  // Status grouping for improved organization
+  const [statusCounts, setStatusCounts] = useState({
+    pending: 0,
+    resubmitted: 0,
+    modification_requested: 0,
+    graded: 0,
+    overdue: 0
+  });
 
   useEffect(() => {
     if (token) {
@@ -58,83 +77,99 @@ const ImprovedGradingPage = () => {
   }, [token, selectedCourse, selectedStatus, selectedType, currentPage]);
 
   useEffect(() => {
-    // Handle URL query params
+    // Handle URL query params on initial load
     const status = searchParams.get('status');
-    if (status && ['pending', 'graded', 'all'].includes(status)) {
+    const type = searchParams.get('type');
+    const course = searchParams.get('course_id');
+    
+    // Only update state if the URL param differs from current state
+    if (status && ['pending', 'graded', 'all', 'resubmitted', 'modification_requested'].includes(status) && status !== selectedStatus) {
       setSelectedStatus(status as any);
     }
-    const type = searchParams.get('type');
-    if (type && ['all', 'assignment', 'project'].includes(type)) {
+    if (type && ['all', 'assignment', 'project'].includes(type) && type !== selectedType) {
       setSelectedType(type as any);
     }
-    const course = searchParams.get('course_id');
-    if (course) {
+    if (course && course !== selectedCourse) {
       setSelectedCourse(course);
     }
-  }, [searchParams]);
+  }, []); // Run only on mount to avoid infinite loops
 
   const fetchGradingData = async () => {
     setLoading(true);
     setError(null);
     
     try {
-      const filters: SubmissionFilters = {
-        status: selectedStatus,
-        page: currentPage,
-        per_page: 20,
+      // First fetch all data to calculate status counts
+      const allFilters: SubmissionFilters = {
+        status: 'all', // Get all data for counting
+        page: 1,
+        per_page: 200, // Get more items for accurate counting
         search_query: searchQuery || undefined,
         sort_by: 'priority',
         sort_order: 'desc'
       };
 
       if (selectedCourse !== 'all') {
-        filters.course_id = parseInt(selectedCourse);
+        allFilters.course_id = parseInt(selectedCourse);
       }
 
-      const items: GradingItem[] = [];
+      const allItems: GradingItem[] = [];
 
-      // Fetch assignments
+      // Fetch assignments for counting
       if (selectedType === 'all' || selectedType === 'assignment') {
         try {
-          const assignmentData = await GradingService.getAssignmentSubmissions(filters);
+          console.log('Fetching assignment submissions with filters:', allFilters);
+          const assignmentData = await GradingService.getAssignmentSubmissions(allFilters);
+          console.log('Assignment data received:', assignmentData);
+          console.log('Raw assignment submissions:', assignmentData.submissions);
           
           // Store analytics from the first response
           if (assignmentData.analytics) {
             setAnalytics(assignmentData.analytics);
           }
           
-          items.push(...assignmentData.submissions.map(sub => ({
-            id: sub.id,
-            type: 'assignment' as const,
-            title: sub.assignment_title,
-            course_title: sub.course_title,
-            course_id: sub.course_id,
-            student_name: sub.student_name,
-            student_id: sub.student_id,
-            submitted_at: sub.submitted_at,
-            due_date: sub.due_date,
-            days_late: sub.days_late,
-            points_possible: sub.assignment_points,
-            grade: sub.grade,
-            graded_at: sub.graded_at
-          })));
+          const mappedAssignments = assignmentData.submissions.map(sub => {
+            const mapped = {
+              id: sub.id,
+              type: 'assignment' as const,
+              title: sub.assignment_title,
+              course_title: sub.course_title,
+              course_id: sub.course_id,
+              student_name: sub.student_name,
+              student_id: sub.student_id,
+              submitted_at: sub.submitted_at,
+              due_date: sub.due_date,
+              days_late: sub.days_late,
+              points_possible: sub.assignment_points,
+              grade: sub.grade,
+              graded_at: sub.graded_at,
+              is_resubmission: sub.is_resubmission,
+              resubmission_count: sub.resubmission_count,
+              submission_notes: sub.submission_notes,
+              modification_requested: sub.modification_requested,
+              modification_request_reason: sub.modification_request_reason,
+              modification_requested_at: sub.modification_requested_at,
+              modification_requested_by: sub.modification_requested_by,
+              can_resubmit: sub.can_resubmit
+            };
+            console.log(`Mapping assignment ${sub.id}: is_resubmission=${sub.is_resubmission} -> ${mapped.is_resubmission}`);
+            return mapped;
+          });
           
-          if (selectedType === 'assignment') {
-            setTotalPages(assignmentData.pagination.pages);
-          }
+          allItems.push(...mappedAssignments);
         } catch (err) {
           console.error('Failed to fetch assignment submissions:', err);
-          if (selectedType === 'assignment') {
-            setError('Failed to load assignment submissions');
-          }
+          // Still continue to show what we can
         }
       }
 
-      // Fetch projects
+      // Fetch projects for counting
       if (selectedType === 'all' || selectedType === 'project') {
         try {
-          const projectData = await GradingService.getProjectSubmissions(filters);
-          items.push(...projectData.submissions.map(sub => ({
+          console.log('Fetching project submissions with filters:', allFilters);
+          const projectData = await GradingService.getProjectSubmissions(allFilters);
+          console.log('Project data received:', projectData);
+          allItems.push(...projectData.submissions.map(sub => ({
             id: sub.id,
             type: 'project' as const,
             title: sub.project_title,
@@ -147,28 +182,112 @@ const ImprovedGradingPage = () => {
             days_late: sub.days_late,
             points_possible: sub.project_points,
             grade: sub.grade,
-            graded_at: sub.graded_at
+            graded_at: sub.graded_at,
+            is_resubmission: sub.is_resubmission,
+            resubmission_count: sub.resubmission_count,
+            submission_notes: sub.submission_notes,
+            modification_requested: sub.modification_requested,
+            modification_request_reason: sub.modification_request_reason,
+            modification_requested_at: sub.modification_requested_at,
+            modification_requested_by: sub.modification_requested_by,
+            can_resubmit: sub.can_resubmit
           })));
-          
-          if (selectedType === 'project') {
-            setTotalPages(projectData.pagination.pages);
-          }
         } catch (err) {
           console.error('Failed to fetch project submissions:', err);
-          if (selectedType === 'project') {
-            setError('Failed to load project submissions');
-          }
         }
       }
 
-      // Sort by submission date (newest first) and ungraded first
-      items.sort((a, b) => {
+      // Calculate status counts from all data
+      const counts = {
+        pending: 0,
+        resubmitted: 0,
+        modification_requested: 0,
+        graded: 0,
+        overdue: 0
+      };
+
+      console.log('All items fetched:', allItems.length);
+      console.log('Starting status counting...');
+      
+      allItems.forEach((item, index) => {
+        console.log(`Processing item ${index + 1}:`, {
+          id: item.id,
+          title: item.title,
+          grade: item.grade,
+          is_resubmission: item.is_resubmission,
+          modification_requested: item.modification_requested,
+          days_late: item.days_late,
+          type: typeof item.is_resubmission,
+          resubmission_check: item.is_resubmission === true
+        });
+
+        // Priority order: resubmissions > modification_requested > graded > pending
+        if (item.is_resubmission === true) {
+          counts.resubmitted++;
+          console.log(`  -> RESUBMITTED (total: ${counts.resubmitted})`);
+        } else if (item.modification_requested === true) {
+          counts.modification_requested++;
+          console.log(`  -> MODIFICATION REQUESTED (total: ${counts.modification_requested})`);
+        } else if (item.grade !== undefined && item.grade !== null) {
+          counts.graded++;
+          console.log(`  -> GRADED (total: ${counts.graded})`);
+        } else {
+          counts.pending++;
+          console.log(`  -> PENDING (total: ${counts.pending})`);
+        }
+        
+        if (item.days_late > 0) {
+          counts.overdue++;
+        }
+      });
+
+      console.log('All items fetched:', allItems.length, allItems);
+      setStatusCounts(counts);
+      console.log('Status counts:', counts);
+
+      // Now filter items based on selected status for display
+      let displayItems = allItems;
+      
+      if (selectedStatus !== 'all') {
+        displayItems = allItems.filter(item => {
+          switch (selectedStatus) {
+            case 'resubmitted':
+              return item.is_resubmission === true;
+            case 'modification_requested':
+              return item.modification_requested === true && !item.is_resubmission;
+            case 'graded':
+              return (item.grade !== undefined && item.grade !== null) && !item.is_resubmission && !item.modification_requested;
+            case 'pending':
+              return !item.grade && !item.is_resubmission && !item.modification_requested;
+            default:
+              return true;
+          }
+        });
+      }
+
+      // Enhanced sorting by priority
+      displayItems.sort((a, b) => {
+        // First priority: Resubmissions that need grading
+        const aIsResubmission = a.is_resubmission && !a.grade;
+        const bIsResubmission = b.is_resubmission && !b.grade;
+        if (aIsResubmission && !bIsResubmission) return -1;
+        if (!aIsResubmission && bIsResubmission) return 1;
+        
+        // Second priority: Assignments/Projects with modification requests but no new submission
+        const aModificationRequested = a.modification_requested && !a.grade;
+        const bModificationRequested = b.modification_requested && !b.grade;
+        if (aModificationRequested && !bModificationRequested) return -1;
+        if (!aModificationRequested && bModificationRequested) return 1;
+        
+        // Third priority: Ungraded submissions
         if (!a.grade && b.grade) return -1;
         if (a.grade && !b.grade) return 1;
+        
+        // Finally: Sort by submission date (newest first)
         return new Date(b.submitted_at).getTime() - new Date(a.submitted_at).getTime();
       });
 
-      setGradingItems(items);
+      setGradingItems(displayItems);
     } catch (err: any) {
       setError(err.message || 'Failed to load grading data');
     } finally {
@@ -214,7 +333,8 @@ const ImprovedGradingPage = () => {
 
   const updateURL = () => {
     const params = new URLSearchParams();
-    if (selectedStatus !== 'pending') params.set('status', selectedStatus);
+    // Always set the status parameter to maintain consistency
+    params.set('status', selectedStatus);
     if (selectedType !== 'all') params.set('type', selectedType);
     if (selectedCourse !== 'all') params.set('course_id', selectedCourse);
     
@@ -245,9 +365,23 @@ const ImprovedGradingPage = () => {
     if (item.grade !== undefined) {
       return <CheckCircle className="w-4 h-4 text-green-600" />;
     }
-    if (item.days_late > 0) {
-      return <AlertCircle className="w-4 h-4 text-red-600" />;
+    
+    // Resubmission - highest priority
+    if (item.is_resubmission) {
+      return <Repeat className="w-4 h-4 text-blue-600" />;
     }
+    
+    // Modification requested but no new submission
+    if (item.modification_requested) {
+      return <FileEdit className="w-4 h-4 text-purple-600" />;
+    }
+    
+    // Overdue
+    if (item.days_late > 0) {
+      return <AlertTriangle className="w-4 h-4 text-red-600" />;
+    }
+    
+    // Regular pending
     return <Clock className="w-4 h-4 text-orange-600" />;
   };
 
@@ -255,10 +389,65 @@ const ImprovedGradingPage = () => {
     if (item.grade !== undefined) {
       return `Graded on ${formatDate(item.graded_at!)}`;
     }
+    
+    // Resubmission - highest priority
+    if (item.is_resubmission) {
+      const submissionText = item.resubmission_count > 1 
+        ? `Resubmission #${item.resubmission_count + 1}` 
+        : 'Resubmission';
+      return `${submissionText} - Needs review`;
+    }
+    
+    // Modification requested but no new submission
+    if (item.modification_requested && !item.is_resubmission) {
+      const requestedDate = item.modification_requested_at 
+        ? formatDate(item.modification_requested_at)
+        : 'recently';
+      return `Modification requested ${requestedDate} - Awaiting student resubmission`;
+    }
+    
+    // Overdue
     if (item.days_late > 0) {
       return `${item.days_late} day${item.days_late > 1 ? 's' : ''} overdue`;
     }
+    
+    // Regular pending
     return 'Awaiting grade';
+  };
+
+  const getSubmissionBadges = (item: GradingItem) => {
+    const badges = [];
+    
+    // Resubmission badge
+    if (item.is_resubmission) {
+      badges.push(
+        <span key="resubmission" className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400 flex items-center">
+          <Repeat className="w-3 h-3 mr-1" />
+          Resubmission {item.resubmission_count ? `#${item.resubmission_count + 1}` : ''}
+        </span>
+      );
+    }
+    
+    // Modification request badge
+    if (item.submission_status?.modification_requested) {
+      badges.push(
+        <span key="mod-request" className="px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900/20 dark:text-purple-400 flex items-center">
+          <FileEdit className="w-3 h-3 mr-1" />
+          Modification Requested
+        </span>
+      );
+    }
+    
+    // Late badge
+    if (item.days_late > 0) {
+      badges.push(
+        <span key="late" className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400">
+          {item.days_late} day{item.days_late > 1 ? 's' : ''} late
+        </span>
+      );
+    }
+    
+    return badges;
   };
 
   if (loading && gradingItems.length === 0) {
@@ -277,7 +466,7 @@ const ImprovedGradingPage = () => {
         <div>
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Grading Center</h1>
           <p className="text-slate-600 dark:text-slate-400 mt-1">
-            Review and grade student submissions
+            Review assignments, projects, resubmissions, and modification requests
             {user?.role?.name === 'instructor' && (
               <span className="ml-2 px-2 py-1 bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 rounded-full text-xs font-medium">
                 Instructor
@@ -316,69 +505,135 @@ const ImprovedGradingPage = () => {
         </div>
       )}
 
-      {/* Summary Cards */}
+      {/* Priority Alerts */}
+      {(statusCounts.resubmitted > 0 || statusCounts.overdue > 0) && (
+        <div className="bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/10 dark:to-red-900/10 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="w-5 h-5 text-orange-600 dark:text-orange-400 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-sm font-medium text-orange-800 dark:text-orange-300">
+                Action Required
+              </h3>
+              <div className="mt-1 text-sm text-orange-700 dark:text-orange-400">
+                {statusCounts.resubmitted > 0 && (
+                  <p>
+                    <span className="font-medium">{statusCounts.resubmitted}</span> resubmission{statusCounts.resubmitted > 1 ? 's' : ''} need{statusCounts.resubmitted === 1 ? 's' : ''} immediate review.
+                  </p>
+                )}
+                {statusCounts.overdue > 0 && (
+                  <p>
+                    <span className="font-medium">{statusCounts.overdue}</span> submission{statusCounts.overdue > 1 ? 's are' : ' is'} overdue.
+                  </p>
+                )}
+              </div>
+              <div className="mt-3 flex space-x-2">
+                {statusCounts.resubmitted > 0 && (
+                  <button
+                    onClick={() => {
+                      setSelectedStatus('resubmitted');
+                      updateURL();
+                    }}
+                    className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition-colors"
+                  >
+                    Review Resubmissions
+                  </button>
+                )}
+                {statusCounts.modification_requested > 0 && (
+                  <button
+                    onClick={() => {
+                      setSelectedStatus('modification_requested');
+                      updateURL();
+                    }}
+                    className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700 transition-colors"
+                  >
+                    Check Modification Requests
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Enhanced Summary Cards */}
       {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* Resubmissions - Highest Priority */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border-l-4 border-blue-500">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-600 dark:text-slate-400">Pending Assignments</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
-                  {summary.assignments.pending}
+                <p className="text-sm text-slate-600 dark:text-slate-400">Resubmissions</p>
+                <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
+                  {statusCounts.resubmitted}
                 </p>
-              </div>
-              <div className="h-12 w-12 bg-orange-100 dark:bg-orange-900/20 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600 dark:text-slate-400">Pending Projects</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
-                  {summary.projects.pending}
-                </p>
-              </div>
-              <div className="h-12 w-12 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600 dark:text-slate-400">Graded This Week</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
-                  {summary.assignments.recent_graded + summary.projects.recent_graded}
-                </p>
-              </div>
-              <div className="h-12 w-12 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-600 dark:text-slate-400">Total Graded</p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
-                  {summary.total_graded}
-                </p>
+                <p className="text-xs text-slate-500 mt-1">Need immediate review</p>
               </div>
               <div className="h-12 w-12 bg-blue-100 dark:bg-blue-900/20 rounded-lg flex items-center justify-center">
-                <svg className="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
+                <Repeat className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Modification Requested */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border-l-4 border-purple-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Modifications Requested</p>
+                <p className="text-2xl font-bold text-purple-600 dark:text-purple-400 mt-1">
+                  {statusCounts.modification_requested}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Awaiting student action</p>
+              </div>
+              <div className="h-12 w-12 bg-purple-100 dark:bg-purple-900/20 rounded-lg flex items-center justify-center">
+                <FileEdit className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Regular Pending */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Pending Review</p>
+                <p className="text-2xl font-bold text-orange-600 dark:text-orange-400 mt-1">
+                  {statusCounts.pending}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Initial submissions</p>
+              </div>
+              <div className="h-12 w-12 bg-orange-100 dark:bg-orange-900/20 rounded-lg flex items-center justify-center">
+                <Clock className="w-6 h-6 text-orange-600 dark:text-orange-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Overdue Items */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Overdue</p>
+                <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1">
+                  {statusCounts.overdue}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Past due date</p>
+              </div>
+              <div className="h-12 w-12 bg-red-100 dark:bg-red-900/20 rounded-lg flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
+              </div>
+            </div>
+          </div>
+
+          {/* Graded */}
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6 border-l-4 border-green-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Graded</p>
+                <p className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">
+                  {statusCounts.graded}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">Complete</p>
+              </div>
+              <div className="h-12 w-12 bg-green-100 dark:bg-green-900/20 rounded-lg flex items-center justify-center">
+                <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400" />
               </div>
             </div>
           </div>
@@ -473,7 +728,6 @@ const ImprovedGradingPage = () => {
               onChange={(e) => { 
                 setSelectedCourse(e.target.value); 
                 setCurrentPage(1);
-                updateURL();
               }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
@@ -486,23 +740,32 @@ const ImprovedGradingPage = () => {
             </select>
           </div>
 
-          {/* Status Filter */}
+          {/* Enhanced Status Filter */}
           <div>
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              Status
+              Submission Status
             </label>
             <select
               value={selectedStatus}
               onChange={(e) => { 
                 setSelectedStatus(e.target.value as any); 
                 setCurrentPage(1);
-                updateURL();
               }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
-              <option value="pending">Pending</option>
-              <option value="graded">Graded</option>
-              <option value="all">All</option>
+              <option value="resubmitted">
+                🔄 Resubmitted ({statusCounts.resubmitted})
+              </option>
+              <option value="modification_requested">
+                ✏️ Modification Requested ({statusCounts.modification_requested})
+              </option>
+              <option value="pending">
+                ⏳ Pending Review ({statusCounts.pending})
+              </option>
+              <option value="graded">
+                ✅ Graded ({statusCounts.graded})
+              </option>
+              <option value="all">All Submissions</option>
             </select>
           </div>
 
@@ -516,7 +779,6 @@ const ImprovedGradingPage = () => {
               onChange={(e) => { 
                 setSelectedType(e.target.value as any); 
                 setCurrentPage(1);
-                updateURL();
               }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
@@ -528,24 +790,43 @@ const ImprovedGradingPage = () => {
         </div>
       </div>
 
-      {/* Submissions List */}
+      {/* Enhanced Submissions List */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm">
         <div className="p-6 border-b border-slate-200 dark:border-slate-700">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
             Submissions ({gradingItems.length})
           </h2>
+          {selectedStatus !== 'all' && (
+            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+              Showing {selectedStatus.replace('_', ' ')} submissions
+            </p>
+          )}
         </div>
 
         {gradingItems.length === 0 ? (
           <div className="p-6 text-center">
-            <svg className="mx-auto h-12 w-12 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <p className="text-slate-600 dark:text-slate-400 mt-4 mb-2">
-              No submissions found
+            <div className="mx-auto h-12 w-12 text-slate-400 mb-4">
+              {selectedStatus === 'resubmitted' && <Repeat className="w-full h-full" />}
+              {selectedStatus === 'modification_requested' && <FileEdit className="w-full h-full" />}
+              {selectedStatus === 'pending' && <Clock className="w-full h-full" />}
+              {selectedStatus === 'graded' && <CheckCircle className="w-full h-full" />}
+              {selectedStatus === 'all' && <svg className="w-full h-full" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>}
+            </div>
+            <p className="text-slate-600 dark:text-slate-400 mb-2">
+              {selectedStatus === 'resubmitted' && 'No resubmitted work to review'}
+              {selectedStatus === 'modification_requested' && 'No modification requests pending'}
+              {selectedStatus === 'pending' && 'No pending submissions'}
+              {selectedStatus === 'graded' && 'No graded submissions'}
+              {selectedStatus === 'all' && 'No submissions found'}
             </p>
             <p className="text-sm text-slate-500 dark:text-slate-500">
-              Try adjusting your filters or check back later
+              {selectedStatus === 'resubmitted' && 'Students haven\'t resubmitted any work yet'}
+              {selectedStatus === 'modification_requested' && 'No assignments are waiting for student modifications'}
+              {selectedStatus === 'pending' && 'All caught up! No submissions need grading'}
+              {selectedStatus === 'graded' && 'No submissions have been graded yet'}
+              {selectedStatus === 'all' && 'Try adjusting your filters or check back later'}
             </p>
           </div>
         ) : (
@@ -563,22 +844,45 @@ const ImprovedGradingPage = () => {
                         }`}>
                           {item.type.charAt(0).toUpperCase() + item.type.slice(1)}
                         </span>
+                        
+                        {/* Status badges */}
+                        {getSubmissionBadges(item).map(badge => badge)}
+                        
                         <div className="flex items-center space-x-1">
                           {getStatusIcon(item)}
                           <span className="text-xs text-slate-600 dark:text-slate-400">
                             {getStatusText(item)}
                           </span>
                         </div>
-                        {item.days_late > 0 && (
-                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400">
-                            {item.days_late} day{item.days_late > 1 ? 's' : ''} late
-                          </span>
-                        )}
                       </div>
 
                       <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">
                         {item.title}
                       </h3>
+                      
+                      {/* Show modification request reason if applicable */}
+                      {item.modification_requested && item.modification_request_reason && (
+                        <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800 rounded-lg">
+                          <h4 className="text-sm font-medium text-purple-800 dark:text-purple-300 mb-1">
+                            Modification Request:
+                          </h4>
+                          <p className="text-sm text-purple-700 dark:text-purple-400">
+                            {item.modification_request_reason}
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Show resubmission notes if applicable */}
+                      {item.is_resubmission && item.submission_notes && (
+                        <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 rounded-lg">
+                          <h4 className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-1">
+                            Student Notes:
+                          </h4>
+                          <p className="text-sm text-blue-700 dark:text-blue-400">
+                            {item.submission_notes}
+                          </p>
+                        </div>
+                      )}
 
                       <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600 dark:text-slate-400">
                         <span className="flex items-center">
@@ -610,9 +914,20 @@ const ImprovedGradingPage = () => {
                     <div className="flex space-x-2 ml-4">
                       <Link
                         href={`/instructor/grading/${item.type}/${item.id}`}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                        className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                          item.is_resubmission 
+                            ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                            : item.grade !== undefined 
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
                       >
-                        {item.grade !== undefined ? 'Review' : 'Grade'}
+                        {item.is_resubmission 
+                          ? 'Review Resubmission' 
+                          : item.grade !== undefined 
+                          ? 'Review' 
+                          : 'Grade'
+                        }
                       </Link>
                     </div>
                   </div>

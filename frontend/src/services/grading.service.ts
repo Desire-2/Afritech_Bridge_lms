@@ -10,7 +10,7 @@ export interface SubmissionFilters {
   course_id?: number;
   assignment_id?: number;
   project_id?: number;
-  status?: 'pending' | 'graded' | 'all';
+  status?: 'pending' | 'graded' | 'all' | 'resubmitted' | 'modification_requested';
   student_id?: number;
   page?: number;
   per_page?: number;
@@ -44,13 +44,12 @@ export interface AssignmentSubmission {
   is_resubmission?: boolean;
   resubmission_count?: number;
   submission_notes?: string;
-  submission_status?: {
-    type: 'first_submission' | 'resubmission';
-    count: number;
-    is_first: boolean;
-    notes?: string;
-    original_submission_id?: number;
-  };
+  // Assignment-level modification request fields
+  modification_requested?: boolean;
+  modification_request_reason?: string;
+  modification_requested_at?: string;
+  modification_requested_by?: number;
+  can_resubmit?: boolean;
   // Enhanced fields
   student_email?: string;
   word_count?: number;
@@ -88,13 +87,12 @@ export interface ProjectSubmission {
   is_resubmission?: boolean;
   resubmission_count?: number;
   submission_notes?: string;
-  submission_status?: {
-    type: 'first_submission' | 'resubmission';
-    count: number;
-    is_first: boolean;
-    notes?: string;
-    original_submission_id?: number;
-  };
+  // Project-level modification request fields
+  modification_requested?: boolean;
+  modification_request_reason?: string;
+  modification_requested_at?: string;
+  modification_requested_by?: number;
+  can_resubmit?: boolean;
 }
 
 export interface SubmissionDetail extends AssignmentSubmission {
@@ -115,13 +113,6 @@ export interface SubmissionDetail extends AssignmentSubmission {
     name: string;
     email: string;
   }>;
-  submission_status?: {
-    type: 'first_submission' | 'resubmission';
-    count: number;
-    is_first: boolean;
-    notes?: string;
-    original_submission_id?: number;
-  };
   previous_attempts?: Array<{
     id: number;
     submitted_at: string;
@@ -517,6 +508,66 @@ export class GradingService {
     const diffTime = submitted.getTime() - due.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     return Math.max(0, diffDays);
+  }
+
+  /**
+   * Get submission priority based on status
+   */
+  static getSubmissionPriority(submission: AssignmentSubmission | ProjectSubmission): 'high' | 'medium' | 'low' {
+    // Resubmissions have highest priority
+    if (submission.is_resubmission && !submission.grade) {
+      return 'high';
+    }
+    
+    // Modification requests waiting for student response
+    if (submission.submission_status?.modification_requested && !submission.is_resubmission) {
+      return 'medium';
+    }
+    
+    // Overdue submissions
+    const daysLate = this.calculateDaysLate(submission.submitted_at, submission.due_date);
+    if (daysLate > 0 && !submission.grade) {
+      return 'high';
+    }
+    
+    // Regular pending submissions
+    if (!submission.grade) {
+      return 'medium';
+    }
+    
+    return 'low';
+  }
+
+  /**
+   * Get status description for submission
+   */
+  static getSubmissionStatusDescription(submission: AssignmentSubmission | ProjectSubmission): string {
+    if (submission.grade !== undefined) {
+      return 'Graded';
+    }
+    
+    if (submission.is_resubmission) {
+      const count = submission.resubmission_count || 0;
+      return count > 1 ? `Resubmission #${count + 1}` : 'Resubmission';
+    }
+    
+    if (submission.submission_status?.modification_requested) {
+      return 'Modification Requested';
+    }
+    
+    const daysLate = this.calculateDaysLate(submission.submitted_at, submission.due_date);
+    if (daysLate > 0) {
+      return `${daysLate} day${daysLate > 1 ? 's' : ''} overdue`;
+    }
+    
+    return 'Pending Review';
+  }
+
+  /**
+   * Check if submission needs immediate attention
+   */
+  static needsImmediateAttention(submission: AssignmentSubmission | ProjectSubmission): boolean {
+    return this.getSubmissionPriority(submission) === 'high';
   }
 }
 

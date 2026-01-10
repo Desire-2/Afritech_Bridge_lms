@@ -655,6 +655,13 @@ class Project(db.Model):
     max_team_size = db.Column(db.Integer, default=1)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Modification request fields
+    modification_requested = db.Column(db.Boolean, default=False, nullable=False)
+    modification_request_reason = db.Column(db.Text, nullable=True)
+    modification_requested_at = db.Column(db.DateTime, nullable=True)
+    modification_requested_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    can_resubmit = db.Column(db.Boolean, default=False, nullable=False)
 
     # Relationships
     course = db.relationship('Course', backref=db.backref('projects', lazy='dynamic', cascade="all, delete-orphan"))
@@ -693,7 +700,13 @@ class Project(db.Model):
             'collaboration_allowed': self.collaboration_allowed,
             'max_team_size': self.max_team_size,
             'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat()
+            'updated_at': self.updated_at.isoformat(),
+            # Modification request fields
+            'modification_requested': self.modification_requested,
+            'modification_request_reason': self.modification_request_reason,
+            'modification_requested_at': self.modification_requested_at.isoformat() if self.modification_requested_at else None,
+            'modification_requested_by': self.modification_requested_by,
+            'can_resubmit': self.can_resubmit
         }
         if include_modules:
             module_ids = self.get_modules()
@@ -768,14 +781,22 @@ class ProjectSubmission(db.Model):
     def get_submission_status(self):
         """Get comprehensive submission status information"""
         status = {
-            'type': 'resubmission' if self.is_resubmission else 'first_submission',
-            'count': self.resubmission_count + 1,  # Total submissions including original
-            'is_first': not self.is_resubmission,
-            'notes': self.submission_notes
+            'is_first_submission': not self.is_resubmission,
+            'is_resubmission': self.is_resubmission,
+            'resubmission_count': self.resubmission_count,
+            'submission_type': 'resubmission' if self.is_resubmission else 'first_submission',
+            'modification_requested': self.project.modification_requested if self.project else False,
+            'can_resubmit': self.project.can_resubmit if self.project else False,
+            'submission_notes': self.submission_notes
         }
         
-        if self.is_resubmission and self.original_submission_id:
-            status['original_submission_id'] = self.original_submission_id
+        # Add modification request details if applicable
+        if self.project and self.project.modification_requested:
+            status.update({
+                'modification_request_reason': self.project.modification_request_reason,
+                'modification_requested_at': self.project.modification_requested_at.isoformat() if self.project.modification_requested_at else None,
+                'modification_requested_by': self.project.modification_requested_by
+            })
         
         return status
 
