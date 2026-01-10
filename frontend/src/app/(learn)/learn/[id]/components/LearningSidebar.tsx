@@ -489,13 +489,15 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                       // 2. Lessons in accessible modules (unlocked, in_progress, completed)
                       // 3. First lesson is always accessible if module is unlocked
                       // 4. FIXED: First module (index 0) lessons are always accessible
+                      // 5. In instructor preview mode, ALL lessons are accessible
                       const isFirstModule = moduleIndex === 0;
                       const isModuleAccessible = isFirstModule || 
                                                   moduleStatus === 'completed' || 
                                                   moduleStatus === 'in_progress' || 
                                                   moduleStatus === 'unlocked';
                       const isFirstLesson = lessonIndex === 0;
-                      const canAccessLesson = isLessonCompleted || // Completed lessons always accessible
+                      const canAccessLesson = viewAsStudent || // All lessons accessible in instructor preview mode
+                                               isLessonCompleted || // Completed lessons always accessible
                                                isModuleAccessible || // Module is unlocked
                                                (isFirstLesson && !isLocked); // First lesson if not locked
                       
@@ -596,8 +598,8 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                 const isQuizCompleted = assessment.type === 'quiz' && quizCompletionStatus[assessment.id]?.completed;
                                 const quizScore = quizCompletionStatus[assessment.id]?.score;
                                 const quizPassed = quizCompletionStatus[assessment.id]?.passed;
-                                // Quiz is accessible if lesson is completed
-                                const canAccessQuiz = isLessonCompleted && assessment.type === 'quiz';
+                                // Quiz is accessible if lesson is completed OR in instructor preview mode
+                                const canAccessQuiz = viewAsStudent || (isLessonCompleted && assessment.type === 'quiz');
                                 
                                 const handleAssessmentClick = () => {
                                   if (assessment.type === 'quiz' && canAccessQuiz) {
