@@ -394,35 +394,35 @@ def application_approved_email(application, course, username, temp_password, cus
     
     if not is_new_account and not temp_password and password_reset_link:
         # Existing user - show reset link instead of password
-        account_type_msg = f'''<div style="background-color: #dbeafe; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 20px 0;">
-            <p style="color: #1e40af; margin: 0; font-size: 14px; line-height: 1.6;">
-                <strong>👋 Welcome Back!</strong> You already have an account with us. 
-                If you don't remember your password, <strong>you can set a new one using the link below</strong>.
+        account_type_msg = f'''<div style="background-color: #2c3e50; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 20px 0;">
+            <p style="color: #e5e7eb; margin: 0; font-size: 14px; line-height: 1.6;">
+                <strong style="color: #ffffff;">👋 Welcome Back!</strong> You already have an account with us. 
+                If you don't remember your password, <strong style="color: #60a5fa;">you can set a new one using the link below</strong>.
             </p>
         </div>'''
         
         credentials_section = f'''
-        <div style="background-color: #eff6ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 25px; margin: 25px 0;">
+        <div style="background-color: #2c3e50; border: 2px solid #3b82f6; border-radius: 8px; padding: 25px; margin: 25px 0;">
             <div style="text-align: center; margin-bottom: 20px;">
                 <span class="icon-medium" style="font-size: 40px; display: block; margin-bottom: 10px;">🔐</span>
-                <h2 style="margin: 0; color: #1e40af; font-size: 20px; font-weight: 700;">
+                <h2 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">
                     Your Account Information
                 </h2>
-                <p style="color: #3b82f6; margin: 8px 0 0 0; font-size: 14px;">
+                <p style="color: #e5e7eb; margin: 8px 0 0 0; font-size: 14px;">
                     Use your existing credentials to log in
                 </p>
             </div>
             
-            <div style="background-color: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <table class="responsive-table" style="width: 100%; color: #4a5568;">
+            <div style="background-color: #2c3e50; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                     <tr>
-                        <td style="padding: 12px 0; font-weight: 600;"><span style="margin-right: 8px;">👤</span> Username:</td>
-                        <td style="padding: 12px 0; font-family: 'Courier New', monospace; font-weight: 700; color: #1e40af;">{username}</td>
+                        <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">👤</span> Username:</td>
+                        <td style="padding: 12px 0; font-family: 'Courier New', monospace; font-weight: 700; color: #60a5fa;">{username}</td>
                     </tr>
                     <tr>
-                        <td style="padding: 12px 0; font-weight: 600;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
+                        <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
                         <td style="padding: 12px 0;">
-                            <a href="https://study.afritechbridge.online/auth/login" style="color: #2563eb; text-decoration: none; font-weight: 600;">
+                            <a href="https://study.afritechbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
                                 study.afritechbridge.online
                             </a>
                         </td>
@@ -430,9 +430,9 @@ def application_approved_email(application, course, username, temp_password, cus
                 </table>
             </div>
             
-            <div style="background-color: #f0fdf4; border: 2px solid #22c55e; border-radius: 8px; padding: 20px; margin-top: 20px;">
-                <p style="color: #166534; font-size: 15px; margin: 0 0 15px 0; text-align: center;">
-                    <strong>🔑 Don't Remember Your Password?</strong><br>
+            <div style="background-color: #2c3e50; border: 2px solid #22c55e; border-radius: 8px; padding: 20px; margin-top: 20px;">
+                <p style="color: #e5e7eb; font-size: 15px; margin: 0 0 15px 0; text-align: center;">
+                    <strong style="color: #ffffff;">🔑 Don't Remember Your Password?</strong><br>
                     No problem! Set a new password using the button below:
                 </p>
                 <div style="text-align: center;">
@@ -440,7 +440,7 @@ def application_approved_email(application, course, username, temp_password, cus
                         🔐 Set New Password
                     </a>
                 </div>
-                <p style="color: #15803d; font-size: 12px; margin: 15px 0 0 0; text-align: center;">
+                <p style="color: #bdc3c7; font-size: 12px; margin: 15px 0 0 0; text-align: center;">
                     This link will expire in 3 days for security reasons.
                 </p>
             </div>
@@ -449,46 +449,46 @@ def application_approved_email(application, course, username, temp_password, cus
     elif temp_password:
         # New account or existing with temp password
         if not is_new_account:
-            account_type_msg = f'''<div style="background-color: #dbeafe; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 20px 0;">
-                <p style="color: #1e40af; margin: 0; font-size: 14px; line-height: 1.6;">
-                    <strong>🔄 Account Update:</strong> We've generated a new temporary password for your existing account. 
-                    Please use the credentials below to log in and <strong>change your password</strong> immediately for security.
+            account_type_msg = f'''<div style="background-color: #2c3e50; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 20px 0;">
+                <p style="color: #e5e7eb; margin: 0; font-size: 14px; line-height: 1.6;">
+                    <strong style="color: #ffffff;">🔄 Account Update:</strong> We've generated a new temporary password for your existing account. 
+                    Please use the credentials below to log in and <strong style="color: #60a5fa;">change your password</strong> immediately for security.
                 </p>
             </div>'''
         else:
-            account_type_msg = f'''<div style="background-color: #dcfce7; border-left: 4px solid #22c55e; border-radius: 8px; padding: 15px; margin: 20px 0;">
-                <p style="color: #15803d; margin: 0; font-size: 14px; line-height: 1.6;">
-                    <strong>✨ New Account Created:</strong> We've created a new student account for you. 
+            account_type_msg = f'''<div style="background-color: #2c3e50; border-left: 4px solid #22c55e; border-radius: 8px; padding: 15px; margin: 20px 0;">
+                <p style="color: #e5e7eb; margin: 0; font-size: 14px; line-height: 1.6;">
+                    <strong style="color: #ffffff;">✨ New Account Created:</strong> We've created a new student account for you. 
                     Use the credentials below to access your dashboard and start your learning journey!
                 </p>
             </div>'''
         
         credentials_section = f'''
-        <div style="background-color: #eff6ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 25px; margin: 25px 0;">
+        <div style="background-color: #2c3e50; border: 2px solid #3b82f6; border-radius: 8px; padding: 25px; margin: 25px 0;">
             <div style="text-align: center; margin-bottom: 20px;">
                 <span class="icon-medium" style="font-size: 40px; display: block; margin-bottom: 10px;">🔐</span>
-                <h2 style="margin: 0; color: #1e40af; font-size: 20px; font-weight: 700;">
+                <h2 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">
                     Your Login Credentials
                 </h2>
-                <p style="color: #3b82f6; margin: 8px 0 0 0; font-size: 14px;">
+                <p style="color: #e5e7eb; margin: 8px 0 0 0; font-size: 14px;">
                     Save these details securely!
                 </p>
             </div>
             
-            <div style="background-color: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <table class="responsive-table" style="width: 100%; color: #4a5568;">
+            <div style="background-color: #2c3e50; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                     <tr>
-                        <td style="padding: 12px 0; font-weight: 600;"><span style="margin-right: 8px;">👤</span> Username:</td>
-                        <td style="padding: 12px 0; font-family: 'Courier New', monospace; font-weight: 700; color: #1e40af;">{username}</td>
+                        <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">👤</span> Username:</td>
+                        <td style="padding: 12px 0; font-family: 'Courier New', monospace; font-weight: 700; color: #60a5fa;">{username}</td>
                     </tr>
                     <tr>
-                        <td style="padding: 12px 0; font-weight: 600;"><span style="margin-right: 8px;">🔑</span> Password:</td>
-                        <td style="padding: 12px 0; font-family: 'Courier New', monospace; font-weight: 700; color: #1e40af;">{temp_password}</td>
+                        <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🔑</span> Password:</td>
+                        <td style="padding: 12px 0; font-family: 'Courier New', monospace; font-weight: 700; color: #60a5fa;">{temp_password}</td>
                     </tr>
                     <tr>
-                        <td style="padding: 12px 0; font-weight: 600;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
+                        <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
                         <td style="padding: 12px 0;">
-                            <a href="https://study.afritechbridge.online/auth/login" style="color: #2563eb; text-decoration: none; font-weight: 600;">
+                            <a href="https://study.afritechbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
                                 study.afritechbridge.online
                             </a>
                         </td>
@@ -496,16 +496,16 @@ def application_approved_email(application, course, username, temp_password, cus
                 </table>
             </div>
             
-            <div style="background-color: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px; padding: 15px; margin-top: 20px;">
-                <p style="color: #dc2626; font-size: 14px; margin: 0; text-align: center;">
-                    <strong>⚠️ Security Reminder:</strong> Please change your password after your first login.
+            <div style="background-color: #2c3e50; border: 1px solid #ef4444; border-radius: 8px; padding: 15px; margin-top: 20px;">
+                <p style="color: #f87171; font-size: 14px; margin: 0; text-align: center;">
+                    <strong style="color: #ffffff;">⚠️ Security Reminder:</strong> Please change your password after your first login.
                 </p>
             </div>
         </div>'''
     
     return f"""
     {get_email_header()}
-    <div style="background-color: white; padding: 30px;">
+    <div style="background-color: #2c3e50; padding: 30px;">
         <!-- Celebration Header -->
         <div style="text-align: center; margin-bottom: 30px;">
             <div class="icon-large" style="font-size: 60px; margin-bottom: 15px;">🎉</div>
@@ -518,11 +518,11 @@ def application_approved_email(application, course, username, temp_password, cus
         </div>
         
         <!-- Greeting -->
-        <p style="color: #4a5568; line-height: 1.6; font-size: 16px;">
-            Dear <strong>{application.full_name}</strong>,
+        <p style="color: #e5e7eb; line-height: 1.6; font-size: 16px;">
+            Dear <strong style="color: #ffffff;">{application.full_name}</strong>,
         </p>
         
-        <p style="color: #4a5568; line-height: 1.6; font-size: 16px;">
+        <p style="color: #e5e7eb; line-height: 1.6; font-size: 16px;">
             We're thrilled to inform you that your application for <strong>{course.title}</strong> has been <strong style="color: #059669;">approved</strong>! Welcome to the Afritec Bridge learning community! 🎓✨
         </p>
         
@@ -535,9 +535,9 @@ def application_approved_email(application, course, username, temp_password, cus
                 
                 {account_type_msg}
         
-        {f'''<div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 20px 0;">
-            <h3 style="margin: 0 0 10px 0; color: #1e40af; font-size: 16px;">💌 Personal Message from Your Instructor</h3>
-            <p style="color: #4a5568; margin: 0; line-height: 1.6; font-style: italic; background-color: white; padding: 15px; border-radius: 6px;">
+        {f'''<div style="background-color: #2c3e50; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 10px 0; color: #ffffff; font-size: 16px;">💌 Personal Message from Your Instructor</h3>
+            <p style="color: #e5e7eb; margin: 0; line-height: 1.6; font-style: italic; background-color: #2c3e50; padding: 15px; border-radius: 6px;">
                 "{custom_message}"
             </p>
         </div>''' if custom_message else ''}
@@ -557,16 +557,16 @@ def application_approved_email(application, course, username, temp_password, cus
             </div>
             
             <div style="text-align: center; margin-top: 20px;">
-                <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: white; color: #128C7E; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px;">
+                <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #2c3e50; color: #25D366; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; border: 2px solid #25D366;">
                     💬 Join WhatsApp Group
                 </a>
             </div>
         </div>
         
         <!-- Course Information -->
-        <div style="background-color: #eff6ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
-            <h3 style="margin: 0 0 15px 0; color: #1e40af; font-size: 16px;">📚 Course Information</h3>
-            <table class="responsive-table" style="width: 100%; color: #4a5568;">
+        <div style="background-color: #2c3e50; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 15px 0; color: #ffffff; font-size: 16px;">📚 Course Information</h3>
+            <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                 <tr>
                     <td style="padding: 8px 0; font-weight: 600;">Course:</td>
                     <td style="padding: 8px 0;">{course.title}</td>
@@ -583,9 +583,9 @@ def application_approved_email(application, course, username, temp_password, cus
         </div>
         
         <!-- Tips for Success -->
-        <div style="background-color: #f0fdf4; border-left: 4px solid #22c55e; border-radius: 8px; padding: 20px; margin: 20px 0;">
-            <h3 style="margin: 0 0 15px 0; color: #15803d; font-size: 16px;">💡 Tips for Success</h3>
-            <ul style="color: #4a5568; line-height: 1.8; margin: 0; padding-left: 20px;">
+        <div style="background-color: #2c3e50; border-left: 4px solid #22c55e; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 15px 0; color: #ffffff; font-size: 16px;">💡 Tips for Success</h3>
+            <ul style="color: #e5e7eb; line-height: 1.8; margin: 0; padding-left: 20px;">
                 <li><strong>Update your password</strong> after first login</li>
                 <li><strong>Complete your profile</strong> with a photo and bio</li>
                 <li><strong>Set learning goals</strong> and track your progress</li>
@@ -602,9 +602,9 @@ def application_approved_email(application, course, username, temp_password, cus
         </div>
         
         <!-- Support Section -->
-        <div style="background-color: #eff6ff; border: 2px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
-            <h3 style="margin: 0 0 10px 0; color: #1e40af; font-size: 16px;">💬 Need Help?</h3>
-            <p style="color: #4a5568; margin: 0 0 15px 0; line-height: 1.6;">
+        <div style="background-color: #2c3e50; border: 2px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 20px 0; text-align: center;">
+            <h3 style="margin: 0 0 10px 0; color: #ffffff; font-size: 16px;">💬 Need Help?</h3>
+            <p style="color: #e5e7eb; margin: 0 0 15px 0; line-height: 1.6;">
                 Our support team is here to help you succeed!
             </p>
             <a href="mailto:support@afritecbridge.com" style="display: inline-block; background-color: #3b82f6; color: white; padding: 10px 25px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
@@ -612,15 +612,15 @@ def application_approved_email(application, course, username, temp_password, cus
             </a>
         </div>
         
-        <p style="color: #4a5568; line-height: 1.6; text-align: center; margin: 30px 0 20px 0;">
+        <p style="color: #e5e7eb; line-height: 1.6; text-align: center; margin: 30px 0 20px 0;">
             We're excited to have you in our learning community!<br>
             Your success is our priority. 🌟
         </p>
         
-        <p style="color: #4a5568; line-height: 1.6; text-align: center;">
+        <p style="color: #e5e7eb; line-height: 1.6; text-align: center;">
             Best regards,<br>
-            <strong>The Afritec Bridge Team</strong><br>
-            <span style="font-size: 13px; color: #6b7280; font-style: italic;">Empowering Africa Through Digital Education</span>
+            <strong style="color: #ffffff;">The Afritec Bridge Team</strong><br>
+            <span style="font-size: 13px; color: #bdc3c7; font-style: italic;">Empowering Africa Through Digital Education</span>
         </p>
     </div>
             
