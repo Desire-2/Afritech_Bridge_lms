@@ -526,9 +526,9 @@ def application_approved_email(application, course, username, temp_password, cus
             We're thrilled to inform you that your application for <strong>{course.title}</strong> has been <strong style="color: #059669;">approved</strong>! Welcome to the Afritec Bridge learning community! 🎓✨
         </p>
         
-        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 8px; padding: 25px; margin: 25px 0; color: white; text-align: center;">
+        <div style="background-color: #2c3e50; border: 3px solid #10b981; border-radius: 8px; padding: 25px; margin: 25px 0; color: white; text-align: center;">
             <h2 style="margin: 0 0 10px 0; font-size: 24px; color: white;">Welcome to {course.title}!</h2>
-            <p style="margin: 0; font-size: 16px; color: rgba(255,255,255,0.9);">
+            <p style="margin: 0; font-size: 16px; color: #e5e7eb;">
                 Your learning journey starts now. We can't wait to see what you'll achieve! 🚀
             </p>
         </div>
@@ -545,19 +545,19 @@ def application_approved_email(application, course, username, temp_password, cus
                 {credentials_section}
         
         <!-- Community Section -->
-        <div style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); border-radius: 8px; padding: 25px; margin: 25px 0; color: white;">
+        <div style="background-color: #2c3e50; border: 3px solid #25D366; border-radius: 8px; padding: 25px; margin: 25px 0; color: white;">
             <div style="text-align: center; margin-bottom: 15px;">
                 <span style="font-size: 40px; display: block; margin-bottom: 10px;">📱</span>
                 <h2 style="margin: 0; color: white; font-size: 20px; font-weight: 700;">
                     Join Our Learning Community!
                 </h2>
-                <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                <p style="color: #e5e7eb; margin: 8px 0 0 0; font-size: 14px;">
                     Connect with fellow students and get course updates
                 </p>
             </div>
             
             <div style="text-align: center; margin-top: 20px;">
-                <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #2c3e50; color: #25D366; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; border: 2px solid #25D366;">
+                <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #25D366; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; border: 2px solid #25D366;">
                     💬 Join WhatsApp Group
                 </a>
             </div>
