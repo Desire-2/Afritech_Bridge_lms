@@ -353,13 +353,15 @@ class ProgressionService:
                     continue
                 
                 # Check comprehensive lesson requirements
-                requirements_status = LessonCompletionService.check_lesson_completion_requirements(
+                can_complete_lesson, req_reason, req_data = LessonCompletionService.check_lesson_completion_requirements(
                     student_id, lesson.id
                 )
                 
-                if not requirements_status["can_complete"]:
-                    missing_reqs = requirements_status.get("missing_requirements", [])
-                    lesson_failures.append(f"Lesson '{lesson.title}': {', '.join(missing_reqs)}")
+                if not can_complete_lesson:
+                    missing_reqs = req_data.get("missing_requirements", []) if isinstance(req_data, dict) else []
+                    if not missing_reqs and req_reason:
+                        missing_reqs = [req_reason]
+                    lesson_failures.append(f"Lesson '{lesson.title}': {', '.join(missing_reqs) if missing_reqs else req_reason}")
                     continue
                 
                 # Check lesson score threshold

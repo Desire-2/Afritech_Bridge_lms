@@ -131,7 +131,7 @@ export class EnhancedModuleUnlockService {
    */
   static async checkModuleUnlockEligibility(moduleId: number): Promise<ModuleUnlockEligibility> {
     try {
-      const response = await axiosInstance.get(`/learning/module/${moduleId}/unlock-eligibility`);
+      const response = await axiosInstance.get(`/student/learning/module/${moduleId}/unlock-eligibility`);
       
       if (response.data.success) {
         return response.data.eligibility;
@@ -149,7 +149,7 @@ export class EnhancedModuleUnlockService {
    */
   static async attemptModuleUnlock(moduleId: number): Promise<ModuleUnlockResult> {
     try {
-      const response = await axiosInstance.post(`/learning/module/${moduleId}/unlock`);
+      const response = await axiosInstance.post(`/student/learning/module/${moduleId}/unlock`);
       
       if (response.data.success) {
         return response.data.result;
@@ -174,7 +174,7 @@ export class EnhancedModuleUnlockService {
    */
   static async getCourseUnlockProgress(courseId: number): Promise<CourseUnlockProgress> {
     try {
-      const response = await axiosInstance.get(`/learning/course/${courseId}/unlock-progress`);
+      const response = await axiosInstance.get(`/student/learning/course/${courseId}/unlock-progress`);
       
       if (response.data.success) {
         return response.data.progress;
@@ -195,7 +195,7 @@ export class EnhancedModuleUnlockService {
     notificationType: 'pre_unlock_warning' | 'unlock_celebration' | 'unlock_reminder'
   ): Promise<UnlockNotification> {
     try {
-      const response = await axiosInstance.post(`/learning/module/${moduleId}/unlock-notification`, {
+      const response = await axiosInstance.post(`/student/learning/module/${moduleId}/unlock-notification`, {
         notification_type: notificationType
       });
       

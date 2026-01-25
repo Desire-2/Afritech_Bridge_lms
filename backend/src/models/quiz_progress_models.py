@@ -89,14 +89,6 @@ class UserAnswer(db.Model):
 # NOTE: UserProgress, LessonCompletion, ModuleCompletion consolidated to student_models.py (Lines 45-79)
 # These models are imported from there and defined only once as single source of truth
 
-class LessonCompletion(db.Model):
-    __tablename__ = "lesson_completion"
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
-    lesson_id = db.Column(db.Integer, db.ForeignKey("lessons.id"), nullable=False)  # ✅ Fixed: lessons (not lesson)
-    completed_at = db.Column(db.DateTime, default=datetime.utcnow)
-    __table_args__ = (db.UniqueConstraint("user_id", "lesson_id", name="uq_user_lesson_completion"),)
-
 class ModuleCompletion(db.Model):
     __tablename__ = "module_completion"
     id = db.Column(db.Integer, primary_key=True)

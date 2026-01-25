@@ -422,13 +422,16 @@ class EnhancedModuleUnlockService:
             
             # Check comprehensive lesson requirements using the service
             from .lesson_completion_service import LessonCompletionService
-            requirements_status = LessonCompletionService.check_lesson_completion_requirements(
+            can_complete_lesson, req_reason, requirements_status = LessonCompletionService.check_lesson_completion_requirements(
                 student_id, lesson.id
             )
+            requirements_status = requirements_status if isinstance(requirements_status, dict) else {}
+            requirements_status["can_complete"] = can_complete_lesson
+            requirements_status["reason"] = req_reason
             
             lesson_score = completion.calculate_lesson_score()
             
-            if requirements_status["can_complete"]:
+            if can_complete_lesson:
                 # Additional check: Ensure lesson score meets the passing threshold
                 if lesson_score >= EnhancedModuleUnlockService.LESSON_PASSING_SCORE:
                     passed_lessons.append({
@@ -659,11 +662,14 @@ class EnhancedModuleUnlockService:
                 
                 # Use the enhanced lesson completion service for strict validation
                 from .lesson_completion_service import LessonCompletionService
-                lesson_requirements = LessonCompletionService.check_lesson_completion_requirements(
+                can_complete_lesson, req_reason, lesson_requirements = LessonCompletionService.check_lesson_completion_requirements(
                     student_id, lesson.id
                 )
-                
-                if not lesson_requirements["can_complete"]:
+                lesson_requirements = lesson_requirements if isinstance(lesson_requirements, dict) else {}
+                lesson_requirements["can_complete"] = can_complete_lesson
+                lesson_requirements["reason"] = req_reason
+
+                if not can_complete_lesson:
                     # Get detailed missing requirements
                     missing_reqs = lesson_requirements.get("missing_requirements", [])
                     current_scores = lesson_requirements.get("current_scores", {})
@@ -678,7 +684,7 @@ class EnhancedModuleUnlockService:
                         "lesson_score": completion.calculate_lesson_score()
                     })
                     lesson_validation_errors.append(
-                        f"Lesson '{lesson.title}': {', '.join(missing_reqs)}"
+                        f"Lesson '{lesson.title}': {', '.join(missing_reqs) if missing_reqs else req_reason}"
                     )
                     all_lessons_satisfied = False
                 

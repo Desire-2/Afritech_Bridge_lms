@@ -481,25 +481,26 @@ export const useProgressTracking = ({
     }
   }, [currentLesson?.id, loadExistingProgress]);
 
-  // Time tracking
+  // Time tracking - more frequent updates for better responsiveness
   useEffect(() => {
     const timer = setInterval(() => {
       if (showCelebration) return;
       
       setTimeSpent(Math.floor((Date.now() - startTimeRef.current) / 1000));
       updateReadingProgress();
-    }, 2000);
+    }, 1000); // Update every 1 second instead of 2 for more frequent saves
     
     return () => clearInterval(timer);
   }, [updateReadingProgress, showCelebration]);
 
-  // Auto-save timer with auto-completion check
+  // Auto-save timer with auto-completion check - more frequent for better data persistence
   useEffect(() => {
-    if (currentLesson && !isLessonCompleted) {
-      const timer = setInterval(() => autoSaveProgress(), 30000);
+    if (currentLesson && !isLessonCompleted && progressLoaded) {
+      // Save progress every 10 seconds instead of 30 for better data persistence
+      const timer = setInterval(() => autoSaveProgress(), 10000);
       return () => clearInterval(timer);
     }
-  }, [currentLesson, autoSaveProgress, isLessonCompleted]);
+  }, [currentLesson, autoSaveProgress, isLessonCompleted, progressLoaded]);
 
   return {
     readingProgress,

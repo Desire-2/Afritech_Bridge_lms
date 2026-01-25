@@ -18,6 +18,8 @@ from src.models.course_models import (
     Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement,
     Assignment, AssignmentSubmission, Project, ProjectSubmission
 )
+from src.models.quiz_progress_models import QuizAttempt, UserAnswer # Import quiz progress models
+from src.models.student_models import LessonCompletion, UserProgress, ModuleProgress, Certificate # Import student tracking models
 from src.models.opportunity_models import Opportunity # Import Opportunity model
 from src.models.achievement_models import (
     Achievement, UserAchievement, LearningStreak, StudentPoints, 
@@ -78,25 +80,33 @@ if os.environ.get('FLASK_ENV') == 'production':
          }})
     logger.info(f"CORS configured for production with origins: {allowed_origins}")
 else:
-    # In development, allow all origins with full configuration
-    CORS(app, 
+    # In development, allow configurable origins with sensible defaults
+    dev_allowed_origins = os.environ.get('DEV_ALLOWED_ORIGINS')
+    if dev_allowed_origins:
+        dev_allowed_origins = [origin.strip() for origin in dev_allowed_origins.split(',') if origin.strip()]
+    else:
+        dev_allowed_origins = [
+            "http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
+            "http://localhost:3005", "http://localhost:5173",
+            "http://192.168.0.4:3000", "http://192.168.0.4:3001",
+            "http://192.168.0.4:3002", "http://192.168.0.4:3005",
+            "http://192.168.0.3:3000", "http://192.168.0.3:3001",
+            "http://192.168.116.116:3000", "http://192.168.116.116:3001",
+            "http://192.168.116.116:3002", "http://192.168.116.116:3005",
+            "http://192.168.0.4:5001", "http://localhost:5001",
+            "http://localhost:51164", "http://192.168.0.5:3000", "http://192.168.0.5:3001"
+        ]
+
+    CORS(app,
          resources={r"/*": {
-             "origins": ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", 
-                        "http://localhost:3005", "http://localhost:5173", 
-                        "http://192.168.0.4:3000", "http://192.168.0.4:3001", 
-                        "http://192.168.0.4:3002", "http://192.168.0.4:3005",
-                        "http://192.168.0.3:3000", "http://192.168.0.3:3001",
-                        "http://192.168.116.116:3000", "http://192.168.116.116:3001", 
-                        "http://192.168.116.116:3002", "http://192.168.116.116:3005",
-                        "http://192.168.0.4:5001", "http://localhost:5001",
-                        "http://localhost:51164"],
+             "origins": dev_allowed_origins,
              "methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
              "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
              "expose_headers": ["Content-Type", "Authorization"],
              "supports_credentials": True,
              "max_age": 3600
          }})
-    logger.info("CORS configured for development with specific settings")
+    logger.info(f"CORS configured for development with origins: {dev_allowed_origins}")
 
 # Disable strict trailing slash enforcement to prevent redirects during CORS preflight
 app.url_map.strict_slashes = False

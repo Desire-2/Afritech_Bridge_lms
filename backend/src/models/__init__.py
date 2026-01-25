@@ -28,7 +28,6 @@ from .course_models import (
 from .quiz_progress_models import (
     QuizAttempt,    # ✅ References consolidated Quiz model
     UserAnswer,     # ✅ References consolidated Question model
-    LessonCompletion,  # ✅ Kept here for backward compatibility
     ModuleCompletion,  # ✅ Kept here for backward compatibility
     Certificate,
     # Enums
@@ -47,11 +46,12 @@ from .user_models import (
 
 # Student Models - Contains UserProgress and other student tracking models
 try:
-    from .student_models import UserProgress, Badge, UserBadge
+    from .student_models import UserProgress, Badge, UserBadge, LessonCompletion
 except ImportError:
     UserProgress = None  # Optional
     Badge = None
     UserBadge = None
+    LessonCompletion = None
 
 # Opportunity Models
 try:

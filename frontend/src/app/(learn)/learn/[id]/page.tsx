@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { StudentApiService } from '@/services/studentApi';
 import { AssessmentApiService, ProgressApiService } from '@/services/api';
+import { EnhancedModuleUnlockService } from '@/services/enhancedModuleUnlockService';
 import ContentAssignmentService, { type ContentQuiz, type ContentAssignment } from '@/services/contentAssignmentApi';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -214,11 +215,15 @@ const LearningPage = () => {
     previousModuleTotalLessons: number;
     requiredScore: number;
   } | null>(null);
+  const [lockedModuleEligibility, setLockedModuleEligibility] = useState<any | null>(null);
+  const [lockedModuleEligibilityLoading, setLockedModuleEligibilityLoading] = useState(false);
+  const [modalUnlocking, setModalUnlocking] = useState(false);
   
   // Refs for tracking
   const contentRef = useRef<HTMLDivElement | null>(null);
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
+  const unlockingRef = useRef<boolean>(false);
 
   // Authentication check effect - must be called after all hooks
   useEffect(() => {
@@ -919,7 +924,7 @@ const LearningPage = () => {
         modules.map(async (module: any) => {
           try {
             const moduleProgress = await StudentApiService.getModuleProgress(module.id);
-            return moduleProgress.cumulative_score || 0;
+            return (moduleProgress.weighted_score ?? moduleProgress.cumulative_score ?? 0);
           } catch {
             return 0;
           }
@@ -1056,8 +1061,14 @@ const LearningPage = () => {
           allLessons.map(async (lesson: any) => {
             try {
               const response = await StudentApiService.getLessonProgress(lesson.id);
-              // Mark as completed if reading progress is 100% or explicitly marked as completed/auto_completed
-              completionStatuses[lesson.id] = response.progress?.completed || response.auto_completed || response.reading_progress >= 100 || false;
+              // Mark as completed if explicitly marked as completed in DB
+              // The API returns { lesson_id, progress: { completed, reading_progress, ... } }
+              const isCompleted = response.progress?.completed === true;
+              completionStatuses[lesson.id] = isCompleted;
+              
+              if (isCompleted) {
+                console.log(`✅ Lesson ${lesson.id} is completed in DB`);
+              }
             } catch (error) {
               console.error(`Failed to load completion status for lesson ${lesson.id}:`, error);
               completionStatuses[lesson.id] = false;
@@ -1077,7 +1088,7 @@ const LearningPage = () => {
               console.log(`⚠️ Preserving local completion for lesson ${lessonId} (backend not synced yet)`);
             }
           });
-          console.log('✅ Loaded lesson completion statuses:', merged);
+          console.log('✅ Loaded lesson completion statuses from DB:', merged);
           return merged;
         });
       } catch (error) {
@@ -1086,6 +1097,115 @@ const LearningPage = () => {
     };
     
     loadLessonCompletionStatuses();
+  }, [courseData?.course?.modules]);
+
+  // Handler to mark a lesson as completed (called when auto-completion happens)
+  const markLessonAsCompleted = useCallback((lessonId: number) => {
+    setLessonCompletionStatus(prev => {
+      if (prev[lessonId] === true) {
+        return prev; // Already completed, no update needed
+      }
+      
+      console.log(`✅ Marking lesson ${lessonId} as completed in UI`);
+      return {
+        ...prev,
+        [lessonId]: true
+      };
+    });
+  }, []);
+
+  // Refresh completion status for current lesson when it changes
+  useEffect(() => {
+    const refreshCurrentLessonCompletion = async () => {
+      if (!currentLesson?.id) return;
+      
+      try {
+        const response = await StudentApiService.getLessonProgress(currentLesson.id);
+        const isCompleted = response.progress?.completed === true;
+        
+        // Update completion status if it's different from current state
+        if (isCompleted !== lessonCompletionStatus[currentLesson.id]) {
+          console.log(`🔄 Updating completion status for lesson ${currentLesson.id}: ${isCompleted}`);
+          markLessonAsCompleted(currentLesson.id);
+        }
+      } catch (error) {
+        console.error(`Failed to refresh completion status for lesson ${currentLesson.id}:`, error);
+      }
+    };
+    
+    refreshCurrentLessonCompletion();
+  }, [currentLesson?.id, markLessonAsCompleted, lessonCompletionStatus]);
+
+  // Load quiz attempt scores from database for sidebar display
+  // This ensures lesson assessment scores are real data from the DB, not just defaults
+  useEffect(() => {
+    const loadQuizAttempts = async () => {
+      if (!courseData?.course?.modules) return;
+      
+      try {
+        const allLessons = courseData.course.modules.flatMap((module: any) => module.lessons || []);
+        const quizStatusMap: { [quizId: number]: { completed: boolean; score: number; passed: boolean } } = {};
+        
+        // Fetch quiz data for lessons with quizzes
+        await Promise.all(
+          allLessons.map(async (lesson: any) => {
+            try {
+              // Get lesson quiz (if exists)
+              const quizData = await ContentAssignmentService.getLessonQuiz(lesson.id).catch(() => ({ quiz: null }));
+              
+              if (quizData.quiz) {
+                const quiz = quizData.quiz;
+                // Get attempts for this quiz to get the best score
+                try {
+                  const attempts = await AssessmentApiService.getQuizAttempts(quiz.id).catch(() => ({ attempts: [] }));
+                  
+                  if (attempts.attempts && attempts.attempts.length > 0) {
+                    // Sort by score descending to get best score
+                    const bestAttempt = attempts.attempts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0))[0];
+                    const passingScore = quiz.passing_score || 70;
+                    
+                    quizStatusMap[quiz.id] = {
+                      completed: true,
+                      score: bestAttempt.score || 0,
+                      passed: (bestAttempt.score || 0) >= passingScore
+                    };
+                    
+                    console.log(`📊 Loaded quiz ${quiz.id} from DB:`, {
+                      bestScore: bestAttempt.score,
+                      isPassed: (bestAttempt.score || 0) >= passingScore,
+                      attemptCount: attempts.attempts.length
+                    });
+                  }
+                } catch (error) {
+                  console.warn(`Failed to fetch attempts for quiz ${quiz.id}:`, error);
+                  // Set empty score if no attempts found
+                  quizStatusMap[quiz.id] = {
+                    completed: false,
+                    score: 0,
+                    passed: false
+                  };
+                }
+              }
+            } catch (error) {
+              console.warn(`Failed to load quiz for lesson ${lesson.id}:`, error);
+            }
+          })
+        );
+        
+        // Update state with all quiz scores from DB
+        if (Object.keys(quizStatusMap).length > 0) {
+          setQuizCompletionStatus(prev => ({
+            ...prev,
+            ...quizStatusMap
+          }));
+          console.log('✅ Loaded quiz attempt scores from database:', quizStatusMap);
+        }
+      } catch (error) {
+        console.error('Failed to load quiz attempts:', error);
+      }
+    };
+    
+    loadQuizAttempts();
   }, [courseData?.course?.modules]);
 
   // Load content when lesson changes
@@ -1305,6 +1425,19 @@ const LearningPage = () => {
         setLessonNotes('');
         setCurrentViewMode('content'); // Reset to content tab when navigating to a new lesson
         
+        // Prefetch lesson progress immediately for faster load
+        try {
+          const progress = await StudentApiService.getLessonProgress(lessonId);
+          console.log('📊 Prefetched lesson progress:', {
+            lessonId,
+            readingProgress: progress.reading_progress,
+            engagementScore: progress.engagement_score,
+            completed: progress.completed
+          });
+        } catch (error) {
+          console.warn('⚠️ Failed to prefetch lesson progress (will load in useProgressTracking):', error);
+        }
+        
         // Reset video tracking for new lesson
         setVideoProgress(0);
         setVideoCompleted(false);
@@ -1433,8 +1566,26 @@ const LearningPage = () => {
     setShowLockedModuleModal(true);
   }, [viewAsStudent]);
 
+  // When locked module modal opens, fetch enhanced eligibility for that target module
+  useEffect(() => {
+    const loadEligibility = async () => {
+      if (!showLockedModuleModal || !lockedModuleInfo) return;
+      try {
+        setLockedModuleEligibilityLoading(true);
+        const elig = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(lockedModuleInfo.moduleId);
+        setLockedModuleEligibility(elig);
+      } catch (e) {
+        setLockedModuleEligibility(null);
+      } finally {
+        setLockedModuleEligibilityLoading(false);
+      }
+    };
+    loadEligibility();
+  }, [showLockedModuleModal, lockedModuleInfo]);
+
   // Auto-unlock next module when current module is completed with passing score
   const checkAndUnlockNextModule = useCallback(async () => {
+    if (unlockingRef.current) return;
     if (!courseData?.course?.modules || !currentModuleId) return;
     
     // Check if all lessons are completed
@@ -1468,6 +1619,14 @@ const LearningPage = () => {
     if (!isPassing) {
       console.log(`⚠️ Module score ${currentScore.toFixed(1)}% is below passing threshold ${passingThreshold}%`);
       
+      // Try enhanced eligibility for richer guidance
+      let eligibility: any = null;
+      try {
+        eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(currentModuleId);
+      } catch (e) {
+        // Non-fatal: continue with local breakdown/weights
+      }
+
       // Fetch detailed score breakdown with dynamic weights from API
       let weights = { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 };
       let assessmentInfo = { hasQuizzes: true, hasAssignments: true, hasFinalAssessment: true, isReadingOnly: false };
@@ -1503,21 +1662,23 @@ const LearningPage = () => {
         finalAssessment: 0
       };
       
-      // Check each component and suggest improvements (only for available components)
-      if (weights.courseContribution > 0 && breakdown.courseContribution < 80) {
-        missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for 80%+)`);
-      }
-      
-      if (weights.quizzes > 0 && breakdown.quizzes < 80) {
-        missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for 80%+)`);
-      }
-      
-      if (weights.assignments > 0 && breakdown.assignments < 80) {
-        missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for 80%+)`);
-      }
-      
-      if (weights.finalAssessment > 0 && breakdown.finalAssessment < 80) {
-        missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for 80%+)`);
+      // Prefer backend recommendations if available
+      if (eligibility?.recommendations?.length) {
+        missingItems.push(...eligibility.recommendations);
+      } else {
+        // Check each component and suggest improvements (only for available components)
+        if (weights.courseContribution > 0 && breakdown.courseContribution < 80) {
+          missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for 80%+)`);
+        }
+        if (weights.quizzes > 0 && breakdown.quizzes < 80) {
+          missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for 80%+)`);
+        }
+        if (weights.assignments > 0 && breakdown.assignments < 80) {
+          missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for 80%+)`);
+        }
+        if (weights.finalAssessment > 0 && breakdown.finalAssessment < 80) {
+          missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for 80%+)`);
+        }
       }
       
       // Show the modal with missing requirements
@@ -1538,36 +1699,58 @@ const LearningPage = () => {
       return;
     }
     
-    // Always call the module completion API to mark the module as completed in the database
-    // This is crucial for both:
-    // 1. The last module which has no next module to trigger completion
-    // 2. Non-last modules to unlock the next module
-    let moduleCompletionResult: any = null;
+    // Prefer enhanced unlock flow
+    unlockingRef.current = true;
     try {
-      console.log(`✅ Marking module ${currentModuleId} as completed via API`);
-      moduleCompletionResult = await AssessmentApiService.submitModuleCompletion(currentModuleId);
-      console.log('📊 Module completion result:', moduleCompletionResult);
-      
-      // Refresh progress data to update the sidebar status
+      const unlock = await EnhancedModuleUnlockService.attemptModuleUnlock(currentModuleId);
+      // Refresh progress after attempt
       await progressiveLearning.refreshProgress();
-    } catch (error: any) {
-      console.warn('Module completion API call:', error?.response?.data?.message || error?.message);
-      // Still refresh progress to try and get updated status
-      await progressiveLearning.refreshProgress();
-    }
-    
-    if (!nextModule) {
-      console.log('🎉 Last module completed! Course finished!');
-      // Check for course completion
-      checkCourseCompletion();
-      return;
-    }
-    
-    // For non-last modules, show unlock animation if passed
-    if (moduleCompletionResult?.passed && moduleCompletionResult?.can_proceed) {
-      // Show unlock animation
-      handleModuleUnlock(nextModule.title || 'Next Module');
-      console.log(`✅ Successfully unlocked module: ${nextModule.title}`);
+
+      if (unlock?.success) {
+        if (unlock?.course_completed || !nextModule) {
+          console.log('🎉 Course completion detected via enhanced unlock!');
+          await checkCourseCompletion();
+          return;
+        }
+        if (unlock?.next_module?.title || nextModule?.title) {
+          handleModuleUnlock((unlock?.next_module?.title) || (nextModule?.title || 'Next Module'));
+          console.log(`✅ Successfully unlocked module: ${(unlock?.next_module?.title) || nextModule?.title}`);
+        }
+        return;
+      }
+
+      // If enhanced unlock failed, surface eligibility guidance
+      try {
+        const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(currentModuleId);
+        const fallbackMissing = Array.isArray(eligibility?.recommendations) ? eligibility.recommendations : [];
+        const breakdown = moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, finalAssessment: 0 };
+        setModuleProgressInfo({
+          moduleName: currentModule?.title || 'Current Module',
+          nextModuleName: nextModule?.title || 'Next Module',
+          currentScore,
+          requiredScore: passingThreshold,
+          missingItems: fallbackMissing,
+          breakdown,
+          weights: { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 },
+          assessmentInfo: undefined
+        });
+        setShowModuleProgressModal(true);
+      } catch (_) {
+        // As last resort, fall back to legacy completion to remain compatible
+        try {
+          const legacy = await AssessmentApiService.submitModuleCompletion(currentModuleId);
+          await progressiveLearning.refreshProgress();
+          if (!nextModule) {
+            await checkCourseCompletion();
+          } else if (legacy?.passed && legacy?.can_proceed && nextModule?.title) {
+            handleModuleUnlock(nextModule.title);
+          }
+        } catch (legacyErr) {
+          console.warn('Legacy completion also failed:', legacyErr);
+        }
+      }
+    } finally {
+      unlockingRef.current = false;
     }
   }, [courseData?.course?.modules, currentModuleId, checkModuleCompletion, moduleScoring, progressiveLearning, checkCourseCompletion, handleModuleUnlock]);
 
@@ -2532,6 +2715,46 @@ const LearningPage = () => {
                   </div>
                 </motion.div>
 
+                {/* Enhanced Eligibility Insights */}
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.25 }}
+                  className="bg-gradient-to-r from-slate-900/40 to-slate-800/30 rounded-lg p-4 sm:p-6 border border-slate-700/40 backdrop-blur-sm"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-slate-200 font-bold text-sm sm:text-base">Eligibility Overview</h4>
+                    {lockedModuleEligibilityLoading && (
+                      <span className="text-xs text-slate-400">Loading…</span>
+                    )}
+                  </div>
+                  {lockedModuleEligibility && (
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <span className={`px-2 py-1 text-xs rounded border ${lockedModuleEligibility.eligible ? 'bg-green-500/10 text-green-300 border-green-600/30' : 'bg-yellow-500/10 text-yellow-300 border-yellow-600/30'}`}>
+                          {lockedModuleEligibility.eligible ? 'Eligible' : 'Not Eligible'}
+                        </span>
+                        <span className="px-2 py-1 text-xs rounded border bg-slate-700/40 text-slate-300 border-slate-600/40">
+                          Score: {Math.round(lockedModuleEligibility.total_score)}% / {Math.round(lockedModuleEligibility.required_score)}%
+                        </span>
+                        {lockedModuleEligibility.can_preview && (
+                          <span className="px-2 py-1 text-xs rounded border bg-blue-500/10 text-blue-300 border-blue-600/30">Preview Allowed</span>
+                        )}
+                      </div>
+                      {Array.isArray(lockedModuleEligibility.recommendations) && lockedModuleEligibility.recommendations.length > 0 && (
+                        <div>
+                          <p className="text-xs text-slate-300 mb-2">Recommendations:</p>
+                          <ul className="list-disc list-inside text-xs text-slate-300 space-y-1">
+                            {lockedModuleEligibility.recommendations.map((rec: string, idx: number) => (
+                              <li key={idx}>{rec}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </motion.div>
+
                 {/* Enhanced Tips Section */}
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }}
@@ -2586,12 +2809,15 @@ const LearningPage = () => {
                    lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
                     <Button
                       className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 sm:py-4 text-sm sm:text-base transition-all duration-200 shadow-lg hover:shadow-xl"
+                      disabled={modalUnlocking}
                       onClick={async () => {
                         try {
-                          // Call API to unlock the next module
-                          console.log(`🔓 Manually unlocking module from modal: previous module ${lockedModuleInfo.previousModuleId}`);
-                          const result = await AssessmentApiService.submitModuleCompletion(lockedModuleInfo.previousModuleId);
-                          console.log('🔓 Unlock result:', result);
+                          if (modalUnlocking) return;
+                          setModalUnlocking(true);
+                          // Call enhanced API to unlock next module from previous module context
+                          console.log(`🔓 Manually unlocking via enhanced API from previous module ${lockedModuleInfo.previousModuleId}`);
+                          const result = await EnhancedModuleUnlockService.attemptModuleUnlock(lockedModuleInfo.previousModuleId);
+                          console.log('🔓 Unlock result (enhanced):', result);
                           
                           // Refresh progress data
                           await progressiveLearning.refreshProgress();
@@ -2600,7 +2826,7 @@ const LearningPage = () => {
                           setShowLockedModuleModal(false);
                           
                           // Show success toast or navigate to the unlocked module
-                          if (result.passed && result.can_proceed) {
+                          if (result?.success) {
                             // Navigate to the newly unlocked module's first lesson
                             const unlockedModule = courseModules.find((m: any) => m.id === lockedModuleInfo.moduleId);
                             const unlockedModuleLessons = unlockedModule?.lessons || [];
@@ -2613,6 +2839,8 @@ const LearningPage = () => {
                           console.error('Failed to unlock module:', error);
                           // Still try to refresh and check if it was already unlocked
                           await progressiveLearning.refreshProgress();
+                        } finally {
+                          setModalUnlocking(false);
                         }
                       }}
                     >

@@ -184,10 +184,20 @@ def get_user_stats():
         
         # User growth by month (last 6 months)
         six_months_ago = datetime.now() - timedelta(days=180)
-        user_growth = db.session.query(
-            func.strftime('%Y-%m', User.created_at).label('month'),
-            func.count(User.id).label('count')
-        ).filter(User.created_at >= six_months_ago).group_by('month').order_by('month').all()
+        # Use PostgreSQL-compatible date formatting
+        from sqlalchemy.sql import text
+        if 'postgresql' in str(db.engine.url):
+            # PostgreSQL: use to_char function
+            user_growth = db.session.query(
+                func.to_char(User.created_at, 'YYYY-MM').label('month'),
+                func.count(User.id).label('count')
+            ).filter(User.created_at >= six_months_ago).group_by(func.to_char(User.created_at, 'YYYY-MM')).order_by(func.to_char(User.created_at, 'YYYY-MM')).all()
+        else:
+            # SQLite: use strftime function
+            user_growth = db.session.query(
+                func.strftime('%Y-%m', User.created_at).label('month'),
+                func.count(User.id).label('count')
+            ).filter(User.created_at >= six_months_ago).group_by('month').order_by('month').all()
         
         return jsonify({
             "total_users": total_users,
@@ -207,6 +217,9 @@ def get_user_stats():
 def bulk_user_action():
     """Perform bulk actions on multiple users with detailed error reporting"""
     try:
+        # Import models at function level to ensure scope availability
+        from ..models.course_models import AssignmentSubmission
+        
         data = request.get_json()
         user_ids = data.get("user_ids", [])
         action = data.get("action")  # activate, deactivate, delete, change_role
@@ -357,6 +370,22 @@ def bulk_user_action():
             if current_user_id in user_ids and current_user.role.name == "admin":
                 return jsonify({"error": "Cannot change your own admin role"}), 400
             
+            # Clean up orphaned assignment submissions BEFORE making role changes
+            # (AssignmentSubmission already imported at function start)
+            
+            # Use no_autoflush to prevent premature flushing during queries
+            with db.session.no_autoflush:
+                # First, check and clean up any orphaned submissions
+                orphaned_submissions = AssignmentSubmission.query.filter(
+                    AssignmentSubmission.student_id.is_(None)
+                ).all()
+                
+                if orphaned_submissions:
+                    logger.warning(f"Found {len(orphaned_submissions)} orphaned assignment submissions - removing them")
+                    for submission in orphaned_submissions:
+                        db.session.delete(submission)
+                    warnings.append(f"Cleaned up {len(orphaned_submissions)} orphaned assignment submissions")
+            
             # Update roles
             users_to_update = User.query.filter(User.id.in_(user_ids)).all()
             for user in users_to_update:
@@ -373,7 +402,49 @@ def bulk_user_action():
                 "valid_actions": ["activate", "deactivate", "delete", "change_role"]
             }), 400
         
-        db.session.commit()
+        # Commit all changes in a single transaction
+        try:
+            # Use no_autoflush to prevent SQLAlchemy from auto-flushing during queries
+            with db.session.no_autoflush:
+                # Final safety check: clean up any orphaned assignment submissions that might have been created
+                final_orphaned = AssignmentSubmission.query.filter(
+                    AssignmentSubmission.student_id.is_(None)
+                ).all()
+                
+                if final_orphaned:
+                    logger.warning(f"Final cleanup: removing {len(final_orphaned)} orphaned assignment submissions")
+                    for submission in final_orphaned:
+                        db.session.delete(submission)
+            
+            # Now commit all changes
+            db.session.commit()
+        except Exception as commit_error:
+            db.session.rollback()
+            logger.error(f"Error committing bulk action: {str(commit_error)}")
+            
+            # If there's still a constraint violation, try a direct SQL cleanup
+            if "not-null constraint" in str(commit_error) and "assignment_submissions" in str(commit_error):
+                logger.warning("Attempting direct SQL cleanup of orphaned assignment submissions")
+                try:
+                    from sqlalchemy import text
+                    # Force delete any problematic records
+                    result = db.session.execute(text("DELETE FROM assignment_submissions WHERE student_id IS NULL"))
+                    if result.rowcount > 0:
+                        logger.info(f"Cleaned up {result.rowcount} orphaned assignment submissions")
+                    db.session.commit()
+                    
+                    # Retry the original operation
+                    return jsonify({
+                        "error": "Database constraint resolved, please retry the operation",
+                        "details": f"Cleaned up {result.rowcount} orphaned assignment submissions"
+                    }), 409  # Conflict - client should retry
+                except Exception as cleanup_error:
+                    logger.error(f"Failed to cleanup orphaned records: {cleanup_error}")
+            
+            return jsonify({
+                "error": "Database operation failed during commit",
+                "details": str(commit_error)
+            }), 500
         
         response_data = {
             "message": f"Bulk action '{action}' completed successfully",

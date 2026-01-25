@@ -160,7 +160,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
               progressMap[module.id] = {
                 completedLessons: completedCount,
                 totalLessons: totalLessons,
-                cumulativeScore: progressData?.module_score || progressData?.cumulative_score || 0,
+                cumulativeScore: (progressData?.weighted_score ?? progressData?.cumulative_score ?? progressData?.module_score ?? 0),
                 status: progressData?.status || 'locked',
                 progressPercentage: progressPercentage
               };

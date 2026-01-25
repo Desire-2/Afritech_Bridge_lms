@@ -1,6 +1,6 @@
 # Enhanced Student API Routes for Afritec Bridge LMS
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import json
@@ -445,7 +445,6 @@ def update_lesson_progress(lesson_id):
         
         if auto_completed:
             response_data["completion_message"] = f"🎉 Lesson auto-completed! Score: {lesson_score:.1f}%"
-            from flask import current_app
             current_app.logger.info(f"✅ Lesson {lesson_id} auto-completed with score {lesson_score:.1f}%")
         
         if next_lesson_unlocked and next_lesson_info:
@@ -542,7 +541,6 @@ def get_lesson_progress(lesson_id):
     
     # Refresh to get latest data from database
     if lesson_completion:
-        from flask import current_app
         db.session.refresh(lesson_completion)
         current_app.logger.info(f"📚 GET lesson progress: lesson_id={lesson_id}, completed={lesson_completion.completed}, reading_progress={lesson_completion.reading_progress}, engagement_score={lesson_completion.engagement_score}")
         score_breakdown = lesson_completion.get_score_breakdown()
@@ -745,9 +743,13 @@ def complete_lesson(lesson_id):
                     new_achievements = AchievementService.check_and_award_achievements(
                         current_user_id, 'lesson_complete', event_data
                     )
+                    new_achievements_payload = [
+                        ach.to_dict() if hasattr(ach, 'to_dict') else ach
+                        for ach in new_achievements
+                    ]
                     
                     # Update learning streak
-                    streak_updated = AchievementService.update_learning_streak(current_user_id)
+                    streak_current, streak_milestones = AchievementService.update_learning_streak(current_user_id)
                     
                     return jsonify({
                         "message": message,
@@ -755,8 +757,11 @@ def complete_lesson(lesson_id):
                         "completion": completion_data.get('completion', {}),
                         "final_score": completion_data.get('final_score', 0),
                         "requirements": requirements,
-                        "new_achievements": new_achievements,
-                        "learning_streak": streak_updated.to_dict() if streak_updated else None
+                        "new_achievements": new_achievements_payload,
+                        "learning_streak": {
+                            "current_streak": streak_current,
+                            "new_milestones": streak_milestones,
+                        } if streak_current is not None else None
                     }), 200
                     
                 except Exception as e:
