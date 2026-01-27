@@ -1,23 +1,35 @@
 import apiClient from '@/lib/api-client';
 import { ApiErrorHandler } from '@/lib/error-handler';
-import { User, PaginatedResponse } from '@/types/api';
+import { User, PaginatedResponse, UserListResponse } from '@/types/api';
+
+export interface UserListParams {
+  page?: number;
+  per_page?: number;
+  role?: string;
+  search?: string;
+  status?: string;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  date_from?: string;
+  date_to?: string;
+}
 
 export class AdminService {
   private static readonly BASE_PATH = '/admin';
 
-  // User management
-  static async getAllUsers(params?: {
-    page?: number;
-    per_page?: number;
-    role?: string;
-    search?: string;
-  }): Promise<PaginatedResponse<User>> {
+  // User management - Enhanced with all filter options
+  static async getAllUsers(params?: UserListParams): Promise<UserListResponse> {
     try {
       const searchParams = new URLSearchParams();
       if (params?.page) searchParams.set('page', params.page.toString());
       if (params?.per_page) searchParams.set('per_page', params.per_page.toString());
       if (params?.role) searchParams.set('role', params.role);
       if (params?.search) searchParams.set('search', params.search);
+      if (params?.status) searchParams.set('status', params.status);
+      if (params?.sort_by) searchParams.set('sort_by', params.sort_by);
+      if (params?.sort_order) searchParams.set('sort_order', params.sort_order);
+      if (params?.date_from) searchParams.set('date_from', params.date_from);
+      if (params?.date_to) searchParams.set('date_to', params.date_to);
 
       const url = searchParams.toString() 
         ? `${this.BASE_PATH}/users?${searchParams.toString()}`
@@ -145,7 +157,10 @@ export class AdminService {
   // System statistics
   static async getSystemStats(): Promise<{
     total_users: number;
+    active_users: number;
+    users_by_role: Record<string, number>;
     total_courses: number;
+    published_courses: number;
     total_enrollments: number;
     total_opportunities: number;
     active_quizzes: number;
@@ -153,6 +168,92 @@ export class AdminService {
   }> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/stats`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Get comprehensive dashboard analytics
+  static async getDashboardAnalytics(): Promise<{
+    user_stats: any;
+    course_stats: any;
+    enrollment_stats: any;
+    growth_data: any[];
+  }> {
+    try {
+      // Fetch multiple stats in parallel
+      const [userStats, systemStats] = await Promise.all([
+        this.getUserStats(),
+        this.getSystemStats()
+      ]);
+      
+      return {
+        user_stats: userStats,
+        course_stats: {
+          total_courses: systemStats.total_courses,
+          published_courses: systemStats.published_courses,
+        },
+        enrollment_stats: {
+          total_enrollments: systemStats.total_enrollments
+        },
+        growth_data: userStats.user_growth || []
+      };
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Get enrollment analytics with breakdown
+  static async getEnrollmentBreakdown(): Promise<{
+    status_breakdown: Array<{ status: string; count: number }>;
+    total: number;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/analytics/enrollment-breakdown`);
+      return response.data;
+    } catch (error) {
+      // Fallback if endpoint doesn't exist
+      console.warn('Enrollment breakdown endpoint not available, using fallback');
+      return {
+        status_breakdown: [
+          { status: 'in_progress', count: 0 },
+          { status: 'completed', count: 0 },
+          { status: 'not_started', count: 0 }
+        ],
+        total: 0
+      };
+    }
+  }
+
+  // Get course analytics
+  static async getCourseStats(): Promise<{
+    total_courses: number;
+    published_courses: number;
+    draft_courses: number;
+    courses_by_category: Record<string, number>;
+    top_courses: Array<{ id: number; title: string; enrollments: number }>;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/analytics/courses`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Get inactivity analysis
+  static async getInactivityAnalysis(): Promise<{
+    analysis: {
+      total_active_users: number;
+      users_by_role: Record<string, number>;
+      inactivity_rates: Record<string, { count: number; rate: number }>;
+      deletion_candidates: Record<string, { count: number; users: any[] }>;
+      recommendations: Array<{ type: string; title: string; message: string; action: string }>;
+    };
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/users/inactivity-analysis`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -412,4 +513,98 @@ export class AdminService {
       throw ApiErrorHandler.handleError(error);
     }
   }
+
+  // Inactive Users Management
+  static async getInactiveUsers(params?: {
+    threshold_days?: number;
+    role?: string;
+  }): Promise<{
+    success: boolean;
+    inactive_users: InactiveUser[];
+    users_by_role: Record<string, InactiveUser[]>;
+    threshold_days: number;
+    total_count: number;
+  }> {
+    try {
+      const searchParams = new URLSearchParams();
+      if (params?.threshold_days) searchParams.set('threshold_days', params.threshold_days.toString());
+      if (params?.role) searchParams.set('role', params.role);
+
+      const url = searchParams.toString()
+        ? `${this.BASE_PATH}/users/inactive?${searchParams.toString()}`
+        : `${this.BASE_PATH}/users/inactive`;
+
+      const response = await apiClient.get(url);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async autoDeleteUser(userId: number): Promise<{
+    success: boolean;
+    message: string;
+    user_info?: any;
+  }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/users/${userId}/auto-delete`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async bulkAutoDeleteUsers(userIds: number[]): Promise<{
+    success: boolean;
+    message: string;
+    results: {
+      successful: Array<{ user_id: number; user_info: any }>;
+      failed: Array<{ user_id: number; error: string }>;
+      total_requested: number;
+    };
+  }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/users/bulk-auto-delete`, {
+        user_ids: userIds
+      });
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async runSystemCleanup(params?: {
+    dry_run?: boolean;
+    user_threshold_days?: number;
+    student_threshold_days?: number;
+  }): Promise<{
+    success: boolean;
+    cleanup_summary: any;
+  }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/system/cleanup-inactive`, params || {});
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+}
+
+// Types for inactive user management
+export interface InactiveUser {
+  user_id: number;
+  username: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  role: string;
+  last_activity: string | null;
+  last_login: string | null;
+  created_at: string;
+  days_inactive: number;
+  role_data: {
+    enrollments_count?: number;
+    lessons_completed?: number;
+    courses_created?: number;
+  };
 }

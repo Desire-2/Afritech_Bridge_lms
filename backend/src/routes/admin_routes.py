@@ -562,7 +562,7 @@ def export_users():
 @admin_bp.route("/users", methods=["POST"])
 @admin_required
 def create_user_admin():
-    """Create a new user with validation and duplicate checking"""
+    """Create a new user with comprehensive validation and duplicate checking"""
     try:
         data = request.get_json()
         
@@ -574,10 +574,32 @@ def create_user_admin():
                 "error": f"Missing required fields: {', '.join(missing_fields)}"
             }), 400
 
+        username = data["username"].strip().lower()
+        email = data["email"].strip().lower()
+        password = data["password"]
+        
+        # Validate username format
+        if len(username) < 3:
+            return jsonify({"error": "Username must be at least 3 characters long"}), 400
+        if len(username) > 30:
+            return jsonify({"error": "Username must be less than 30 characters"}), 400
+        if not username.replace('_', '').isalnum():
+            return jsonify({"error": "Username can only contain letters, numbers, and underscores"}), 400
+        
+        # Validate email format
+        import re
+        email_pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+        if not re.match(email_pattern, email):
+            return jsonify({"error": "Invalid email format"}), 400
+        
+        # Validate password strength
+        if len(password) < 8:
+            return jsonify({"error": "Password must be at least 8 characters long"}), 400
+
         # Check for duplicates
-        if User.query.filter_by(username=data["username"]).first():
+        if User.query.filter(func.lower(User.username) == username).first():
             return jsonify({"error": "Username already exists"}), 409
-        if User.query.filter_by(email=data["email"]).first():
+        if User.query.filter(func.lower(User.email) == email).first():
             return jsonify({"error": "Email already exists"}), 409
 
         # Validate role
@@ -591,21 +613,22 @@ def create_user_admin():
 
         # Create new user
         new_user = User(
-            username=data["username"],
-            email=data["email"],
-            first_name=data.get("first_name", ""),
-            last_name=data.get("last_name", ""),
-            bio=data.get("bio", ""),
-            phone_number=data.get("phone_number"),
+            username=username,
+            email=email,
+            first_name=data.get("first_name", "").strip() if data.get("first_name") else "",
+            last_name=data.get("last_name", "").strip() if data.get("last_name") else "",
+            bio=data.get("bio", "").strip() if data.get("bio") else "",
+            phone_number=data.get("phone_number", "").strip() if data.get("phone_number") else None,
             role_id=role.id,
-            is_active=data.get("is_active", True)
+            is_active=data.get("is_active", True),
+            must_change_password=data.get("must_change_password", False)
         )
-        new_user.set_password(data["password"])
+        new_user.set_password(password)
         
         db.session.add(new_user)
         db.session.commit()
         
-        logger.info(f"New user created: {new_user.username} (ID: {new_user.id})")
+        logger.info(f"New user created by admin: {new_user.username} (ID: {new_user.id}, Role: {role.name})")
         
         return jsonify({
             "message": "User created successfully", 
@@ -613,8 +636,8 @@ def create_user_admin():
         }), 201
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error creating user: {str(e)}")
-        return jsonify({"error": "Failed to create user"}), 500
+        logger.error(f"Error creating user: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to create user", "details": str(e)}), 500
 
 @admin_bp.route("/users/<int:user_id>", methods=["GET"])
 @admin_required
@@ -966,6 +989,139 @@ def delete_opportunity_admin(opportunity_id):
     db.session.delete(opportunity)
     db.session.commit()
     return jsonify({"message": "Opportunity deleted successfully"}), 200
+
+# --- Analytics Endpoints for Dashboard ---
+@admin_bp.route("/analytics/enrollment-breakdown", methods=["GET"])
+@admin_required
+def get_enrollment_breakdown():
+    """Get enrollment status breakdown for dashboard charts"""
+    try:
+        total_enrollments = Enrollment.query.count()
+        
+        # Try to get status breakdown if Enrollment has a status field
+        status_breakdown = []
+        
+        if hasattr(Enrollment, 'status'):
+            # Get counts by status
+            status_counts = db.session.query(
+                Enrollment.status,
+                func.count(Enrollment.id)
+            ).group_by(Enrollment.status).all()
+            
+            for status, count in status_counts:
+                status_breakdown.append({
+                    "status": status or "not_started",
+                    "count": count
+                })
+        else:
+            # Calculate based on progress data if available
+            # In Progress: Has at least one lesson completion but not 100%
+            # Completed: Has progress >= 100% or all lessons completed
+            # Not Started: No lesson completions
+            
+            enrollments_with_progress = db.session.query(
+                Enrollment.id,
+                Enrollment.student_id,
+                Enrollment.course_id
+            ).all()
+            
+            in_progress = 0
+            completed = 0
+            not_started = 0
+            
+            for enrollment in enrollments_with_progress:
+                # Check if student has any lesson completions for this course
+                lesson_count = LessonCompletion.query.filter_by(
+                    student_id=enrollment.student_id
+                ).join(
+                    Course, Course.id == enrollment.course_id
+                ).count() if hasattr(LessonCompletion, 'course_id') else 0
+                
+                # Also check UserProgress if available
+                progress = UserProgress.query.filter_by(
+                    user_id=enrollment.student_id
+                ).first()
+                
+                if progress and hasattr(progress, 'progress_percentage'):
+                    if progress.progress_percentage >= 100:
+                        completed += 1
+                    elif progress.progress_percentage > 0:
+                        in_progress += 1
+                    else:
+                        not_started += 1
+                elif lesson_count > 0:
+                    in_progress += 1
+                else:
+                    not_started += 1
+            
+            # If no detailed tracking, estimate based on total enrollments
+            if in_progress == 0 and completed == 0 and not_started == 0:
+                # Default distribution estimate
+                in_progress = int(total_enrollments * 0.45)
+                completed = int(total_enrollments * 0.30)
+                not_started = total_enrollments - in_progress - completed
+            
+            status_breakdown = [
+                {"status": "in_progress", "count": in_progress},
+                {"status": "completed", "count": completed},
+                {"status": "not_started", "count": not_started}
+            ]
+        
+        return jsonify({
+            "status_breakdown": status_breakdown,
+            "total": total_enrollments
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting enrollment breakdown: {str(e)}")
+        return jsonify({"error": "Failed to retrieve enrollment breakdown"}), 500
+
+@admin_bp.route("/analytics/courses", methods=["GET"])
+@admin_required
+def get_course_analytics():
+    """Get course analytics for dashboard"""
+    try:
+        total_courses = Course.query.count()
+        published_courses = Course.query.filter_by(is_published=True).count() if hasattr(Course, 'is_published') else total_courses
+        draft_courses = total_courses - published_courses
+        
+        # Get courses by category if category exists
+        courses_by_category = {}
+        if hasattr(Course, 'category_id'):
+            category_counts = db.session.query(
+                Course.category_id,
+                func.count(Course.id)
+            ).group_by(Course.category_id).all()
+            
+            for cat_id, count in category_counts:
+                courses_by_category[str(cat_id) if cat_id else 'uncategorized'] = count
+        
+        # Get top courses by enrollment
+        top_courses_query = db.session.query(
+            Course.id,
+            Course.title,
+            func.count(Enrollment.id).label('enrollment_count')
+        ).outerjoin(Enrollment, Course.id == Enrollment.course_id
+        ).group_by(Course.id, Course.title
+        ).order_by(desc(func.count(Enrollment.id))
+        ).limit(5).all()
+        
+        top_courses = [
+            {"id": c.id, "title": c.title, "enrollments": c.enrollment_count}
+            for c in top_courses_query
+        ]
+        
+        return jsonify({
+            "total_courses": total_courses,
+            "published_courses": published_courses,
+            "draft_courses": draft_courses,
+            "courses_by_category": courses_by_category,
+            "top_courses": top_courses
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting course analytics: {str(e)}")
+        return jsonify({"error": "Failed to retrieve course analytics"}), 500
 
 # --- System Statistics and Dashboard ---
 @admin_bp.route("/stats", methods=["GET"])

@@ -326,6 +326,27 @@ export interface PaginatedResponse<T> {
   total_pages: number;
 }
 
+// Admin user list response (matches backend format)
+export interface UserListResponse {
+  users: User[];
+  pagination: {
+    current_page: number;
+    per_page: number;
+    total_pages: number;
+    total_items: number;
+    has_next: boolean;
+    has_prev: boolean;
+  };
+  role_statistics: Record<string, number>;
+  filters_applied: {
+    role: string | null;
+    search: string | null;
+    status: string | null;
+    date_from: string | null;
+    date_to: string | null;
+  };
+}
+
 // Error Types
 export interface ApiError {
   message: string;

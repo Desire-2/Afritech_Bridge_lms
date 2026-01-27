@@ -10,6 +10,13 @@ export default {
   theme: {
   	extend: {
   		colors: {
+  			// Afritech Bridge Brand Colors
+  			brand: {
+  				DEFAULT: 'hsl(var(--brand))',
+  				light: 'hsl(var(--brand-light))',
+  				lighter: 'hsl(var(--brand-lighter))',
+  				accent: 'hsl(var(--brand-accent))',
+  			},
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
   			sidebar: {
