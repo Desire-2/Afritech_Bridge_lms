@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { Award, Users, BookOpen, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Award, Users, BookOpen, CheckCircle, AlertTriangle, Search, X } from 'lucide-react';
 import InstructorService from '@/services/instructor.service';
 import { Course } from '@/types/api';
 
@@ -48,6 +49,8 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
   const [moduleComponents, setModuleComponents] = useState<ModuleComponents | null>(null);
   const [loading, setLoading] = useState(false);
   const [awarding, setAwarding] = useState(false);
+  const [studentSearch, setStudentSearch] = useState<string>('');
+  const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
 
   // Load students when course is selected
   useEffect(() => {
@@ -61,6 +64,7 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
     setSelectedStudent('');
     setSelectedModule('');
     setModuleComponents(null);
+    setStudentSearch(''); // Clear search when course changes
   }, [selectedCourse]);
 
   // Load module components when module is selected
@@ -71,6 +75,25 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
       setModuleComponents(null);
     }
   }, [selectedModule]);
+
+  // Filter students based on search term
+  useEffect(() => {
+    if (!studentSearch.trim()) {
+      setFilteredStudents(students);
+    } else {
+      const searchTerm = studentSearch.toLowerCase();
+      const filtered = students.filter(student => 
+        student.name.toLowerCase().includes(searchTerm) ||
+        student.email.toLowerCase().includes(searchTerm)
+      );
+      setFilteredStudents(filtered);
+    }
+  }, [students, studentSearch]);
+
+  // Reset search when course changes
+  useEffect(() => {
+    setStudentSearch('');
+  }, [selectedCourse]);
 
   const loadStudents = async (courseId: number) => {
     try {
@@ -128,6 +151,7 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
         setSelectedStudent('');
         setSelectedModule('');
         setModuleComponents(null);
+        setStudentSearch(''); // Clear search after awarding credit
       } else {
         toast.error(result.message || 'Failed to award full credit');
       }
@@ -145,8 +169,35 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
 
   const canAwardCredit = selectedCourse && selectedStudent && selectedModule && moduleComponents;
 
+  const clearAllSelections = () => {
+    setSelectedCourse('');
+    setSelectedStudent('');
+    setSelectedModule('');
+    setModuleComponents(null);
+    setStudentSearch('');
+  };
+
   return (
     <div className="space-y-6">
+      {/* Header with Clear All */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h3 className="text-lg font-semibold">Award Full Credit</h3>
+          <p className="text-sm text-gray-600">Give students full credit for completed modules</p>
+        </div>
+        {(selectedCourse || selectedStudent || selectedModule || studentSearch) && (
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={clearAllSelections}
+            className="flex items-center space-x-1"
+          >
+            <X className="h-4 w-4" />
+            <span>Clear All</span>
+          </Button>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Course Selection */}
         <div className="space-y-2">
@@ -168,22 +219,98 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
         {/* Student Selection */}
         <div className="space-y-2">
           <label className="text-sm font-medium">Select Student</label>
+          
+          {/* Search Input */}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              placeholder="Search students by name or email..."
+              value={studentSearch}
+              onChange={(e) => setStudentSearch(e.target.value)}
+              onKeyDown={(e) => {
+                // Quick select first result with Enter
+                if (e.key === 'Enter' && filteredStudents.length === 1) {
+                  setSelectedStudent(filteredStudents[0].id.toString());
+                  setStudentSearch('');
+                }
+                // Clear search with Escape
+                if (e.key === 'Escape') {
+                  setStudentSearch('');
+                }
+              }}
+              className="pl-10 pr-10"
+              disabled={!selectedCourse || loading}
+            />
+            {studentSearch && (
+              <button
+                onClick={() => setStudentSearch('')}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          
           <Select 
             value={selectedStudent} 
             onValueChange={setSelectedStudent}
             disabled={!selectedCourse || loading}
           >
             <SelectTrigger>
-              <SelectValue placeholder={loading ? "Loading students..." : "Choose a student"} />
+              <SelectValue placeholder={
+                loading ? "Loading students..." : 
+                filteredStudents.length === 0 && students.length > 0 ? "No students found" :
+                "Choose a student"
+              } />
             </SelectTrigger>
             <SelectContent>
-              {students.map((student) => (
-                <SelectItem key={student.id} value={student.id.toString()}>
-                  {student.name} ({student.email})
-                </SelectItem>
-              ))}
+              {filteredStudents.length === 0 && studentSearch && students.length > 0 ? (
+                <div className="px-2 py-3 text-sm text-gray-500 text-center">
+                  No students found for "{studentSearch}"
+                </div>
+              ) : (
+                filteredStudents.map((student) => (
+                  <SelectItem key={student.id} value={student.id.toString()}>
+                    <div className="flex flex-col">
+                      <span className="font-medium">{student.name}</span>
+                      <span className="text-xs text-gray-500">{student.email}</span>
+                    </div>
+                  </SelectItem>
+                ))
+              )}
             </SelectContent>
           </Select>
+          
+          {/* Search Results Info */}
+          {studentSearch && (
+            <div className="text-xs text-gray-500">
+              {filteredStudents.length === 0 ? 
+                'No students found' : 
+                `Showing ${filteredStudents.length} of ${students.length} students`
+              }
+            </div>
+          )}
+          
+          {/* Quick Actions for Multiple Students */}
+          {filteredStudents.length > 0 && filteredStudents.length < students.length && (
+            <div className="flex flex-wrap gap-1">
+              {filteredStudents.slice(0, 3).map((student) => (
+                <button
+                  key={student.id}
+                  onClick={() => setSelectedStudent(student.id.toString())}
+                  className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-2 py-1 rounded border text-left"
+                  disabled={selectedStudent === student.id.toString()}
+                >
+                  {student.name.split(' ')[0]} {/* First name only for quick access */}
+                </button>
+              ))}
+              {filteredStudents.length > 3 && (
+                <span className="text-xs text-gray-400 px-2 py-1">
+                  +{filteredStudents.length - 3} more
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Module Selection */}
@@ -227,6 +354,9 @@ const FullCreditManager: React.FC<FullCreditManagerProps> = ({ courses, onCredit
                   <p className="font-medium text-slate-600 dark:text-slate-400">Student</p>
                   <p className="font-semibold">{selectedStudentData?.name}</p>
                   <p className="text-xs text-slate-500">{selectedStudentData?.email}</p>
+                  {studentSearch && (
+                    <p className="text-xs text-green-600">✓ Found via search</p>
+                  )}
                 </div>
                 <div>
                   <p className="font-medium text-slate-600 dark:text-slate-400">Module</p>
