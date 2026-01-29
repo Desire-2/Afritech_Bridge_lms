@@ -7,7 +7,7 @@ import logging
 from ..models.user_models import db
 from ..models.course_models import Module, Lesson, Quiz, Assignment, AssignmentSubmission
 from ..models.student_models import LessonCompletion, ModuleProgress
-from ..models.quiz_progress_models import QuizAttempt
+from ..models.quiz_progress_models import QuizAttempt, QuizAttemptStatus
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -157,17 +157,20 @@ class FullCreditService:
             if attempt:
                 # Update existing attempt with full score
                 attempt.score = 100.0
-                attempt.status = 'completed'
-                attempt.completed_at = datetime.utcnow()
+                attempt.score_percentage = 100.0
+                attempt.status = QuizAttemptStatus.AUTO_GRADED
+                attempt.end_time = datetime.utcnow()
             else:
                 # Create new attempt with full score
                 attempt = QuizAttempt(
                     user_id=student_id,
                     quiz_id=quiz_id,
+                    attempt_number=1,
                     score=100.0,
-                    status='completed',
-                    started_at=datetime.utcnow(),
-                    completed_at=datetime.utcnow()
+                    score_percentage=100.0,
+                    status=QuizAttemptStatus.AUTO_GRADED,
+                    start_time=datetime.utcnow(),
+                    end_time=datetime.utcnow()
                 )
                 db.session.add(attempt)
             
