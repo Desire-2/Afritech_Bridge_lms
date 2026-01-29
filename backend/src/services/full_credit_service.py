@@ -52,7 +52,7 @@ class FullCreditService:
             for lesson in lessons:
                 try:
                     FullCreditService._award_lesson_full_credit(student_id, lesson.id, details)
-                    logger.debug(f"Awarded lesson credit for lesson {lesson.id}")
+                    logger.debug(f"Awarded lesson credit for lesson {lesson.id}: {lesson.title}")
                 except Exception as lesson_error:
                     logger.error(f"Error awarding lesson {lesson.id} credit: {str(lesson_error)}")
                     raise lesson_error
@@ -63,7 +63,7 @@ class FullCreditService:
             for quiz in quizzes:
                 try:
                     FullCreditService._award_quiz_full_credit(student_id, quiz.id, details)
-                    logger.debug(f"Awarded quiz credit for quiz {quiz.id}")
+                    logger.debug(f"Awarded quiz credit for quiz {quiz.id}: {quiz.title}")
                 except Exception as quiz_error:
                     logger.error(f"Error awarding quiz {quiz.id} credit: {str(quiz_error)}")
                     raise quiz_error
@@ -74,7 +74,7 @@ class FullCreditService:
             for assignment in assignments:
                 try:
                     FullCreditService._award_assignment_full_credit(student_id, assignment.id, instructor_id, details)
-                    logger.debug(f"Awarded assignment credit for assignment {assignment.id}")
+                    logger.debug(f"Awarded assignment credit for assignment {assignment.id}: {assignment.title}")
                 except Exception as assignment_error:
                     logger.error(f"Error awarding assignment {assignment.id} credit: {str(assignment_error)}")
                     raise assignment_error
@@ -87,7 +87,15 @@ class FullCreditService:
                 logger.error(f"Error updating module progress: {str(progress_error)}")
                 raise progress_error
             
-            # 5. Commit all changes
+            # 5. Flush changes to ensure they're staged properly
+            try:
+                db.session.flush()
+                logger.debug("All changes flushed to database session")
+            except Exception as flush_error:
+                logger.error(f"Error flushing session: {flush_error}")
+                raise flush_error
+            
+            # 6. Commit all changes
             db.session.commit()
             logger.info(f"Full credit committed successfully for student {student_id}, module {module_id}")
             
@@ -124,7 +132,16 @@ class FullCreditService:
                 completion.completed = True
                 completion.reading_progress = 100.0
                 completion.engagement_score = 100.0
+                completion.scroll_progress = 100.0
+                completion.video_progress = 100.0
+                completion.video_completed = True
+                completion.lesson_score = 100.0
+                completion.reading_component_score = 100.0
+                completion.engagement_component_score = 100.0
+                completion.quiz_component_score = 100.0
+                completion.assignment_component_score = 100.0
                 completion.completed_at = datetime.utcnow()
+                completion.score_last_updated = datetime.utcnow()
                 completion.time_spent = max(completion.time_spent or 0, 3600)  # At least 1 hour
             else:
                 # Create new completion
@@ -134,15 +151,27 @@ class FullCreditService:
                     completed=True,
                     reading_progress=100.0,
                     engagement_score=100.0,
+                    scroll_progress=100.0,
+                    video_progress=100.0,
+                    video_completed=True,
+                    lesson_score=100.0,
+                    reading_component_score=100.0,
+                    engagement_component_score=100.0,
+                    quiz_component_score=100.0,
+                    assignment_component_score=100.0,
                     completed_at=datetime.utcnow(),
+                    score_last_updated=datetime.utcnow(),
                     time_spent=3600  # 1 hour
                 )
                 db.session.add(completion)
             
             details["lessons_updated"] += 1
+            logger.debug(f"Successfully updated lesson {lesson_id} completion for student {student_id}")
             
         except Exception as e:
-            current_app.logger.warning(f"Error updating lesson {lesson_id} completion: {e}")
+            logger.error(f"Error updating lesson {lesson_id} completion: {e}", exc_info=True)
+            # Don't silently continue - this is a critical error
+            raise e
     
     @staticmethod
     def _award_quiz_full_credit(student_id: int, quiz_id: int, details: Dict):
@@ -175,9 +204,12 @@ class FullCreditService:
                 db.session.add(attempt)
             
             details["quizzes_updated"] += 1
+            logger.debug(f"Successfully updated quiz {quiz_id} attempt for student {student_id}")
             
         except Exception as e:
-            current_app.logger.warning(f"Error updating quiz {quiz_id} attempt: {e}")
+            logger.error(f"Error updating quiz {quiz_id} attempt: {e}", exc_info=True)
+            # Don't silently continue - this is a critical error
+            raise e
     
     @staticmethod
     def _award_assignment_full_credit(student_id: int, assignment_id: int, instructor_id: int, details: Dict):
@@ -216,9 +248,12 @@ class FullCreditService:
                 db.session.add(submission)
             
             details["assignments_updated"] += 1
+            logger.debug(f"Successfully updated assignment {assignment_id} submission for student {student_id}")
             
         except Exception as e:
-            current_app.logger.warning(f"Error updating assignment {assignment_id} submission: {e}")
+            logger.error(f"Error updating assignment {assignment_id} submission: {e}", exc_info=True)
+            # Don't silently continue - this is a critical error  
+            raise e
     
     @staticmethod
     def _update_module_progress(student_id: int, module_id: int, enrollment_id: int, details: Dict):
@@ -233,47 +268,41 @@ class FullCreditService:
             
             if progress:
                 # Update existing progress
-                if hasattr(progress, 'completed'):
-                    progress.completed = True
-                if hasattr(progress, 'completion_date'):
-                    progress.completion_date = datetime.utcnow()
-                if hasattr(progress, 'cumulative_score'):
-                    progress.cumulative_score = 100.0
-                if hasattr(progress, 'course_contribution_score'):
-                    progress.course_contribution_score = 10.0  # Full course contribution
-                if hasattr(progress, 'quiz_score'):
-                    progress.quiz_score = 100.0
-                if hasattr(progress, 'assignment_score'):
-                    progress.assignment_score = 100.0
+                progress.status = 'completed'
+                progress.completed_at = datetime.utcnow()
+                progress.cumulative_score = 100.0
+                progress.course_contribution_score = 10.0  # Full course contribution
+                progress.quiz_score = 100.0
+                progress.assignment_score = 100.0
+                progress.final_assessment_score = 100.0
+                progress.prerequisites_met = True
             else:
                 # Create new progress record
-                progress_data = {
-                    'student_id': student_id,
-                    'module_id': module_id,
-                    'enrollment_id': enrollment_id
-                }
-                
-                # Add fields that exist in the current schema
-                if hasattr(ModuleProgress, 'completed'):
-                    progress_data['completed'] = True
-                if hasattr(ModuleProgress, 'completion_date'):
-                    progress_data['completion_date'] = datetime.utcnow()
-                if hasattr(ModuleProgress, 'cumulative_score'):
-                    progress_data['cumulative_score'] = 100.0
-                if hasattr(ModuleProgress, 'course_contribution_score'):
-                    progress_data['course_contribution_score'] = 10.0
-                if hasattr(ModuleProgress, 'quiz_score'):
-                    progress_data['quiz_score'] = 100.0
-                if hasattr(ModuleProgress, 'assignment_score'):
-                    progress_data['assignment_score'] = 100.0
-                
-                progress = ModuleProgress(**progress_data)
+                progress = ModuleProgress(
+                    student_id=student_id,
+                    module_id=module_id,
+                    enrollment_id=enrollment_id,
+                    status='completed',
+                    completed_at=datetime.utcnow(),
+                    started_at=datetime.utcnow(),
+                    unlocked_at=datetime.utcnow(),
+                    cumulative_score=100.0,
+                    course_contribution_score=10.0,
+                    quiz_score=100.0,
+                    assignment_score=100.0,
+                    final_assessment_score=100.0,
+                    prerequisites_met=True,
+                    attempts_count=1
+                )
                 db.session.add(progress)
             
             details["module_progress_updated"] = True
+            logger.debug(f"Successfully updated module progress for student {student_id}, module {module_id}")
             
         except Exception as e:
-            current_app.logger.warning(f"Error updating module progress: {e}")
+            logger.error(f"Error updating module progress: {e}", exc_info=True)
+            # Don't silently continue - this is a critical error
+            raise e
     
     @staticmethod
     def get_module_components_summary(module_id: int) -> Dict:
