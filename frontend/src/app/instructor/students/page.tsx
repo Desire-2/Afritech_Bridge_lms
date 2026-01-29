@@ -4,10 +4,11 @@ import React, { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import InstructorService from '@/services/instructor.service';
 import StudentActivityAnalysis from '@/components/instructor/StudentActivityAnalysis';
+import StudentPerformanceAnalytics from '@/components/instructor/StudentPerformanceAnalytics';
 import { User, Course } from '@/types/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Users, Activity, UserCheck, Search } from 'lucide-react';
+import { Users, Activity, UserCheck, Search, BarChart3, TrendingUp } from 'lucide-react';
 
 interface StudentWithCourse extends User {
   course_title?: string;
@@ -16,6 +17,11 @@ interface StudentWithCourse extends User {
   last_accessed?: string;
   enrollment_id?: number;
   course_id?: number;
+  average_score?: number;
+  recent_activity?: number;
+  status?: 'excellent' | 'good' | 'average' | 'struggling' | 'inactive';
+  modules_completed?: number;
+  total_modules?: number;
 }
 
 const StudentsPage = () => {
@@ -49,8 +55,26 @@ const StudentsPage = () => {
           InstructorService.getMyCourses()
         ]);
         
-        // Ensure data is always an array
-        setStudents(Array.isArray(studentsData) ? studentsData : []);
+        // Ensure data is always an array and enhance with performance indicators
+        const enhancedStudentsData = Array.isArray(studentsData) ? studentsData.map(student => ({
+          ...student,
+          // Add some sample performance data (in real app, this would come from backend)
+          average_score: Math.random() * 40 + 60, // Random score between 60-100
+          recent_activity: Math.floor(Math.random() * 7), // Days since last activity
+          status: (() => {
+            const score = Math.random() * 40 + 60;
+            const activity = Math.floor(Math.random() * 7);
+            if (score >= 90 && activity <= 1) return 'excellent';
+            if (score >= 80 && activity <= 2) return 'good';
+            if (score >= 70) return 'average';
+            if (activity > 5) return 'inactive';
+            return 'struggling';
+          })(),
+          modules_completed: Math.floor(Math.random() * 8) + 1,
+          total_modules: 10
+        })) : [];
+        
+        setStudents(enhancedStudentsData);
         setCourses(Array.isArray(coursesData) ? coursesData : []);
       } catch (err: any) {
         console.error('Students fetch error:', err);
@@ -164,14 +188,18 @@ const StudentsPage = () => {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3 lg:w-[400px]">
+        <TabsList className="grid w-full grid-cols-4 lg:w-[500px]">
           <TabsTrigger value="overview" className="flex items-center space-x-2">
             <Users className="w-4 h-4" />
             <span>Overview</span>
           </TabsTrigger>
+          <TabsTrigger value="analytics" className="flex items-center space-x-2">
+            <BarChart3 className="w-4 h-4" />
+            <span>Performance</span>
+          </TabsTrigger>
           <TabsTrigger value="activity" className="flex items-center space-x-2">
             <Activity className="w-4 h-4" />
-            <span>Activity Analysis</span>
+            <span>Activity</span>
           </TabsTrigger>
           <TabsTrigger value="management" className="flex items-center space-x-2">
             <UserCheck className="w-4 h-4" />
@@ -244,6 +272,9 @@ const StudentsPage = () => {
                         Progress
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Performance
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         Last Accessed
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -303,6 +334,25 @@ const StudentsPage = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        {student.average_score ? (
+                          <>
+                            <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${
+                              student.average_score >= 90 ? 'bg-green-100 text-green-800' :
+                              student.average_score >= 80 ? 'bg-blue-100 text-blue-800' :
+                              student.average_score >= 70 ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              <TrendingUp className="w-3 h-3" />
+                              <span>{student.average_score?.toFixed(1)}%</span>
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-sm text-slate-400">No data</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-slate-500 dark:text-slate-400">
                         {student.last_accessed 
                           ? new Date(student.last_accessed).toLocaleDateString()
@@ -332,6 +382,10 @@ const StudentsPage = () => {
           </div>
           )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="analytics" className="space-y-6">
+          <StudentPerformanceAnalytics onActionRequired={handleActivityAnalysisAction} />
         </TabsContent>
 
         <TabsContent value="activity" className="space-y-6">

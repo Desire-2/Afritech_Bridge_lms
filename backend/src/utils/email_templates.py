@@ -1704,3 +1704,205 @@ def custom_application_email(recipient_name, subject, message):
             </div>
     {get_email_footer()}
     """
+
+def full_credit_awarded_email(student_name, module_title, course_title, instructor_name, reason=None, details=None):
+    """✨ Email template for full credit award notification"""
+    # Process details for display
+    components_text = ""
+    if details:
+        components_list = []
+        if details.get('lessons_updated', 0) > 0:
+            components_list.append(f"{details['lessons_updated']} lesson(s)")
+        if details.get('quizzes_updated', 0) > 0:
+            components_list.append(f"{details['quizzes_updated']} quiz(es)")
+        if details.get('assignments_updated', 0) > 0:
+            components_list.append(f"{details['assignments_updated']} assignment(s)")
+        
+        if components_list:
+            components_text = f"This includes: {', '.join(components_list)}"
+    
+    reason_section = f'''
+        <!-- Instructor Note -->
+        <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 15px; padding: 30px; margin: 30px 0; color: white; box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <span style="font-size: 40px; display: block; margin-bottom: 10px;">📝</span>
+                <h3 style="margin: 0; color: white; font-size: 20px; font-weight: 700;">Instructor Note</h3>
+            </div>
+            <div style="background-color: rgba(255,255,255,0.15); border-radius: 10px; padding: 20px;">
+                <p style="color: white; margin: 0; line-height: 1.8; white-space: pre-wrap; text-align: center; font-style: italic;">{reason}</p>
+            </div>
+        </div>
+    ''' if reason and reason.strip() else ''
+    
+    return f"""
+    {get_email_header()}
+    <!-- Main Content -->
+    <div class="email-content" style="padding: 50px 35px;">
+        <!-- Celebration Header -->
+        <div style="text-align: center; margin-bottom: 40px;">
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); width: 120px; height: 120px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 15px 40px rgba(16, 185, 129, 0.4); position: relative; overflow: hidden;">
+                <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 60px; animation: bounce 2s infinite;">🏆</div>
+            </div>
+            <h1 style="color: #ffffff; margin: 0 0 10px 0; font-size: 32px; font-weight: 800; letter-spacing: -1px; text-shadow: 2px 2px 8px rgba(0,0,0,0.3);">
+                Full Credit Awarded!
+            </h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 0; font-size: 18px; font-weight: 500; text-shadow: 1px 1px 3px rgba(0,0,0,0.4);">
+                Outstanding achievement recognized ✨
+            </p>
+        </div>
+        
+        <!-- Personal Greeting -->
+        <div style="margin-bottom: 35px; text-align: center;">
+            <p style="color: #ffffff; font-size: 20px; margin: 0; font-weight: 600; text-shadow: 1px 1px 3px rgba(0,0,0,0.5);">
+                Dear <strong style="color: #fbbf24;">{student_name}</strong>,
+            </p>
+        </div>
+        
+        <!-- Main Message -->
+        <div style="background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); border-radius: 20px; padding: 35px; margin: 35px 0; border: 2px solid rgba(255,255,255,0.2);">
+            <p style="color: #ffffff; line-height: 1.8; font-size: 17px; margin: 0; text-shadow: 1px 1px 2px rgba(0,0,0,0.4); text-align: center;">
+                🎉 <strong>Congratulations!</strong> Your instructor <strong style="color: #fbbf24;">{instructor_name}</strong> has awarded you 
+                <strong style="color: #10b981;">full credit</strong> for the module 
+                <strong style="color: #fbbf24;">"{module_title}"</strong> in <strong>{course_title}</strong>.
+            </p>
+        </div>
+        
+        <!-- Achievement Badge -->
+        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 20px; padding: 40px; margin: 35px 0; color: white; text-align: center; box-shadow: 0 15px 50px rgba(16, 185, 129, 0.4); border: 3px solid rgba(255,255,255,0.2);">
+            <div style="margin-bottom: 25px;">
+                <span style="font-size: 80px; display: block; margin-bottom: 15px; filter: drop-shadow(0 5px 15px rgba(0,0,0,0.3));">🎉</span>
+                <h2 style="margin: 0; font-size: 28px; color: white; font-weight: 800; letter-spacing: -0.5px;">
+                    Full Credit Achieved
+                </h2>
+            </div>
+            
+            <div style="background: rgba(255,255,255,0.2); border-radius: 15px; padding: 30px; margin: 25px 0; backdrop-filter: blur(10px);">
+                <div style="font-size: 64px; font-weight: 900; color: white; margin: 15px 0; text-shadow: 2px 2px 8px rgba(0,0,0,0.3);">
+                    100%
+                </div>
+                <div style="font-size: 20px; color: #d1fae5; margin: 10px 0; font-weight: 600;">
+                    Module Complete
+                </div>
+                <div style="background: rgba(255,255,255,0.3); border-radius: 25px; padding: 12px 30px; margin: 20px auto; display: inline-block; backdrop-filter: blur(5px);">
+                    <span style="font-weight: 700; font-size: 16px; color: white;">✨ Excellence Recognized ✨</span>
+                </div>
+            </div>
+        </div>
+        
+        {reason_section}
+        
+        <!-- Module Details Card -->
+        <div style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-radius: 20px; padding: 35px; margin: 35px 0; border: 3px solid #bbf7d0; box-shadow: 0 10px 30px rgba(187, 247, 208, 0.3);">
+            <div style="text-align: center; margin-bottom: 25px;">
+                <span style="font-size: 50px; display: block; margin-bottom: 10px;">📊</span>
+                <h3 style="margin: 0; color: #166534; font-size: 24px; font-weight: 700;">Module Details</h3>
+            </div>
+            
+            <div style="background: white; border-radius: 15px; padding: 25px; box-shadow: 0 5px 20px rgba(0,0,0,0.1);">
+                <table class="responsive-table" style="width: 100%; color: #166534; line-height: 2;">
+                    <tr style="border-bottom: 2px solid #f0fdf4;">
+                        <td style="padding: 12px 0; font-weight: 700; font-size: 16px; width: 35%;">📚 Module:</td>
+                        <td style="padding: 12px 0; font-size: 16px;">{module_title}</td>
+                    </tr>
+                    <tr style="border-bottom: 2px solid #f0fdf4;">
+                        <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">🎓 Course:</td>
+                        <td style="padding: 12px 0; font-size: 16px;">{course_title}</td>
+                    </tr>
+                    <tr style="border-bottom: 2px solid #f0fdf4;">
+                        <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">👨‍🏫 Instructor:</td>
+                        <td style="padding: 12px 0; font-size: 16px;">{instructor_name}</td>
+                    </tr>
+                    <tr style="border-bottom: 2px solid #f0fdf4;">
+                        <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">📈 Status:</td>
+                        <td style="padding: 12px 0;">
+                            <span style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 8px 20px; border-radius: 20px; font-weight: 700; display: inline-block; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);">
+                                ✅ Complete
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">📅 Awarded:</td>
+                        <td style="padding: 12px 0; font-size: 16px;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                    </tr>
+                </table>
+                
+                {f'<div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border-radius: 10px; padding: 20px; margin-top: 20px; border-left: 5px solid #3b82f6;"><p style="color: #1e40af; margin: 0; font-style: italic; font-weight: 600; text-align: center;">📋 {components_text}</p></div>' if components_text else ''}
+            </div>
+        </div>
+        
+        <!-- What This Means Section -->
+        <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 20px; padding: 35px; margin: 35px 0; border: 3px solid #f59e0b; box-shadow: 0 10px 30px rgba(245, 158, 11, 0.3);">
+            <div style="text-align: center; margin-bottom: 25px;">
+                <span style="font-size: 50px; display: block; margin-bottom: 10px;">🌟</span>
+                <h3 style="margin: 0; color: #92400e; font-size: 24px; font-weight: 700;">What This Means</h3>
+            </div>
+            
+            <div style="background: white; border-radius: 15px; padding: 25px; box-shadow: 0 5px 20px rgba(0,0,0,0.1);">
+                <ul style="color: #92400e; line-height: 2; margin: 0; padding-left: 0; list-style: none; font-size: 16px;">
+                    <li style="margin: 15px 0; padding-left: 0;">
+                        <span style="color: #f59e0b; font-size: 20px; margin-right: 10px;">✅</span>
+                        <strong>Complete Module Mastery:</strong> You've successfully completed all components
+                    </li>
+                    <li style="margin: 15px 0; padding-left: 0;">
+                        <span style="color: #f59e0b; font-size: 20px; margin-right: 10px;">📈</span>
+                        <strong>Progress Updated:</strong> Your course progress reflects full completion
+                    </li>
+                    <li style="margin: 15px 0; padding-left: 0;">
+                        <span style="color: #f59e0b; font-size: 20px; margin-right: 10px;">🎯</span>
+                        <strong>Grade Contribution:</strong> This achievement counts toward your final grade
+                    </li>
+                    <li style="margin: 15px 0; padding-left: 0;">
+                        <span style="color: #f59e0b; font-size: 20px; margin-right: 10px;">🚀</span>
+                        <strong>Ready to Advance:</strong> Proceed to the next module when available
+                    </li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Encouragement Section -->
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; padding: 40px; margin: 35px 0; color: white; text-align: center; box-shadow: 0 15px 50px rgba(102, 126, 234, 0.4);">
+            <div style="margin-bottom: 20px;">
+                <span style="font-size: 60px; display: block; margin-bottom: 15px; filter: drop-shadow(0 5px 15px rgba(0,0,0,0.3));">🎯</span>
+                <h3 style="margin: 0; color: white; font-size: 26px; font-weight: 700;">Keep Up the Great Work!</h3>
+            </div>
+            <div style="background: rgba(255,255,255,0.15); border-radius: 15px; padding: 25px; backdrop-filter: blur(10px);">
+                <p style="color: white; margin: 0; line-height: 1.8; font-size: 17px;">
+                    This recognition of your <strong>dedication</strong> and <strong>hard work</strong> is well-deserved. 
+                    Continue applying yourself with the same commitment, and you'll achieve great success in your learning journey! 🌟
+                </p>
+            </div>
+        </div>
+        
+        <!-- CTA Button -->
+        <div style="text-align: center; margin: 40px 0;">
+            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 15px; font-weight: 700; font-size: 18px; mobile-button; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); border: 3px solid rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: 1px;">
+                📊 View Course Progress
+            </a>
+            <p style="color: rgba(255,255,255,0.8); margin: 15px 0 0 0; font-size: 14px;">
+                Track your achievements and continue your learning journey
+            </p>
+        </div>
+        
+        <!-- WhatsApp Community -->
+        <div style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); border-radius: 20px; padding: 35px; margin: 35px 0; text-align: center; box-shadow: 0 10px 30px rgba(37, 211, 102, 0.3);">
+            <div style="margin-bottom: 20px;">
+                <span style="font-size: 50px; display: block; margin-bottom: 10px;">💬</span>
+                <h3 style="margin: 0; color: white; font-size: 22px; font-weight: 700;">Share Your Success!</h3>
+            </div>
+            <p style="color: rgba(255,255,255,0.95); margin: 0 0 25px 0; font-size: 16px; line-height: 1.6;">
+                Join our WhatsApp community to celebrate your achievement with fellow students
+            </p>
+            <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background: white; color: #128C7E; padding: 15px 35px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2);">
+                🎉 Join Community
+            </a>
+        </div>
+        
+        <!-- Closing -->
+        <p style="color: #ffffff; font-size: 16px; line-height: 1.8; text-align: center; margin: 40px 0 0 0; text-shadow: 1px 1px 3px rgba(0,0,0,0.4);">
+            Congratulations once again on this outstanding achievement! 🎊<br><br>
+            Best regards,<br>
+            <strong style="color: #fbbf24;">The Afritec Bridge Team</strong> 🎓
+        </p>
+    </div>
+    {get_email_footer()}
+    """

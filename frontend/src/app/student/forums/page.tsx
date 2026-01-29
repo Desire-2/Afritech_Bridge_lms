@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
   MessageSquare, Users, Clock, BookOpen, ChevronRight, AlertCircle, 
-  Search, Plus, TrendingUp, Award, Filter, Lock, Unlock 
+  Search, Plus, TrendingUp, Award, Filter, Lock, Unlock, Bell, FileText
 } from 'lucide-react';
 import { ForumService, Forum } from '@/services/forum.service';
 import { Button } from '@/components/ui/button';
@@ -14,17 +14,21 @@ import { Badge } from '@/components/ui/badge';
 const ForumsHomePage = () => {
   const [generalForums, setGeneralForums] = useState<Forum[]>([]);
   const [courseForums, setCourseForums] = useState<Forum[]>([]);
+  const [categoryForums, setCategoryForums] = useState<Record<string, Forum[]>>({});
   const [filteredGeneralForums, setFilteredGeneralForums] = useState<Forum[]>([]);
   const [filteredCourseForums, setFilteredCourseForums] = useState<Forum[]>([]);
+  const [filteredCategoryForums, setFilteredCategoryForums] = useState<Record<string, Forum[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterOption, setFilterOption] = useState<'all' | 'enrolled' | 'popular'>('all');
+  const [filterOption, setFilterOption] = useState<'all' | 'enrolled' | 'popular' | 'subscribed'>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [stats, setStats] = useState({
     totalForums: 0,
     totalThreads: 0,
     totalPosts: 0,
-    myPosts: 0
+    myPosts: 0,
+    notifications: 0
   });
   const { token, user } = useAuth();
 
@@ -34,7 +38,7 @@ const ForumsHomePage = () => {
 
   useEffect(() => {
     applyFilters();
-  }, [searchQuery, filterOption, generalForums, courseForums]);
+  }, [searchQuery, filterOption, selectedCategory, generalForums, courseForums, categoryForums]);
 
   const fetchForums = async () => {
     if (!token) return;
@@ -42,66 +46,112 @@ const ForumsHomePage = () => {
     setLoading(true);
     setError(null);
     try {
-      const [forumsData, myPostsData] = await Promise.all([
+      const [forumsData, myPostsData, notificationsData] = await Promise.all([
         ForumService.getAllForums(),
-        ForumService.getMyPosts().catch(() => ({ threads: [], replies: [], total_posts: 0 }))
+        ForumService.getUserPosts(),
+        ForumService.getNotifications()
       ]);
 
       setGeneralForums(forumsData.general_forums || []);
       setCourseForums(forumsData.course_forums || []);
-      
+      setCategoryForums(forumsData.categories || {});
+
       // Calculate stats
-      const totalThreads = [...(forumsData.general_forums || []), ...(forumsData.course_forums || [])]
-        .reduce((sum, forum) => sum + forum.thread_count, 0);
-      const totalPosts = [...(forumsData.general_forums || []), ...(forumsData.course_forums || [])]
-        .reduce((sum, forum) => sum + forum.post_count, 0);
+      let totalThreads = 0;
+      let totalPosts = 0;
       
+      [...(forumsData.general_forums || []), ...(forumsData.course_forums || [])].forEach(forum => {
+        totalThreads += forum.thread_count || 0;
+        totalPosts += forum.post_count || 0;
+      });
+
+      Object.values(forumsData.categories || {}).forEach(categoryForums => {
+        categoryForums.forEach(forum => {
+          totalThreads += forum.thread_count || 0;
+          totalPosts += forum.post_count || 0;
+        });
+      });
+
       setStats({
-        totalForums: forumsData.total_forums,
+        totalForums: (forumsData.general_forums?.length || 0) + (forumsData.course_forums?.length || 0) + 
+                     Object.values(forumsData.categories || {}).reduce((sum, forums) => sum + forums.length, 0),
         totalThreads,
         totalPosts,
-        myPosts: myPostsData.total_posts
+        myPosts: myPostsData?.length || 0,
+        notifications: notificationsData?.length || 0
       });
     } catch (err: any) {
-      console.error('Error fetching forums:', err);
-      setError(err.message || 'Failed to load forums.');
+      setError(err.message || 'Failed to load forums');
     } finally {
       setLoading(false);
     }
   };
 
   const applyFilters = () => {
-    let general = [...generalForums];
-    let course = [...courseForums];
+    let filteredGeneral = [...generalForums];
+    let filteredCourse = [...courseForums];
+    let filteredCategories = { ...categoryForums };
 
     // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      general = general.filter(f => 
-        f.title.toLowerCase().includes(query) || 
-        f.description?.toLowerCase().includes(query)
+      filteredGeneral = filteredGeneral.filter(forum =>
+        forum.title.toLowerCase().includes(query) ||
+        forum.description.toLowerCase().includes(query)
       );
-      course = course.filter(f => 
-        f.title.toLowerCase().includes(query) || 
-        f.description?.toLowerCase().includes(query) ||
-        f.course_title?.toLowerCase().includes(query)
+      filteredCourse = filteredCourse.filter(forum =>
+        forum.title.toLowerCase().includes(query) ||
+        forum.description.toLowerCase().includes(query)
       );
+
+      // Filter category forums
+      const newFilteredCategories: Record<string, Forum[]> = {};
+      Object.entries(filteredCategories).forEach(([categoryName, forums]) => {
+        const filtered = forums.filter(forum =>
+          forum.title.toLowerCase().includes(query) ||
+          forum.description.toLowerCase().includes(query)
+        );
+        if (filtered.length > 0) {
+          newFilteredCategories[categoryName] = filtered;
+        }
+      });
+      filteredCategories = newFilteredCategories;
+    }
+
+    // Apply category filter
+    if (selectedCategory) {
+      filteredGeneral = [];
+      filteredCourse = [];
+      // Only show selected category
+      if (filteredCategories[selectedCategory]) {
+        filteredCategories = { [selectedCategory]: filteredCategories[selectedCategory] };
+      } else {
+        filteredCategories = {};
+      }
     }
 
     // Apply filter option
     if (filterOption === 'enrolled') {
-      course = course.filter(f => f.is_enrolled);
+      // Only show course forums for enrolled courses
     } else if (filterOption === 'popular') {
-      general = general.filter(f => f.thread_count >= 5);
-      course = course.filter(f => f.thread_count >= 5);
+      // Sort by activity
+      filteredGeneral.sort((a, b) => (b.post_count || 0) - (a.post_count || 0));
+      filteredCourse.sort((a, b) => (b.post_count || 0) - (a.post_count || 0));
+      Object.keys(filteredCategories).forEach(cat => {
+        filteredCategories[cat].sort((a, b) => (b.post_count || 0) - (a.post_count || 0));
+      });
+    } else if (filterOption === 'subscribed') {
+      // Only show subscribed forums
+      filteredGeneral = filteredGeneral.filter(forum => forum.is_subscribed);
+      filteredCourse = filteredCourse.filter(forum => forum.is_subscribed);
+      Object.keys(filteredCategories).forEach(cat => {
+        filteredCategories[cat] = filteredCategories[cat].filter(forum => forum.is_subscribed);
+      });
     }
 
-    setFilteredGeneralForums(general);
-    setFilteredCourseForums(course);
-  };
-
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchQuery(e.target.value);
+    setFilteredGeneralForums(filteredGeneral);
+    setFilteredCourseForums(filteredCourse);
+    setFilteredCategoryForums(filteredCategories);
   };
 
   const formatRelativeTime = (timestamp: string) => {
@@ -121,202 +171,230 @@ const ForumsHomePage = () => {
     for (const unit in units) {
       const interval = Math.floor(diffInSeconds / units[unit]);
       if (interval >= 1) {
-        return `${interval} ${unit}${interval > 1 ? 's' : ''} ago`;
+        return `${interval} ${unit}${interval > 1 ? "s" : ""} ago`;
       }
     }
     return 'just now';
   };
 
   const renderForumCard = (forum: Forum) => (
-    <div 
-      key={forum.id}
-      className="p-6 hover:bg-slate-900/50 transition-colors group"
-    >
-      <div className="flex flex-col lg:flex-row justify-between items-start gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start gap-3 mb-2">
-            <Link
-              href={`/student/forums/${forum.id}`}
-              className="text-lg font-semibold text-white hover:text-indigo-400 transition-colors flex items-center gap-2 flex-1"
-            >
-              {forum.title}
-              <ChevronRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-400 flex-shrink-0" />
-            </Link>
-            {forum.course_id && (
-              forum.is_enrolled ? (
-                <Badge className="bg-green-900/30 text-green-400 border-green-800">
-                  <Unlock className="w-3 h-3 mr-1" />
-                  Enrolled
-                </Badge>
-              ) : (
-                <Badge className="bg-amber-900/30 text-amber-400 border-amber-800">
-                  <Lock className="w-3 h-3 mr-1" />
-                  Enroll Required
-                </Badge>
-              )
-            )}
-          </div>
-          
-          {forum.course_title && (
-            <p className="text-sm text-indigo-400 mb-1">Course: {forum.course_title}</p>
-          )}
-          
-          <p className="mt-1 text-slate-400 text-sm line-clamp-2">{forum.description}</p>
-          
-          {/* Stats */}
-          <div className="flex flex-wrap gap-4 mt-3 text-sm text-slate-500">
-            <span className="flex items-center gap-1">
-              <MessageSquare className="w-4 h-4" />
-              {forum.thread_count} {forum.thread_count === 1 ? 'thread' : 'threads'}
-            </span>
-            <span className="flex items-center gap-1">
-              <Users className="w-4 h-4" />
-              {forum.post_count} {forum.post_count === 1 ? 'post' : 'posts'}
-            </span>
-            {forum.thread_count >= 10 && (
-              <Badge className="bg-orange-900/30 text-orange-400 border-orange-800 text-xs">
-                <TrendingUp className="w-3 h-3 mr-1" />
-                Popular
+    <div key={forum.id} className="p-6 hover:bg-slate-900/50 transition-colors group">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-start gap-3 mb-2 flex-1">
+          <Link
+            href={`/student/forums/${forum.id}`}
+            className="text-lg font-semibold text-white hover:text-indigo-400 transition-colors flex items-center gap-2 flex-1"
+          >
+            {forum.title}
+            <ChevronRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity text-indigo-400 flex-shrink-0" />
+          </Link>
+          <div className="flex gap-2">
+            {forum.is_public ? (
+              <Badge className="bg-green-900/30 text-green-400 border-green-800">
+                <Unlock className="w-3 h-3 mr-1" />
+                Public
+              </Badge>
+            ) : (
+              <Badge className="bg-amber-900/30 text-amber-400 border-amber-800">
+                <Lock className="w-3 h-3 mr-1" />
+                Private
               </Badge>
             )}
           </div>
         </div>
-
-        {/* Last Post */}
-        {forum.last_post && (
-          <div className="w-full lg:w-72 text-sm">
-            <div className="flex items-center gap-3 bg-slate-900/50 p-3 rounded-lg border border-slate-700">
-              <div className="flex-shrink-0">
-                <div className="w-10 h-10 rounded-full bg-indigo-900/50 flex items-center justify-center border border-indigo-700">
-                  <span className="text-indigo-400 text-sm font-medium">
-                    {forum.last_post.author_name[0]}
-                  </span>
-                </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-white truncate text-xs mb-1">
-                  Latest: {forum.last_post.title}
-                </p>
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span className="truncate">by {forum.last_post.author_name}</span>
-                </div>
-                <div className="flex items-center gap-1 text-xs text-slate-500 mt-1">
-                  <Clock className="w-3 h-3" />
-                  <span>{formatRelativeTime(forum.last_post.created_at)}</span>
-                </div>
-              </div>
-            </div>
+        
+        {/* Action Buttons - Show on hover */}
+        {user && (
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity ml-4">
+            <Link href={`/student/forums/${forum.id}/threads/new`}>
+              <Button 
+                size="sm" 
+                className="bg-green-600 hover:bg-green-700 text-white text-xs"
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                New Thread
+              </Button>
+            </Link>
           </div>
+        )}
+      </div>
+      {forum.course_title && (
+        <p className="text-sm text-indigo-400 mb-1">Course: {forum.course_title}</p>
+      )}
+      <p className="mt-1 text-slate-400 text-sm line-clamp-2">{forum.description}</p>
+
+      {/* Stats */}
+      <div className="flex items-center gap-4 mt-4 text-sm text-slate-500">
+        <span className="flex items-center gap-1">
+          <MessageSquare className="w-4 h-4" />
+          {forum.thread_count} {forum.thread_count === 1 ? "thread" : "threads"}
+        </span>
+        <span className="flex items-center gap-1">
+          <Users className="w-4 h-4" />
+          {forum.post_count} {forum.post_count === 1 ? "post" : "posts"}
+        </span>
+        {forum.is_trending && (
+          <Badge className="bg-orange-900/30 text-orange-400 border-orange-800 text-xs">
+            <TrendingUp className="w-3 h-3 mr-1" />
+            Trending
+          </Badge>
         )}
       </div>
     </div>
   );
 
-  if (loading) return (
-    <div className="min-h-screen bg-[#1e293b] flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
-        <div className="text-slate-300 text-lg">Loading forums...</div>
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="container mx-auto px-4 py-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-center h-64">
+              <div className="text-center">
+                <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-slate-400">Loading forums...</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
-  
-  if (error) return (
-    <div className="min-h-screen bg-[#1e293b] flex items-center justify-center p-4">
-      <div className="bg-slate-800 border border-red-900/50 rounded-xl p-8 text-center max-w-md">
-        <AlertCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-        <p className="text-red-400 text-lg mb-4">{error}</p>
-        <Button 
-          onClick={fetchForums}
-          className="bg-red-600 hover:bg-red-700 text-white"
-        >
-          Try Again
-        </Button>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+        <div className="container mx-auto px-4 py-6">
+          <div className="max-w-7xl mx-auto">
+            <div className="text-center py-16">
+              <AlertCircle className="w-16 h-16 text-red-400 mx-auto mb-4" />
+              <p className="text-xl text-red-400 mb-2">Failed to load forums</p>
+              <p className="text-slate-400 mb-4">{error}</p>
+              <Button onClick={fetchForums} className="bg-indigo-600 hover:bg-indigo-700">
+                Try Again
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#1e293b]">
-      <div className="container mx-auto px-4 py-6 sm:py-8">
-        {/* Header Section */}
-        <div className="mb-6 sm:mb-8">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white flex items-center gap-3">
-                  <MessageSquare className="w-7 h-7 sm:w-8 sm:h-8 text-indigo-400" />
-                  Community Forums
-                </h1>
-                <p className="mt-2 text-slate-400 text-sm sm:text-base">Connect, learn, and collaborate with fellow learners</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      <div className="container mx-auto px-4 py-6">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2">Community Forums</h1>
+              <p className="text-slate-400">Connect, discuss, and learn together</p>
+            </div>
+            
+            {/* Stats */}
+            <div className="flex gap-4 text-sm">
+              <div className="text-center">
+                <div className="text-xl font-bold text-indigo-400">{stats.totalForums}</div>
+                <div className="text-slate-500">Forums</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xl font-bold text-green-400">{stats.totalThreads}</div>
+                <div className="text-slate-500">Threads</div>
+              </div>
+              <div className="text-center">
+                <div className="text-xl font-bold text-blue-400">{stats.totalPosts}</div>
+                <div className="text-slate-500">Posts</div>
+              </div>
+              {stats.myPosts > 0 && (
+                <div className="text-center">
+                  <div className="text-xl font-bold text-yellow-400">{stats.myPosts}</div>
+                  <div className="text-slate-500">My Posts</div>
+                </div>
+              )}
+              {stats.notifications > 0 && (
+                <div className="text-center">
+                  <div className="text-xl font-bold text-purple-400">{stats.notifications}</div>
+                  <div className="text-slate-500">Notifications</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-6 mb-8">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="text-white font-semibold">Quick Actions:</div>
+                <div className="flex gap-2 text-sm text-slate-400">
+                  <span>• Browse forums</span>
+                  <span>• Join discussions</span>
+                  <span>• Ask questions</span>
+                  <span>• Share knowledge</span>
+                </div>
               </div>
               
               {user && (
                 <div className="flex flex-wrap gap-3">
-                  {generalForums.length > 0 && (
-                    <Link href={`/student/forums/${generalForums[0].id}/threads/new`}>
-                      <Button className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white">
-                        <Plus className="w-4 h-4 mr-2" />
-                        Create Thread
-                      </Button>
-                    </Link>
+                  {/* Create Thread - show if any forums are available */}
+                  {(generalForums.length > 0 || courseForums.length > 0) && (
+                    <>
+                      {generalForums.length > 0 ? (
+                        <Link href={`/student/forums/${generalForums[0].id}/threads/new`}>
+                          <Button className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white">
+                            <Plus className="w-4 h-4 mr-2" />
+                            Create Thread
+                          </Button>
+                        </Link>
+                      ) : courseForums.length > 0 ? (
+                        <Link href={`/student/forums/${courseForums[0].id}/threads/new`}>
+                          <Button className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white">
+                            <Plus className="w-4 h-4 mr-2" />
+                            Create Thread
+                          </Button>
+                        </Link>
+                      ) : null}
+                    </>
                   )}
+                  
+                  {/* If no forums at all, show a message or link to request forum creation */}
+                  {generalForums.length === 0 && courseForums.length === 0 && Object.keys(categoryForums).length === 0 && (
+                    <Button 
+                      variant="outline" 
+                      className="border-amber-600 text-amber-400 hover:bg-amber-900/20"
+                      onClick={() => alert('No forums available yet. Contact an administrator to create forums.')}
+                    >
+                      <AlertCircle className="w-4 h-4 mr-2" />
+                      Request Forum
+                    </Button>
+                  )}
+                  
                   <Link href="/student/forums/my-posts">
-                    <Button className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white">
-                      <Award className="w-4 h-4 mr-2" />
-                      My Posts ({stats.myPosts})
+                    <Button variant="outline" className="border-slate-700 text-slate-300 hover:bg-slate-800">
+                      <FileText className="w-4 h-4 mr-2" />
+                      My Posts
                     </Button>
                   </Link>
                 </div>
               )}
             </div>
+          </div>
 
-            {/* Stats Bar */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-              <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 sm:p-4">
-                <div className="flex items-center gap-2 text-slate-400 text-xs sm:text-sm mb-1">
-                  <BookOpen className="w-4 h-4" />
-                  Forums
-                </div>
-                <p className="text-xl sm:text-2xl font-bold text-white">{stats.totalForums}</p>
-              </div>
-              <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 sm:p-4">
-                <div className="flex items-center gap-2 text-slate-400 text-xs sm:text-sm mb-1">
-                  <MessageSquare className="w-4 h-4" />
-                  Threads
-                </div>
-                <p className="text-xl sm:text-2xl font-bold text-white">{stats.totalThreads}</p>
-              </div>
-              <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 sm:p-4">
-                <div className="flex items-center gap-2 text-slate-400 text-xs sm:text-sm mb-1">
-                  <Users className="w-4 h-4" />
-                  Posts
-                </div>
-                <p className="text-xl sm:text-2xl font-bold text-white">{stats.totalPosts}</p>
-              </div>
-              <div className="bg-slate-800 border border-slate-700 rounded-lg p-3 sm:p-4">
-                <div className="flex items-center gap-2 text-slate-400 text-xs sm:text-sm mb-1">
-                  <Award className="w-4 h-4" />
-                  My Posts
-                </div>
-                <p className="text-xl sm:text-2xl font-bold text-indigo-400">{stats.myPosts}</p>
-              </div>
-            </div>
-
-            {/* Search and Filter Bar */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
+          {/* Filters and Search */}
+          <div className="bg-slate-800 rounded-xl shadow-sm border border-slate-700 p-6 mb-8">
+            <div className="space-y-4">
+              {/* Search */}
+              <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   type="text"
-                  placeholder="Search forums, threads, topics..."
+                  placeholder="Search forums, threads, or topics..."
                   value={searchQuery}
-                  onChange={handleSearch}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 text-white placeholder-slate-400 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-colors"
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 />
               </div>
-              
-              <div className="flex gap-2">
+
+              {/* Filter Options */}
+              <div className="flex flex-wrap gap-2">
                 <Button
                   onClick={() => setFilterOption('all')}
                   variant={filterOption === 'all' ? 'default' : 'outline'}
@@ -325,18 +403,19 @@ const ForumsHomePage = () => {
                     : 'border-slate-700 text-slate-300 hover:bg-slate-800'
                   }
                 >
-                  All
+                  <Filter className="w-4 h-4 mr-2" />
+                  All Forums
                 </Button>
                 <Button
                   onClick={() => setFilterOption('enrolled')}
                   variant={filterOption === 'enrolled' ? 'default' : 'outline'}
                   className={filterOption === 'enrolled' 
-                    ? 'bg-green-600 text-white hover:bg-green-700' 
+                    ? 'bg-blue-600 text-white hover:bg-blue-700' 
                     : 'border-slate-700 text-slate-300 hover:bg-slate-800'
                   }
                 >
-                  <Filter className="w-4 h-4 mr-2" />
-                  Enrolled
+                  <BookOpen className="w-4 h-4 mr-2" />
+                  My Courses
                 </Button>
                 <Button
                   onClick={() => setFilterOption('popular')}
@@ -349,91 +428,160 @@ const ForumsHomePage = () => {
                   <TrendingUp className="w-4 h-4 mr-2" />
                   Popular
                 </Button>
+                <Button
+                  onClick={() => setFilterOption('subscribed')}
+                  variant={filterOption === 'subscribed' ? 'default' : 'outline'}
+                  className={filterOption === 'subscribed' 
+                    ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                    : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                  }
+                >
+                  <Bell className="w-4 h-4 mr-2" />
+                  Subscribed
+                </Button>
               </div>
+
+              {/* Category Filter */}
+              {Object.keys(categoryForums).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    onClick={() => setSelectedCategory('')}
+                    variant={selectedCategory === '' ? 'default' : 'outline'}
+                    size="sm"
+                    className={selectedCategory === '' 
+                      ? 'bg-slate-600 text-white hover:bg-slate-700' 
+                      : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                    }
+                  >
+                    All Categories
+                  </Button>
+                  {Object.keys(categoryForums).map((category) => (
+                    <Button
+                      key={category}
+                      onClick={() => setSelectedCategory(category)}
+                      variant={selectedCategory === category ? 'default' : 'outline'}
+                      size="sm"
+                      className={selectedCategory === category 
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                        : 'border-slate-700 text-slate-400 hover:bg-slate-800'
+                      }
+                    >
+                      {category} ({categoryForums[category]?.length || 0})
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        </div>
 
-        {/* Forums Content */}
-        {/* Forums Content */}
-        {filteredGeneralForums.length === 0 && filteredCourseForums.length === 0 ? (
-          <div className="text-center py-16 bg-slate-800 rounded-xl border border-dashed border-slate-700">
-            <BookOpen className="w-16 h-16 text-slate-500 mx-auto mb-4" />
-            <p className="text-xl text-slate-400 mb-2">
-              {searchQuery ? 'No forums match your search' : 'No forums available yet'}
-            </p>
-            {searchQuery && (
-              <Button 
-                onClick={() => setSearchQuery('')}
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-              >
-                Clear Search
-              </Button>
+          {/* Forums Content */}
+          <div className="space-y-6">
+            {/* Empty State */}
+            {filteredGeneralForums.length === 0 && 
+             filteredCourseForums.length === 0 && 
+             Object.keys(filteredCategoryForums).length === 0 ? (
+              <div className="text-center py-16 bg-slate-800 rounded-xl border border-dashed border-slate-700">
+                <BookOpen className="w-16 h-16 text-slate-500 mx-auto mb-4" />
+                <p className="text-xl text-slate-400 mb-2">
+                  {searchQuery ? "No forums match your search" : "No forums available yet"}
+                </p>
+                {searchQuery && (
+                  <Button 
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSelectedCategory('');
+                    }}
+                    variant="outline"
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                  >
+                    Clear Filters
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <>
+                {/* General Forums */}
+                {filteredGeneralForums.length > 0 && (
+                  <section className="mb-6 sm:mb-8 bg-slate-800 rounded-xl shadow-sm border border-slate-700">
+                    <div className="p-4 sm:p-6 border-b border-slate-700">
+                      <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                        <Users className="w-5 h-5 text-indigo-400" />
+                        General Discussions
+                      </h2>
+                      <p className="text-sm text-slate-400 mt-1">Open to all community members</p>
+                    </div>
+                    <div className="divide-y divide-slate-700">
+                      {filteredGeneralForums.map(forum => renderForumCard(forum))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Category Forums */}
+                {Object.entries(filteredCategoryForums).map(([categoryName, forums]) => (
+                  forums.length > 0 && (
+                    <section key={categoryName} className="mb-6 sm:mb-8 bg-slate-800 rounded-xl shadow-sm border border-slate-700">
+                      <div className="p-4 sm:p-6 border-b border-slate-700">
+                        <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                          <FileText className="w-5 h-5 text-purple-400" />
+                          {categoryName}
+                        </h2>
+                        <p className="text-sm text-slate-400 mt-1">{forums.length} forum{forums.length !== 1 ? "s" : ""} in this category</p>
+                      </div>
+                      <div className="divide-y divide-slate-700">
+                        {forums.map(forum => renderForumCard(forum))}
+                      </div>
+                    </section>
+                  )
+                ))}
+
+                {/* Course Forums */}
+                {filteredCourseForums.length > 0 && (
+                  <section className="mb-6 sm:mb-8 bg-slate-800 rounded-xl shadow-sm border border-slate-700">
+                    <div className="p-4 sm:p-6 border-b border-slate-700">
+                      <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
+                        <BookOpen className="w-5 h-5 text-blue-400" />
+                        Course Forums
+                      </h2>
+                      <p className="text-sm text-slate-400 mt-1">Discussion spaces for enrolled courses</p>
+                    </div>
+                    <div className="divide-y divide-slate-700">
+                      {filteredCourseForums.map(forum => renderForumCard(forum))}
+                    </div>
+                  </section>
+                )}
+              </>
             )}
           </div>
-        ) : (
-          <>
-            {/* General Forums */}
-            {filteredGeneralForums.length > 0 && (
-              <section className="mb-6 sm:mb-8 bg-slate-800 rounded-xl shadow-sm border border-slate-700">
-                <div className="p-4 sm:p-6 border-b border-slate-700">
-                  <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
-                    <Users className="w-5 h-5 text-indigo-400" />
-                    General Discussions
-                  </h2>
-                  <p className="text-sm text-slate-400 mt-1">Open to all community members</p>
-                </div>
-                <div className="divide-y divide-slate-700">
-                  {filteredGeneralForums.map(forum => renderForumCard(forum))}
-                </div>
-              </section>
-            )}
 
-            {/* Course Forums */}
-            {filteredCourseForums.length > 0 && (
-              <section className="mb-6 sm:mb-8 bg-slate-800 rounded-xl shadow-sm border border-slate-700">
-                <div className="p-4 sm:p-6 border-b border-slate-700">
-                  <h2 className="text-lg sm:text-xl font-semibold text-white flex items-center gap-2">
-                    <BookOpen className="w-5 h-5 text-green-400" />
-                    Course-Specific Forums
-                  </h2>
-                  <p className="text-sm text-slate-400 mt-1">Discussion spaces for enrolled courses</p>
+          {/* Help Text */}
+          <div className="mt-8 bg-gradient-to-r from-indigo-900/30 to-blue-900/30 border border-indigo-800/50 rounded-xl p-6">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
+                  <AlertCircle className="w-5 h-5 text-white" />
                 </div>
-                <div className="divide-y divide-slate-700">
-                  {filteredCourseForums.map(forum => renderForumCard(forum))}
-                </div>
-              </section>
-            )}
-          </>
-        )}
-
-        {/* Help Text */}
-        <div className="mt-8 bg-gradient-to-r from-indigo-900/30 to-blue-900/30 border border-indigo-800/50 rounded-xl p-6">
-          <div className="flex items-start gap-4">
-            <div className="flex-shrink-0">
-              <MessageSquare className="w-8 h-8 text-indigo-400" />
-            </div>
-            <div>
-              <h3 className="text-lg font-semibold text-white mb-2">Forum Guidelines</h3>
-              <ul className="text-sm text-slate-400 space-y-1.5">
-                <li className="flex items-start gap-2">
-                  <span className="text-indigo-400 mt-0.5">•</span>
-                  <span>Be respectful and constructive in your discussions</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-indigo-400 mt-0.5">•</span>
-                  <span>Search before posting to avoid duplicate threads</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-indigo-400 mt-0.5">•</span>
-                  <span>Course forums require enrollment in the respective course</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-indigo-400 mt-0.5">•</span>
-                  <span>Help others by sharing your knowledge and experience</span>
-                </li>
-              </ul>
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-2">Forum Guidelines</h3>
+                <ul className="space-y-2 text-slate-300">
+                  <li className="flex items-start gap-2">
+                    <span className="text-indigo-400 mt-0.5">•</span>
+                    <span>Be respectful and constructive in your discussions</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-indigo-400 mt-0.5">•</span>
+                    <span>Search before posting to avoid duplicate threads</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-indigo-400 mt-0.5">•</span>
+                    <span>Course forums require enrollment in the respective course</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-indigo-400 mt-0.5">•</span>
+                    <span>Help others by sharing your knowledge and experience</span>
+                  </li>
+                </ul>
+              </div>
             </div>
           </div>
         </div>

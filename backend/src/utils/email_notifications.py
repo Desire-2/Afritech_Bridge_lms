@@ -4,12 +4,20 @@ Centralizes email sending for various events
 """
 import logging
 from datetime import datetime
-from ..utils.brevo_email_service import brevo_service
 from ..utils.email_templates import (
     assignment_graded_email,
     quiz_graded_email,
-    course_announcement_email
+    course_announcement_email,
+    full_credit_awarded_email
 )
+
+# Import brevo service with error handling for missing dependencies
+try:
+    from ..utils.brevo_email_service import brevo_service
+    BREVO_AVAILABLE = True
+except (ImportError, ModuleNotFoundError) as e:
+    brevo_service = None
+    BREVO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +56,11 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
             feedback=feedback or "",
             passed=passed
         )
+        
+        # Check if brevo service is available
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send grade notification")
+            return False
         
         brevo_service.send_email(
             to_emails=[student.email],
@@ -96,6 +109,11 @@ def send_quiz_grade_notification(student, quiz, score, total_points):
             percentage=percentage,
             passed=passed
         )
+        
+        # Check if brevo service is available
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send quiz notification")
+            return False
         
         brevo_service.send_email(
             to_emails=[student.email],
@@ -599,4 +617,55 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
             return False
     except Exception as e:
         logger.error(f"❌ Failed to send resubmission notification: {str(e)}")
+        return False
+
+
+def send_full_credit_notification(student, module, course, instructor, reason=None, details=None):
+    """
+    Send email notification when full credit is awarded to a student for a module
+    
+    Args:
+        student: User object (student receiving full credit)
+        module: Module object for which credit is awarded
+        course: Course object containing the module
+        instructor: User object (instructor awarding the credit)
+        reason: Optional string explaining why full credit was awarded
+        details: Optional dictionary with breakdown of components updated
+    """
+    try:
+        # Check if brevo service is available
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available (missing dependencies) - cannot send full credit notification")
+            return False
+        
+        # Build student name
+        student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor.first_name else instructor.username
+        
+        # Generate the email content using the template
+        email_html = full_credit_awarded_email(
+            student_name=student_name,
+            module_title=module.title,
+            course_title=course.title,
+            instructor_name=instructor_name,
+            reason=reason,
+            details=details
+        )
+        
+        # Send the email
+        success = brevo_service.send_email(
+            to_emails=[student.email],
+            subject=f"🏆 Full Credit Awarded: {module.title} - {course.title}",
+            html_content=email_html
+        )
+        
+        if success:
+            logger.info(f"📧 Full credit notification sent to {student.email} for module {module.id}")
+            return True
+        else:
+            logger.error(f"❌ Failed to send full credit notification to {student.email}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to send full credit notification: {str(e)}")
         return False

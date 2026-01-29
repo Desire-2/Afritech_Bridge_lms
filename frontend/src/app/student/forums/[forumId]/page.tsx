@@ -33,7 +33,7 @@ const ForumDetailPage = () => {
         setForum(forumData);
         setThreads(forumData.threads || []);
       } catch (err: any) {
-        setError(err.message || 'Failed to load forum');
+        setError(err.response?.data?.error || err.message || 'Failed to load forum');
       } finally {
         setLoading(false);
       }

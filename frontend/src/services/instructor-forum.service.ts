@@ -22,21 +22,15 @@ export interface ForumPost {
   flag_reason?: string;
   moderated_by?: number;
   moderated_at?: string;
-  author_avatar?: string;
-  moderator_name?: string;
+  forum_title?: string;
   reply_count?: number;
-  last_reply?: {
-    author_name: string;
-    created_at: string;
-  };
   user_reaction?: {
     liked: boolean | null;
     can_edit: boolean;
     can_delete: boolean;
-    can_pin?: boolean;
-    can_lock?: boolean;
+    can_pin: boolean;
+    can_lock: boolean;
   };
-  replies?: ForumPost[];
 }
 
 export interface Forum {
@@ -58,7 +52,7 @@ export interface Forum {
   moderated: boolean;
   post_count: number;
   thread_count: number;
-  subscriber_count?: number;
+  subscriber_count: number;
   is_enrolled?: boolean;
   can_post: boolean;
   can_moderate: boolean;
@@ -73,10 +67,23 @@ export interface Forum {
   threads?: ForumPost[];
 }
 
-export interface ForumCategory {
-  id: string;
+export interface CreateForumData {
   title: string;
-  forums: Forum[];
+  description?: string;
+  category?: string;
+  course_id?: number | null;
+  is_pinned?: boolean;
+  allow_anonymous?: boolean;
+  moderated?: boolean;
+}
+
+export interface UpdateForumData {
+  title?: string;
+  description?: string;
+  category?: string;
+  is_locked?: boolean;
+  moderated?: boolean;
+  is_pinned?: boolean;
 }
 
 export interface CreateThreadData {
@@ -88,13 +95,13 @@ export interface CreateReplyData {
   content: string;
 }
 
-export class ForumService {
+export class InstructorForumService {
   private static readonly BASE_PATH = '/forums';
 
-  // Get all forums
-  static async getAllForums(): Promise<{ 
-    general_forums: Forum[]; 
-    course_forums: Forum[]; 
+  // Get all forums (instructor perspective)
+  static async getAllForums(): Promise<{
+    general_forums: Forum[];
+    course_forums: Forum[];
     categories: Record<string, Forum[]>;
     total_forums: number;
     user_role: string;
@@ -104,12 +111,12 @@ export class ForumService {
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
-      return { 
-        general_forums: [], 
-        course_forums: [], 
+      return {
+        general_forums: [],
+        course_forums: [],
         categories: {},
         total_forums: 0,
-        user_role: 'student'
+        user_role: 'instructor'
       };
     } catch (error) {
       console.error('Error fetching forums:', error);
@@ -117,7 +124,48 @@ export class ForumService {
     }
   }
 
-  // Get forum details with threads
+  // Create new forum
+  static async createForum(data: CreateForumData): Promise<Forum> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}`, data);
+      if (response.data.success && response.data.data) {
+        return response.data.data;
+      }
+      throw new Error('Failed to create forum');
+    } catch (error) {
+      console.error('Error creating forum:', error);
+      throw error;
+    }
+  }
+
+  // Update forum
+  static async updateForum(forumId: number, data: UpdateForumData): Promise<Forum> {
+    try {
+      const response = await apiClient.put(`${this.BASE_PATH}/${forumId}`, data);
+      if (response.data.success && response.data.data) {
+        return response.data.data;
+      }
+      throw new Error('Failed to update forum');
+    } catch (error) {
+      console.error('Error updating forum:', error);
+      throw error;
+    }
+  }
+
+  // Delete forum
+  static async deleteForum(forumId: number): Promise<void> {
+    try {
+      const response = await apiClient.delete(`${this.BASE_PATH}/${forumId}`);
+      if (!response.data.success) {
+        throw new Error('Failed to delete forum');
+      }
+    } catch (error) {
+      console.error('Error deleting forum:', error);
+      throw error;
+    }
+  }
+
+  // Get forum details
   static async getForumDetails(forumId: number): Promise<Forum> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/${forumId}`);
@@ -131,7 +179,7 @@ export class ForumService {
     }
   }
 
-  // Get thread details with replies
+  // Get thread details
   static async getThreadDetails(threadId: number): Promise<ForumPost> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/threads/${threadId}`);
@@ -173,38 +221,60 @@ export class ForumService {
     }
   }
 
-  // Search forums and threads (legacy method, use searchForumsAdvanced for new features)
-  static async searchForums(query: string): Promise<{ forums: Forum[]; threads: ForumPost[] }> {
-    const result = await this.searchForumsAdvanced(query);
-    return { forums: result.forums, threads: result.threads };
-  }
-
-  // Get user's posts
-  static async getMyPosts(): Promise<{ threads: ForumPost[]; replies: ForumPost[]; total_posts: number }> {
+  // Edit post
+  static async editPost(postId: number, data: { title?: string; content?: string }): Promise<ForumPost> {
     try {
-      const response = await apiClient.get(`${this.BASE_PATH}/my-posts`);
+      const response = await apiClient.put(`${this.BASE_PATH}/posts/${postId}`, data);
       if (response.data.success && response.data.data) {
         return response.data.data;
       }
-      return { threads: [], replies: [], total_posts: 0 };
+      throw new Error('Failed to edit post');
     } catch (error) {
-      console.error('Error fetching user posts:', error);
+      console.error('Error editing post:', error);
       throw error;
     }
   }
 
-  // Alias for getMyPosts to match forum page expectations
-  static async getUserPosts(): Promise<{ length: number }> {
+  // Delete post
+  static async deletePost(postId: number): Promise<void> {
     try {
-      const result = await this.getMyPosts();
-      return { length: result.total_posts };
+      const response = await apiClient.delete(`${this.BASE_PATH}/posts/${postId}`);
+      if (!response.data.success) {
+        throw new Error('Failed to delete post');
+      }
     } catch (error) {
-      console.error('Error fetching user posts:', error);
+      console.error('Error deleting post:', error);
       throw error;
     }
   }
 
-  // Like or dislike a post
+  // Pin/unpin post
+  static async pinPost(postId: number, pinned: boolean): Promise<void> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/posts/${postId}/pin`, { pinned });
+      if (!response.data.success) {
+        throw new Error('Failed to pin post');
+      }
+    } catch (error) {
+      console.error('Error pinning post:', error);
+      throw error;
+    }
+  }
+
+  // Lock/unlock post
+  static async lockPost(postId: number, locked: boolean): Promise<void> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/posts/${postId}/lock`, { locked });
+      if (!response.data.success) {
+        throw new Error('Failed to lock post');
+      }
+    } catch (error) {
+      console.error('Error locking post:', error);
+      throw error;
+    }
+  }
+
+  // Like/dislike post
   static async likePost(postId: number, isLike: boolean): Promise<{
     like_count: number;
     dislike_count: number;
@@ -222,7 +292,7 @@ export class ForumService {
     }
   }
 
-  // Flag a post
+  // Flag post
   static async flagPost(postId: number, reason: string): Promise<void> {
     try {
       const response = await apiClient.post(`${this.BASE_PATH}/posts/${postId}/flag`, { reason });
@@ -263,15 +333,19 @@ export class ForumService {
     }
   }
 
-  // Enhanced search with filters
-  static async searchForumsAdvanced(
-    query: string, 
+  // Search forums and threads
+  static async searchForums(
+    query: string,
     options?: {
       category?: string;
       forum_id?: number;
       sort?: 'relevance' | 'date' | 'popularity';
     }
-  ): Promise<{ forums: Forum[]; threads: ForumPost[]; total_results: number }> {
+  ): Promise<{
+    forums: Forum[];
+    threads: ForumPost[];
+    total_results: number;
+  }> {
     try {
       const params: any = { q: query };
       if (options?.category) params.category = options.category;
@@ -303,6 +377,24 @@ export class ForumService {
     }
   }
 
+  // Get user's posts
+  static async getMyPosts(): Promise<{
+    threads: ForumPost[];
+    replies: ForumPost[];
+    total_posts: number;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/my-posts`);
+      if (response.data.success && response.data.data) {
+        return response.data.data;
+      }
+      return { threads: [], replies: [], total_posts: 0 };
+    } catch (error) {
+      console.error('Error fetching user posts:', error);
+      throw error;
+    }
+  }
+
   // Get forum notifications
   static async getForumNotifications(): Promise<{
     notifications: any[];
@@ -314,17 +406,6 @@ export class ForumService {
         return response.data.data;
       }
       return { notifications: [], unread_count: 0 };
-    } catch (error) {
-      console.error('Error fetching notifications:', error);
-      throw error;
-    }
-  }
-
-  // Alias for getForumNotifications to match forum page expectations
-  static async getNotifications(): Promise<{ length: number }> {
-    try {
-      const result = await this.getForumNotifications();
-      return { length: result.unread_count };
     } catch (error) {
       console.error('Error fetching notifications:', error);
       throw error;
@@ -343,4 +424,56 @@ export class ForumService {
       throw error;
     }
   }
+
+  // === Moderation Methods ===
+
+  // Get posts pending approval
+  static async getPendingPosts(): Promise<{
+    pending_posts: ForumPost[];
+    total_count: number;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/moderation/pending`);
+      if (response.data.success && response.data.data) {
+        return response.data.data;
+      }
+      return { pending_posts: [], total_count: 0 };
+    } catch (error) {
+      console.error('Error fetching pending posts:', error);
+      throw error;
+    }
+  }
+
+  // Approve or reject post
+  static async approvePost(postId: number, approve: boolean): Promise<void> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/moderation/posts/${postId}/approve`, { approve });
+      if (!response.data.success) {
+        throw new Error('Failed to moderate post');
+      }
+    } catch (error) {
+      console.error('Error moderating post:', error);
+      throw error;
+    }
+  }
+
+  // Get flagged posts
+  static async getFlaggedPosts(): Promise<{
+    flagged_posts: ForumPost[];
+    total_count: number;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/moderation/flagged`);
+      if (response.data.success && response.data.data) {
+        return response.data.data;
+      }
+      return { flagged_posts: [], total_count: 0 };
+    } catch (error) {
+      console.error('Error fetching flagged posts:', error);
+      throw error;
+    }
+  }
 }
+
+// Re-export for convenience
+export { InstructorForumService as ForumService };

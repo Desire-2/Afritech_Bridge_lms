@@ -1,6 +1,6 @@
 # Instructor API Routes for Afritec Bridge LMS
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, and_
 from datetime import datetime
@@ -8,7 +8,7 @@ import logging
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, Assignment
 from ..services.background_service import background_service
 
 # Set up logger
@@ -23,7 +23,16 @@ def instructor_required(f):
     def decorated_function(*args, **kwargs):
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
+        
+        # Debug logging
+        logger.info(f"Instructor access check - User ID: {current_user_id}")
+        if user:
+            logger.info(f"User found: {user.username}, Role: {user.role.name if user.role else 'None'}")
+        else:
+            logger.info("No user found for the provided token")
+        
         if not user or not user.role or user.role.name not in ['instructor', 'admin']:
+            logger.warning(f"Access denied for user {current_user_id} - Role: {user.role.name if user and user.role else 'None'}")
             return jsonify({"message": "Instructor access required"}), 403
         return f(*args, **kwargs)
     return decorated_function
@@ -362,6 +371,142 @@ def get_pending_submissions():
         return jsonify({"message": "Failed to fetch pending submissions", "error": str(e)}), 500
 
 # --- Student Activity Management Routes ---
+
+@instructor_bp.route("/students/analytics", methods=["GET"])
+@instructor_required
+def get_student_performance_analytics():
+    """Get comprehensive student performance analytics for instructor"""
+    current_user_id = get_jwt_identity()
+    course_id = request.args.get('course_id', type=int)
+    
+    try:
+        from ..services.analytics_service import AnalyticsService
+        
+        analytics_data = AnalyticsService.get_instructor_student_analytics(
+            instructor_id=current_user_id,
+            course_id=course_id
+        )
+        
+        return jsonify(analytics_data), 200
+        
+    except Exception as e:
+        return jsonify({
+            "message": "Failed to fetch student analytics", 
+            "error": str(e)
+        }), 500
+
+@instructor_bp.route("/students/<int:student_id>/modules/<int:module_id>/full-credit", methods=["POST"])
+@jwt_required()
+@instructor_required
+def give_module_full_credit(student_id, module_id):
+    """Give full credit to a student for all components of a specific module"""
+    current_user_id = get_jwt_identity()
+    
+    try:
+        logger.info(f"Full credit request - Student: {student_id}, Module: {module_id}, Instructor: {current_user_id}")
+        
+        # Verify instructor owns the course containing this module
+        module = Module.query.get(module_id)
+        if not module:
+            logger.warning(f"Module {module_id} not found")
+            return jsonify({"message": "Module not found"}), 404
+        
+        logger.info(f"Module found: {module.title}, Course ID: {module.course_id}")
+        
+        course = Course.query.filter_by(id=module.course_id, instructor_id=current_user_id).first()
+        if not course:
+            logger.warning(f"Instructor {current_user_id} does not own course {module.course_id}")
+            return jsonify({"message": "Access denied. You do not own this course."}), 403
+        
+        logger.info(f"Course access verified: {course.title}")
+        
+        # Verify student is enrolled in the course
+        enrollment = Enrollment.query.filter_by(student_id=student_id, course_id=course.id).first()
+        if not enrollment:
+            logger.warning(f"Student {student_id} not enrolled in course {course.id}")
+            return jsonify({"message": "Student is not enrolled in this course"}), 404
+        
+        logger.info(f"Student enrollment verified: {enrollment.id}")
+        
+        # Get optional reason from request body - handle missing Content-Type gracefully
+        try:
+            request_data = request.get_json(force=True) or {}
+        except Exception:
+            # If no JSON data or wrong content type, just use empty dict
+            request_data = {}
+        
+        reason = request_data.get('reason', '').strip() or None
+        logger.info(f"Full credit reason: {reason}")
+        
+        # Import and call the FullCreditService
+        try:
+            from ..services.full_credit_service import FullCreditService
+            logger.info("FullCreditService imported successfully")
+            
+            result = FullCreditService.give_module_full_credit(
+                student_id=student_id,
+                module_id=module_id,
+                instructor_id=current_user_id,
+                enrollment_id=enrollment.id
+            )
+            logger.info(f"FullCreditService result: {result}")
+            
+        except Exception as service_error:
+            logger.error(f"FullCreditService error: {str(service_error)}")
+            logger.error(f"Service error traceback:", exc_info=True)
+            return jsonify({
+                "message": "Failed to award full credit due to service error",
+                "error": str(service_error)
+            }), 500
+        
+        if result.get('success'):
+            # Send email notification to student
+            try:
+                from ..utils.email_notifications import send_full_credit_notification
+                
+                student = User.query.get(student_id)
+                instructor = User.query.get(current_user_id)
+                
+                if student and instructor:
+                    email_result = send_full_credit_notification(
+                        student=student,
+                        module=module,
+                        course=course,
+                        instructor=instructor,
+                        reason=reason,
+                        details=result.get('details', {})
+                    )
+                    logger.info(f"📧 Email notification result: {email_result}")
+                    if email_result:
+                        logger.info(f"📧 Full credit email notification sent to {student.email}")
+                    else:
+                        logger.warning(f"📧 Failed to send email notification to {student.email}")
+                else:
+                    logger.warning(f"Could not send email notification - missing student or instructor data")
+            except Exception as email_error:
+                # Don't fail the full credit award if email fails
+                logger.error(f"Email notification error: {str(email_error)}")
+                logger.error(f"Email error traceback:", exc_info=True)
+            
+            return jsonify({
+                "message": f"Full credit awarded to student for module '{module.title}'",
+                "success": True,
+                "details": result.get('details', {})
+            }), 200
+        else:
+            logger.error(f"FullCreditService returned failure: {result}")
+            return jsonify({
+                "message": result.get('message', 'Failed to award full credit'),
+                "success": False
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"Full credit route error: {str(e)}")
+        logger.error(f"Full error traceback:", exc_info=True)
+        return jsonify({
+            "message": "Failed to award full credit", 
+            "error": str(e)
+        }), 500
 
 @instructor_bp.route("/students/analysis", methods=["GET"])
 @instructor_required
@@ -989,3 +1134,112 @@ def get_test_task_status(task_id):
             "message": "Failed to check test task status",
             "error": str(e)
         }), 500
+
+@instructor_bp.route("/courses/<int:course_id>/students", methods=["GET"])
+@jwt_required()
+@instructor_required
+def get_enrolled_students(course_id):
+    """Get all students enrolled in a specific course"""
+    try:
+        instructor_id = get_jwt_identity()
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=instructor_id).first()
+        if not course:
+            return jsonify({"error": "Course not found or access denied"}), 404
+        
+        # Get all enrollments for this course
+        enrollments = Enrollment.query.filter_by(course_id=course_id, status='active').all()
+        
+        students = []
+        for enrollment in enrollments:
+            user = User.query.get(enrollment.student_id)
+            if user:
+                students.append({
+                    "id": user.id,
+                    "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "email": user.email,
+                    "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                    "progress": getattr(enrollment, 'progress', 0) or 0
+                })
+        
+        return jsonify(students), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting course students: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@instructor_bp.route("/courses/<int:course_id>/modules", methods=["GET"])
+@jwt_required()
+@instructor_required
+def get_course_module_list(course_id):
+    """Get all modules for a specific course"""
+    try:
+        instructor_id = get_jwt_identity()
+        
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=course_id, instructor_id=instructor_id).first()
+        if not course:
+            return jsonify({"error": "Course not found or access denied"}), 404
+        
+        # Get all modules for this course
+        modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+        
+        module_list = []
+        for module in modules:
+            # Count components
+            lessons_count = Lesson.query.filter_by(module_id=module.id).count()
+            quizzes_count = Quiz.query.filter_by(module_id=module.id).count()
+            assignments_count = Assignment.query.filter_by(module_id=module.id).count()
+            
+            module_list.append({
+                "id": module.id,
+                "title": module.title,
+                "description": module.description,
+                "order": module.order,
+                "lessons_count": lessons_count,
+                "quizzes_count": quizzes_count,
+                "assignments_count": assignments_count,
+                "total_components": lessons_count + quizzes_count + assignments_count
+            })
+        
+        return jsonify(module_list), 200
+        
+    except Exception as e:
+        current_app.logger.error(f"Error getting course modules: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
+
+@instructor_bp.route("/modules/<int:module_id>/components", methods=["GET"])
+@jwt_required()
+@instructor_required
+def get_module_component_summary(module_id):
+    """Get summary of components in a module"""
+    try:
+        instructor_id = get_jwt_identity()
+        
+        # Get module and verify instructor ownership
+        module = Module.query.get_or_404(module_id)
+        course = Course.query.get_or_404(module.course_id)
+        
+        # Debug logging
+        logger.info(f"Module access check - Module {module_id}: '{module.title}'")
+        logger.info(f"  Course {course.id}: '{course.title}'")
+        logger.info(f"  Course instructor_id: {course.instructor_id} (type: {type(course.instructor_id)})")
+        logger.info(f"  Current instructor_id: {instructor_id} (type: {type(instructor_id)})")
+        logger.info(f"  Match: {course.instructor_id == instructor_id}")
+        
+        # Ensure integer comparison
+        if int(course.instructor_id) != int(instructor_id):
+            logger.warning(f"Authorization failed: course instructor {course.instructor_id} != current instructor {instructor_id}")
+            return jsonify({"error": "Not authorized to access this module"}), 403
+        
+        # Get components summary
+        from ..services.full_credit_service import FullCreditService
+        summary = FullCreditService.get_module_components_summary(module_id)
+        
+        logger.info(f"Module components summary generated successfully for module {module_id}")
+        return jsonify(summary), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting module components: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500

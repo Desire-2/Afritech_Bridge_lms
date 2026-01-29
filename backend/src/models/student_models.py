@@ -601,30 +601,48 @@ class StudentBookmark(db.Model):
         }
 
 class StudentForum(db.Model):
-    """Discussion forums for courses"""
+    """Discussion forums for courses and general discussions"""
     __tablename__ = 'student_forums'
     id = db.Column(db.Integer, primary_key=True)
-    course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
+    course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=True)  # Allow NULL for general forums
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+    
+    # Enhanced forum features
+    category = db.Column(db.String(100), nullable=True)
+    is_pinned = db.Column(db.Boolean, default=False)
+    is_locked = db.Column(db.Boolean, default=False)
+    view_count = db.Column(db.Integer, default=0)
+    allow_anonymous = db.Column(db.Boolean, default=True)
+    moderated = db.Column(db.Boolean, default=False)
     
     course = db.relationship('Course', backref=db.backref('forums', lazy='dynamic'))
     creator = db.relationship('User', backref=db.backref('created_forums', lazy='dynamic'))
     
     def to_dict(self):
+        # Get post and thread counts
+        post_count = ForumPost.query.filter_by(forum_id=self.id, is_active=True).count()
+        thread_count = ForumPost.query.filter_by(forum_id=self.id, parent_post_id=None, is_active=True).count()
+        
         return {
             'id': self.id,
             'course_id': self.course_id,
             'title': self.title,
             'description': self.description,
             'created_by': self.created_by,
-            'created_at': self.created_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
             'is_active': self.is_active,
             'course_title': self.course.title if self.course else None,
-            'creator_name': f"{self.creator.first_name} {self.creator.last_name}" if self.creator else None
+            'creator_name': f"{self.creator.first_name} {self.creator.last_name}" if self.creator else None,
+            'post_count': post_count,
+            'thread_count': thread_count,
+            'is_public': True,  # Default for compatibility
+            'is_trending': post_count > 5,  # Simple trending logic
+            'is_subscribed': False  # Default for compatibility
         }
 
 class ForumPost(db.Model):
@@ -640,9 +658,33 @@ class ForumPost(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
     
+    # Enhanced forum post features
+    is_pinned = db.Column(db.Boolean, default=False)
+    is_locked = db.Column(db.Boolean, default=False)
+    is_approved = db.Column(db.Boolean, default=True)
+    like_count = db.Column(db.Integer, default=0)
+    view_count = db.Column(db.Integer, default=0)
+    is_anonymous = db.Column(db.Boolean, default=False)
+    edited_at = db.Column(db.DateTime)
+    edited_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    moderator_notes = db.Column(db.Text)
+    
+    # Moderation fields
+    is_flagged = db.Column(db.Boolean, default=False)
+    flag_reason = db.Column(db.Text)
+    moderated_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+    moderated_at = db.Column(db.DateTime)
+    is_edited = db.Column(db.Boolean, default=False)
+    dislike_count = db.Column(db.Integer, default=0)
+    
     forum = db.relationship('StudentForum', backref=db.backref('posts', lazy='dynamic'))
-    author = db.relationship('User', backref=db.backref('forum_posts', lazy='dynamic'))
+    author = db.relationship('User', foreign_keys=[author_id], backref=db.backref('forum_posts', lazy='dynamic'))
     parent_post = db.relationship('ForumPost', remote_side=[id], backref='replies')
+    
+    @property
+    def author_name(self):
+        """Get the author's full name"""
+        return f"{self.author.first_name} {self.author.last_name}" if self.author else "Unknown User"
     
     def to_dict(self):
         return {
@@ -652,11 +694,149 @@ class ForumPost(db.Model):
             'title': self.title,
             'content': self.content,
             'parent_post_id': self.parent_post_id,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat(),
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'is_active': self.is_active,
-            'author_name': f"{self.author.first_name} {self.author.last_name}" if self.author else None,
+            'is_pinned': self.is_pinned,
+            'is_locked': self.is_locked,
+            'is_approved': self.is_approved,
+            'is_edited': self.is_edited,
+            'like_count': self.like_count,
+            'dislike_count': self.dislike_count,
+            'view_count': self.view_count,
+            'is_flagged': self.is_flagged,
+            'flag_reason': self.flag_reason,
+            'moderated_by': self.moderated_by,
+            'moderated_at': self.moderated_at.isoformat() if self.moderated_at else None,
+            'author_name': self.author_name,
             'reply_count': len(self.replies) if hasattr(self, 'replies') else 0
+        }
+
+
+class ForumPostLike(db.Model):
+    """Likes and dislikes for forum posts"""
+    __tablename__ = 'forum_post_likes'
+    id = db.Column(db.Integer, primary_key=True)
+    post_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    is_like = db.Column(db.Boolean, nullable=False)  # True for like, False for dislike
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# TEMPORARILY COMMENTED OUT DUE TO CONSTRAINT CONFLICT
+# class ForumSubscription(db.Model):
+#     """User subscriptions to forums for notifications"""
+#     __tablename__ = 'forum_subscriptions'
+#     id = db.Column(db.Integer, primary_key=True)
+#     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+#     forum_id = db.Column(db.Integer, db.ForeignKey('student_forums.id'), nullable=True)
+#     thread_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=True)
+#     subscription_type = db.Column(db.String(20), nullable=False)
+#     notify_replies = db.Column(db.Boolean, default=True)
+#     notify_new_threads = db.Column(db.Boolean, default=True)
+#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+#     is_active = db.Column(db.Boolean, default=True)
+#     
+#     user = db.relationship('User', backref=db.backref('forum_subscriptions', lazy='dynamic'))
+#     forum = db.relationship('StudentForum', backref=db.backref('subscriptions', lazy='dynamic'))
+#     thread = db.relationship('ForumPost', backref=db.backref('thread_subscriptions', lazy='dynamic'))
+#     
+#     __table_args__ = (db.UniqueConstraint('user_id', 'forum_id', 'thread_id', name='_user_forum_thread_sub_uc'),)
+
+# Simple placeholder class to avoid import errors
+class ForumSubscription:
+    @staticmethod
+    def query():
+        return EmptyQuery()
+
+class EmptyQuery:
+    def filter_by(self, **kwargs):
+        return self
+    
+    def first(self):
+        return None
+    
+    def all(self):
+        return []
+    
+    post = db.relationship('ForumPost', backref=db.backref('post_likes', lazy='dynamic'))
+    user = db.relationship('User', backref=db.backref('forum_likes', lazy='dynamic'))
+    
+    __table_args__ = (db.UniqueConstraint('post_id', 'user_id', name='_post_user_like_uc'),)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'post_id': self.post_id,
+            'user_id': self.user_id,
+            'is_like': self.is_like,
+            'created_at': self.created_at.isoformat()
+        }
+
+
+class ForumSubscription(db.Model):
+    """User subscriptions to forum threads for notifications"""
+    __tablename__ = 'forum_subscriptions'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    forum_id = db.Column(db.Integer, db.ForeignKey('student_forums.id'), nullable=True)
+    thread_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=True)
+    subscription_type = db.Column(db.String(20), nullable=False)  # 'forum', 'thread'
+    notify_replies = db.Column(db.Boolean, default=True)
+    notify_new_threads = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    is_active = db.Column(db.Boolean, default=True)
+    
+    user = db.relationship('User', backref=db.backref('forum_subscriptions', lazy='dynamic'))
+    forum = db.relationship('StudentForum', backref=db.backref('subscriptions', lazy='dynamic'))
+    thread = db.relationship('ForumPost', backref=db.backref('subscriptions', lazy='dynamic'))
+    
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'forum_id', 'thread_id', name='_user_forum_thread_sub_uc'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'forum_id': self.forum_id,
+            'thread_id': self.thread_id,
+            'subscription_type': self.subscription_type,
+            'notify_replies': self.notify_replies,
+            'notify_new_threads': self.notify_new_threads,
+            'created_at': self.created_at.isoformat(),
+            'is_active': self.is_active
+        }
+
+
+class ForumNotification(db.Model):
+    """Notifications for forum activities"""
+    __tablename__ = 'forum_notifications'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    forum_id = db.Column(db.Integer, db.ForeignKey('student_forums.id'), nullable=True)
+    post_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=True)
+    notification_type = db.Column(db.String(50), nullable=False)  # 'new_thread', 'new_reply', 'post_liked', 'mention'
+    title = db.Column(db.String(255), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    user = db.relationship('User', backref=db.backref('forum_notifications', lazy='dynamic'))
+    forum = db.relationship('StudentForum')
+    post = db.relationship('ForumPost')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'forum_id': self.forum_id,
+            'post_id': self.post_id,
+            'notification_type': self.notification_type,
+            'title': self.title,
+            'message': self.message,
+            'is_read': self.is_read,
+            'created_at': self.created_at.isoformat()
         }
 
 # ===== NEW ENHANCED MODELS FOR COMPREHENSIVE LMS FEATURES =====
