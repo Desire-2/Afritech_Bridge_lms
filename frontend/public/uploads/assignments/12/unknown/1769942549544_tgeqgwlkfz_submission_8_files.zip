@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Afritec Bridge LMS API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #3498db;
+        }
+        code {
+            background-color: #f1f1f1;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Afritec Bridge LMS API</h1>
+        <p>Welcome to the Afritec Bridge Learning Management System API. This is the backend service that powers the Afritec Bridge LMS platform.</p>
+        
+        <h2>API Endpoints</h2>
+        <p>The API provides endpoints for:</p>
+        <ul>
+            <li>User authentication and management</li>
+            <li>Course content and structure</li>
+            <li>Student enrollments</li>
+            <li>Quizzes and assignments</li>
+            <li>Opportunities</li>
+        </ul>
+        
+        <h2>API Documentation</h2>
+        <p>For detailed API documentation, please refer to the API documentation provided by the Afritec Bridge team.</p>
+        
+        <h2>Status</h2>
+        <p>The API is currently running and operational.</p>
+    </div>
+</body>
+</html>

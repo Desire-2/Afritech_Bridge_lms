@@ -8,6 +8,10 @@ export interface UploadedFile {
   pathname: string;
   contentType: string;
   contentDisposition: string;
+  // Google Drive specific fields
+  downloadUrl?: string;
+  fileId?: string;
+  storage?: 'google_drive' | 'vercel_blob' | 'local' | 'fallback' | 'unknown';
 }
 
 export interface StagedFile {
@@ -69,6 +73,8 @@ export class FileUploadService {
     
     // Archives
     'application/zip',
+    'application/x-zip-compressed', // Alternative ZIP MIME type
+    'application/x-zip',             // Another alternative ZIP MIME type
     'application/x-tar',
     'application/gzip',
     'application/x-rar-compressed',
@@ -273,9 +279,44 @@ export class FileUploadService {
   /**
    * Delete a file from Vercel Blob
    */
-  static async deleteFile(url: string): Promise<void> {
+  /**
+   * Delete a file (handles both Google Drive and Vercel Blob)
+   */
+  static async deleteFile(url: string, fileId?: string): Promise<void> {
     try {
+      // If we have a fileId, it's a Google Drive file
+      if (fileId) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+        const response = await fetch(`${apiUrl}/uploads/google-drive/files/${fileId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: 'Delete failed' }));
+          throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        if (!result.success) {
+          throw new Error(result.error || 'Delete failed');
+        }
+        
+        return;
+      }
+      
+      // Check if it's a Google Drive URL
+      if (url.includes('drive.google.com') || url.includes('googleusercontent.com')) {
+        console.warn('Cannot delete Google Drive file without fileId');
+        throw new Error('Google Drive file deletion requires fileId');
+      }
+      
+      // Try Vercel Blob deletion
       await del(url);
+      
     } catch (error: any) {
       console.error('File deletion error:', error);
       throw new Error(`Delete failed: ${error.message || 'Unknown error'}`);
@@ -463,6 +504,10 @@ export class FileUploadService {
 
       const result = await response.json();
       
+      if (!result.success) {
+        throw new Error(result.error || 'Upload failed');
+      }
+      
       // Simulate final progress
       if (options.onProgress) {
         options.onProgress({
@@ -473,13 +518,18 @@ export class FileUploadService {
         });
       }
 
+      // Handle Google Drive response format
       return {
         url: result.url,
-        size: file.size,
-        uploadedAt: new Date().toISOString(),
+        size: result.size || file.size,
+        uploadedAt: result.uploadedAt || new Date().toISOString(),
         pathname: result.pathname || file.name,
-        contentType: file.type,
-        contentDisposition: `attachment; filename="${file.name}"`
+        contentType: result.contentType || file.type,
+        contentDisposition: result.contentDisposition || `attachment; filename="${file.name}"`,
+        // Include Google Drive specific fields
+        downloadUrl: result.download_url,
+        fileId: result.file_id,
+        storage: result.storage || 'unknown'
       };
     } catch (error: any) {
       console.error('Backend upload error:', error);
@@ -724,6 +774,40 @@ export class FileUploadService {
     
     console.log('All staging methods are available');
     return true;
+  }
+  
+  /**
+   * Test Google Drive connection
+   */
+  static async testGoogleDriveConnection(): Promise<{
+    success: boolean;
+    message: string;
+    storageProvider?: string;
+  }> {
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+      const response = await fetch(`${apiUrl}/uploads/google-drive/test`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      const result = await response.json();
+      
+      return {
+        success: result.success,
+        message: result.message || result.error || 'Unknown response',
+        storageProvider: result.storage_provider
+      };
+      
+    } catch (error: any) {
+      return {
+        success: false,
+        message: `Connection test failed: ${error.message || 'Unknown error'}`
+      };
+    }
   }
 }
 

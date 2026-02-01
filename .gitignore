@@ -54,3 +54,6 @@ coverage/
 .cache/
 .mypy_cache/backend/.env
 backend/instance/*.db
+
+# Google service account keys
+backend/gen-lang-client-0193686612-6ab422c5f4be.json

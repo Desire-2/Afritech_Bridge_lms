@@ -2,8 +2,10 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
+from io import BytesIO
 import json
 import logging
+import os
 
 from ..models.user_models import db, User
 from ..models.course_models import (
@@ -12,6 +14,7 @@ from ..models.course_models import (
 )
 from ..models.student_models import LessonCompletion
 from ..utils.validators import StudentValidators
+from ..utils.google_drive_service import google_drive_service
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +448,29 @@ def get_assignment_files(assignment_id):
             files_data = json.loads(submission.file_url)
             if not isinstance(files_data, list):
                 files_data = []
+                
+            # If using Google Drive, enrich file data with current info
+            storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'google_drive').lower()
+            if storage_provider == 'google_drive' and google_drive_service.is_configured:
+                enriched_files = []
+                for file_data in files_data:
+                    # Check if this looks like a Google Drive file
+                    if 'file_id' in file_data:
+                        # Get current file info from Google Drive
+                        current_info = google_drive_service.get_file_info(file_data['file_id'])
+                        if current_info:
+                            # Merge stored data with current Google Drive data
+                            enriched_file = {**file_data, **current_info}
+                            enriched_files.append(enriched_file)
+                        else:
+                            # File not found in Google Drive, mark as missing
+                            enriched_file = {**file_data, 'status': 'missing', 'error': 'File not found in Google Drive'}
+                            enriched_files.append(enriched_file)
+                    else:
+                        # Legacy file format, keep as is
+                        enriched_files.append(file_data)
+                files_data = enriched_files
+                
         except (json.JSONDecodeError, TypeError):
             files_data = []
         
@@ -561,7 +587,7 @@ def get_file_info():
 @file_upload_bp.route("/file", methods=["POST"])
 @jwt_required()
 def upload_single_file():
-    """Upload a single file and return metadata - Fallback for when Vercel Blob is not available"""
+    """Upload a single file to Google Drive"""
     try:
         current_user_id = get_jwt_identity()
         user = User.query.get(current_user_id)
@@ -592,13 +618,16 @@ def upload_single_file():
         assignment_id = request.form.get('assignmentId')
         student_id = request.form.get('studentId', str(current_user_id))
 
+        # Read file data for validation
+        file_content = file.read()
+        file.seek(0)  # Reset file pointer
+        
         # Validate file
         file_data = {
             'filename': file.filename,
             'content_type': file.content_type,
-            'size': len(file.read())
+            'size': len(file_content)
         }
-        file.seek(0)  # Reset file pointer
         
         is_valid, errors = StudentValidators.validate_file_upload(file_data)
         
@@ -608,14 +637,55 @@ def upload_single_file():
                 "error": f"File validation failed: {', '.join(errors)}"
             }), 400
 
-        # In a real implementation, you would save the file to a storage service
-        # For now, we'll just return a mock URL since this is a fallback
+        # Check file storage provider
+        storage_provider = os.getenv('FILE_STORAGE_PROVIDER', 'google_drive').lower()
+        
+        if storage_provider == 'google_drive' and google_drive_service.is_configured:
+            try:
+                # Upload to Google Drive
+                file_data_io = BytesIO(file_content)
+                
+                result = google_drive_service.upload_file(
+                    file_data=file_data_io,
+                    filename=file.filename,
+                    mime_type=file.content_type,
+                    assignment_id=int(assignment_id) if assignment_id else 0,
+                    student_id=int(student_id),
+                    metadata={
+                        'folder': folder,
+                        'uploaded_by': current_user_id,
+                        'upload_type': 'single_file'
+                    }
+                )
+                
+                logger.info(f"File uploaded to Google Drive: {file.filename} for user {current_user_id}")
+                
+                return jsonify({
+                    "success": True,
+                    "url": result['view_link'],  # Use view link as primary URL
+                    "download_url": result['download_link'],
+                    "file_id": result['file_id'],
+                    "pathname": f"{folder}/{assignment_id or 'general'}/{student_id}/{result['filename']}",
+                    "size": result['size'],
+                    "contentType": result['mime_type'],
+                    "uploadedAt": result['uploaded_at'],
+                    "message": "File uploaded successfully to Google Drive",
+                    "storage": "google_drive"
+                }), 200
+                
+            except Exception as drive_error:
+                logger.error(f"Google Drive upload failed: {str(drive_error)}")
+                # Continue to fallback
+        elif storage_provider == 'google_drive' and not google_drive_service.is_configured:
+            logger.warning("Google Drive requested but not configured, using fallback")
+        
+        # Fallback to mock response (for development/testing)
         import time
         timestamp = int(time.time())
         mock_pathname = f"{folder}/{assignment_id or 'general'}/{student_id}/{timestamp}_{file.filename}"
         mock_url = f"/uploads/{mock_pathname}"
         
-        logger.info(f"File upload fallback: {file.filename} for user {current_user_id}")
+        logger.warning(f"Using fallback storage for: {file.filename} (user {current_user_id})")
         
         return jsonify({
             "success": True,
@@ -623,7 +693,9 @@ def upload_single_file():
             "pathname": mock_pathname,
             "size": file_data['size'],
             "contentType": file_data['content_type'],
-            "message": "File upload completed (backend fallback)"
+            "uploadedAt": datetime.utcnow().isoformat(),
+            "message": "File upload completed (fallback storage)",
+            "storage": "fallback"
         }), 200
         
     except Exception as e:
@@ -631,4 +703,155 @@ def upload_single_file():
         return jsonify({
             "success": False,
             "error": f"Upload failed: {str(e)}"
+        }), 500
+
+
+@file_upload_bp.route("/google-drive/files/<file_id>", methods=["GET"])
+@jwt_required()
+def get_google_drive_file_info(file_id):
+    """Get information about a Google Drive file"""
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        
+        if not user:
+            return jsonify({
+                "success": False,
+                "error": "User not found"
+            }), 404
+        
+        if not google_drive_service.is_configured:
+            return jsonify({
+                "success": False,
+                "error": "Google Drive service is not configured"
+            }), 503
+        
+        # Get file info from Google Drive
+        file_info = google_drive_service.get_file_info(file_id)
+        
+        if not file_info:
+            return jsonify({
+                "success": False,
+                "error": "File not found"
+            }), 404
+        
+        return jsonify({
+            "success": True,
+            "file": file_info
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting Google Drive file info: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to get file information"
+        }), 500
+
+
+@file_upload_bp.route("/google-drive/files/<file_id>", methods=["DELETE"])
+@jwt_required()
+def delete_google_drive_file(file_id):
+    """Delete a Google Drive file"""
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        
+        if not user:
+            return jsonify({
+                "success": False,
+                "error": "User not found"
+            }), 404
+        
+        if not google_drive_service.is_configured:
+            return jsonify({
+                "success": False,
+                "error": "Google Drive service is not configured"
+            }), 503
+        
+        # Get file info first to verify ownership/access
+        file_info = google_drive_service.get_file_info(file_id)
+        
+        if not file_info:
+            return jsonify({
+                "success": False,
+                "error": "File not found"
+            }), 404
+        
+        # Check if user has permission to delete (basic check)
+        metadata = file_info.get('metadata', {})
+        uploaded_by = metadata.get('uploaded_by')
+        
+        # Allow deletion if user uploaded the file or is admin/instructor
+        if (uploaded_by != str(current_user_id) and 
+            user.role.name not in ['admin', 'instructor']):
+            return jsonify({
+                "success": False,
+                "error": "Permission denied"
+            }), 403
+        
+        # Delete file from Google Drive
+        success = google_drive_service.delete_file(file_id)
+        
+        if success:
+            logger.info(f"Deleted Google Drive file {file_id} by user {current_user_id}")
+            return jsonify({
+                "success": True,
+                "message": "File deleted successfully"
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Failed to delete file"
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Error deleting Google Drive file: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to delete file"
+        }), 500
+
+
+@file_upload_bp.route("/google-drive/test", methods=["GET"])
+@jwt_required()
+def test_google_drive_connection():
+    """Test Google Drive API connection"""
+    try:
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        
+        if not user or user.role.name not in ['admin', 'instructor']:
+            return jsonify({
+                "success": False,
+                "error": "Admin or instructor access required"
+            }), 403
+        
+        if not google_drive_service.is_configured:
+            return jsonify({
+                "success": False,
+                "error": "Google Drive service is not configured",
+                "storage_provider": os.getenv('FILE_STORAGE_PROVIDER', 'google_drive'),
+                "message": "Please configure GOOGLE_SERVICE_ACCOUNT_JSON and GOOGLE_DRIVE_ROOT_FOLDER_ID in environment variables"
+            }), 503
+        
+        # Test connection
+        is_connected = google_drive_service.test_connection()
+        
+        if is_connected:
+            return jsonify({
+                "success": True,
+                "message": "Google Drive connection successful",
+                "storage_provider": os.getenv('FILE_STORAGE_PROVIDER', 'google_drive')
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": "Google Drive connection failed"
+            }), 500
+        
+    except Exception as e:
+        logger.error(f"Error testing Google Drive connection: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": f"Connection test failed: {str(e)}"
         }), 500

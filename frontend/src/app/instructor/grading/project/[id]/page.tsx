@@ -523,19 +523,21 @@ const ProjectGradingDetail = () => {
                 <div>
                   <label className="text-sm text-slate-600 dark:text-slate-400">Name</label>
                   <p className="font-medium text-slate-900 dark:text-white">
-                    {submission.student_info.name}
+                    {submission.student_info?.name || 
+                     `${submission.student_info?.first_name || ''} ${submission.student_info?.last_name || ''}`.trim() || 
+                     'N/A'}
                   </p>
                 </div>
                 <div>
                   <label className="text-sm text-slate-600 dark:text-slate-400">Email</label>
                   <p className="text-slate-900 dark:text-white">
-                    {submission.student_info.email}
+                    {submission.student_info?.email || 'N/A'}
                   </p>
                 </div>
                 <div>
                   <label className="text-sm text-slate-600 dark:text-slate-400">Username</label>
                   <p className="text-slate-900 dark:text-white">
-                    {submission.student_info.username}
+                    {submission.student_info?.username || 'N/A'}
                   </p>
                 </div>
               </div>

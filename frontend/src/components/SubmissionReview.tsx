@@ -15,7 +15,8 @@ import {
   Headphones,
   Archive,
   Code,
-  Link
+  Link,
+  AlertCircle
 } from 'lucide-react';
 import FileViewer from './FileViewer';
 import DocumentAnalysis from './DocumentAnalysis';
@@ -88,13 +89,36 @@ const SubmissionReview: React.FC<SubmissionReviewProps> = ({
 
   // Render file preview
   const renderFilePreview = (file: SubmissionFile | { url: string; fileInfo: FileInfo }) => {
-    const isContentFile = 'url' in file;
-    const fileInfo = isContentFile ? file.fileInfo : parseFileInfo(file.filename, file.file_size);
-    const fileUrl = isContentFile ? file.url : (file.file_url || file.file_path || '');
-    const fileName = isContentFile ? fileInfo.name : file.filename;
-    const fileId = isContentFile ? file.url : (file.id || fileName);
+    try {
+      const isContentFile = 'url' in file;
+      
+      // Safe file info parsing with null checks
+      let fileInfo: FileInfo;
+      let fileName: string;
+      let fileUrl: string;
+      let fileId: string;
 
-    if (!fileUrl) return null;
+      if (isContentFile) {
+        fileInfo = file.fileInfo;
+        fileName = fileInfo?.name || 'Unknown file';
+        fileUrl = file.url || '';
+        fileId = file.url || 'unknown';
+      } else {
+        // Ensure file has required properties before parsing
+        const safeFilename = file.filename || file.name || 'untitled';
+        const safeFileSize = file.file_size || file.size || undefined;
+        
+        fileInfo = parseFileInfo(safeFilename, safeFileSize);
+        fileName = safeFilename;
+        fileUrl = file.file_url || file.file_path || file.url || '';
+        fileId = file.id?.toString() || fileName || 'unknown';
+      }
+
+      // Additional safety checks
+      if (!fileUrl || !fileInfo || !fileName) {
+        console.warn('Invalid file data:', file);
+        return null;
+      }
 
     const isExpanded = expandedFiles.has(fileId);
     const isGoogleDrive = isGoogleDriveUrl(fileUrl);
@@ -170,6 +194,17 @@ const SubmissionReview: React.FC<SubmissionReviewProps> = ({
         )}
       </div>
     );
+    } catch (error) {
+      console.error('Error rendering file preview:', error, file);
+      return (
+        <div className="border border-red-200 bg-red-50 rounded-lg p-4 text-red-700">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4" />
+            <span>Error displaying file: {file?.filename || file?.name || 'Unknown'}</span>
+          </div>
+        </div>
+      );
+    }
   };
 
   // Get submission quality indicators
@@ -336,6 +371,15 @@ const SubmissionReview: React.FC<SubmissionReviewProps> = ({
       </div>
     </div>
   );
-};
-
+    } catch (error) {
+      console.error('Error rendering file preview:', error, file);
+      return (
+        <div className="border border-red-200 bg-red-50 rounded-lg p-4 text-red-700">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4" />
+            <span>Error displaying file: {file?.filename || file?.name || 'Unknown'}</span>
+          </div>
+        </div>
+      );
+    }
 export default SubmissionReview;

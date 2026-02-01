@@ -7,7 +7,10 @@ import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
 import FileViewer from '@/components/FileViewer';
 import DocumentAnalysis from '@/components/DocumentAnalysis';
 import SubmissionReview from '@/components/SubmissionReview';
+import SubmissionFileManager from '@/components/SubmissionFileManager';
 import GradingService, { SubmissionDetail, FeedbackTemplate } from '@/services/grading.service';
+import { EnhancedFileService } from '@/services/enhanced-file.service';
+import { parseFileInfo } from '@/utils/fileUtils';
 import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
 import { 
   FileText, 
@@ -54,6 +57,21 @@ const AssignmentGradingDetail = () => {
       fetchTemplates();
     }
   }, [token, submissionId]);
+
+  // Helper function to safely get student name
+  const getStudentName = () => {
+    if (!submission?.student_info) return 'N/A';
+    return submission.student_info.name || 
+           `${submission.student_info.first_name || ''} ${submission.student_info.last_name || ''}`.trim() || 
+           'N/A';
+  };
+
+  // Helper function to safely get student initials
+  const getStudentInitials = () => {
+    const name = getStudentName();
+    if (name === 'N/A') return 'NA';
+    return name.split(' ').map(n => n[0] || '').join('').substring(0, 2).toUpperCase();
+  };
 
   const fetchSubmission = async () => {
     setLoading(true);
@@ -430,18 +448,107 @@ const AssignmentGradingDetail = () => {
                 </div>
               )}
 
-              {/* Comprehensive Submission Review */}
-              <SubmissionReview
-                textContent={submission.content}
-                files={submission.files || (submission.file_url ? [{
-                  id: 'main-file',
-                  filename: 'Submission File',
-                  file_url: submission.file_url
-                }] : [])}
-                submissionType="assignment"
-                expectedLength={submission.assignment?.expected_length}
-                maxFiles={submission.assignment?.max_files}
-                allowedFileTypes={submission.assignment?.allowed_file_types?.split(',')}
+              {/* Enhanced File Review Section */}
+              <SubmissionFileManager
+                files={(submission.files && Array.isArray(submission.files) && submission.files.length > 0) 
+                  ? submission.files.map((file, index) => {
+                      const filename = file.filename || 'Unknown File';
+                      return {
+                        id: `file-${index}`,
+                        filename: filename,
+                        file_url: file.url,
+                        file_size: file.size || 0,
+                        uploaded_at: file.uploadedAt || submission.submitted_at,
+                        fileInfo: parseFileInfo(filename, file.size)
+                      };
+                    })
+                  : (submission.file_url ? [{
+                      id: 'main-file',
+                      filename: submission.original_filename || 'Submission File',
+                      file_url: submission.file_url,
+                      file_size: 0,
+                      uploaded_at: submission.submitted_at,
+                      fileInfo: parseFileInfo(submission.original_filename || 'Submission File')
+                    }] : [])
+                }
+                submissionId={submissionId}
+                studentName={getStudentName()}
+                onDownloadSingle={async (fileId) => {
+                  try {
+                    console.log('Download requested for fileId:', fileId);
+                    console.log('Submission files:', submission.files);
+                    console.log('Submission file_url:', submission.file_url);
+                    
+                    // Handle parsed files array (new format)
+                    let file = null;
+                    if (submission.files && Array.isArray(submission.files)) {
+                      const fileIndex = parseInt(fileId.replace('file-', ''));
+                      if (!isNaN(fileIndex) && submission.files[fileIndex]) {
+                        const sourceFile = submission.files[fileIndex];
+                        file = {
+                          id: fileId,
+                          filename: sourceFile.filename || 'Unknown File',
+                          file_url: sourceFile.url,
+                          file_size: sourceFile.size || 0,
+                          uploaded_at: sourceFile.uploadedAt || submission.submitted_at
+                        };
+                      }
+                    }
+                    
+                    // Handle legacy single file case
+                    if (!file && fileId === 'main-file' && submission.file_url) {
+                      console.log('Using legacy file_url for main-file');
+                      file = {
+                        id: 'main-file',
+                        filename: submission.original_filename || 'Submission File',
+                        file_url: submission.file_url,
+                        file_size: 0,
+                        uploaded_at: submission.submitted_at
+                      };
+                    }
+                    
+                    console.log('Found file for download:', file);
+                    
+                    if (file && file.file_url) {
+                      console.log('Attempting to download from URL:', file.file_url);
+                      const { blob, filename } = await EnhancedFileService.downloadSingleFile(file.file_url, file.filename);
+                      EnhancedFileService.triggerFileDownload(blob, filename);
+                    } else {
+                      console.error('File not found for download. FileId:', fileId, 'File obj:', file);
+                      alert('File not found or URL missing');
+                    }
+                  } catch (error) {
+                    console.error('Download failed:', error);
+                    alert(`Download failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                  }
+                }}
+                onDownloadAll={() => {
+                  // Handle download all files
+                  EnhancedFileService.downloadSubmissionFiles(parseInt(submissionId))
+                    .then(({ blob, filename }) => {
+                      EnhancedFileService.triggerFileDownload(blob, filename);
+                    })
+                    .catch(error => {
+                      console.error('Download all failed:', error);
+                      // Could show a toast notification here
+                    });
+                }}
+                onAddFileComment={(fileId, comment) => {
+                  // Handle file comment
+                  EnhancedFileService.addFileComment({
+                    file_id: fileId,
+                    comment_text: comment,
+                    submission_id: parseInt(submissionId),
+                    is_private: false
+                  }).then(() => {
+                    // Could refresh comments or update state
+                    console.log('Comment added successfully');
+                  }).catch(error => {
+                    console.error('Failed to add comment:', error);
+                  });
+                }}
+                allowComments={true}
+                allowDownload={true}
                 className="mb-6"
               />
             </div>
@@ -610,15 +717,15 @@ const AssignmentGradingDetail = () => {
                   <div className="flex items-center space-x-4">
                     <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center">
                       <span className="text-white font-bold text-lg">
-                        {submission.student_info.name.split(' ').map(n => n[0]).join('')}
+                        {getStudentInitials()}
                       </span>
                     </div>
                     <div>
                       <h4 className="font-bold text-slate-900 dark:text-white text-lg">
-                        {submission.student_info.name}
+                        {getStudentName()}
                       </h4>
                       <p className="text-slate-600 dark:text-slate-400">
-                        @{submission.student_info.username}
+                        @{submission.student_info?.username || 'N/A'}
                       </p>
                     </div>
                   </div>
@@ -632,7 +739,7 @@ const AssignmentGradingDetail = () => {
                       <div>
                         <p className="text-xs text-slate-600 dark:text-slate-400">Email</p>
                         <p className="text-sm font-medium text-slate-900 dark:text-white">
-                          {submission.student_info.email}
+                          {submission.student_info?.email || 'N/A'}
                         </p>
                       </div>
                     </div>
@@ -644,7 +751,7 @@ const AssignmentGradingDetail = () => {
                       <div>
                         <p className="text-xs text-slate-600 dark:text-slate-400">Student ID</p>
                         <p className="text-sm font-medium text-slate-900 dark:text-white">
-                          #{submission.student_info.id}
+                          #{submission.student_info?.id || 'N/A'}
                         </p>
                       </div>
                     </div>
