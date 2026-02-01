@@ -371,15 +371,6 @@ const SubmissionReview: React.FC<SubmissionReviewProps> = ({
       </div>
     </div>
   );
-    } catch (error) {
-      console.error('Error rendering file preview:', error, file);
-      return (
-        <div className="border border-red-200 bg-red-50 rounded-lg p-4 text-red-700">
-          <div className="flex items-center space-x-2">
-            <AlertCircle className="w-4 h-4" />
-            <span>Error displaying file: {file?.filename || file?.name || 'Unknown'}</span>
-          </div>
-        </div>
-      );
-    }
+};
+
 export default SubmissionReview;
