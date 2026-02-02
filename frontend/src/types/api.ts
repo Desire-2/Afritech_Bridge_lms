@@ -268,11 +268,14 @@ export interface QuizSubmissionRequest {
 export interface Announcement {
   id: number;
   course_id: number;
+  instructor_id: number;
   title: string;
   content: string;
   created_at: string;
   updated_at: string;
   course?: Course;
+  course_title?: string;
+  instructor_name?: string;
 }
 
 export interface CreateAnnouncementRequest {

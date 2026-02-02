@@ -440,6 +440,10 @@ class Assignment(db.Model):
     modification_requested_at = db.Column(db.DateTime, nullable=True)
     modification_requested_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     can_resubmit = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # Resubmission tracking
+    max_resubmissions = db.Column(db.Integer, default=3, nullable=False)
+    resubmission_count = db.Column(db.Integer, default=0, nullable=False)
 
     # Relationships
     course = db.relationship('Course', backref=db.backref('assignments', lazy='dynamic', cascade="all, delete-orphan"))
@@ -473,7 +477,9 @@ class Assignment(db.Model):
             'modification_request_reason': self.modification_request_reason,
             'modification_request_at': self.modification_requested_at.isoformat() if self.modification_requested_at else None,
             'modification_requested_by': self.modification_requested_by,
-            'can_resubmit': self.can_resubmit
+            'can_resubmit': self.can_resubmit,
+            'max_resubmissions': self.max_resubmissions,
+            'resubmission_count': self.resubmission_count
         }
 
 class AssignmentSubmission(db.Model):
@@ -662,6 +668,10 @@ class Project(db.Model):
     modification_requested_at = db.Column(db.DateTime, nullable=True)
     modification_requested_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     can_resubmit = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # Resubmission tracking
+    max_resubmissions = db.Column(db.Integer, default=3, nullable=False)
+    resubmission_count = db.Column(db.Integer, default=0, nullable=False)
 
     # Relationships
     course = db.relationship('Course', backref=db.backref('projects', lazy='dynamic', cascade="all, delete-orphan"))
@@ -706,7 +716,9 @@ class Project(db.Model):
             'modification_request_reason': self.modification_request_reason,
             'modification_requested_at': self.modification_requested_at.isoformat() if self.modification_requested_at else None,
             'modification_requested_by': self.modification_requested_by,
-            'can_resubmit': self.can_resubmit
+            'can_resubmit': self.can_resubmit,
+            'max_resubmissions': self.max_resubmissions,
+            'resubmission_count': self.resubmission_count
         }
         if include_modules:
             module_ids = self.get_modules()

@@ -5,11 +5,14 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, and_
 from datetime import datetime
 import logging
+import threading
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, Assignment
 from ..services.background_service import background_service
+from ..utils.email_utils import send_email
+from ..utils.email_templates import course_announcement_email
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -38,6 +41,75 @@ def instructor_required(f):
     return decorated_function
 
 instructor_bp = Blueprint("instructor_bp", __name__, url_prefix="/api/v1/instructor")
+
+# Helper function for sending announcement emails
+def _send_announcement_emails(announcement, course):
+    """Send announcement emails to all enrolled students in a course"""
+    try:
+        # Get all enrolled students for this course
+        enrollments = Enrollment.query.filter_by(course_id=course.id).filter(
+            Enrollment.status.in_(['active', 'completed'])
+        ).all()
+        
+        # Get the instructor information
+        instructor = User.query.get(announcement.instructor_id)
+        instructor_name = f"{instructor.first_name} {instructor.last_name}".strip() if instructor else "Your Instructor"
+        
+        # Extract data from SQLAlchemy objects before threading to avoid DetachedInstanceError
+        course_title = course.title
+        announcement_title = announcement.title
+        announcement_content = announcement.content
+        
+        # Extract student data before threading
+        students_data = []
+        for enrollment in enrollments:
+            student = enrollment.student
+            if student and student.email:
+                student_name = f"{student.first_name} {student.last_name}".strip() if student.first_name else student.username
+                students_data.append({
+                    'email': student.email,
+                    'name': student_name
+                })
+        
+        # Capture the Flask app instance before threading
+        app_instance = current_app._get_current_object()
+        
+        # Send emails in a separate thread to avoid blocking the main request
+        def send_emails():
+            with app_instance.app_context():
+                for student_info in students_data:
+                    try:
+                        # Generate email content
+                        email_html = course_announcement_email(
+                            student_name=student_info['name'],
+                            course_title=course_title,
+                            announcement_title=announcement_title,
+                            announcement_content=announcement_content,
+                            instructor_name=instructor_name
+                        )
+                        
+                        # Send email
+                        send_email(
+                            to=student_info['email'],
+                            subject=f"New Announcement: {announcement_title}",
+                            template=email_html
+                        )
+                        
+                        logger.info(f"Announcement email sent to student {student_info['email']} for course {course_title}")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to send announcement email to student {student_info['email']}: {str(e)}")
+                        continue
+                        
+                logger.info(f"Announcement email broadcast completed for {len(students_data)} students in course {course_title}")
+        
+        # Start email sending in background thread
+        email_thread = threading.Thread(target=send_emails)
+        email_thread.daemon = True
+        email_thread.start()
+        
+    except Exception as e:
+        logger.error(f"Failed to initiate announcement email broadcast: {str(e)}")
 
 # --- Dashboard Routes ---
 @instructor_bp.route("/dashboard", methods=["GET"])
@@ -180,6 +252,82 @@ def get_course_analytics(course_id):
         
     except Exception as e:
         return jsonify({"message": "Failed to fetch analytics", "error": str(e)}), 500
+
+# --- Announcement Management Routes ---
+@instructor_bp.route("/announcements", methods=["GET"])
+@instructor_required
+def get_instructor_announcements():
+    """Get all announcements for courses taught by the instructor."""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Get instructor's courses
+        courses = Course.query.filter_by(instructor_id=current_user_id).all()
+        course_ids = [c.id for c in courses]
+        
+        # Get all announcements for these courses
+        announcements = db.session.query(Announcement).filter(
+            Announcement.course_id.in_(course_ids)
+        ).order_by(Announcement.created_at.desc()).all()
+        
+        # Return formatted announcements
+        announcements_data = []
+        for ann in announcements:
+            ann_dict = ann.to_dict()
+            # Add course title for easier display
+            ann_dict['course_title'] = ann.course.title if ann.course else "Unknown"
+            announcements_data.append(ann_dict)
+        
+        return jsonify(announcements_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching instructor announcements: {str(e)}")
+        return jsonify({"message": "Failed to fetch announcements", "error": str(e)}), 500
+
+@instructor_bp.route("/announcements", methods=["POST"])
+@instructor_required  
+def create_announcement():
+    """Create a new announcement for a specific course."""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = ['course_id', 'title', 'content']
+    for field in required_fields:
+        if not data.get(field):
+            return jsonify({"message": f"Field '{field}' is required"}), 400
+    
+    try:
+        # Verify instructor owns the course
+        course = Course.query.filter_by(id=data['course_id'], instructor_id=current_user_id).first()
+        if not course:
+            return jsonify({"message": "Course not found or access denied"}), 404
+        
+        # Create announcement
+        new_announcement = Announcement(
+            course_id=data['course_id'],
+            instructor_id=current_user_id,
+            title=data['title'].strip(),
+            content=data['content'].strip()
+        )
+        
+        db.session.add(new_announcement)
+        db.session.commit()
+        
+        # Send email notifications to enrolled students
+        _send_announcement_emails(new_announcement, course)
+        
+        # Return the created announcement
+        ann_dict = new_announcement.to_dict()
+        ann_dict['course_title'] = course.title
+        
+        logger.info(f"Announcement created by instructor {current_user_id} for course {course.id}")
+        return jsonify(ann_dict), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating announcement: {str(e)}")
+        return jsonify({"message": "Failed to create announcement", "error": str(e)}), 500
 
 # --- Student Management Routes ---
 @instructor_bp.route("/students", methods=["GET"])

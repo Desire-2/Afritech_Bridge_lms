@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle, Bell } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
@@ -99,6 +99,12 @@ const StudentSidebar = () => {
     {
       title: 'COMMUNITY',
       items: [
+        { 
+          href: '/student/announcements', 
+          label: 'Announcements', 
+          description: 'Course updates & news',
+          icon: <Bell size={iconSize} /> 
+        },
         { 
           href: '/student/forums', 
           label: 'Forums', 

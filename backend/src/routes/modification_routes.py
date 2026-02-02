@@ -545,7 +545,12 @@ def get_student_modification_requests():
                 'modification_reason': assignment.modification_request_reason,
                 'requested_at': assignment.modification_requested_at.isoformat() if assignment.modification_requested_at else None,
                 'resubmissions_remaining': (assignment.max_resubmissions or 3) - (assignment.resubmission_count or 0),
-                'type': 'assignment'
+                'type': 'assignment',
+                # Assignment-specific fields for enhanced UI
+                'assignment_type': assignment.assignment_type,
+                'max_file_size_mb': assignment.max_file_size_mb,
+                'allowed_file_types': assignment.allowed_file_types,
+                'due_date': assignment.due_date.isoformat() if assignment.due_date else None
             })
         
         # Get projects with modification requests (if applicable)

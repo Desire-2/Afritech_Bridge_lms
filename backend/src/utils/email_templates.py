@@ -1,5 +1,5 @@
 """
-✨ Modern & Creative Email Templates for Afritec Bridge LMS
+✨ Modern & Creative Email Templates for Afritech Bridge LMS
 Beautiful, responsive, and engaging email designs
 """
 from datetime import datetime
@@ -122,7 +122,7 @@ def get_email_header():
                                 </table>
                             </div>
                             <h1 style="color: white; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px; text-shadow: 0 2px 10px rgba(0,0,0,0.2);">
-                                Afritec Bridge
+                                Afritech Bridge
                             </h1>
                             <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 15px; font-weight: 500; letter-spacing: 2px; text-transform: uppercase;">
                                 Learning Management System
@@ -141,11 +141,11 @@ def get_email_footer():
                 </div>
                 
                 <p style="color: #ffffff; margin: 0 0 20px 0; font-size: 16px; font-weight: 600;">
-                    Afritec Bridge LMS
+                    Afritech Bridge LMS
                 </p>
                 
                 <div style="margin: 25px 0; padding: 20px 0; border-top: 1px solid rgba(255,255,255,0.1); border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <a href="mailto:support@afritecbridge.com" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
+                    <a href="mailto:Afritechh.bridge@yahoo.com" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         📧 Support
                     </a>
                     <a href="https://wa.me/250780784924" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(37, 211, 102, 0.2); color: #25d366; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
@@ -157,7 +157,7 @@ def get_email_footer():
                 </div>
                 
                 <p class="small-text" style="color: #d1d5db; margin: 15px 0 5px 0; font-size: 12px; line-height: 1.6;">
-                    © {year} Afritec Bridge LMS. All rights reserved.<br>
+                    © {year} Afritech Bridge LMS. All rights reserved.<br>
                     Building Africa's Digital Future Through Education
                 </p>
                 
@@ -365,7 +365,7 @@ def application_received_email(application, course_title):
                         <p style="color: #bdc3c7; margin: 0 0 20px 0; font-size: 14px; line-height: 1.6;">
                             Our support team is here to help you every step of the way!
                         </p>
-                        <a href="mailto:support@afritecbridge.com" style="display: inline-block; background-color: #f59e0b; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 2px solid #f59e0b;">
+                        <a href="mailto:afritech.bridge@yahoo.com" style="display: inline-block; background-color: #f59e0b; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); border: 2px solid #f59e0b;">
                             📧 Contact Support
                         </a>
                     </div>
@@ -377,7 +377,7 @@ def application_received_email(application, course_title):
                 </p>
                 
                 <p style="color: #bdc3c7; font-size: 14px; margin: 20px 0 0 0; text-align: center;">
-                    <strong style="color: #ffffff;">The Afritec Bridge Team</strong><br>
+                    <strong style="color: #ffffff;">The Afritech Bridge Team</strong><br>
                     <span style="font-size: 13px; color: #bdc3c7;">Empowering Africa Through Digital Education</span>
                 </p>
             </div>
@@ -422,8 +422,8 @@ def application_approved_email(application, course, username, temp_password, cus
                     <tr>
                         <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
                         <td style="padding: 12px 0;">
-                            <a href="https://study.afritechbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
-                                study.afritechbridge.online
+                            <a href="https://study.Afritechhbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
+                                study.Afritechhbridge.online
                             </a>
                         </td>
                     </tr>
@@ -488,8 +488,8 @@ def application_approved_email(application, course, username, temp_password, cus
                     <tr>
                         <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
                         <td style="padding: 12px 0;">
-                            <a href="https://study.afritechbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
-                                study.afritechbridge.online
+                            <a href="https://study.Afritechhbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
+                                study.Afritechhbridge.online
                             </a>
                         </td>
                     </tr>
@@ -523,7 +523,7 @@ def application_approved_email(application, course, username, temp_password, cus
         </p>
         
         <p style="color: #e5e7eb; line-height: 1.6; font-size: 16px;">
-            We're thrilled to inform you that your application for <strong>{course.title}</strong> has been <strong style="color: #059669;">approved</strong>! Welcome to the Afritec Bridge learning community! 🎓✨
+            We're thrilled to inform you that your application for <strong>{course.title}</strong> has been <strong style="color: #059669;">approved</strong>! Welcome to the Afritech Bridge learning community! 🎓✨
         </p>
         
         <div style="background-color: #2c3e50; border: 3px solid #10b981; border-radius: 8px; padding: 25px; margin: 25px 0; color: white; text-align: center;">
@@ -596,7 +596,7 @@ def application_approved_email(application, course, username, temp_password, cus
         
         <!-- Call to Action -->
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.afritechbridge.online/auth/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.Afritechhbridge.online/auth/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 🚀 Access Your Dashboard
             </a>
         </div>
@@ -607,7 +607,7 @@ def application_approved_email(application, course, username, temp_password, cus
             <p style="color: #e5e7eb; margin: 0 0 15px 0; line-height: 1.6;">
                 Our support team is here to help you succeed!
             </p>
-            <a href="mailto:support@afritecbridge.com" style="display: inline-block; background-color: #3b82f6; color: white; padding: 10px 25px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
+            <a href="mailto:afritech.bridge@yahoo.com" style="display: inline-block; background-color: #3b82f6; color: white; padding: 10px 25px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 14px;">
                 📧 Contact Support
             </a>
         </div>
@@ -619,7 +619,7 @@ def application_approved_email(application, course, username, temp_password, cus
         
         <p style="color: #e5e7eb; line-height: 1.6; text-align: center;">
             Best regards,<br>
-            <strong style="color: #ffffff;">The Afritec Bridge Team</strong><br>
+            <strong style="color: #ffffff;">The Afritech Bridge Team</strong><br>
             <span style="font-size: 13px; color: #bdc3c7; font-style: italic;">Empowering Africa Through Digital Education</span>
         </p>
     </div>
@@ -652,7 +652,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                     </p>
                     <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 15px 0 0 0;">
                         Thank you for taking the time to apply for <strong>{course_title}</strong>. 
-                        We truly appreciate your interest in Afritec Bridge LMS and the effort you put into your application.
+                        We truly appreciate your interest in Afritech Bridge LMS and the effort you put into your application.
                     </p>
                 </div>
                 
@@ -753,7 +753,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                     </div>
                     
                     <div style="text-align: center;">
-                        <a href="https://study.afritechbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
+                        <a href="https://study.Afritechhbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
                             🔍 Browse All Courses
                         </a>
                         <p style="color: #bdc3c7; margin: 15px 0 0 0; font-size: 13px;">
@@ -798,7 +798,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                         Our support team is here to help you navigate your learning path.<br>
                         We can provide advice on course selection and application improvement!
                     </p>
-                    <a href="mailto:support@afritecbridge.com" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 600; font-size: 15px; box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);">
+                    <a href="mailto:afritech.bridge@yahoo.com" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 600; font-size: 15px; box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);">
                         📧 Contact Support Team
                     </a>
                 </div>
@@ -820,7 +820,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                     
                     <p style="color: #ffffff; font-size: 15px; font-weight: 700; margin: 20px 0 5px 0;">
                         With warm regards,<br>
-                        The Afritec Bridge Team
+                        The Afritech Bridge Team
                     </p>
                     <p style="color: #bdc3c7; font-size: 13px; margin: 0; font-style: italic;">
                         Empowering Africa Through Digital Education
@@ -1009,7 +1009,7 @@ def application_waitlisted_email(application, course_title, position=None, estim
                                 can strengthen your background for this one! 💪
                             </p>
                             <div style="text-align: center;">
-                                <a href="https://study.afritechbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); mobile-button">
+                                <a href="https://study.Afritechhbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); mobile-button">
                                     🔍 Browse Available Courses
                                 </a>
                             </div>
@@ -1048,7 +1048,7 @@ def application_waitlisted_email(application, course_title, position=None, estim
                     <p style="color: #bdc3c7; margin: 0 0 20px 0; font-size: 15px; line-height: 1.7;">
                         Our team is here to help! Contact us anytime for updates or assistance.
                     </p>
-                    <a href="mailto:support@afritecbridge.com" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 600; font-size: 15px; box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);">
+                    <a href="mailto:afritech.bridge@yahoo.com" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 600; font-size: 15px; box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);">
                         📧 Contact Support Team
                     </a>
                 </div>
@@ -1062,7 +1062,7 @@ def application_waitlisted_email(application, course_title, position=None, estim
                     
                     <p style="color: #ffffff; font-size: 15px; font-weight: 700; margin: 20px 0 5px 0;">
                         With warm regards,<br>
-                        The Afritec Bridge Team
+                        The Afritech Bridge Team
                     </p>
                     <p style="color: #f59e0b; font-size: 13px; margin: 0; font-style: italic;">
                         Empowering Africa Through Digital Education
@@ -1157,7 +1157,7 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
         </div>'''}
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Full Details
             </a>
         </div>
@@ -1165,7 +1165,7 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
         <p style="color: #4a5568; line-height: 1.6;">
             Keep up the great work!<br><br>
             Best regards,<br>
-            <strong>The Afritec Bridge Team</strong>
+            <strong>The Afritech Bridge Team</strong>
         </p>
     </div>
     {get_email_footer()}
@@ -1178,18 +1178,18 @@ def course_announcement_email(student_name, course_title, announcement_title, an
     
     return f"""
     {get_email_header()}
-    <div style="background-color: white; padding: 30px;">
+    <div style="background-color: #2c3e50; padding: 30px;">
         <div style="text-align: center; margin-bottom: 20px;">
             <div class="icon-medium" style="font-size: 50px; margin-bottom: 10px;">📢</div>
-            <h2 style="color: #2d3748; margin: 0;">New Announcement</h2>
+            <h2 style="color: #ffffff; margin: 0;">New Announcement</h2>
         </div>
         
-        <p style="color: #4a5568; line-height: 1.6;">
-            Dear <strong>{student_name}</strong>,
+        <p style="color: #e5e7eb; line-height: 1.6;">
+            Dear <strong style="color: #ffffff;">{student_name}</strong>,
         </p>
         
-        <p style="color: #4a5568; line-height: 1.6;">
-            Your instructor has posted a new announcement for <strong>{course_title}</strong>.
+        <p style="color: #e5e7eb; line-height: 1.6;">
+            Your instructor has posted a new announcement for <strong style="color: #ffffff;">{course_title}</strong>.
         </p>
         
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px; padding: 25px; margin: 25px 0; color: white;">
@@ -1202,34 +1202,34 @@ def course_announcement_email(student_name, course_title, announcement_title, an
             </p>
         </div>
         
-        <div style="background-color: #eff6ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <div style="background-color: #34495e; border-radius: 8px; padding: 20px; margin: 20px 0;">
             <h3 style="margin: 0 0 15px 0; color: #ffffff; font-size: 16px;">ℹ️ Course Information</h3>
-            <table class="responsive-table" style="width: 100%; color: #4a5568;">
+            <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Course:</strong></td>
-                    <td>{course_title}</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Course:</strong></td>
+                    <td style="color: #ffffff;">{course_title}</td>
                 </tr>
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Instructor:</strong></td>
-                    <td>{instructor_name}</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Instructor:</strong></td>
+                    <td style="color: #ffffff;">{instructor_name}</td>
                 </tr>
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Posted:</strong></td>
-                    <td>{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Posted:</strong></td>
+                    <td style="color: #ffffff;">{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
                 </tr>
             </table>
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Full Announcement
             </a>
         </div>
         
-        <p style="color: #4a5568; line-height: 1.6;">
+        <p style="color: #e5e7eb; line-height: 1.6; text-align: center;">
             Stay engaged and check your course regularly for updates!<br><br>
             Best regards,<br>
-            <strong>The Afritec Bridge Team</strong>
+            <strong style="color: #ffffff;">The Afritech Bridge Team</strong>
         </p>
     </div>
     {get_email_footer()}
@@ -1238,24 +1238,24 @@ def course_announcement_email(student_name, course_title, announcement_title, an
 def quiz_graded_email(student_name, quiz_title, course_title, score, total_points, percentage, passed=True):
     """Email template for quiz grade notification"""
     status_color = "#059669" if passed else "#dc2626"
-    status_bg = "#f0fdf4" if passed else "#fef2f2"
+    status_bg = "#34495e" if passed else "#34495e"
     status_text = "Passed" if passed else "Failed"
     status_icon = "✅" if passed else "❌"
     
     return f"""
     {get_email_header()}
-    <div style="background-color: white; padding: 30px;">
+    <div style="background-color: #2c3e50; padding: 30px;">
         <div style="text-align: center; margin-bottom: 20px;">
             <div class="icon-medium" style="font-size: 50px; margin-bottom: 10px;">{status_icon}</div>
             <h2 style="color: {status_color}; margin: 0;">Quiz Results Available</h2>
         </div>
         
-        <p style="color: #4a5568; line-height: 1.6;">
-            Dear <strong>{student_name}</strong>,
+        <p style="color: #e5e7eb; line-height: 1.6;">
+            Dear <strong style="color: #ffffff;">{student_name}</strong>,
         </p>
         
-        <p style="color: #4a5568; line-height: 1.6;">
-            Your quiz <strong>"{quiz_title}"</strong> for <strong>{course_title}</strong> has been graded.
+        <p style="color: #e5e7eb; line-height: 1.6;">
+            Your quiz <strong style="color: #ffffff;">"{quiz_title}"</strong> for <strong style="color: #ffffff;">{course_title}</strong> has been graded.
         </p>
         
         <div style="background-color: {status_bg}; border: 2px solid {status_color}; border-radius: 8px; padding: 20px; margin: 25px 0; text-align: center;">
@@ -1266,43 +1266,43 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
             <div style="font-size: 24px; color: {status_color}; margin: 5px 0;">
                 {percentage:.1f}%
             </div>
-            <div style="background-color: white; color: {status_color}; display: inline-block; padding: 8px 20px; border-radius: 20px; margin-top: 10px; font-weight: 600;">
+            <div style="background-color: #2c3e50; color: {status_color}; display: inline-block; padding: 8px 20px; border-radius: 20px; margin-top: 10px; font-weight: 600;">
                 {status_text}
             </div>
         </div>
         
-        <div style="background-color: #eff6ff; border-radius: 8px; padding: 20px; margin: 20px 0;">
+        <div style="background-color: #34495e; border-radius: 8px; padding: 20px; margin: 20px 0;">
             <h3 style="margin: 0 0 15px 0; color: #ffffff; font-size: 16px;">📊 Quiz Details</h3>
-            <table class="responsive-table" style="width: 100%; color: #4a5568;">
+            <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Quiz:</strong></td>
-                    <td>{quiz_title}</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Quiz:</strong></td>
+                    <td style="color: #ffffff;">{quiz_title}</td>
                 </tr>
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Course:</strong></td>
-                    <td>{course_title}</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Course:</strong></td>
+                    <td style="color: #ffffff;">{course_title}</td>
                 </tr>
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Score:</strong></td>
-                    <td>{score} / {total_points}</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Score:</strong></td>
+                    <td style="color: #ffffff;">{score} / {total_points}</td>
                 </tr>
                 <tr>
-                    <td style="padding: 8px 0;"><strong>Percentage:</strong></td>
-                    <td>{percentage:.1f}%</td>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Percentage:</strong></td>
+                    <td style="color: #ffffff;">{percentage:.1f}%</td>
                 </tr>
             </table>
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Detailed Results
             </a>
         </div>
         
-        <p style="color: #4a5568; line-height: 1.6;">
+        <p style="color: #e5e7eb; line-height: 1.6; text-align: center;">
             Keep learning and improving!<br><br>
             Best regards,<br>
-            <strong>The Afritec Bridge Team</strong>
+            <strong style="color: #ffffff;">The Afritech Bridge Team</strong>
         </p>
     </div>
     {get_email_footer()}
@@ -1451,14 +1451,14 @@ def application_status_pending_email(application, course_title, reason=None):
                     <p style="color: #d1d5db; font-size: 15px; line-height: 1.7; margin: 0 0 20px 0;">
                         Have questions about your application?
                     </p>
-                    <a href="mailto:support@afritecbridge.com" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);">
+                    <a href="mailto:afritech.bridge@yahoo.com" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);">
                         📧 Contact Support
                     </a>
                 </div>
                 
                 <p style="color: #bdc3c7; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0;">
                     Thank you for your patience.<br>
-                    <strong style="color: #ffffff;">The Afritec Bridge Team</strong> 🎓
+                    <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 🎓
                 </p>
             </div>
     {get_email_footer()}
@@ -1576,7 +1576,7 @@ def application_status_withdrawn_email(application, course_title, reason=None):
                         You're always welcome to submit a new application if you'd like to join this course in the future.
                     </p>
                     <div style="text-align: center;">
-                        <a href="https://study.afritechbridge.online/courses" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                        <a href="https://study.Afritechhbridge.online/courses" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
                             📚 Browse Courses
                         </a>
                     </div>
@@ -1587,14 +1587,14 @@ def application_status_withdrawn_email(application, course_title, reason=None):
                     <p style="color: #d1d5db; font-size: 15px; line-height: 1.7; margin: 0 0 20px 0;">
                         Questions or concerns about this withdrawal?
                     </p>
-                    <a href="mailto:support@afritecbridge.com" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
+                    <a href="mailto:afritech.bridge@yahoo.com" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
                         🆘 Contact Support Urgently
                     </a>
                 </div>
                 
                 <p style="color: #bdc3c7; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0;">
                     We hope to see you again soon.<br>
-                    <strong style="color: #ffffff;">The Afritec Bridge Team</strong> 🎓
+                    <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 🎓
                 </p>
             </div>
     {get_email_footer()}
@@ -1699,7 +1699,7 @@ def custom_application_email(recipient_name, subject, message):
                 
                 <p style="color: #ffffff; font-size: 14px; line-height: 1.7; text-align: center; margin: 30px 0 0 0; text-shadow: 1px 1px 2px rgba(0,0,0,0.4);">
                     Best regards,<br>
-                    <strong style="color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">The Afritec Bridge Team</strong> 🎓
+                    <strong style="color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">The Afritech Bridge Team</strong> 🎓
                 </p>
             </div>
     {get_email_footer()}
@@ -1875,7 +1875,7 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
         
         <!-- CTA Button -->
         <div style="text-align: center; margin: 40px 0;">
-            <a href="https://study.afritechbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 15px; font-weight: 700; font-size: 18px; mobile-button; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); border: 3px solid rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: 1px;">
+            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 15px; font-weight: 700; font-size: 18px; mobile-button; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); border: 3px solid rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: 1px;">
                 📊 View Course Progress
             </a>
             <p style="color: rgba(255,255,255,0.8); margin: 15px 0 0 0; font-size: 14px;">
@@ -1901,7 +1901,7 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
         <p style="color: #ffffff; font-size: 16px; line-height: 1.8; text-align: center; margin: 40px 0 0 0; text-shadow: 1px 1px 3px rgba(0,0,0,0.4);">
             Congratulations once again on this outstanding achievement! 🎊<br><br>
             Best regards,<br>
-            <strong style="color: #fbbf24;">The Afritec Bridge Team</strong> 🎓
+            <strong style="color: #fbbf24;">The Afritech Bridge Team</strong> 🎓
         </p>
     </div>
     {get_email_footer()}

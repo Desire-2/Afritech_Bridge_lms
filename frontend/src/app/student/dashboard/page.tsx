@@ -22,7 +22,8 @@ import {
   Brain,
   Lightbulb,
   Timer,
-  Activity
+  Activity,
+  Bell
 } from 'lucide-react';
 import { StudentService, StudentDashboard } from '@/services/student.service';
 import { motion } from 'framer-motion';
@@ -32,6 +33,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BookingCard } from '@/components/booking/BookingCard';
+import StudentAnnouncements from '@/components/student/StudentAnnouncements';
 
 const StudentDashboardOverviewPage = () => {
   const { user, isAuthenticated } = useAuth();
@@ -449,6 +451,12 @@ const StudentDashboardOverviewPage = () => {
                       Progress Analytics
                     </Button>
                   </Link>
+                  <Link href="/student/announcements">
+                    <Button variant="outline" className="w-full justify-start">
+                      <Bell className="w-4 h-4 mr-2" />
+                      Announcements
+                    </Button>
+                  </Link>
                   <Link href="/student/opportunities">
                     <Button variant="outline" className="w-full justify-start">
                       <Award className="w-4 h-4 mr-2" />
@@ -466,6 +474,15 @@ const StudentDashboardOverviewPage = () => {
               transition={{ duration: 0.5, delay: 0.45 }}
             >
               <BookingCard variant="compact" />
+            </motion.div>
+
+            {/* Announcements */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.5 }}
+            >
+              <StudentAnnouncements maxItems={3} />
             </motion.div>
 
             {/* Recent Achievements */}

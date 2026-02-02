@@ -49,10 +49,12 @@ export async function POST(request: NextRequest) {
       try {
         console.log('Forwarding to backend for Google Drive upload...');
         
-        const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+        const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+        console.log(`Backend URL: ${backendUrl}`);
         
         // Get authorization header from request
         const authHeader = request.headers.get('authorization');
+        console.log(`Auth header present: ${!!authHeader}`);
         
         // Create new FormData for backend
         const backendFormData = new FormData();
@@ -61,16 +63,21 @@ export async function POST(request: NextRequest) {
         if (assignmentId) backendFormData.append('assignmentId', assignmentId);
         if (studentId) backendFormData.append('studentId', studentId);
         
+        console.log(`Uploading file: ${file.name}, size: ${file.size}, type: ${file.type}`);
+        
         const response = await fetch(`${backendUrl}/uploads/file`, {
           method: 'POST',
           body: backendFormData,
           headers: authHeader ? { 'Authorization': authHeader } : undefined
         });
         
+        console.log(`Backend response status: ${response.status} ${response.statusText}`);
+        
         const result = await response.json();
+        console.log('Backend response:', JSON.stringify(result, null, 2));
         
         if (!response.ok || !result.success) {
-          throw new Error(result.error || 'Backend upload failed');
+          throw new Error(result.error || `Backend upload failed: ${response.status} ${response.statusText}`);
         }
         
         console.log('Backend Google Drive upload successful');
@@ -78,6 +85,7 @@ export async function POST(request: NextRequest) {
         
       } catch (backendError: any) {
         console.error('Backend upload failed:', backendError.message);
+        console.error('Full error:', backendError);
         // Continue to Vercel Blob fallback
       }
     }

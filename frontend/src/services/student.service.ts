@@ -1,5 +1,6 @@
 import apiClient from '@/lib/api-client';
 import { ApiErrorHandler } from '@/lib/error-handler';
+import { Announcement } from '@/types/api';
 
 // Enhanced types for student services
 export interface StudentDashboard {
@@ -339,6 +340,16 @@ export class StudentService {
   static async removeBookmark(courseId: number): Promise<{ message: string }> {
     try {
       const response = await apiClient.delete(`${this.BASE_PATH}/bookmarks/${courseId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Announcements
+  static async getAnnouncements(): Promise<Announcement[]> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/announcements`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

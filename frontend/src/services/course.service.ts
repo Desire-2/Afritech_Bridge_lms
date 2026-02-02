@@ -400,6 +400,15 @@ export class QuestionService {
       throw ApiErrorHandler.handleError(error);
     }
   }
+
+  static async getInstructorCourses(): Promise<Course[]> {
+    try {
+      const response = await apiClient.get('/instructor/courses');
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
 }
 
 export class AnnouncementService {
@@ -435,6 +444,25 @@ export class AnnouncementService {
   static async deleteAnnouncement(announcementId: number): Promise<{ message: string }> {
     try {
       const response = await apiClient.delete(`${this.BASE_PATH}/${announcementId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Instructor-specific methods
+  static async getInstructorAnnouncements(): Promise<Announcement[]> {
+    try {
+      const response = await apiClient.get('/instructor/announcements');
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async createAnnouncementAsInstructor(announcementData: CreateAnnouncementRequest): Promise<Announcement> {
+    try {
+      const response = await apiClient.post('/instructor/announcements', announcementData);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

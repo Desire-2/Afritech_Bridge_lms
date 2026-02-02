@@ -95,7 +95,9 @@ class GoogleDriveService:
             
             results = self.service.files().list(
                 q=query,
-                spaces='drive'
+                spaces='drive',
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True
             ).execute()
             
             items = results.get('files', [])
@@ -115,7 +117,11 @@ class GoogleDriveService:
             if parent_folder_id:
                 folder_metadata['parents'] = [parent_folder_id]
             
-            folder = self.service.files().create(body=folder_metadata).execute()
+            folder = self.service.files().create(
+                body=folder_metadata,
+                supportsAllDrives=True,
+                supportsTeamDrives=True
+            ).execute()
             folder_id = folder.get('id')
             
             logger.info(f"Created new folder '{folder_name}': {folder_id}")
@@ -140,30 +146,47 @@ class GoogleDriveService:
             # Get root folder ID from environment
             root_folder_id = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
             
-            # Create/get main LMS folder
-            lms_folder_id = self._get_or_create_folder(
-                'Afritec_Bridge_LMS_Submissions', 
-                root_folder_id
-            )
+            if not root_folder_id:
+                raise ValueError("GOOGLE_DRIVE_ROOT_FOLDER_ID not configured")
             
-            # Create/get assignment folder
-            assignment_folder_id = self._get_or_create_folder(
-                f'Assignment_{assignment_id}',
-                lms_folder_id
-            )
-            
-            # Create/get student folder
-            student_folder_id = self._get_or_create_folder(
-                f'Student_{student_id}',
-                assignment_folder_id
-            )
-            
-            return student_folder_id
+            # Try to create organized subfolder structure
+            try:
+                # Create/get main LMS folder
+                lms_folder_id = self._get_or_create_folder(
+                    'Afritec_Bridge_LMS_Submissions', 
+                    root_folder_id
+                )
+                
+                # Create/get assignment folder
+                assignment_folder_id = self._get_or_create_folder(
+                    f'Assignment_{assignment_id}',
+                    lms_folder_id
+                )
+                
+                # Create/get student folder
+                student_folder_id = self._get_or_create_folder(
+                    f'Student_{student_id}',
+                    assignment_folder_id
+                )
+                
+                logger.info(f"Created organized folder structure: Assignment_{assignment_id}/Student_{student_id}")
+                return student_folder_id
+                
+            except HttpError as folder_error:
+                # If subfolder creation fails (permissions), use root folder directly
+                logger.warning(f"Could not create organized subfolder structure: {folder_error}")
+                logger.info(f"Falling back to root folder for upload: {root_folder_id}")
+                return root_folder_id
             
         except Exception as e:
             logger.error(f"Error setting up folder structure: {e}")
             # Fallback to root folder
-            return os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
+            root_folder_id = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
+            if root_folder_id:
+                logger.info(f"Using root folder as fallback: {root_folder_id}")
+                return root_folder_id
+            else:
+                raise ValueError("No valid folder ID available for file upload")
     
     def upload_file(self, 
                    file_data: BytesIO, 
@@ -214,13 +237,16 @@ class GoogleDriveService:
             media = MediaIoBaseUpload(
                 file_data,
                 mimetype=mime_type,
-                resumable=True
+                resumable=False  # Disable resumable upload for service accounts
             )
             
+            # Create file with specific ownership settings
             file = self.service.files().create(
                 body=file_metadata,
                 media_body=media,
-                fields='id,name,size,createdTime,webViewLink,webContentLink,mimeType'
+                fields='id,name,size,createdTime,webViewLink,webContentLink,mimeType',
+                supportsAllDrives=True,  # Support shared drives
+                supportsTeamDrives=True  # Legacy support
             ).execute()
             
             # Make file accessible to anyone with the link (for LMS access)

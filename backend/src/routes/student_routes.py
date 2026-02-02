@@ -4,11 +4,12 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
 import json
+import logging
 from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission, Announcement
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
@@ -16,6 +17,9 @@ from ..models.student_models import (
     Certificate, SkillBadge, StudentSkillBadge
 )
 from ..models.achievement_models import UserAchievement, Achievement
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Helper for role checking
 from functools import wraps
@@ -991,6 +995,42 @@ def get_achievements():
         'earned': achievements,
         'available': [badge.to_dict() for badge in available_badges]
     }), 200
+
+# --- Announcements Routes ---
+@student_bp.route("/announcements", methods=["GET"])
+@student_required
+def get_student_announcements():
+    """Get all announcements from enrolled courses"""
+    current_user_id = int(get_jwt_identity())
+    
+    try:
+        # Get enrolled course IDs
+        enrolled_course_ids = db.session.query(Enrollment.course_id).filter_by(
+            student_id=current_user_id
+        ).all()
+        course_ids = [e.course_id for e in enrolled_course_ids]
+        
+        if not course_ids:
+            return jsonify([]), 200
+        
+        # Get announcements from enrolled courses
+        announcements = Announcement.query.filter(
+            Announcement.course_id.in_(course_ids)
+        ).order_by(Announcement.created_at.desc()).all()
+        
+        # Format announcements with course information
+        announcements_data = []
+        for announcement in announcements:
+            ann_dict = announcement.to_dict()
+            # Add course title for easier display
+            ann_dict['course_title'] = announcement.course.title if announcement.course else "Unknown"
+            announcements_data.append(ann_dict)
+        
+        return jsonify(announcements_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching student announcements: {str(e)}")
+        return jsonify({"message": "Failed to fetch announcements", "error": str(e)}), 500
 
 # --- Assignments Routes ---
 @student_bp.route("/assignments", methods=["GET"])

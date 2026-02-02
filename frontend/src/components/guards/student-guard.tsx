@@ -12,11 +12,20 @@ export function StudentGuard({ children }: { children: React.ReactNode }) {
   const { user, isLoading, isAuthenticated, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [loadingStartTime] = useState(Date.now());
+  const [loadingStartTime, setLoadingStartTime] = useState<number | null>(null);
   const [hasCheckedPermissions, setHasCheckedPermissions] = useState(false);
+
+  // Set loading start time only on client side to avoid hydration issues
+  useEffect(() => {
+    if (loadingStartTime === null) {
+      setLoadingStartTime(Date.now());
+    }
+  }, [loadingStartTime]);
 
   useEffect(() => {
     // Check for loading timeout (10 seconds - reduced from 15)
+    if (loadingStartTime === null) return;
+    
     const timeoutCheck = setInterval(() => {
       if (isLoading) {
         const elapsed = Date.now() - loadingStartTime;
@@ -68,7 +77,7 @@ export function StudentGuard({ children }: { children: React.ReactNode }) {
 
   // Show loading screen only for the initial load
   if (isLoading && !hasCheckedPermissions) {
-    const elapsed = Math.floor((Date.now() - loadingStartTime) / 1000);
+    const elapsed = loadingStartTime ? Math.floor((Date.now() - loadingStartTime) / 1000) : 0;
     const showTimeoutWarning = elapsed > 5;
     
     return (

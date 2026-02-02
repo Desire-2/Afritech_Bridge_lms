@@ -58,13 +58,11 @@ def send_email(to, subject, template=None, body=None, retries=3, retry_delay=2, 
             return False
         
         # Use Brevo service for sending
-        return brevo_service.send_transactional_email(
-            to=recipients,
+        return brevo_service.send_email(
+            to_emails=recipients,
             subject=subject,
             html_content=template,
-            text_content=body,
-            retries=retries,
-            async_send=async_send
+            text_content=body
         )
             
     except Exception as e:
@@ -81,13 +79,11 @@ def _send_email_sync(to, subject, template=None, body=None, retries=3, retry_del
         recipients = [to] if isinstance(to, str) else to
         
         # Use Brevo service for synchronous sending
-        return brevo_service.send_transactional_email(
-            to=recipients,
+        return brevo_service.send_email(
+            to_emails=recipients,
             subject=subject,
             html_content=template,
-            text_content=body,
-            retries=retries,
-            async_send=False  # Synchronous
+            text_content=body
         )
         
     except Exception as e:
@@ -134,14 +130,12 @@ def send_email_with_bcc(to, bcc, subject, template=None, body=None, retries=3, r
             bcc_list = bcc_list[1:]
         
         # Use Brevo service for BCC emails
-        return brevo_service.send_transactional_email(
-            to=to_list,
+        return brevo_service.send_email(
+            to_emails=to_list,
             bcc=bcc_list,
             subject=subject,
             html_content=template,
-            text_content=body,
-            retries=retries,
-            async_send=async_send
+            text_content=body
         )
             
     except Exception as e:

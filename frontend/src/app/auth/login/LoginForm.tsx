@@ -113,8 +113,8 @@ export default function LoginForm() {
   
   // If already authenticated, redirect to appropriate dashboard
   useEffect(() => {
-    // Start auth check timeout
-    if (isLoading && authCheckTimeout === 0) {
+    // Start auth check timeout only on client side
+    if (isLoading && authCheckTimeout === 0 && typeof window !== 'undefined') {
       setAuthCheckTimeout(Date.now());
     }
 
@@ -636,7 +636,7 @@ export default function LoginForm() {
         </form>
 
         {/* Timeout warning for stuck authentication */}
-        {authCheckTimeout > 0 && (Date.now() - authCheckTimeout) > 8000 && (
+        {authCheckTimeout > 0 && typeof window !== 'undefined' && (Date.now() - authCheckTimeout) > 8000 && (
           <div className="mt-4 p-4 bg-yellow-900/50 border border-yellow-700 rounded-lg">
             <div className="flex items-center gap-2 text-yellow-300 text-sm mb-2">
               <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
