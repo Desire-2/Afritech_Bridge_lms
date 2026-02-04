@@ -174,7 +174,14 @@ class AchievementApiService {
       `${API_BASE_URL}/achievements/`,
       this.getAuthHeaders()
     );
-    return response.data;
+    const data = response.data;
+    if (Array.isArray(data.achievements)) {
+      data.achievements = data.achievements.map((achievement: Achievement & { points_value?: number }) => ({
+        ...achievement,
+        points_value: achievement.points_value ?? achievement.points ?? 0
+      }));
+    }
+    return data;
   }
 
   async getEarnedAchievements(): Promise<{ achievements: UserAchievement[]; total: number; success: boolean }> {
@@ -182,7 +189,19 @@ class AchievementApiService {
       `${API_BASE_URL}/achievements/earned`,
       this.getAuthHeaders()
     );
-    return response.data;
+    const data = response.data;
+    if (Array.isArray(data.achievements)) {
+      data.achievements = data.achievements.map((userAchievement: UserAchievement) => ({
+        ...userAchievement,
+        achievement: userAchievement.achievement
+          ? {
+              ...userAchievement.achievement,
+              points_value: (userAchievement.achievement as Achievement & { points_value?: number }).points_value ?? userAchievement.achievement.points ?? 0
+            }
+          : userAchievement.achievement
+      }));
+    }
+    return data;
   }
 
   async getAchievementsSummary(): Promise<{ success: boolean; data: any }> {

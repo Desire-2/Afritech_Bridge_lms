@@ -530,6 +530,8 @@ def get_points_leaderboard():
     """Get points leaderboard (convenience route for total_points_alltime)"""
     try:
         limit = request.args.get('limit', 100, type=int)
+
+        AchievementService.ensure_default_leaderboards()
         
         # Debug: Check if leaderboard exists
         from ..models.achievement_models import Leaderboard

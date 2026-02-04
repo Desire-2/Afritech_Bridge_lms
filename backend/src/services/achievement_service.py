@@ -21,6 +21,62 @@ logger = logging.getLogger(__name__)
 
 class AchievementService:
     """Service for managing achievements and gamification"""
+
+    @staticmethod
+    def ensure_default_leaderboards() -> None:
+        """Ensure default leaderboards exist"""
+        try:
+            defaults = [
+                {
+                    "name": "total_points_alltime",
+                    "title": "All-Time Points",
+                    "description": "Top learners by total points",
+                    "metric": "total_points",
+                    "time_period": "all_time",
+                    "scope": "global",
+                    "icon": "trophy",
+                    "color": "gold",
+                    "max_displayed": 100,
+                },
+                {
+                    "name": "streak_masters",
+                    "title": "Streak Masters",
+                    "description": "Longest learning streaks",
+                    "metric": "streak_days",
+                    "time_period": "all_time",
+                    "scope": "global",
+                    "icon": "flame",
+                    "color": "orange",
+                    "max_displayed": 100,
+                },
+                {
+                    "name": "weekly_champions",
+                    "title": "Weekly Champions",
+                    "description": "Top points this week",
+                    "metric": "total_points",
+                    "time_period": "weekly",
+                    "scope": "global",
+                    "icon": "calendar",
+                    "color": "blue",
+                    "max_displayed": 100,
+                },
+            ]
+
+            created_any = False
+            for data in defaults:
+                existing = Leaderboard.query.filter_by(name=data["name"]).first()
+                if existing:
+                    continue
+
+                leaderboard = Leaderboard(**data)
+                db.session.add(leaderboard)
+                created_any = True
+
+            if created_any:
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Failed to ensure default leaderboards: {str(e)}")
     
     @staticmethod
     def check_and_award_achievements(user_id: int, event_type: str, event_data: dict) -> List[UserAchievement]:
@@ -393,6 +449,7 @@ class AchievementService:
     def get_leaderboard(leaderboard_name: str, limit: int = 100) -> Dict:
         """Get leaderboard rankings"""
         try:
+            AchievementService.ensure_default_leaderboards()
             leaderboard = Leaderboard.query.filter_by(
                 name=leaderboard_name,
                 is_active=True

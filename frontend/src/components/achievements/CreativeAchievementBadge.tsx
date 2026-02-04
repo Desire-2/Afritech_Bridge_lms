@@ -175,6 +175,200 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
 
   const config = sizeConfigs[size];
 
+  const openShareWindow = (url: string, features?: string) => {
+    const popup = window.open(url, '_blank', features || 'noopener,noreferrer');
+    if (!popup) {
+      throw new Error('Popup blocked. Please allow popups to share.');
+    }
+  };
+
+  const createAchievementCanvas = async () => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      toast.error('Canvas not supported by your browser');
+      return null;
+    }
+
+    const loadLogo = () =>
+      new Promise<HTMLImageElement | null>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = '/logo.jpg';
+      });
+
+    const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
+      const radius = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + w - radius, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+      ctx.lineTo(x + w, y + h - radius);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+      ctx.lineTo(x + radius, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.closePath();
+    };
+
+    // High resolution canvas
+    canvas.width = 1200;
+    canvas.height = 800;
+    
+    // Dark theme gradient background
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, '#0f172a'); // slate-900
+    gradient.addColorStop(0.5, '#1e293b'); // slate-800
+    gradient.addColorStop(1, '#334155'); // slate-700
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Subtle background pattern
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = '#ffffff';
+    for (let i = 0; i < 20; i++) {
+      const x = (i * 60) % canvas.width;
+      const y = Math.floor(i / 10) * 120 + 60;
+      ctx.beginPath();
+      ctx.arc(x, y, 40, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    
+    // Add decorative border
+    ctx.strokeStyle = '#fbbf24'; // amber-400
+    ctx.lineWidth = 8;
+    ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+    
+    // Inner border
+    ctx.strokeStyle = '#64748b'; // slate-500
+    ctx.lineWidth = 2;
+    ctx.strokeRect(60, 60, canvas.width - 120, canvas.height - 120);
+
+    // Logo placement
+    const logo = await loadLogo();
+    if (logo) {
+      const logoBoxSize = 110;
+      const logoX = canvas.width - logoBoxSize - 90;
+      const logoY = 90;
+      const innerPadding = 12;
+
+      // Soft shadow
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+      ctx.shadowBlur = 12;
+      ctx.shadowOffsetY = 4;
+      ctx.fillStyle = '#ffffff';
+      drawRoundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 18);
+      ctx.fill();
+      ctx.restore();
+
+      // Clip for logo content
+      ctx.save();
+      drawRoundedRect(logoX + innerPadding, logoY + innerPadding, logoBoxSize - innerPadding * 2, logoBoxSize - innerPadding * 2, 12);
+      ctx.clip();
+
+      const box = logoBoxSize - innerPadding * 2;
+      const scale = Math.min(box / logo.naturalWidth, box / logo.naturalHeight);
+      const drawW = logo.naturalWidth * scale;
+      const drawH = logo.naturalHeight * scale;
+      const drawX = logoX + innerPadding + (box - drawW) / 2;
+      const drawY = logoY + innerPadding + (box - drawH) / 2;
+      ctx.drawImage(logo, drawX, drawY, drawW, drawH);
+      ctx.restore();
+
+      // Gold outline
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 3;
+      drawRoundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 18);
+      ctx.stroke();
+    }
+
+    // Certificate title
+    ctx.fillStyle = '#f1f5f9'; // slate-100
+    ctx.font = 'bold 48px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🏆 ACHIEVEMENT CERTIFICATE', canvas.width / 2, 150);
+    
+    // Achievement title
+    ctx.font = 'bold 42px Arial, sans-serif';
+    ctx.fillStyle = '#fbbf24'; // amber-400
+    ctx.fillText(achievement.title.toUpperCase(), canvas.width / 2, 220);
+    
+    // Description
+    ctx.font = '28px Arial, sans-serif';
+    ctx.fillStyle = '#cbd5e1'; // slate-300
+    
+    // Word wrap description
+    const words = achievement.description.split(' ');
+    const lines = [] as string[];
+    let currentLine = words[0];
+    
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i];
+      const width = ctx.measureText(currentLine + ' ' + word).width;
+      if (width < canvas.width - 200) {
+        currentLine += ' ' + word;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    }
+    lines.push(currentLine);
+    
+    // Draw description lines
+    lines.forEach((line, index) => {
+      ctx.fillText(line, canvas.width / 2, 280 + (index * 35));
+    });
+    
+    // Achievement details
+    const detailsY = 380 + (lines.length * 35);
+    
+    ctx.font = '24px Arial, sans-serif';
+    ctx.fillStyle = '#94a3b8'; // slate-400
+    
+    const details = [
+      `Category: ${achievement.category}`,
+      `Tier: ${achievement.tier}`,
+      `Rarity: ${achievement.rarity}`,
+      `Points: ${achievement.points_value}`
+    ];
+    
+    details.forEach((detail, index) => {
+      ctx.fillText(detail, canvas.width / 2, detailsY + (index * 30));
+    });
+    
+    // Earned date
+    if (earned && achievement.earned_at) {
+      ctx.font = '20px Arial, sans-serif';
+      ctx.fillStyle = '#10b981'; // emerald-500
+      const earnedDate = new Date(achievement.earned_at).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+      ctx.fillText(`Earned on: ${earnedDate}`, canvas.width / 2, detailsY + 160);
+    }
+    
+    // Footer
+    ctx.font = '18px Arial, sans-serif';
+    ctx.fillStyle = '#64748b'; // slate-500
+    ctx.fillText('Afritech Bridge LMS', canvas.width / 2, canvas.height - 60);
+
+    // Gold seal
+    ctx.beginPath();
+    ctx.fillStyle = '#f59e0b';
+    ctx.arc(120, canvas.height - 140, 40, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 16px Arial, sans-serif';
+    ctx.fillText('CERTIFIED', 120, canvas.height - 135);
+
+    return canvas;
+  };
+
   // Helper function to execute the actual sharing action
   const executeShare = async (method: string, shareText: string, achievementUrl: string, hashtags: string) => {
     // Validate method parameter
@@ -192,23 +386,46 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
       case 'twitter':
         const twitterText = encodeURIComponent(`${shareText} #${hashtags}`);
         const twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}&url=${encodeURIComponent(achievementUrl)}`;
-        window.open(twitterUrl, '_blank', 'width=600,height=400,scrollbars=yes,resizable=yes');
+        openShareWindow(twitterUrl, 'width=600,height=400,scrollbars=yes,resizable=yes');
         break;
         
       case 'linkedin':
-        const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(achievementUrl)}&title=${encodeURIComponent(achievement.title)}&summary=${encodeURIComponent(achievement.description)}`;
-        window.open(linkedinUrl, '_blank', 'width=600,height=600,scrollbars=yes,resizable=yes');
+        await navigator.clipboard.writeText(shareText);
+        toast.success('Caption copied. Paste it into your LinkedIn post.');
+        const linkedinShareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(achievementUrl)}`;
+        openShareWindow(linkedinShareUrl, 'width=600,height=600,scrollbars=yes,resizable=yes');
         break;
         
       case 'whatsapp':
         const whatsappText = `${shareText}\n\n${achievementUrl}`;
         const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(whatsappText)}`;
-        window.open(whatsappUrl, '_blank');
+        openShareWindow(whatsappUrl);
         break;
         
       case 'facebook':
         const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(achievementUrl)}&quote=${encodeURIComponent(shareText)}`;
-        window.open(facebookUrl, '_blank', 'width=600,height=400,scrollbars=yes,resizable=yes');
+        openShareWindow(facebookUrl, 'width=600,height=400,scrollbars=yes,resizable=yes');
+        break;
+
+      case 'reddit':
+        const redditUrl = `https://reddit.com/submit?url=${encodeURIComponent(achievementUrl)}&title=${encodeURIComponent(`Achievement Unlocked: ${achievement.title}`)}`;
+        openShareWindow(redditUrl, 'width=800,height=600,scrollbars=yes,resizable=yes');
+        break;
+
+      case 'discord':
+        await navigator.clipboard.writeText(shareText);
+        toast.success('Discord-formatted message copied! Paste it in your Discord channel.');
+        break;
+
+      case 'email':
+        const emailSubject = encodeURIComponent(`Check out my latest achievement: ${achievement.title}`);
+        const emailBody = encodeURIComponent(`${shareText}\n\nView my achievement: ${achievementUrl}`);
+        window.location.href = `mailto:?subject=${emailSubject}&body=${emailBody}`;
+        break;
+
+      case 'telegram':
+        const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(achievementUrl)}&text=${encodeURIComponent(shareText)}`;
+        openShareWindow(telegramUrl);
         break;
         
       case 'download':
@@ -217,11 +434,37 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
         
       case 'native':
         if (navigator.share) {
-          await navigator.share({
-            title: `Achievement Unlocked: ${achievement.title}`,
-            text: shareText,
-            url: achievementUrl
-          });
+          let sharedWithImage = false;
+          try {
+            const canvas = await createAchievementCanvas();
+            if (canvas) {
+              const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1.0));
+              if (blob) {
+                const timestamp = new Date().toISOString().split('T')[0];
+                const fileName = `${achievement.title.replace(/[^a-zA-Z0-9]/g, '_')}_Certificate_${timestamp}.png`;
+                const file = new File([blob], fileName, { type: 'image/png' });
+                if ((navigator as any).canShare?.({ files: [file] })) {
+                  await navigator.share({
+                    title: `Achievement Unlocked: ${achievement.title}`,
+                    text: shareText,
+                    url: achievementUrl,
+                    files: [file]
+                  });
+                  sharedWithImage = true;
+                }
+              }
+            }
+          } catch (shareImageError) {
+            console.warn('Native share with image failed, falling back to text share:', shareImageError);
+          }
+
+          if (!sharedWithImage) {
+            await navigator.share({
+              title: `Achievement Unlocked: ${achievement.title}`,
+              text: shareText,
+              url: achievementUrl
+            });
+          }
         } else {
           await navigator.clipboard.writeText(shareText + '\n' + achievementUrl);
         }
@@ -257,40 +500,26 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
         .map(tag => tag.replace(/\s+/g, ''))
         .join(',');
       
-      // Track the share on backend first, then execute sharing action
+      // Execute sharing action first to ensure popup isn't blocked
       try {
-        const { AchievementApiService } = await import('@/services/api');
-        const shareData = await AchievementApiService.shareAchievement(achievement.id, method);
+        await executeShare(method, shareText, achievementUrl, hashtags);
         
-        // Use backend share text if available
-        const finalShareText = shareData.share_text || shareText;
-        
-        // Execute the actual sharing with backend text
-        await executeShare(method, finalShareText, achievementUrl, hashtags);
-        
+        try {
+          const { AchievementApiService } = await import('@/services/api');
+          const shareData = await AchievementApiService.shareAchievement(achievement.id, method);
+          toast.success(`Shared via ${method}! (Total shares: ${shareData.shared_count})`);
+        } catch (trackError) {
+          console.warn('Share tracking failed:', trackError);
+          toast.success(`Shared via ${method}! (Note: Share count not tracked)`);
+        }
+
         // Call parent onShare callback
         onShare?.(achievement.id, method);
         
-        toast.success(`Shared via ${method}! (Total shares: ${shareData.shared_count})`);
-        
       } catch (shareError: any) {
-        console.warn('Share tracking failed:', shareError);
-        
-        // If it's an "not earned" error, don't proceed with sharing
-        if (shareError.message && shareError.message.includes('earned')) {
-          toast.error(shareError.message);
-          return;
-        }
-        
-        // Otherwise, continue with sharing but without tracking
-        try {
-          await executeShare(method, shareText, achievementUrl, hashtags);
-          onShare?.(achievement.id, method);
-          toast.success(`Shared via ${method}! (Note: Share count not tracked)`);
-        } catch (execError) {
-          toast.error(`Failed to share via ${method}`);
-          return;
-        }
+        console.warn('Share action failed:', shareError);
+        toast.error(shareError.message || `Failed to share via ${method}`);
+        return;
       }
       
       // Celebration effect
@@ -312,106 +541,10 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
 
   const downloadAchievementImage = async () => {
     try {
-      // Create achievement certificate canvas with enhanced design
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        toast.error('Canvas not supported by your browser');
+      const canvas = await createAchievementCanvas();
+      if (!canvas) {
         return;
       }
-
-      // High resolution canvas
-      canvas.width = 1200;
-      canvas.height = 800;
-      
-      // Dark theme gradient background
-      const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-      gradient.addColorStop(0, '#0f172a'); // slate-900
-      gradient.addColorStop(0.5, '#1e293b'); // slate-800
-      gradient.addColorStop(1, '#334155'); // slate-700
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Add decorative border
-      ctx.strokeStyle = '#fbbf24'; // amber-400
-      ctx.lineWidth = 8;
-      ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
-      
-      // Inner border
-      ctx.strokeStyle = '#64748b'; // slate-500
-      ctx.lineWidth = 2;
-      ctx.strokeRect(60, 60, canvas.width - 120, canvas.height - 120);
-
-      // Certificate title
-      ctx.fillStyle = '#f1f5f9'; // slate-100
-      ctx.font = 'bold 48px Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('🏆 ACHIEVEMENT CERTIFICATE', canvas.width / 2, 150);
-      
-      // Achievement title
-      ctx.font = 'bold 42px Arial, sans-serif';
-      ctx.fillStyle = '#fbbf24'; // amber-400
-      ctx.fillText(achievement.title.toUpperCase(), canvas.width / 2, 220);
-      
-      // Description
-      ctx.font = '28px Arial, sans-serif';
-      ctx.fillStyle = '#cbd5e1'; // slate-300
-      
-      // Word wrap description
-      const words = achievement.description.split(' ');
-      const lines = [];
-      let currentLine = words[0];
-      
-      for (let i = 1; i < words.length; i++) {
-        const word = words[i];
-        const width = ctx.measureText(currentLine + ' ' + word).width;
-        if (width < canvas.width - 200) {
-          currentLine += ' ' + word;
-        } else {
-          lines.push(currentLine);
-          currentLine = word;
-        }
-      }
-      lines.push(currentLine);
-      
-      // Draw description lines
-      lines.forEach((line, index) => {
-        ctx.fillText(line, canvas.width / 2, 280 + (index * 35));
-      });
-      
-      // Achievement details
-      const detailsY = 380 + (lines.length * 35);
-      
-      ctx.font = '24px Arial, sans-serif';
-      ctx.fillStyle = '#94a3b8'; // slate-400
-      
-      const details = [
-        `Category: ${achievement.category}`,
-        `Tier: ${achievement.tier}`,
-        `Rarity: ${achievement.rarity}`,
-        `Points: ${achievement.points_value}`
-      ];
-      
-      details.forEach((detail, index) => {
-        ctx.fillText(detail, canvas.width / 2, detailsY + (index * 30));
-      });
-      
-      // Earned date
-      if (earned && achievement.earned_at) {
-        ctx.font = '20px Arial, sans-serif';
-        ctx.fillStyle = '#10b981'; // emerald-500
-        const earnedDate = new Date(achievement.earned_at).toLocaleDateString('en-US', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        });
-        ctx.fillText(`Earned on: ${earnedDate}`, canvas.width / 2, detailsY + 160);
-      }
-      
-      // Footer
-      ctx.font = '18px Arial, sans-serif';
-      ctx.fillStyle = '#64748b'; // slate-500
-      ctx.fillText('Afritech Bridge LMS', canvas.width / 2, canvas.height - 60);
       
       // Generate and download
       const timestamp = new Date().toISOString().split('T')[0];

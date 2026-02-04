@@ -102,22 +102,14 @@ export const useAchievementShare = () => {
     setIsSharing(true);
     
     try {
-      // Track share on backend (if API service is available)
-      let shareData;
-      try {
-        const { AchievementApiService } = await import('@/services/achievementApi');
-        shareData = await AchievementApiService.shareAchievement(achievement.id, platform);
-        setShareCount(shareData.shared_count || 0);
-      } catch (apiError: any) {
-        console.warn('Could not track share on backend:', apiError);
-        // If it's a user-facing error (like not earned), re-throw it
-        if (apiError.message && (apiError.message.includes('earned') || apiError.message.includes('404'))) {
-          throw apiError;
-        }
-        // Otherwise just log and continue with sharing
-      }
-
       const content = generateShareContent(achievement, platform, options);
+
+      const openShareWindow = (url: string, features?: string) => {
+        const popup = window.open(url, '_blank', features || 'noopener,noreferrer');
+        if (!popup) {
+          throw new Error('Popup blocked. Please allow popups to share.');
+        }
+      };
       
       // Platform-specific sharing logic
       switch (platform.toLowerCase()) {
@@ -129,27 +121,30 @@ export const useAchievementShare = () => {
         case 'twitter':
           const twitterText = encodeURIComponent(content.text);
           const twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}&url=${encodeURIComponent(content.url)}`;
-          window.open(twitterUrl, '_blank', 'width=600,height=400,scrollbars=yes,resizable=yes');
+          openShareWindow(twitterUrl, 'width=600,height=400,scrollbars=yes,resizable=yes');
           break;
           
         case 'linkedin':
-          const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(content.url)}&title=${encodeURIComponent(content.title)}&summary=${encodeURIComponent(achievement.description)}`;
-          window.open(linkedinUrl, '_blank', 'width=600,height=600,scrollbars=yes,resizable=yes');
+          // LinkedIn share-offsite ignores custom text; copy caption for user convenience
+          await navigator.clipboard.writeText(content.text);
+          toast.success('Caption copied. Paste it into your LinkedIn post.');
+          const linkedinShareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(content.url)}`;
+          openShareWindow(linkedinShareUrl, 'width=600,height=600,scrollbars=yes,resizable=yes');
           break;
           
         case 'whatsapp':
           const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(content.text)}`;
-          window.open(whatsappUrl, '_blank');
+          openShareWindow(whatsappUrl);
           break;
           
         case 'facebook':
           const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(content.url)}&quote=${encodeURIComponent(content.text)}`;
-          window.open(facebookUrl, '_blank', 'width=600,height=400,scrollbars=yes,resizable=yes');
+          openShareWindow(facebookUrl, 'width=600,height=400,scrollbars=yes,resizable=yes');
           break;
           
         case 'reddit':
           const redditUrl = `https://reddit.com/submit?url=${encodeURIComponent(content.url)}&title=${encodeURIComponent(`Achievement Unlocked: ${achievement.title}`)}`;
-          window.open(redditUrl, '_blank', 'width=800,height=600,scrollbars=yes,resizable=yes');
+          openShareWindow(redditUrl, 'width=800,height=600,scrollbars=yes,resizable=yes');
           break;
           
         case 'discord':
@@ -165,11 +160,37 @@ export const useAchievementShare = () => {
           
         case 'native':
           if (navigator.share) {
-            await navigator.share({
-              title: content.title,
-              text: content.text,
-              url: content.url
-            });
+            let sharedWithImage = false;
+            try {
+              const canvas = await generateShareableImage(achievement, { theme: 'dark' });
+              const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png', 1.0));
+
+              if (blob) {
+                const timestamp = new Date().toISOString().split('T')[0];
+                const fileName = `${achievement.title.replace(/[^a-zA-Z0-9]/g, '_')}_Certificate_${timestamp}.png`;
+                const file = new File([blob], fileName, { type: 'image/png' });
+
+                if ((navigator as any).canShare?.({ files: [file] })) {
+                  await navigator.share({
+                    title: content.title,
+                    text: content.text,
+                    url: content.url,
+                    files: [file]
+                  });
+                  sharedWithImage = true;
+                }
+              }
+            } catch (shareImageError) {
+              console.warn('Native share with image failed, falling back to text share:', shareImageError);
+            }
+
+            if (!sharedWithImage) {
+              await navigator.share({
+                title: content.title,
+                text: content.text,
+                url: content.url
+              });
+            }
           } else {
             // Fallback to copy
             await navigator.clipboard.writeText(`${content.text}\n${content.url}`);
@@ -179,12 +200,26 @@ export const useAchievementShare = () => {
           
         case 'telegram':
           const telegramUrl = `https://t.me/share/url?url=${encodeURIComponent(content.url)}&text=${encodeURIComponent(content.text)}`;
-          window.open(telegramUrl, '_blank');
+          openShareWindow(telegramUrl);
           break;
           
         default:
           toast.error(`Sharing method '${platform}' is not supported`);
           return false;
+      }
+
+      // Track share on backend (if API service is available)
+      let shareData;
+      try {
+        const { AchievementApiService } = await import('@/services/achievementApi');
+        shareData = await AchievementApiService.shareAchievement(achievement.id, platform);
+        setShareCount(shareData.shared_count || 0);
+      } catch (apiError: any) {
+        console.warn('Could not track share on backend:', apiError);
+        // If it's a user-facing error (like not earned), re-throw it
+        if (apiError.message && (apiError.message.includes('earned') || apiError.message.includes('404'))) {
+          throw apiError;
+        }
       }
       
       // Success callback and effects
@@ -245,6 +280,29 @@ export const useAchievementShare = () => {
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Canvas not supported');
 
+      const loadLogo = () =>
+        new Promise<HTMLImageElement | null>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = '/logo.jpg';
+        });
+
+      const drawRoundedRect = (x: number, y: number, w: number, h: number, r: number) => {
+        const radius = Math.min(r, w / 2, h / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + radius, y);
+        ctx.lineTo(x + w - radius, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+        ctx.lineTo(x + w, y + h - radius);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+        ctx.lineTo(x + radius, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+      };
+
       canvas.width = width;
       canvas.height = height;
       
@@ -280,6 +338,18 @@ export const useAchievementShare = () => {
       gradient.addColorStop(1, colors.bg3);
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, width, height);
+
+      // Subtle decorative dots
+      ctx.globalAlpha = 0.08;
+      ctx.fillStyle = colors.text;
+      for (let i = 0; i < 24; i++) {
+        const x = (i * 50) % width;
+        const y = Math.floor(i / 12) * 120 + 50;
+        ctx.beginPath();
+        ctx.arc(x, y, 30, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
       
       // Decorative elements
       ctx.strokeStyle = colors.primary;
@@ -289,6 +359,45 @@ export const useAchievementShare = () => {
       ctx.strokeStyle = colors.secondary;
       ctx.lineWidth = 2;
       ctx.strokeRect(60, 60, width - 120, height - 120);
+
+      // Logo placement
+      const logo = await loadLogo();
+      if (logo) {
+        const logoBoxSize = Math.floor(width * 0.1);
+        const logoX = width - logoBoxSize - 90;
+        const logoY = 90;
+        const innerPadding = Math.floor(width * 0.01);
+
+        // Soft shadow + white background
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+        ctx.shadowBlur = 12;
+        ctx.shadowOffsetY = 4;
+        ctx.fillStyle = '#ffffff';
+        drawRoundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 18);
+        ctx.fill();
+        ctx.restore();
+
+        // Clip area for logo
+        ctx.save();
+        drawRoundedRect(logoX + innerPadding, logoY + innerPadding, logoBoxSize - innerPadding * 2, logoBoxSize - innerPadding * 2, 12);
+        ctx.clip();
+
+        const box = logoBoxSize - innerPadding * 2;
+        const scale = Math.min(box / logo.naturalWidth, box / logo.naturalHeight);
+        const drawW = logo.naturalWidth * scale;
+        const drawH = logo.naturalHeight * scale;
+        const drawX = logoX + innerPadding + (box - drawW) / 2;
+        const drawY = logoY + innerPadding + (box - drawH) / 2;
+        ctx.drawImage(logo, drawX, drawY, drawW, drawH);
+        ctx.restore();
+
+        // Gold outline
+        ctx.strokeStyle = colors.primary;
+        ctx.lineWidth = 3;
+        drawRoundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 18);
+        ctx.stroke();
+      }
 
       // Certificate title
       ctx.fillStyle = colors.text;
@@ -359,6 +468,15 @@ export const useAchievementShare = () => {
       ctx.font = `${Math.floor(width * 0.015)}px Arial, sans-serif`;
       ctx.fillStyle = colors.secondary;
       ctx.fillText('Afritech Bridge LMS', width / 2, height - 60);
+
+      // Seal
+      ctx.beginPath();
+      ctx.fillStyle = colors.primary;
+      ctx.arc(120, height - 140, 40, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = colors.text;
+      ctx.font = `bold ${Math.floor(width * 0.013)}px Arial, sans-serif`;
+      ctx.fillText('CERTIFIED', 120, height - 135);
       
       return canvas;
       

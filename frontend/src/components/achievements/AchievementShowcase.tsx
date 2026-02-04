@@ -168,7 +168,7 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
               size="xl"
               variant="showcase"
               showSharing={achievement.earned}
-              onShare={onShare ? (method) => onShare(achievement.id, method) : undefined}
+              onShare={onShare}
             />
           </div>
           
@@ -428,7 +428,7 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
                   showProgress={!achievement.earned}
                   showSharing={achievement.earned}
                   onClick={() => setSelectedAchievement(achievement)}
-                  onShare={onShare ? (method) => onShare(achievement.id, method) : undefined}
+                  onShare={onShare}
                   onToggleShowcase={onToggleShowcase ? () => onToggleShowcase(achievement.id, !achievement.is_showcased) : undefined}
                 />
               </motion.div>
