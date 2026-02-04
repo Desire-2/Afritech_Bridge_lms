@@ -74,18 +74,18 @@ const AchievementProfilePanel: React.FC<AchievementProfilePanelProps> = ({
 }) => {
   if (loading) {
     return (
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
+      <Card className="w-full border-slate-700 bg-slate-800">
+        <CardHeader className="bg-slate-900 border-b border-slate-700">
+          <CardTitle className="flex items-center gap-2 text-slate-100">
             <Trophy className="h-5 w-5 text-yellow-500" />
             Achievements
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="bg-slate-800">
           <div className="space-y-4">
             <div className="animate-pulse">
-              <div className="h-4 bg-gray-200 rounded w-1/2 mb-2"></div>
-              <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+              <div className="h-4 bg-slate-700 rounded w-1/2 mb-2"></div>
+              <div className="h-4 bg-slate-700 rounded w-3/4"></div>
             </div>
           </div>
         </CardContent>
@@ -102,10 +102,10 @@ const AchievementProfilePanel: React.FC<AchievementProfilePanelProps> = ({
             Achievements
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="bg-slate-800">
           <div className="text-center py-8">
-            <Trophy className="h-12 w-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-muted-foreground">Start learning to earn achievements!</p>
+            <Trophy className="h-12 w-12 text-slate-400 mx-auto mb-4" />
+            <p className="text-slate-300">Start learning to earn achievements!</p>
             <Button className="mt-4" asChild>
               <Link href="/student/courses">Explore Courses</Link>
             </Button>
@@ -117,12 +117,12 @@ const AchievementProfilePanel: React.FC<AchievementProfilePanelProps> = ({
 
   if (compact) {
     return (
-      <Card className="w-full">
-        <CardContent className="p-4">
+      <Card className="w-full border-slate-700 bg-slate-800">
+        <CardContent className="p-4 bg-slate-800">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Trophy className="h-5 w-5 text-yellow-500" />
-              <span className="font-semibold">Achievements</span>
+              <span className="font-semibold text-slate-100">Achievements</span>
             </div>
             <Button variant="ghost" size="sm" asChild>
               <Link href="/student/achievements">
@@ -134,20 +134,20 @@ const AchievementProfilePanel: React.FC<AchievementProfilePanelProps> = ({
           
           {/* Compact Stats */}
           <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="text-center p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-              <div className="text-2xl font-bold text-yellow-800">{data.total_achievements}</div>
-              <div className="text-xs text-yellow-600">Earned</div>
+            <div className="text-center p-3 bg-slate-700 rounded-lg border border-slate-600">
+              <div className="text-2xl font-bold text-slate-100">{data.total_achievements}</div>
+              <div className="text-xs text-slate-300">Earned</div>
             </div>
-            <div className="text-center p-3 bg-orange-50 rounded-lg border border-orange-200">
-              <div className="text-2xl font-bold text-orange-800">{data.current_streak}</div>
-              <div className="text-xs text-orange-600">Day Streak</div>
+            <div className="text-center p-3 bg-slate-700 rounded-lg border border-slate-600">
+              <div className="text-2xl font-bold text-slate-100">{data.current_streak}</div>
+              <div className="text-xs text-slate-300">Day Streak</div>
             </div>
           </div>
 
           {/* Level Progress */}
           <div className="mb-4">
             <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-purple-700 font-medium">Level {data.current_level}</span>
+              <span className="text-slate-100 font-medium">Level {data.current_level}</span>
               <span className="text-purple-600">{data.xp_progress}%</span>
             </div>
             <Progress value={data.xp_progress} className="h-2" />

@@ -124,8 +124,8 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = ({
       transition={{ delay: index * 0.05 }}
       className={`flex items-center gap-4 p-4 rounded-lg transition-all
         ${isCurrentUser 
-          ? 'bg-gradient-to-r from-blue-100 to-purple-100 border-2 border-blue-400 shadow-lg' 
-          : 'bg-white hover:bg-gray-50 border border-gray-200'
+          ? 'bg-gradient-to-r from-slate-700 to-slate-600 border-2 border-slate-500 shadow-lg' 
+          : 'bg-slate-800 hover:bg-slate-700 border border-slate-600'
         }`}
     >
       {/* Rank Badge */}
@@ -136,14 +136,14 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = ({
       {/* User Info */}
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <Avatar className="h-10 w-10">
-          <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-500 text-white font-semibold">
+          <AvatarFallback className="bg-gradient-to-br from-slate-600 to-slate-700 text-slate-100 font-semibold">
             {ranking.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
           </AvatarFallback>
         </Avatar>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <p className={`font-semibold truncate ${isCurrentUser ? 'text-blue-900' : 'text-gray-900'}`}>
+            <p className={`font-semibold truncate ${isCurrentUser ? 'text-slate-100' : 'text-slate-100'}`}>
               {ranking.name}
             </p>
             {isCurrentUser && (
@@ -153,25 +153,25 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = ({
               <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />
             )}
           </div>
-          <p className="text-sm text-gray-600 truncate">@{ranking.username}</p>
+          <p className="text-sm text-slate-300 truncate">@{ranking.username}</p>
         </div>
       </div>
 
       {/* Score */}
       <div className="text-right flex-shrink-0">
-        <div className={`text-xl font-bold ${isCurrentUser ? 'text-blue-900' : 'text-gray-900'}`}>
+        <div className={`text-xl font-bold ${isCurrentUser ? 'text-slate-100' : 'text-slate-100'}`}>
           {ranking.score.toLocaleString()}
         </div>
-        <div className="text-xs text-gray-500">{getMetricLabel(metric)}</div>
+        <div className="text-xs text-slate-300">{getMetricLabel(metric)}</div>
       </div>
 
       {/* Period Score (for weekly/monthly) */}
       {ranking.period_score !== undefined && (
         <div className="text-right flex-shrink-0 text-sm">
-          <div className="font-semibold text-green-600">
+          <div className="font-semibold text-emerald-400">
             +{ranking.period_score.toLocaleString()}
           </div>
-          <div className="text-xs text-gray-500">this period</div>
+          <div className="text-xs text-slate-300">this period</div>
         </div>
       )}
     </motion.div>
@@ -208,8 +208,8 @@ export const LeaderboardDisplay: React.FC<LeaderboardDisplayProps> = ({
   const IconComponent = getIcon(leaderboard.metric);
 
   return (
-    <Card className="border-2">
-      <CardHeader>
+    <Card className="border-2 border-slate-700 bg-slate-800">
+      <CardHeader className="bg-slate-900 border-b border-slate-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className={`w-12 h-12 rounded-full bg-gradient-to-br from-${leaderboard.color}-400 to-${leaderboard.color}-600 
@@ -272,7 +272,7 @@ export const LeaderboardDisplay: React.FC<LeaderboardDisplayProps> = ({
         )}
 
         {/* Last Updated */}
-        <div className="mt-4 pt-4 border-t text-center text-xs text-gray-500">
+        <div className="mt-4 pt-4 border-t border-slate-600 text-center text-xs text-slate-400">
           Last updated: {new Date(leaderboard.last_updated).toLocaleString()}
         </div>
       </CardContent>
@@ -316,15 +316,15 @@ export const LeaderboardWidget: React.FC<LeaderboardWidgetProps> = ({
             >
               <RankMedal rank={ranking.rank} size="sm" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{ranking.name}</p>
+                <p className="text-sm font-medium truncate text-slate-100">{ranking.name}</p>
               </div>
-              <div className="text-sm font-bold">{ranking.score}</div>
+              <div className="text-sm font-bold text-slate-100">{ranking.score}</div>
             </div>
           ))}
         </div>
 
         {rankings.length === 0 && (
-          <div className="text-center py-6 text-sm text-gray-500">
+          <div className="text-center py-6 text-sm text-slate-300">
             No rankings yet
           </div>
         )}
@@ -349,11 +349,11 @@ export const UserRankCard: React.FC<UserRankCardProps> = ({
   const percentile = ((totalParticipants - userRank.rank) / totalParticipants) * 100;
 
   return (
-    <Card className="border-2 border-blue-300 bg-gradient-to-br from-blue-50 to-purple-50">
+    <Card className="border-2 border-slate-700 bg-gradient-to-br from-slate-800 to-slate-700">
       <CardContent className="p-6">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-lg">Your Ranking</h3>
-          <Badge variant="secondary" className="text-lg font-bold">
+          <h3 className="font-bold text-lg text-slate-100">Your Ranking</h3>
+          <Badge variant="secondary" className="text-lg font-bold bg-slate-600 text-slate-100">
             #{userRank.rank}
           </Badge>
         </div>
@@ -361,10 +361,10 @@ export const UserRankCard: React.FC<UserRankCardProps> = ({
         <div className="flex items-center gap-4 mb-4">
           <RankMedal rank={userRank.rank} size="lg" />
           <div className="flex-1">
-            <div className="text-3xl font-bold text-blue-900">
+            <div className="text-3xl font-bold text-slate-100">
               {userRank.score.toLocaleString()}
             </div>
-            <div className="text-sm text-gray-600">Total Score</div>
+            <div className="text-sm text-slate-300">Total Score</div>
           </div>
         </div>
 

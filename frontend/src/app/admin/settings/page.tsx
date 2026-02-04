@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import SettingsPanel from '@/components/admin/SettingsPanel';
+import EnhancedSettingsPanel from '@/components/admin/EnhancedSettingsPanel';
 
 export default function SettingsPage() {
-  return <SettingsPanel />;
+  return <EnhancedSettingsPanel />;
 }

@@ -3,8 +3,14 @@
 
 from datetime import datetime, timedelta
 import json
+from sqlalchemy.orm import validates
+from sqlalchemy.exc import SQLAlchemyError
+import logging
 from .user_models import db, User
 from .course_models import Course, Module, Enrollment
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 class Achievement(db.Model):
     """
@@ -54,22 +60,51 @@ class Achievement(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
+    # Add validation
+    @validates('name')
+    def validate_name(self, key, name):
+        if not name or len(name.strip()) == 0:
+            raise ValueError("Achievement name cannot be empty")
+        return name.strip()
+    
+    @validates('points')
+    def validate_points(self, key, points):
+        if points is not None and points < 0:
+            raise ValueError("Achievement points cannot be negative")
+        return points
+    
+    @validates('criteria_value')
+    def validate_criteria_value(self, key, criteria_value):
+        if criteria_value is not None and criteria_value < 0:
+            raise ValueError("Criteria value cannot be negative")
+        return criteria_value
+    
+    @validates('max_earners')
+    def validate_max_earners(self, key, max_earners):
+        if max_earners is not None and max_earners < 1:
+            raise ValueError("Max earners must be at least 1")
+        return max_earners
+    
     def is_available(self):
-        """Check if achievement is currently available to earn"""
-        if not self.is_active:
-            return False
-        
-        if self.is_seasonal:
-            now = datetime.utcnow()
-            if self.season_start and now < self.season_start:
+        """Check if achievement is currently available to earn with error handling"""
+        try:
+            if not self.is_active:
                 return False
-            if self.season_end and now > self.season_end:
+            
+            if self.is_seasonal:
+                now = datetime.utcnow()
+                if self.season_start and now < self.season_start:
+                    return False
+                if self.season_end and now > self.season_end:
+                    return False
+            
+            if self.max_earners and self.current_earners and self.current_earners >= self.max_earners:
                 return False
-        
-        if self.max_earners and self.current_earners >= self.max_earners:
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error checking availability for achievement {self.id}: {str(e)}")
             return False
-        
-        return True
     
     def to_dict(self, hide_secret=True):
         data = {
@@ -441,44 +476,73 @@ class StudentPoints(db.Model):
     # Relationships
     user = db.relationship('User', backref=db.backref('points', uselist=False))
     
+    # Add validation
+    @validates('total_points', 'lesson_points', 'quiz_points', 'assignment_points', 
+               'streak_points', 'achievement_points', 'social_points', 'bonus_points')
+    def validate_points(self, key, value):
+        if value is not None and value < 0:
+            raise ValueError(f"{key} cannot be negative")
+        return value
+    
+    @validates('current_level')
+    def validate_level(self, key, level):
+        if level is not None and level < 1:
+            raise ValueError("Level must be at least 1")
+        return level
+    
+    @validates('point_multiplier')
+    def validate_multiplier(self, key, multiplier):
+        if multiplier is not None and multiplier < 0:
+            raise ValueError("Point multiplier cannot be negative")
+        return multiplier
+    
     def add_points(self, points, category='bonus', apply_multiplier=True):
-        """Add points with optional multiplier"""
-        # Ensure point_multiplier is not None
-        if self.point_multiplier is None:
-            self.point_multiplier = 1.0
-        
-        if apply_multiplier and self.point_multiplier > 1.0:
-            if self.multiplier_expires_at and datetime.utcnow() < self.multiplier_expires_at:
-                points = int(points * self.point_multiplier)
-            else:
+        """Add points with optional multiplier and validation"""
+        try:
+            if points is None or points < 0:
+                logger.warning(f"Invalid points value: {points}")
+                return 0
+                
+            # Ensure point_multiplier is not None
+            if self.point_multiplier is None:
                 self.point_multiplier = 1.0
-                self.multiplier_expires_at = None
-        
-        # Add to category (ensure fields are not None)
-        if category == 'lesson':
-            self.lesson_points = (self.lesson_points or 0) + points
-        elif category == 'quiz':
-            self.quiz_points = (self.quiz_points or 0) + points
-        elif category == 'assignment':
-            self.assignment_points = (self.assignment_points or 0) + points
-        elif category == 'streak':
-            self.streak_points = (self.streak_points or 0) + points
-        elif category == 'achievement':
-            self.achievement_points = (self.achievement_points or 0) + points
-        elif category == 'social':
-            self.social_points = (self.social_points or 0) + points
-        else:
-            self.bonus_points = (self.bonus_points or 0) + points
-        
-        self.total_points = (self.total_points or 0) + points
-        self.points_this_week = (self.points_this_week or 0) + points
-        self.points_this_month = (self.points_this_month or 0) + points
-        self.last_points_earned_at = datetime.utcnow()
-        
-        # Check for level up
-        self._check_level_up()
-        
-        return points
+            
+            if apply_multiplier and self.point_multiplier > 1.0:
+                if self.multiplier_expires_at and datetime.utcnow() < self.multiplier_expires_at:
+                    points = int(points * self.point_multiplier)
+                else:
+                    self.point_multiplier = 1.0
+                    self.multiplier_expires_at = None
+            
+            # Add to category (ensure fields are not None)
+            if category == 'lesson':
+                self.lesson_points = (self.lesson_points or 0) + points
+            elif category == 'quiz':
+                self.quiz_points = (self.quiz_points or 0) + points
+            elif category == 'assignment':
+                self.assignment_points = (self.assignment_points or 0) + points
+            elif category == 'streak':
+                self.streak_points = (self.streak_points or 0) + points
+            elif category == 'achievement':
+                self.achievement_points = (self.achievement_points or 0) + points
+            elif category == 'social':
+                self.social_points = (self.social_points or 0) + points
+            else:
+                self.bonus_points = (self.bonus_points or 0) + points
+            
+            self.total_points = (self.total_points or 0) + points
+            self.points_this_week = (self.points_this_week or 0) + points
+            self.points_this_month = (self.points_this_month or 0) + points
+            self.last_points_earned_at = datetime.utcnow()
+            
+            # Check for level up
+            self._check_level_up()
+            
+            return points
+            
+        except Exception as e:
+            logger.error(f"Error adding points for user {self.user_id}: {str(e)}")
+            return 0
     
     def add_xp(self, xp):
         """Add experience points and check for level up"""

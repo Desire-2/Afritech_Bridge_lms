@@ -25,6 +25,7 @@ from src.models.achievement_models import (
     Achievement, UserAchievement, LearningStreak, StudentPoints, 
     Milestone, UserMilestone, Leaderboard, QuestChallenge, UserQuestProgress
 ) # Import achievement models
+from src.models.system_settings_models import SystemSetting, SettingAuditLog, initialize_default_settings # Import system settings models
 from src.models.file_models import FileComment, FileAnalysis # Import enhanced file models
 from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
 from src.utils.brevo_email_service import brevo_service # Import Brevo service
@@ -51,6 +52,7 @@ from src.routes.forum_routes import forum_bp # Import forum blueprint
 from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
 from src.routes.enhanced_file_routes import enhanced_file_bp # Import enhanced file routes
 from src.routes.admin_routes import admin_bp # Import admin blueprint
+from src.routes.system_settings_routes import settings_bp # Import system settings blueprint
 from src.routes.file_upload_routes import file_upload_bp # Import file upload blueprint
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
@@ -303,6 +305,7 @@ app.register_blueprint(ai_agent_bp) # Register AI agent blueprint
 app.register_blueprint(enhanced_file_bp) # Register enhanced file routes
 app.register_blueprint(application_bp) # Register application blueprint
 app.register_blueprint(admin_bp) # Register admin blueprint
+app.register_blueprint(settings_bp) # Register system settings blueprint
 app.register_blueprint(file_upload_bp) # Register file upload blueprint
 
 with app.app_context():
@@ -314,6 +317,13 @@ with app.app_context():
     if not Role.query.filter_by(name='admin').first():
         db.session.add(Role(name='admin'))
     db.session.commit()
+    
+    # Initialize default system settings
+    try:
+        initialize_default_settings()
+        logger.info("✅ System settings initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize system settings: {str(e)}")
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext

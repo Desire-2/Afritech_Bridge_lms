@@ -150,20 +150,20 @@ export const AchievementBadge: React.FC<AchievementBadgeProps> = ({
             )}
           </motion.div>
         </TooltipTrigger>
-        <TooltipContent>
+        <TooltipContent className="bg-slate-800 border-slate-700">
           <div className="max-w-xs">
-            <div className="font-bold text-sm">{achievement.title}</div>
-            <div className="text-xs text-gray-400 mt-1">{achievement.description}</div>
+            <div className="font-bold text-sm text-slate-100">{achievement.title}</div>
+            <div className="text-xs text-slate-300 mt-1">{achievement.description}</div>
             {earned && earnedData && (
-              <div className="text-xs text-green-400 mt-2">
+              <div className="text-xs text-emerald-400 mt-2">
                 Earned {new Date(earnedData.earned_at).toLocaleDateString()}
               </div>
             )}
             <div className="flex items-center gap-2 mt-2">
-              <Badge variant="secondary" className="text-xs">
+              <Badge variant="secondary" className="text-xs bg-slate-700 text-slate-200">
                 {achievement.points} pts
               </Badge>
-              <Badge variant="outline" className="text-xs capitalize">
+              <Badge variant="outline" className="text-xs capitalize bg-slate-700 border-slate-600 text-slate-200">
                 {achievement.rarity}
               </Badge>
             </div>

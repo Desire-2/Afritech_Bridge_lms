@@ -17,6 +17,9 @@ api.interceptors.request.use(
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    } else {
+      // Log warning if token is missing
+      console.warn('⚠️ No token found in localStorage for request:', config.url);
     }
     return config;
   },
@@ -387,6 +390,13 @@ export class StudentApiService {
 
   static async completeLesson(lessonId: number, data: any): Promise<any> {
     try {
+      // Check if token exists before making request
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.error('❌ No authentication token found - cannot complete lesson');
+        throw new Error('No authentication token available');
+      }
+      
       console.log(`📤 Calling completeLesson API: /student/lessons/${lessonId}/complete`, data);
       const response = await api.post(`/student/lessons/${lessonId}/complete`, data);
       console.log(`✅ completeLesson API success:`, response.data);
@@ -490,6 +500,14 @@ export class StudentApiService {
     const response = await api.post('/student/enrollment/enroll', { 
       course_id: courseId,
       ...paymentData 
+    });
+    return response.data;
+  }
+
+  static async processPayment(applicationId: number, paymentData: any): Promise<any> {
+    const response = await api.post('/student/enrollment/payment', {
+      application_id: applicationId,
+      ...paymentData
     });
     return response.data;
   }

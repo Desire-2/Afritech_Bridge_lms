@@ -237,11 +237,11 @@ class EnrollmentService:
                 return False, "Application not in payment pending status", {}
             
             # Mock payment processing (integrate with actual payment gateway)
-            payment_success = EnrollmentService._process_payment_gateway(payment_data)
+            payment_success, payment_reference, gateway_message = EnrollmentService._process_payment_gateway(payment_data)
             
             if payment_success:
                 application.payment_status = 'completed'
-                application.payment_reference = payment_data.get('reference')
+                application.payment_reference = payment_reference or payment_data.get('reference')
                 application.status = 'approved'
                 
                 # Create enrollment
@@ -255,7 +255,7 @@ class EnrollmentService:
             else:
                 application.payment_status = 'failed'
                 db.session.commit()
-                return False, "Payment processing failed", {}
+                return False, gateway_message or "Payment processing failed", {}
                 
         except Exception as e:
             db.session.rollback()
@@ -393,11 +393,26 @@ class EnrollmentService:
         return True
     
     @staticmethod
-    def _process_payment_gateway(payment_data: Dict) -> bool:
-        """Mock payment gateway integration"""
-        # This would integrate with actual payment processors like Stripe, PayPal, etc.
-        # For now, return True for demo purposes
-        return payment_data.get('test_success', True)
+    def _process_payment_gateway(payment_data: Dict) -> Tuple[bool, str, str]:
+        """Payment gateway integration"""
+        payment_method = payment_data.get('payment_method')
+
+        if payment_method == 'mobile_money':
+            from .mtn_payment_service import MtnPaymentService
+
+            success, reference, message = MtnPaymentService.process_mobile_money_payment(payment_data)
+            return success, reference or "", message
+
+        if payment_method == 'paypal':
+            from .paypal_payment_service import PaypalPaymentService
+
+            success, approval_url, message = PaypalPaymentService.process_paypal_payment(payment_data)
+            return success, approval_url or "", message
+
+        # Fallback mock processing for other methods
+        test_success = payment_data.get('test_success', True)
+        reference = payment_data.get('reference') or ""
+        return bool(test_success), reference, ""
     
     @staticmethod
     def get_student_enrollments(student_id: int) -> List[Dict]:

@@ -17,6 +17,15 @@ def check_and_add_columns():
             
             # Define all expected columns for each table
             table_schemas = {
+                "courses": [
+                    ("enrollment_type", "VARCHAR(20) DEFAULT 'free'"),
+                    ("price", "FLOAT"),
+                    ("currency", "VARCHAR(10) DEFAULT 'USD'"),
+                    ("start_date", "TIMESTAMP"),
+                    ("module_release_count", "INTEGER"),
+                    ("module_release_interval", "VARCHAR(50)"),
+                    ("module_release_interval_days", "INTEGER"),
+                ],
                 "modules": [
                     ("learning_objectives", "TEXT"),
                     ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
@@ -70,18 +79,21 @@ def check_and_add_columns():
             added_count = 0
             existing_count = 0
             
+            inspector = inspect(db.engine)
+
             for table_name, columns in table_schemas.items():
                 print(f"\n📋 Checking table: {table_name}")
-                
+
+                try:
+                    existing_columns = {
+                        col["name"] for col in inspector.get_columns(table_name)
+                    }
+                except Exception as e:
+                    print(f"   ⚠️  Unable to inspect table {table_name}: {str(e)}")
+                    continue
+
                 for column_name, column_type in columns:
-                    # Check if column exists
-                    result = db.session.execute(text(f"""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name='{table_name}' AND column_name='{column_name}'
-                    """))
-                    
-                    if result.fetchone() is None:
+                    if column_name not in existing_columns:
                         print(f"   ➜ Adding {column_name}...")
                         try:
                             db.session.execute(text(f"""

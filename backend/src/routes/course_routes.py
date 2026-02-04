@@ -90,6 +90,17 @@ def create_course():
                 "message": "A course with this title already exists. Please choose a different title.",
                 "existing_course_id": existing_course.id
             }), 409  # 409 Conflict
+
+        enrollment_type = data.get("enrollment_type", "free")
+        price = data.get("price")
+        currency = data.get("currency", "USD")
+
+        if enrollment_type == "paid":
+            try:
+                if price is None or float(price) <= 0:
+                    return jsonify({"message": "Paid courses must have a price greater than 0"}), 400
+            except (TypeError, ValueError):
+                return jsonify({"message": "Price must be a valid number"}), 400
         
         new_course = Course(
             title=data["title"],
@@ -98,7 +109,10 @@ def create_course():
             target_audience=data.get("target_audience"),
             estimated_duration=data.get("estimated_duration"),
             instructor_id=instructor_id_to_set,
-            is_published=data.get("is_published", False)
+            is_published=data.get("is_published", False),
+            enrollment_type=enrollment_type,
+            price=price,
+            currency=currency
         )
         logger.info(f"[CREATE_COURSE] Course object created: {new_course.title}")
         
@@ -179,6 +193,26 @@ def update_course(course_id):
         course.target_audience = data.get("target_audience", course.target_audience)
         course.estimated_duration = data.get("estimated_duration", course.estimated_duration)
         course.is_published = data.get("is_published", course.is_published)
+
+        # Payment & Enrollment settings
+        if "enrollment_type" in data:
+            enrollment_type = data.get("enrollment_type")
+            if enrollment_type not in ["free", "paid", "scholarship"]:
+                return jsonify({"message": "Invalid enrollment_type. Use free, paid, or scholarship."}), 400
+            course.enrollment_type = enrollment_type
+
+        if "price" in data:
+            try:
+                course.price = float(data["price"]) if data["price"] is not None else None
+            except (TypeError, ValueError):
+                return jsonify({"message": "Price must be a valid number"}), 400
+
+        if "currency" in data:
+            course.currency = data.get("currency") or course.currency
+
+        if course.enrollment_type == "paid":
+            if course.price is None or course.price <= 0:
+                return jsonify({"message": "Paid courses must have a price greater than 0"}), 400
         
         # Module release settings
         if "start_date" in data:

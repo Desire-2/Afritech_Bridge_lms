@@ -9,6 +9,7 @@ export { default as ProgressApiService } from './progress.service';
 export { default as AssessmentApiService } from './assessment.service';
 export { default as InteractiveLearningApiService } from './interactive.service';
 export { default as PaymentApiService } from './payment.service';
+export { default as AchievementApiService } from '../achievementApi';
 
 // Re-export types
 export * from './types';

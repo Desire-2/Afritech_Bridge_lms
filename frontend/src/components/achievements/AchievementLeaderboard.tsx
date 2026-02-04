@@ -79,29 +79,74 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
       setRefreshing(true);
       const response = await AchievementApiService.getLeaderboard(currentLeaderboard, 50);
       
-      // Mock additional leaderboard data for enhanced features
-      const enhancedEntries = response.leaderboard.map((entry: any, index: number) => ({
-        ...entry,
-        rank: index + 1,
-        trend: ['up', 'down', 'same'][Math.floor(Math.random() * 3)] as 'up' | 'down' | 'same',
-        change: Math.floor(Math.random() * 10) + 1,
-        recent_activity: ['Completed quiz', 'Earned achievement', 'Finished course', 'Started project'][Math.floor(Math.random() * 4)]
-      }));
+      // Handle the correct response format from backend
+      const rankings = response.rankings || [];
+      
+      // Transform API response to match LeaderboardEntry interface
+      const enhancedEntries: LeaderboardEntry[] = rankings.map((entry: any, index: number) => {
+        // Debug: Log the original entry to understand its structure
+        if (index === 0) {
+          console.log('First API entry structure:', Object.keys(entry));
+        }
+        
+        // Parse the full name from API response
+        const fullName = entry.name || '';
+        const [firstName, ...lastNameParts] = fullName.split(' ');
+        const lastName = lastNameParts.join(' ');
+        
+        const transformedEntry: LeaderboardEntry = {
+          user_id: entry.user_id,
+          username: entry.username,
+          first_name: firstName || undefined,
+          last_name: lastName || undefined,
+          score: entry.score || 0,
+          rank: entry.rank || index + 1,
+          achievements_count: entry.achievements_count || Math.floor(Math.random() * 20) + 1, // Mock for now
+          current_streak: entry.current_streak || Math.floor(Math.random() * 30) + 1, // Mock for now
+          level: entry.level || Math.floor((entry.score || 0) / 100) + 1, // Calculate from score
+          recent_activity: ['Completed quiz', 'Earned achievement', 'Finished course', 'Started project'][Math.floor(Math.random() * 4)],
+          trend: ['up', 'down', 'same'][Math.floor(Math.random() * 3)] as 'up' | 'down' | 'same',
+          change: Math.floor(Math.random() * 10) + 1,
+          profile_picture_url: undefined // Will use fallback avatar
+        };
+        
+        // Debug: Log the transformed entry to make sure transformation is working
+        if (index === 0) {
+          console.log('Transformed entry structure:', Object.keys(transformedEntry));
+        }
+        
+        return transformedEntry;
+      });
 
       const leaderboardData: Leaderboard = {
         name: currentLeaderboard,
         display_name: getLeaderboardDisplayName(currentLeaderboard),
         description: getLeaderboardDescription(currentLeaderboard),
         entries: enhancedEntries,
-        user_position: response.user_position,
-        total_participants: response.total_users || enhancedEntries.length,
+        user_position: typeof response.user_rank === 'number' ? response.user_rank : undefined,
+        total_participants: response.total_participants || enhancedEntries.length,
         last_updated: new Date().toISOString()
       };
 
+      // Debug: Log final entries to verify they're properly transformed
+      console.log('Final leaderboard entries sample:', leaderboardData.entries.slice(0, 2));
+
       setLeaderboards([leaderboardData]);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching leaderboards:', error);
-      toast.error('Failed to load leaderboard');
+      
+      // Extract meaningful error message
+      let errorMessage = 'Failed to load leaderboard';
+      if (error.response?.data?.error) {
+        errorMessage = error.response.data.error;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
+      
+      // Set empty state if no data
+      setLeaderboards([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -176,7 +221,17 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
     if (entry.first_name && entry.last_name) {
       return `${entry.first_name[0]}${entry.last_name[0]}`.toUpperCase();
     }
-    return entry.username[0]?.toUpperCase() || 'U';
+    if (entry.first_name && !entry.last_name) {
+      return entry.first_name.substring(0, 2).toUpperCase();
+    }
+    if (entry.username) {
+      const parts = entry.username.split(' ');
+      if (parts.length >= 2) {
+        return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+      }
+      return entry.username.substring(0, 2).toUpperCase();
+    }
+    return 'U';
   };
 
   const currentLeaderboardData = leaderboards.find(lb => lb.name === currentLeaderboard);
@@ -199,11 +254,11 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
       {/* Header with Controls */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
+          <h2 className="text-2xl font-bold flex items-center gap-2 text-slate-100">
             <Trophy className="h-6 w-6 text-yellow-500" />
             Achievement Leaderboard
           </h2>
-          <p className="text-muted-foreground">
+          <p className="text-slate-300">
             {currentLeaderboardData?.description}
           </p>
         </div>
@@ -270,10 +325,10 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
       )}
 
       {/* Leaderboard Content */}
-      <Card>
-        <CardHeader className="pb-3">
+      <Card className="border-slate-700 bg-slate-800">
+        <CardHeader className="pb-3 bg-slate-900 border-b border-slate-700">
           <div className="flex justify-between items-center">
-            <CardTitle className="text-lg">
+            <CardTitle className="text-lg text-slate-100">
               {currentLeaderboardData?.display_name}
             </CardTitle>
             <div className="flex gap-2">
@@ -293,59 +348,67 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
               </Button>
             </div>
           </div>
-          <div className="text-sm text-muted-foreground">
+          <div className="text-sm text-slate-300">
             Last updated: {currentLeaderboardData?.last_updated && 
               new Date(currentLeaderboardData.last_updated).toLocaleTimeString()}
           </div>
         </CardHeader>
-        <CardContent className="p-0">
+        <CardContent className="p-0 bg-slate-800">
           {currentLeaderboardData?.entries && currentLeaderboardData.entries.length > 0 ? (
             <div className="space-y-1">
-              {currentLeaderboardData.entries.map((entry, index) => (
+              {currentLeaderboardData.entries
+                .filter((entry): entry is LeaderboardEntry => 
+                  entry != null && 
+                  typeof entry === 'object' && 
+                  'user_id' in entry &&
+                  'rank' in entry &&
+                  typeof entry.rank === 'number'
+                )
+                .map((entry, index) => (
                 <motion.div
-                  key={`${entry.user_id}-${entry.rank}`}
+                  key={`${entry.user_id}-${entry.rank || index}`}
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
                   className={`
-                    p-4 border-l-4 hover:bg-gray-50 transition-colors cursor-pointer
-                    ${entry.rank === 1 ? 'border-l-yellow-400 bg-yellow-50' : 
-                      entry.rank === 2 ? 'border-l-gray-400 bg-gray-50' :
-                      entry.rank === 3 ? 'border-l-amber-400 bg-amber-50' :
-                      'border-l-transparent'}
+                    p-4 border-l-4 hover:bg-slate-700 transition-colors cursor-pointer bg-slate-800
+                    ${(entry.rank || 0) === 1 ? 'border-l-yellow-400 bg-slate-700' : 
+                      (entry.rank || 0) === 2 ? 'border-l-gray-400 bg-slate-750' :
+                      (entry.rank || 0) === 3 ? 'border-l-amber-400 bg-slate-750' :
+                      'border-l-slate-600'}
                   `}
                 >
                   {viewMode === 'detailed' ? (
                     <div className="flex items-center gap-4">
                       {/* Rank */}
                       <div className="flex-shrink-0 w-12 flex justify-center">
-                        {getRankIcon(entry.rank)}
+                        {getRankIcon(entry.rank || 0)}
                       </div>
 
                       {/* User Info */}
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <Avatar className="h-10 w-10">
                           <AvatarImage src={entry.profile_picture_url} />
-                          <AvatarFallback className="bg-gradient-to-br from-blue-400 to-purple-600 text-white">
+                          <AvatarFallback className="bg-gradient-to-br from-slate-600 to-slate-700 text-slate-100">
                             {getInitials(entry)}
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold truncate">
+                            <span className="font-semibold truncate text-slate-100">
                               {entry.first_name && entry.last_name 
                                 ? `${entry.first_name} ${entry.last_name}`
                                 : entry.username
                               }
                             </span>
-                            {entry.rank <= 3 && (
+                            {(entry.rank || 0) <= 3 && (
                               <Badge variant="secondary" className="text-xs">
-                                {entry.rank === 1 ? 'Champion' : entry.rank === 2 ? 'Runner-up' : 'Bronze'}
+                                {(entry.rank || 0) === 1 ? 'Champion' : (entry.rank || 0) === 2 ? 'Runner-up' : 'Bronze'}
                               </Badge>
                             )}
                           </div>
-                          <div className="text-sm text-muted-foreground truncate">
-                            Level {entry.level} • {entry.achievements_count} achievements
+                          <div className="text-sm text-slate-300 truncate">
+                            Level {entry.level || 1} • {entry.achievements_count || 0} achievements
                           </div>
                         </div>
                       </div>
@@ -353,10 +416,10 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
                       {/* Stats */}
                       <div className="flex items-center gap-6 text-sm">
                         <div className="text-center">
-                          <div className="font-semibold text-lg">
-                            {entry.score.toLocaleString()}
+                          <div className="font-semibold text-lg text-slate-100">
+                            {(entry.score || 0).toLocaleString()}
                           </div>
-                          <div className="text-muted-foreground">
+                          <div className="text-slate-300">
                             {currentLeaderboard === 'points' ? 'Points' :
                              currentLeaderboard === 'achievements' ? 'Achievements' :
                              currentLeaderboard === 'streaks' ? 'Days' : 'Score'}
@@ -368,7 +431,7 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
                         <div className="flex flex-col items-center">
                           <div className="flex items-center gap-1 text-orange-600">
                             <Flame className="h-4 w-4" />
-                            <span className="font-semibold">{entry.current_streak}</span>
+                            <span className="font-semibold">{entry.current_streak || 0}</span>
                           </div>
                           <div className="text-xs text-muted-foreground">streak</div>
                         </div>
@@ -395,37 +458,37 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-8 flex justify-center">
-                          {entry.rank <= 3 ? getRankIcon(entry.rank) : (
+                          {(entry.rank || 0) <= 3 ? getRankIcon(entry.rank || 0) : (
                             <span className="text-sm font-semibold text-gray-600">
-                              {entry.rank}
+                              {entry.rank || 0}
                             </span>
                           )}
                         </div>
                         <Avatar className="h-8 w-8">
                           <AvatarImage src={entry.profile_picture_url} />
-                          <AvatarFallback className="bg-gradient-to-br from-blue-400 to-purple-600 text-white text-xs">
+                          <AvatarFallback className="bg-gradient-to-br from-slate-600 to-slate-700 text-slate-100 text-xs">
                             {getInitials(entry)}
                           </AvatarFallback>
                         </Avatar>
                         <div>
-                          <div className="font-medium text-sm">
+                          <div className="font-medium text-sm text-slate-100">
                             {entry.first_name && entry.last_name 
                               ? `${entry.first_name} ${entry.last_name}`
                               : entry.username
                             }
                           </div>
-                          <div className="text-xs text-muted-foreground">
-                            Level {entry.level}
+                          <div className="text-xs text-slate-300">
+                            Level {entry.level || 1}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-3">
                         <div className="text-right">
-                          <div className="font-semibold">
-                            {entry.score.toLocaleString()}
+                          <div className="font-semibold text-slate-100">
+                            {(entry.score || 0).toLocaleString()}
                           </div>
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-xs text-slate-300">
                             {currentLeaderboard === 'points' ? 'pts' :
                              currentLeaderboard === 'achievements' ? 'achievements' : 'days'}
                           </div>
@@ -439,9 +502,9 @@ const AchievementLeaderboard: React.FC<AchievementLeaderboardProps> = ({ classNa
             </div>
           ) : (
             <div className="text-center py-12">
-              <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No rankings yet</h3>
-              <p className="text-muted-foreground">
+              <Users className="h-12 w-12 text-slate-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2 text-slate-100">No rankings yet</h3>
+              <p className="text-slate-300">
                 Be the first to appear on the leaderboard by earning achievements!
               </p>
             </div>

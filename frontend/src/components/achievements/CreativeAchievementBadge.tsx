@@ -108,12 +108,12 @@ const TIER_STYLES = {
 
 // Category-based background patterns
 const CATEGORY_PATTERNS = {
-  learning: 'bg-gradient-to-br from-blue-50 to-indigo-100',
-  speed: 'bg-gradient-to-br from-red-50 to-orange-100',
-  consistency: 'bg-gradient-to-br from-green-50 to-emerald-100',
-  mastery: 'bg-gradient-to-br from-purple-50 to-violet-100',
-  social: 'bg-gradient-to-br from-pink-50 to-rose-100',
-  exploration: 'bg-gradient-to-br from-cyan-50 to-sky-100'
+  learning: 'bg-gradient-to-br from-slate-800 to-slate-700',
+  speed: 'bg-gradient-to-br from-slate-700 to-slate-600',
+  consistency: 'bg-gradient-to-br from-slate-800 to-slate-700',
+  mastery: 'bg-gradient-to-br from-slate-700 to-slate-600',
+  social: 'bg-gradient-to-br from-slate-800 to-slate-700',
+  exploration: 'bg-gradient-to-br from-slate-700 to-slate-600'
 };
 
 interface Achievement {
@@ -141,7 +141,7 @@ interface CreativeAchievementBadgeProps {
   showProgress?: boolean;
   showSharing?: boolean;
   onClick?: () => void;
-  onShare?: (method: string) => void;
+  onShare?: (achievementId: number, method: string) => void;
   onToggleShowcase?: () => void;
   className?: string;
 }
@@ -175,110 +175,263 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
 
   const config = sizeConfigs[size];
 
-  // Sharing functionality
+  // Helper function to execute the actual sharing action
+  const executeShare = async (method: string, shareText: string, achievementUrl: string, hashtags: string) => {
+    // Validate method parameter
+    if (!method || typeof method !== 'string' || method.trim() === '') {
+      console.error('❌ Invalid share method in executeShare:', method);
+      throw new Error('Invalid sharing method');
+    }
+    
+    switch (method.toLowerCase()) {
+      case 'copy':
+        const copyText = `${shareText}\n\n🎯 Category: ${achievement.category}\n⭐ Tier: ${achievement.tier}\n🏖️ Points: ${achievement.points_value}\n\n🔗 View: ${achievementUrl}`;
+        await navigator.clipboard.writeText(copyText);
+        break;
+        
+      case 'twitter':
+        const twitterText = encodeURIComponent(`${shareText} #${hashtags}`);
+        const twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}&url=${encodeURIComponent(achievementUrl)}`;
+        window.open(twitterUrl, '_blank', 'width=600,height=400,scrollbars=yes,resizable=yes');
+        break;
+        
+      case 'linkedin':
+        const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(achievementUrl)}&title=${encodeURIComponent(achievement.title)}&summary=${encodeURIComponent(achievement.description)}`;
+        window.open(linkedinUrl, '_blank', 'width=600,height=600,scrollbars=yes,resizable=yes');
+        break;
+        
+      case 'whatsapp':
+        const whatsappText = `${shareText}\n\n${achievementUrl}`;
+        const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(whatsappText)}`;
+        window.open(whatsappUrl, '_blank');
+        break;
+        
+      case 'facebook':
+        const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(achievementUrl)}&quote=${encodeURIComponent(shareText)}`;
+        window.open(facebookUrl, '_blank', 'width=600,height=400,scrollbars=yes,resizable=yes');
+        break;
+        
+      case 'download':
+        await downloadAchievementImage();
+        break;
+        
+      case 'native':
+        if (navigator.share) {
+          await navigator.share({
+            title: `Achievement Unlocked: ${achievement.title}`,
+            text: shareText,
+            url: achievementUrl
+          });
+        } else {
+          await navigator.clipboard.writeText(shareText + '\n' + achievementUrl);
+        }
+        break;
+        
+      default:
+        throw new Error(`Sharing method '${method}' not supported`);
+    }
+  };
+
+  // Sharing functionality with enhanced platform support
   const handleShare = async (method: string) => {
+    if (!earned) {
+      toast.error('You can only share achievements you\'ve earned');
+      return;
+    }
+    
+    // Validate method parameter
+    if (!method || typeof method !== 'string' || method.trim() === '') {
+      console.error('❌ Invalid share method in handleShare:', method);
+      toast.error('Invalid sharing method');
+      return;
+    }
+    
     setIsSharing(true);
     
     try {
-      const achievementUrl = `${window.location.origin}/achievements/${achievement.id}`;
+      const baseUrl = window.location.origin;
+      const achievementUrl = `${baseUrl}/achievements/${achievement.id}`;
       const shareText = `🏆 I just earned "${achievement.title}" achievement! ${achievement.description}`;
+      const hashtags = ['Learning', 'Achievement', achievement.category, achievement.tier]
+        .filter(Boolean)
+        .map(tag => tag.replace(/\s+/g, ''))
+        .join(',');
       
-      switch (method) {
-        case 'copy':
-          await navigator.clipboard.writeText(shareText + '\n' + achievementUrl);
-          toast.success('Achievement details copied to clipboard!');
-          break;
-          
-        case 'twitter':
-          const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(achievementUrl)}`;
-          window.open(twitterUrl, '_blank');
-          break;
-          
-        case 'linkedin':
-          const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(achievementUrl)}`;
-          window.open(linkedinUrl, '_blank');
-          break;
-          
-        case 'whatsapp':
-          const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(shareText + '\n' + achievementUrl)}`;
-          window.open(whatsappUrl, '_blank');
-          break;
-          
-        case 'download':
-          // Generate achievement certificate image
-          await downloadAchievementImage();
-          break;
-          
-        default:
-          if (navigator.share) {
-            await navigator.share({
-              title: achievement.title,
-              text: shareText,
-              url: achievementUrl
-            });
-          }
+      // Track the share on backend first, then execute sharing action
+      try {
+        const { AchievementApiService } = await import('@/services/api');
+        const shareData = await AchievementApiService.shareAchievement(achievement.id, method);
+        
+        // Use backend share text if available
+        const finalShareText = shareData.share_text || shareText;
+        
+        // Execute the actual sharing with backend text
+        await executeShare(method, finalShareText, achievementUrl, hashtags);
+        
+        // Call parent onShare callback
+        onShare?.(achievement.id, method);
+        
+        toast.success(`Shared via ${method}! (Total shares: ${shareData.shared_count})`);
+        
+      } catch (shareError: any) {
+        console.warn('Share tracking failed:', shareError);
+        
+        // If it's an "not earned" error, don't proceed with sharing
+        if (shareError.message && shareError.message.includes('earned')) {
+          toast.error(shareError.message);
+          return;
+        }
+        
+        // Otherwise, continue with sharing but without tracking
+        try {
+          await executeShare(method, shareText, achievementUrl, hashtags);
+          onShare?.(achievement.id, method);
+          toast.success(`Shared via ${method}! (Note: Share count not tracked)`);
+        } catch (execError) {
+          toast.error(`Failed to share via ${method}`);
+          return;
+        }
       }
-      
-      onShare?.(method);
       
       // Celebration effect
       confetti({
         particleCount: 50,
         spread: 60,
-        origin: { y: 0.8 }
+        origin: { y: 0.8 },
+        colors: ['#FFD700', '#FF6347', '#32CD32', '#FF1493']
       });
       
-    } catch (error) {
-      toast.error('Failed to share achievement');
+    } catch (error: any) {
+      console.error('Share error:', error);
+      const errorMessage = error.message || 'Failed to share achievement';
+      toast.error(errorMessage);
     } finally {
       setIsSharing(false);
     }
   };
 
   const downloadAchievementImage = async () => {
-    // Create achievement certificate canvas
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    try {
+      // Create achievement certificate canvas with enhanced design
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        toast.error('Canvas not supported by your browser');
+        return;
+      }
 
-    canvas.width = 800;
-    canvas.height = 600;
+      // High resolution canvas
+      canvas.width = 1200;
+      canvas.height = 800;
+      
+      // Dark theme gradient background
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+      gradient.addColorStop(0, '#0f172a'); // slate-900
+      gradient.addColorStop(0.5, '#1e293b'); // slate-800
+      gradient.addColorStop(1, '#334155'); // slate-700
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Add decorative border
+      ctx.strokeStyle = '#fbbf24'; // amber-400
+      ctx.lineWidth = 8;
+      ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+      
+      // Inner border
+      ctx.strokeStyle = '#64748b'; // slate-500
+      ctx.lineWidth = 2;
+      ctx.strokeRect(60, 60, canvas.width - 120, canvas.height - 120);
 
-    // Background gradient
-    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    gradient.addColorStop(0, '#f8fafc');
-    gradient.addColorStop(1, '#e2e8f0');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Certificate title
+      ctx.fillStyle = '#f1f5f9'; // slate-100
+      ctx.font = 'bold 48px Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('🏆 ACHIEVEMENT CERTIFICATE', canvas.width / 2, 150);
+      
+      // Achievement title
+      ctx.font = 'bold 42px Arial, sans-serif';
+      ctx.fillStyle = '#fbbf24'; // amber-400
+      ctx.fillText(achievement.title.toUpperCase(), canvas.width / 2, 220);
+      
+      // Description
+      ctx.font = '28px Arial, sans-serif';
+      ctx.fillStyle = '#cbd5e1'; // slate-300
+      
+      // Word wrap description
+      const words = achievement.description.split(' ');
+      const lines = [];
+      let currentLine = words[0];
+      
+      for (let i = 1; i < words.length; i++) {
+        const word = words[i];
+        const width = ctx.measureText(currentLine + ' ' + word).width;
+        if (width < canvas.width - 200) {
+          currentLine += ' ' + word;
+        } else {
+          lines.push(currentLine);
+          currentLine = word;
+        }
+      }
+      lines.push(currentLine);
+      
+      // Draw description lines
+      lines.forEach((line, index) => {
+        ctx.fillText(line, canvas.width / 2, 280 + (index * 35));
+      });
+      
+      // Achievement details
+      const detailsY = 380 + (lines.length * 35);
+      
+      ctx.font = '24px Arial, sans-serif';
+      ctx.fillStyle = '#94a3b8'; // slate-400
+      
+      const details = [
+        `Category: ${achievement.category}`,
+        `Tier: ${achievement.tier}`,
+        `Rarity: ${achievement.rarity}`,
+        `Points: ${achievement.points_value}`
+      ];
+      
+      details.forEach((detail, index) => {
+        ctx.fillText(detail, canvas.width / 2, detailsY + (index * 30));
+      });
+      
+      // Earned date
+      if (earned && achievement.earned_at) {
+        ctx.font = '20px Arial, sans-serif';
+        ctx.fillStyle = '#10b981'; // emerald-500
+        const earnedDate = new Date(achievement.earned_at).toLocaleDateString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        });
+        ctx.fillText(`Earned on: ${earnedDate}`, canvas.width / 2, detailsY + 160);
+      }
+      
+      // Footer
+      ctx.font = '18px Arial, sans-serif';
+      ctx.fillStyle = '#64748b'; // slate-500
+      ctx.fillText('Afritech Bridge LMS', canvas.width / 2, canvas.height - 60);
+      
+      // Generate and download
+      const timestamp = new Date().toISOString().split('T')[0];
+      const fileName = `${achievement.title.replace(/[^a-zA-Z0-9]/g, '_')}_Certificate_${timestamp}.png`;
+      
+      const link = document.createElement('a');
+      link.download = fileName;
+      link.href = canvas.toDataURL('image/png', 1.0);
+      
+      // Trigger download
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
 
-    // Achievement details
-    ctx.fillStyle = '#1e293b';
-    ctx.font = 'bold 48px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('🏆 Achievement Unlocked!', canvas.width / 2, 100);
-
-    ctx.font = 'bold 36px Arial';
-    ctx.fillText(achievement.title, canvas.width / 2, 200);
-
-    ctx.font = '24px Arial';
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(achievement.description, canvas.width / 2, 250);
-
-    ctx.font = '18px Arial';
-    ctx.fillText(`Category: ${achievement.category} • Tier: ${achievement.tier}`, canvas.width / 2, 300);
-
-    if (earned && achievement.earned_at) {
-      const earnedDate = new Date(achievement.earned_at).toLocaleDateString();
-      ctx.fillText(`Earned on: ${earnedDate}`, canvas.width / 2, 350);
+      toast.success(`Achievement certificate downloaded as ${fileName}!`);
+      
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error('Failed to generate certificate. Please try again.');
     }
-
-    // Download
-    const link = document.createElement('a');
-    link.download = `${achievement.title.replace(/\s+/g, '_')}_achievement.png`;
-    link.href = canvas.toDataURL();
-    link.click();
-
-    toast.success('Achievement certificate downloaded!');
   };
 
   // Animation variants
@@ -394,23 +547,114 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
         {showSharing && earned && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                <Share2 className="h-4 w-4" />
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-8 w-8 p-0 hover:bg-slate-600" 
+                disabled={isSharing}
+              >
+                {isSharing ? (
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                  >
+                    <Share2 className="h-4 w-4" />
+                  </motion.div>
+                ) : (
+                  <Share2 className="h-4 w-4" />
+                )}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleShare('copy')}>
+            <DropdownMenuContent align="end" className="w-56 bg-slate-800 border-slate-700">
+              <div className="px-2 py-1.5 text-xs font-semibold text-slate-400 border-b border-slate-700">
+                Share Achievement
+              </div>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('copy')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
                 <Copy className="h-4 w-4 mr-2" />
-                Copy Link
+                Copy Details
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleShare('download')}>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('download')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
                 <Download className="h-4 w-4 mr-2" />
                 Download Certificate
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleShare('twitter')}>
-                <Share2 className="h-4 w-4 mr-2" />
-                Share on Twitter
+              
+              <div className="px-2 py-1.5 text-xs font-semibold text-slate-400 border-b border-slate-700 mt-1">
+                Social Media
+              </div>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('twitter')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-blue-400">🐦</div>
+                Twitter
               </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('linkedin')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-blue-600">💼</div>
+                LinkedIn
+              </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('facebook')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-blue-500">📘</div>
+                Facebook
+              </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('whatsapp')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-green-500">💬</div>
+                WhatsApp
+              </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('discord')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-purple-500">🎮</div>
+                Discord
+              </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('reddit')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-orange-500">📱</div>
+                Reddit
+              </DropdownMenuItem>
+              
+              <DropdownMenuItem 
+                onClick={() => handleShare('email')}
+                className="hover:bg-slate-700 text-slate-200"
+              >
+                <div className="h-4 w-4 mr-2 text-gray-500">📧</div>
+                Email
+              </DropdownMenuItem>
+              
+              {navigator.share && (
+                <DropdownMenuItem 
+                  onClick={() => handleShare('native')}
+                  className="hover:bg-slate-700 text-slate-200 border-t border-slate-700 mt-1"
+                >
+                  <Share2 className="h-4 w-4 mr-2" />
+                  More Options
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -430,9 +674,9 @@ const CreativeAchievementBadge: React.FC<CreativeAchievementBadgeProps> = ({
       onHoverEnd={() => setIsHovered(false)}
     >
       <Card className={`
-        overflow-hidden cursor-pointer
-        ${earned ? 'bg-gradient-to-br from-white to-gray-50' : 'bg-gray-100'}
-        ${earned ? tierStyle.border : 'border-gray-200'}
+        overflow-hidden cursor-pointer border-slate-700
+        ${earned ? 'bg-gradient-to-br from-slate-800 to-slate-700' : 'bg-slate-900'}
+        ${earned ? tierStyle.border : 'border-slate-600'}
         transition-all duration-300
       `} onClick={onClick}>
         <CardContent className={`p-4 ${categoryPattern} relative`}>

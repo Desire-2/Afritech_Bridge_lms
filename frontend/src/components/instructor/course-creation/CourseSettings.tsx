@@ -22,7 +22,8 @@ import {
   Info,
   Save,
   RefreshCw,
-  Layers
+  Layers,
+  CreditCard
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Course } from '@/types/api';
@@ -71,6 +72,11 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [releaseInterval, setReleaseInterval] = useState<string>('manual');
   const [customIntervalDays, setCustomIntervalDays] = useState<number>(7);
 
+  const [paymentEnabled, setPaymentEnabled] = useState(false);
+  const [coursePrice, setCoursePrice] = useState<number>(0);
+  const [currency, setCurrency] = useState<string>('USD');
+  const [savingPayment, setSavingPayment] = useState(false);
+
   // Fetch module release status
   const fetchModuleReleaseStatus = async () => {
     if (!token) return;
@@ -108,6 +114,12 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   useEffect(() => {
     fetchModuleReleaseStatus();
   }, [course.id, token]);
+
+  useEffect(() => {
+    setPaymentEnabled(course.enrollment_type === 'paid');
+    setCoursePrice(course.price ?? 0);
+    setCurrency(course.currency || 'USD');
+  }, [course]);
 
   // Save module release settings
   const handleSaveSettings = async () => {
@@ -177,6 +189,52 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       setSuccess(`Module ${currentlyReleased ? 'unreleased' : 'released'} successfully`);
     } catch (err: any) {
       setError(err.message || 'Failed to update module');
+    }
+  };
+
+  const handleSavePaymentSettings = async () => {
+    if (!token) return;
+
+    if (paymentEnabled && (!coursePrice || coursePrice <= 0)) {
+      setError('Please set a valid course price');
+      return;
+    }
+
+    setSavingPayment(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const payload = {
+        enrollment_type: paymentEnabled ? 'paid' : 'free',
+        price: paymentEnabled ? coursePrice : null,
+        currency: currency || 'USD'
+      };
+
+      const response = await fetch(`${API_URL}/courses/${course.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData?.message || 'Failed to save payment settings');
+      }
+
+      const updatedCourse: Course = await response.json();
+      setSuccess('Payment settings saved successfully');
+
+      if (onCourseUpdate) {
+        onCourseUpdate(updatedCourse);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to save payment settings');
+    } finally {
+      setSavingPayment(false);
     }
   };
 
@@ -483,6 +541,101 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           </CardContent>
         </Card>
       )}
+
+      {/* Course Payment Settings */}
+      <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
+            <CreditCard className="h-5 w-5" />
+            Course Payment Settings
+          </CardTitle>
+          <CardDescription className="text-slate-600 dark:text-slate-400">
+            Enable paid enrollment and set a course fee
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+            <div className="space-y-1">
+              <Label htmlFor="enable-payment" className="text-base font-medium text-slate-900 dark:text-white">
+                Enable Paid Course
+              </Label>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Turn on payments to require mobile money payment before enrollment
+              </p>
+            </div>
+            <Switch
+              id="enable-payment"
+              checked={paymentEnabled}
+              onCheckedChange={setPaymentEnabled}
+            />
+          </div>
+
+          {paymentEnabled && (
+            <>
+              <Separator />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="course-price" className="text-slate-900 dark:text-white">
+                    Course Price
+                  </Label>
+                  <Input
+                    id="course-price"
+                    type="number"
+                    min={1}
+                    value={coursePrice}
+                    onChange={(e) => setCoursePrice(parseFloat(e.target.value) || 0)}
+                    className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Set the amount students will pay</p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="course-currency" className="text-slate-900 dark:text-white">
+                    Currency
+                  </Label>
+                  <Select value={currency} onValueChange={setCurrency}>
+                    <SelectTrigger id="course-currency" className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                      <SelectValue placeholder="Select currency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USD">USD</SelectItem>
+                      <SelectItem value="GHS">GHS</SelectItem>
+                      <SelectItem value="UGX">UGX</SelectItem>
+                      <SelectItem value="RWF">RWF</SelectItem>
+                      <SelectItem value="XOF">XOF</SelectItem>
+                      <SelectItem value="XAF">XAF</SelectItem>
+                      <SelectItem value="KES">KES</SelectItem>
+                      <SelectItem value="ZMW">ZMW</SelectItem>
+                      <SelectItem value="NGN">NGN</SelectItem>
+                      <SelectItem value="TZS">TZS</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <Button
+              onClick={handleSavePaymentSettings}
+              disabled={savingPayment}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {savingPayment ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Payment Settings
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 };

@@ -191,6 +191,8 @@ def process_payment():
             'amount': data.get('amount'),
             'currency': data.get('currency', 'USD'),
             'reference': data.get('reference'),
+            'phone_number': data.get('phone_number') or data.get('msisdn'),
+            'payer_name': data.get('payer_name'),
             'test_success': data.get('test_success', True)  # For testing
         }
         

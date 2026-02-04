@@ -120,32 +120,41 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const storedToken = localStorage.getItem('token');
       const storedUser = localStorage.getItem('user');
       
+      console.log('🔑 Initializing auth...', { hasToken: !!storedToken, hasUser: !!storedUser });
+      
       if (storedToken) {
         setToken(storedToken);
         
-        // Check if token is valid before making API call
+        // Check if token is valid
         try {
           const decoded: TokenPayload = jwtDecode(storedToken);
           const currentTime = Math.floor(Date.now() / 1000);
           
-          // If we have cached user data, set it immediately for faster UI rendering
+          console.log('🕐 Token check:', { 
+            expires: new Date(decoded.exp * 1000).toISOString(),
+            current: new Date().toISOString(),
+            isExpired: decoded.exp <= currentTime 
+          });
+          
+          // If we have cached user data, set it immediately
           if (storedUser) {
             try {
               const parsedUser = JSON.parse(storedUser);
               setUser(parsedUser);
               setIsAuthenticated(true);
-              console.log('Restored user from cache');
+              console.log('✅ User restored from cache:', { id: parsedUser.id, email: parsedUser.email });
             } catch (parseError) {
-              console.error('Failed to parse stored user data:', parseError);
+              console.error('❌ Failed to parse stored user data:', parseError);
+              localStorage.removeItem('user');
             }
           }
           
           // If token is expired, attempt refresh
           if (decoded.exp <= currentTime) {
-            console.log('Token expired, attempting refresh...');
+            console.log('⚠️ Token expired, attempting refresh...');
             const refreshSuccess = await refreshToken();
             if (!refreshSuccess) {
-              console.log('Refresh failed, clearing auth data');
+              console.log('❌ Refresh failed, clearing auth data');
               localStorage.removeItem('token');
               localStorage.removeItem('refreshToken');
               localStorage.removeItem('user');
@@ -157,48 +166,46 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             }
           }
 
-          // Token is valid or was refreshed successfully, fetch fresh user profile in background
-          try {
-            const userData = await AuthService.getCurrentUser();
-            setUser(userData);
-            setIsAuthenticated(true);
-            localStorage.setItem('user', JSON.stringify(userData));
-            console.log('User profile updated from server');
-          } catch (error: any) {
-            console.error('Failed to fetch fresh user profile:', error);
-            
-            // Only clear auth state if it's a 401 (unauthorized) error
-            if (error.response?.status === 401) {
-              console.log('Token invalid (401), clearing auth data');
-              localStorage.removeItem('token');
-              localStorage.removeItem('refreshToken');
-              localStorage.removeItem('user');
-              setToken(null);
-              setUser(null);
-              setIsAuthenticated(false);
-            } else {
-              // For network errors or other issues, keep using cached data if available
-              console.log('Network/temporary error - maintaining session with cached data');
-              // If we don't have user data yet, try using cached data
-              if (!user && storedUser) {
-                try {
-                  const parsedUser = JSON.parse(storedUser);
-                  setUser(parsedUser);
-                  setIsAuthenticated(true);
-                  console.log('Fallback to cached user data');
-                } catch (parseError) {
-                  console.error('Failed to parse stored user data:', parseError);
-                  setIsAuthenticated(false);
+          // If we don't have user data or token was refreshed, fetch fresh profile
+          if (!storedUser || decoded.exp <= currentTime) {
+            try {
+              console.log('📥 Fetching fresh user profile...');
+              const userData = await AuthService.getCurrentUser();
+              setUser(userData);
+              setIsAuthenticated(true);
+              localStorage.setItem('user', JSON.stringify(userData));
+              console.log('✅ User profile updated:', { id: userData.id, email: userData.email });
+            } catch (error: any) {
+              console.error('❌ Failed to fetch user profile:', error);
+              
+              // Only clear auth state if it's a 401 (unauthorized) error
+              if (error.response?.status === 401) {
+                console.log('❌ Token invalid (401), clearing auth data');
+                localStorage.removeItem('token');
+                localStorage.removeItem('refreshToken');
+                localStorage.removeItem('user');
+                setToken(null);
+                setUser(null);
+                setIsAuthenticated(false);
+              } else {
+                // For network errors, keep using cached data if available
+                console.log('⚠️ Network error - maintaining session with cached data');
+                if (storedUser && !user) {
+                  try {
+                    const parsedUser = JSON.parse(storedUser);
+                    setUser(parsedUser);
+                    setIsAuthenticated(true);
+                    console.log('✅ Fallback to cached user data');
+                  } catch (parseError) {
+                    console.error('❌ Failed to parse cached user data:', parseError);
+                    setIsAuthenticated(false);
+                  }
                 }
-              }
-              // Keep authenticated if we already have user data
-              else if (user) {
-                setIsAuthenticated(true);
               }
             }
           }
         } catch (tokenError) {
-          console.error('Error decoding token:', tokenError);
+          console.error('❌ Error decoding token:', tokenError);
           localStorage.removeItem('token');
           localStorage.removeItem('refreshToken');
           localStorage.removeItem('user');
@@ -206,8 +213,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setUser(null);
           setIsAuthenticated(false);
         }
+      } else {
+        console.log('ℹ️ No token found - user not authenticated');
       }
+      
       setIsLoading(false);
+      console.log('✅ Auth initialization complete');
     };
     
     // Only initialize after hydration
@@ -268,29 +279,34 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const login = async (identifier: string, password: string) => {
     setIsLoading(true);
     try {
+      console.log('🔐 Attempting login for:', identifier);
       const authData = await AuthService.login({ identifier, password });
+      
+      console.log('✅ Login successful:', { 
+        userId: authData.user.id, 
+        email: authData.user.email, 
+        role: authData.user.role 
+      });
       
       // Store tokens and set state
       localStorage.setItem('token', authData.access_token);
       localStorage.setItem('refreshToken', authData.refresh_token);
+      localStorage.setItem('user', JSON.stringify(authData.user));
+      
       setToken(authData.access_token);
       setUser(authData.user);
       setIsAuthenticated(true);
-      
-      // Log successful login
-      console.log(`AuthContext: User ${authData.user.role} logged in successfully`);
       
       // Give the state a moment to properly update
       setTimeout(() => {
         setIsLoading(false);
       }, 100);
       
-      // Return the user data so LoginForm can redirect immediately
       return authData;
     } catch (error) {
+      console.error('❌ Login failed:', error);
       setIsAuthenticated(false);
       setIsLoading(false);
-      // Don't double-process the error - AuthService already handled it
       throw error;
     }
   };

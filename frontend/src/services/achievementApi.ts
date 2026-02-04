@@ -3,7 +3,8 @@
 
 import axios from 'axios';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+// Fix API URL to match backend port
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api/v1';
 
 export interface Achievement {
   id: number;
@@ -155,6 +156,9 @@ class AchievementApiService {
   private getAuthHeaders() {
     // Use 'token' key to match the rest of the app
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token) {
+      console.warn('⚠️  No auth token found in localStorage');
+    }
     return {
       headers: {
         'Authorization': token ? `Bearer ${token}` : '',
@@ -198,13 +202,59 @@ class AchievementApiService {
     return response.data.achievement;
   }
 
-  async shareAchievement(achievementId: number): Promise<{ share_text: string; shared_count: number }> {
-    const response = await axios.post(
-      `${API_BASE_URL}/achievements/${achievementId}/share`,
-      {},
-      this.getAuthHeaders()
-    );
-    return response.data;
+  async shareAchievement(achievementId: number, platform: string = 'general'): Promise<{ share_text: string; shared_count: number; success: boolean }> {
+    console.log('🚀 API call shareAchievement:', { achievementId, platform });
+    
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/achievements/${achievementId}/share`,
+        { platform },
+        this.getAuthHeaders()
+      );
+      
+      console.log('✅ Share API success:', response.data);
+      
+      // Ensure we have the expected response structure
+      const data = response.data;
+      return {
+        share_text: data.share_text || '',
+        shared_count: data.shared_count || 0,
+        success: data.success !== false,
+        platform: data.platform || platform,
+        achievement_url: data.achievement_url || ''
+      };
+    } catch (error: any) {
+      console.error('❌ Share API error:', {
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+        message: error.message,
+        url: error.config?.url
+      });
+      
+      // Handle specific error cases
+      if (error.response?.status === 404) {
+        throw new Error('You can only share achievements that you have earned');
+      } else if (error.response?.data?.error) {
+        throw new Error(error.response.data.error);
+      } else {
+        throw new Error('Failed to share achievement. Please try again.');
+      }
+    }
+  }
+
+  // Add user verification method
+  async verifyCurrentUser(): Promise<{ user_id: number; achievements: number[] }> {
+    try {
+      const response = await axios.get(
+        `${API_BASE_URL}/achievements/debug/user-info`,
+        this.getAuthHeaders()
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Failed to verify user:', error);
+      throw error;
+    }
   }
 
   // ==================== Streak Methods ====================

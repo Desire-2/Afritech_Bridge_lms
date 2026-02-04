@@ -163,13 +163,17 @@ class StudentValidators:
         
         # Validate currency
         if 'currency' in data:
-            valid_currencies = ['USD', 'EUR', 'GBP', 'CAD', 'AUD']
+            valid_currencies = [
+                'USD', 'EUR', 'GBP', 'CAD', 'AUD',
+                'GHS', 'UGX', 'RWF', 'XOF', 'XAF',
+                'KES', 'ZMW', 'NGN', 'TZS'
+            ]
             if data['currency'] not in valid_currencies:
                 errors.append(f"Currency must be one of: {', '.join(valid_currencies)}")
         
         # Validate payment method
         if 'payment_method' in data:
-            valid_methods = ['credit_card', 'debit_card', 'paypal', 'bank_transfer']
+            valid_methods = ['credit_card', 'debit_card', 'paypal', 'bank_transfer', 'mobile_money']
             if data['payment_method'] not in valid_methods:
                 errors.append(f"Payment method must be one of: {', '.join(valid_methods)}")
         

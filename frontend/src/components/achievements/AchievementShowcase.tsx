@@ -77,12 +77,12 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
 
   // Combine achievements with earned status
   const combinedAchievements = achievements.map(achievement => {
-    const earned = earnedAchievements.find(ea => ea.id === achievement.id);
+    const earned = earnedAchievements.find(ea => ea.achievement?.id === achievement.id);
     return {
       ...achievement,
       earned: !!earned,
       earned_at: earned?.earned_at,
-      unlock_order: earned?.unlock_order,
+      unlock_order: earned?.showcase_order,
       is_showcased: earned?.is_showcased || false
     };
   });
@@ -154,7 +154,7 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
       onClick={() => setSelectedAchievement(null)}
     >
       <motion.div
-        className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        className="bg-slate-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto border border-slate-700"
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.8, opacity: 0 }}
@@ -174,42 +174,42 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
           
           <div className="space-y-4">
             <div>
-              <h2 className="text-2xl font-bold mb-2">{achievement.title}</h2>
-              <p className="text-muted-foreground text-lg">{achievement.description}</p>
+              <h2 className="text-2xl font-bold mb-2 text-slate-100">{achievement.title}</h2>
+              <p className="text-slate-300 text-lg">{achievement.description}</p>
             </div>
             
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-sm text-muted-foreground">Category</span>
-                  <Badge variant="outline">{achievement.category}</Badge>
+                  <span className="text-sm text-slate-300">Category</span>
+                  <Badge variant="outline" className="bg-slate-700 border-slate-600 text-slate-100">{achievement.category}</Badge>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm text-muted-foreground">Tier</span>
-                  <Badge>{achievement.tier}</Badge>
+                  <span className="text-sm text-slate-300">Tier</span>
+                  <Badge className="bg-slate-600 text-slate-100">{achievement.tier}</Badge>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm text-muted-foreground">Rarity</span>
-                  <Badge variant="secondary">{achievement.rarity}</Badge>
+                  <span className="text-sm text-slate-300">Rarity</span>
+                  <Badge variant="secondary" className="bg-slate-700 text-slate-200">{achievement.rarity}</Badge>
                 </div>
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-sm text-muted-foreground">Points</span>
-                  <span className="font-semibold">{achievement.points_value}</span>
+                  <span className="text-sm text-slate-300">Points</span>
+                  <span className="font-semibold text-slate-100">{achievement.points_value}</span>
                 </div>
                 {achievement.earned && achievement.earned_at && (
                   <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Earned</span>
-                    <span className="font-semibold">
+                    <span className="text-sm text-slate-300">Earned</span>
+                    <span className="font-semibold text-slate-100">
                       {new Date(achievement.earned_at).toLocaleDateString()}
                     </span>
                   </div>
                 )}
                 {achievement.unlock_order && (
                   <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Unlock #</span>
-                    <span className="font-semibold">{achievement.unlock_order}</span>
+                    <span className="text-sm text-slate-300">Unlock #</span>
+                    <span className="font-semibold text-slate-100">{achievement.unlock_order}</span>
                   </div>
                 )}
               </div>
@@ -246,10 +246,10 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
     return (
       <div className="space-y-6">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+          <div className="h-8 bg-slate-700 rounded w-1/3"></div>
           <div className="grid grid-cols-4 gap-4">
             {[...Array(8)].map((_, i) => (
-              <div key={i} className="h-48 bg-gray-200 rounded-lg"></div>
+              <div key={i} className="h-48 bg-slate-700 rounded-lg"></div>
             ))}
           </div>
         </div>
@@ -261,57 +261,57 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
     <div className="space-y-6">
       {/* Header with Stats */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card className="md:col-span-1">
+        <Card className="md:col-span-1 border-slate-700 bg-slate-800">
           <CardContent className="p-4 text-center">
             <Trophy className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
-            <div className="text-2xl font-bold">{stats.earned}</div>
-            <div className="text-sm text-muted-foreground">Earned</div>
+            <div className="text-2xl font-bold text-slate-100">{stats.earned}</div>
+            <div className="text-sm text-slate-300">Earned</div>
           </CardContent>
         </Card>
-        <Card className="md:col-span-1">
+        <Card className="md:col-span-1 border-slate-700 bg-slate-800">
           <CardContent className="p-4 text-center">
             <Target className="h-8 w-8 text-blue-500 mx-auto mb-2" />
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <div className="text-sm text-muted-foreground">Total</div>
+            <div className="text-2xl font-bold text-slate-100">{stats.total}</div>
+            <div className="text-sm text-slate-300">Total</div>
           </CardContent>
         </Card>
-        <Card className="md:col-span-1">
+        <Card className="md:col-span-1 border-slate-700 bg-slate-800">
           <CardContent className="p-4 text-center">
             <BarChart3 className="h-8 w-8 text-green-500 mx-auto mb-2" />
-            <div className="text-2xl font-bold">{stats.completion}%</div>
-            <div className="text-sm text-muted-foreground">Complete</div>
+            <div className="text-2xl font-bold text-slate-100">{stats.completion}%</div>
+            <div className="text-sm text-slate-300">Complete</div>
           </CardContent>
         </Card>
-        <Card className="md:col-span-1">
+        <Card className="md:col-span-1 border-slate-700 bg-slate-800">
           <CardContent className="p-4 text-center">
             <Zap className="h-8 w-8 text-orange-500 mx-auto mb-2" />
-            <div className="text-2xl font-bold">{stats.totalPoints}</div>
-            <div className="text-sm text-muted-foreground">Points</div>
+            <div className="text-2xl font-bold text-slate-100">{stats.totalPoints}</div>
+            <div className="text-sm text-slate-300">Points</div>
           </CardContent>
         </Card>
-        <Card className="md:col-span-1">
+        <Card className="md:col-span-1 border-slate-700 bg-slate-800">
           <CardContent className="p-4 text-center">
             <Star className="h-8 w-8 text-purple-500 mx-auto mb-2" />
-            <div className="text-2xl font-bold">{stats.showcased}</div>
-            <div className="text-sm text-muted-foreground">Showcased</div>
+            <div className="text-2xl font-bold text-slate-100">{stats.showcased}</div>
+            <div className="text-sm text-slate-300">Showcased</div>
           </CardContent>
         </Card>
       </div>
 
       {/* Filters and Controls */}
-      <Card>
-        <CardContent className="p-6">
+      <Card className="border-slate-700 bg-slate-800">
+        <CardContent className="p-6 bg-slate-800">
           <div className="space-y-4">
             {/* Search and View Controls */}
             <div className="flex flex-col md:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                   <Input
                     placeholder="Search achievements..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
+                    className="pl-10 bg-slate-700 border-slate-600 text-slate-100 placeholder-slate-400"
                   />
                 </div>
               </div>
@@ -391,7 +391,7 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
                 </SelectContent>
               </Select>
 
-              <div className="text-sm text-muted-foreground flex items-center">
+              <div className="text-sm text-slate-300 flex items-center">
                 {filteredAchievements.length} results
               </div>
             </div>
@@ -440,9 +440,9 @@ const AchievementShowcase: React.FC<AchievementShowcaseProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
-            <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No achievements found</h3>
-            <p className="text-muted-foreground mb-4">
+            <Trophy className="h-12 w-12 text-slate-400 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold mb-2 text-slate-100">No achievements found</h3>
+            <p className="text-slate-300 mb-4">
               Try adjusting your filters or search criteria
             </p>
             <Button onClick={resetFilters} variant="outline">

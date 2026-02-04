@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAchievementSystem } from '@/hooks/useAchievementSystem';
+import { AchievementApiService } from '@/services/achievementApi';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Trophy, 
@@ -44,7 +45,6 @@ const AchievementsPage = () => {
     showRewardsModal,
     clearPendingRewards,
     toggleShowcase,
-    shareAchievement,
     getQuickStats,
     refreshData
   } = useAchievementSystem();
@@ -58,11 +58,117 @@ const AchievementsPage = () => {
   }, [isAuthenticated]);
 
   const handleShare = async (achievementId: number, method: string) => {
+    console.log('🎯 Share attempt:', { achievementId, method });
+    console.log('📚 Available achievements:', earnedAchievements.map(a => ({ 
+      userAchievementId: a.id, 
+      achievementId: a.achievement?.id,
+      title: a.achievement?.title 
+    })));
+    
     try {
-      await shareAchievement(achievementId);
-      toast.success(`Achievement shared via ${method}!`);
-    } catch (error) {
-      toast.error('Failed to share achievement');
+      // First verify current user and their achievements
+      try {
+        const userInfo = await AchievementApiService.verifyCurrentUser();
+        console.log('👤 Current user info:', userInfo);
+        
+        if (!userInfo.achievements.includes(achievementId)) {
+          console.error('❌ Backend confirms user does not have achievement:', achievementId);
+          toast.error(`Achievement ${achievementId} not found in your earned achievements`);
+          return;
+        }
+      } catch (verifyError) {
+        console.warn('⚠️ Could not verify user, proceeding with frontend check:', verifyError);
+      }
+      
+      // Find the specific achievement for sharing - FIXED: use correct nested structure
+      const userAchievement = earnedAchievements.find(ua => ua.achievement?.id === achievementId);
+      if (!userAchievement || !userAchievement.achievement) {
+        console.error('❌ Achievement not found in earnedAchievements:', achievementId);
+        console.error('❌ Available achievement IDs:', earnedAchievements.map(ua => ua.achievement?.id).filter(Boolean));
+        toast.error('You can only share achievements you have earned');
+        return;
+      }
+      
+      const achievement = userAchievement.achievement;
+      console.log('✅ Found achievement to share:', achievement.title);
+      
+      // Track the share in backend first
+      const shareData = await AchievementApiService.shareAchievement(achievementId, method);
+      
+      // Create enhanced share content
+      const baseUrl = window.location.origin;
+      const achievementUrl = `${baseUrl}/achievements/${achievementId}`;
+      const shareText = shareData.share_text || `🏆 I just earned "${achievement.title}"! ${achievement.description}`;
+      const hashtags = ['Learning', 'Achievement', 'Progress', achievement.category]
+        .map(tag => tag.replace(/\s+/g, ''))
+        .join(',');
+      
+      // Validate method parameter
+      if (!method || typeof method !== 'string' || method.trim() === '') {
+        console.error('❌ Invalid share method:', method);
+        toast.error('Invalid sharing method');
+        return;
+      }
+      
+      // Handle different sharing methods
+      switch (method.toLowerCase()) {
+        case 'copy':
+          await navigator.clipboard.writeText(`${shareText}\n\n🔗 ${achievementUrl}`);
+          toast.success('Achievement details copied to clipboard!');
+          break;
+          
+        case 'twitter':
+          const twitterText = encodeURIComponent(`${shareText} #${hashtags}`);
+          const twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}&url=${encodeURIComponent(achievementUrl)}`;
+          window.open(twitterUrl, '_blank', 'width=600,height=400');
+          break;
+          
+        case 'linkedin':
+          const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(achievementUrl)}&title=${encodeURIComponent(achievement.title)}&summary=${encodeURIComponent(achievement.description)}`;
+          window.open(linkedinUrl, '_blank', 'width=600,height=600');
+          break;
+          
+        case 'whatsapp':
+          const whatsappText = `${shareText}\n\n${achievementUrl}`;
+          const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(whatsappText)}`;
+          window.open(whatsappUrl, '_blank');
+          break;
+          
+        case 'facebook':
+          const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(achievementUrl)}&quote=${encodeURIComponent(shareText)}`;
+          window.open(facebookUrl, '_blank', 'width=600,height=400');
+          break;
+          
+        case 'email':
+          const emailSubject = encodeURIComponent(`Check out my latest achievement: ${achievement.title}`);
+          const emailBody = encodeURIComponent(`${shareText}\n\nView my achievement: ${achievementUrl}`);
+          window.location.href = `mailto:?subject=${emailSubject}&body=${emailBody}`;
+          break;
+          
+        case 'native':
+          if (navigator.share) {
+            await navigator.share({
+              title: `Achievement Unlocked: ${achievement.title}`,
+              text: shareText,
+              url: achievementUrl
+            });
+          } else {
+            throw new Error('Native sharing not supported');
+          }
+          break;
+          
+        default:
+          toast.error(`Sharing method '${method}' not supported`);
+          return;
+      }
+      
+      // Show success with share count
+      toast.success(`Achievement shared via ${method}! (Total shares: ${shareData.shared_count})`);
+      
+    } catch (error: any) {
+      console.error('Share error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to share achievement';
+      toast.error(errorMessage);
     }
   };
 

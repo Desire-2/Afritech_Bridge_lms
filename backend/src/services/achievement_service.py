@@ -4,6 +4,9 @@
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import json
+import logging
+from functools import lru_cache
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..models.achievement_models import (
     Achievement, UserAchievement, LearningStreak, Milestone, UserMilestone,
@@ -11,7 +14,10 @@ from ..models.achievement_models import (
 )
 from ..models.student_models import LessonCompletion, UserProgress, Badge, UserBadge
 from ..models.course_models import Enrollment, Course, Module
-from ..models.user_models import db, User
+from ..models.user_models import db, User, Role
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 class AchievementService:
     """Service for managing achievements and gamification"""
@@ -31,30 +37,53 @@ class AchievementService:
         """
         newly_awarded = []
         
-        # Get all active achievements
-        achievements = Achievement.query.filter_by(is_active=True).all()
+        if not user_id or not event_type:
+            logger.warning(f"Invalid parameters: user_id={user_id}, event_type={event_type}")
+            return newly_awarded
         
-        for achievement in achievements:
-            # Skip if not available (seasonal, max_earners, etc.)
-            if not achievement.is_available():
-                continue
+        try:
+            logger.info(f"Checking achievements for user {user_id}, event: {event_type}")
             
-            # Skip if already earned (and not repeatable)
-            if not achievement.is_repeatable:
-                existing = UserAchievement.query.filter_by(
-                    user_id=user_id, 
-                    achievement_id=achievement.id
-                ).first()
-                if existing:
+            # Get all active achievements with caching
+            achievements = AchievementService._get_active_achievements()
+            
+            for achievement in achievements:
+                try:
+                    # Skip if not available (seasonal, max_earners, etc.)
+                    if not achievement.is_available():
+                        continue
+                    
+                    # Skip if already earned (and not repeatable)
+                    if not achievement.is_repeatable:
+                        existing = UserAchievement.query.filter_by(
+                            user_id=user_id, 
+                            achievement_id=achievement.id
+                        ).first()
+                        if existing:
+                            continue
+                    
+                    # Check if criteria met
+                    if AchievementService._check_achievement_criteria(user_id, achievement, event_type, event_data):
+                        user_achievement = AchievementService._award_achievement(user_id, achievement, event_data)
+                        if user_achievement:
+                            newly_awarded.append(user_achievement)
+                            logger.info(f"Awarded achievement {achievement.name} to user {user_id}")
+                            
+                except Exception as e:
+                    logger.error(f"Error processing achievement {achievement.id}: {str(e)}")
                     continue
             
-            # Check if criteria met
-            if AchievementService._check_achievement_criteria(user_id, achievement, event_type, event_data):
-                user_achievement = AchievementService._award_achievement(user_id, achievement, event_data)
-                if user_achievement:
-                    newly_awarded.append(user_achievement)
-        
-        return newly_awarded
+            return newly_awarded
+            
+        except Exception as e:
+            logger.error(f"Error in check_and_award_achievements: {str(e)}")
+            return []
+    
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def _get_active_achievements():
+        """Get active achievements with caching"""
+        return Achievement.query.filter_by(is_active=True).all()
     
     @staticmethod
     def _check_achievement_criteria(user_id: int, achievement: Achievement, event_type: str, event_data: dict) -> bool:
@@ -150,8 +179,17 @@ class AchievementService:
     
     @staticmethod
     def _award_achievement(user_id: int, achievement: Achievement, context_data: dict) -> Optional[UserAchievement]:
-        """Award achievement to user"""
+        """Award achievement to user with proper transaction management"""
+        if not user_id or not achievement:
+            logger.error(f"Invalid parameters: user_id={user_id}, achievement={achievement}")
+            return None
+            
         try:
+            logger.info(f"Awarding achievement {achievement.name} to user {user_id}")
+            
+            # Start transaction
+            user_achievement = None
+            
             # Check if repeatable
             if achievement.is_repeatable:
                 existing = UserAchievement.query.filter_by(
@@ -160,45 +198,54 @@ class AchievementService:
                 ).first()
                 
                 if existing:
-                    existing.times_earned += 1
+                    existing.times_earned = (existing.times_earned or 0) + 1
                     existing.earned_at = datetime.utcnow()
                     user_achievement = existing
                 else:
                     user_achievement = UserAchievement(
                         user_id=user_id,
                         achievement_id=achievement.id,
-                        context_data=json.dumps(context_data),
-                        earned_during_course_id=context_data.get('course_id')
+                        context_data=json.dumps(context_data) if context_data else '{}',
+                        earned_during_course_id=context_data.get('course_id') if context_data else None
                     )
                     db.session.add(user_achievement)
             else:
                 user_achievement = UserAchievement(
                     user_id=user_id,
                     achievement_id=achievement.id,
-                    context_data=json.dumps(context_data),
-                    earned_during_course_id=context_data.get('course_id')
+                    context_data=json.dumps(context_data) if context_data else '{}',
+                    earned_during_course_id=context_data.get('course_id') if context_data else None
                 )
                 db.session.add(user_achievement)
             
-            # Update achievement earner count
-            achievement.current_earners += 1
+            # Update achievement earner count (with null safety)
+            achievement.current_earners = (achievement.current_earners or 0) + 1
             
-            # Award points
+            # Award points with error handling
             points_service = StudentPoints.query.filter_by(user_id=user_id).first()
             if not points_service:
                 points_service = StudentPoints(user_id=user_id)
                 db.session.add(points_service)
             
-            points_service.add_points(achievement.points, 'achievement')
+            # Add points and XP
+            if achievement.points:
+                points_service.add_points(achievement.points, 'achievement')
             if achievement.xp_bonus:
                 points_service.add_xp(achievement.xp_bonus)
             
+            # Commit transaction
             db.session.commit()
+            
+            logger.info(f"Successfully awarded achievement {achievement.name} to user {user_id}")
             return user_achievement
             
+        except SQLAlchemyError as e:
+            db.session.rollback()
+            logger.error(f"Database error awarding achievement {achievement.id} to user {user_id}: {str(e)}")
+            return None
         except Exception as e:
             db.session.rollback()
-            print(f"Error awarding achievement: {e}")
+            logger.error(f"Error awarding achievement {achievement.id} to user {user_id}: {str(e)}")
             return None
     
     @staticmethod
@@ -345,134 +392,211 @@ class AchievementService:
     @staticmethod
     def get_leaderboard(leaderboard_name: str, limit: int = 100) -> Dict:
         """Get leaderboard rankings"""
-        leaderboard = Leaderboard.query.filter_by(
-            name=leaderboard_name,
-            is_active=True
-        ).first()
-        
-        if not leaderboard:
-            return {'error': 'Leaderboard not found'}
-        
-        # Get rankings based on metric
-        metric = leaderboard.metric
-        time_period = leaderboard.time_period
-        
-        query = db.session.query(
-            User.id,
-            User.first_name,
-            User.last_name,
-            User.username
-        ).join(StudentPoints, User.id == StudentPoints.user_id)
-        
-        if metric == 'total_points':
-            query = query.add_columns(StudentPoints.total_points.label('score'))
-            query = query.order_by(StudentPoints.total_points.desc())
-        elif metric == 'current_level':
-            query = query.add_columns(StudentPoints.current_level.label('score'))
-            query = query.order_by(StudentPoints.current_level.desc())
-        elif metric == 'streak_days':
-            query = query.join(LearningStreak, User.id == LearningStreak.user_id)
-            query = query.add_columns(LearningStreak.current_streak.label('score'))
-            query = query.order_by(LearningStreak.current_streak.desc())
-        
-        # Apply time period filter
-        if time_period == 'weekly':
-            query = query.filter(StudentPoints.week_reset_date >= datetime.utcnow().date() - timedelta(days=7))
-            query = query.add_columns(StudentPoints.points_this_week.label('period_score'))
-            query = query.order_by(StudentPoints.points_this_week.desc())
-        elif time_period == 'monthly':
-            query = query.filter(StudentPoints.month_reset_date >= datetime.utcnow().date() - timedelta(days=30))
-            query = query.add_columns(StudentPoints.points_this_month.label('period_score'))
-            query = query.order_by(StudentPoints.points_this_month.desc())
-        
-        # Apply course filter if specified
-        if leaderboard.scope == 'course' and leaderboard.course_id:
-            query = query.join(Enrollment, User.id == Enrollment.student_id)
-            query = query.filter(Enrollment.course_id == leaderboard.course_id)
-        
-        # Limit results
-        results = query.limit(min(limit, leaderboard.max_displayed)).all()
-        
-        rankings = []
-        for rank, row in enumerate(results, start=1):
-            rankings.append({
-                'rank': rank,
-                'user_id': row.id,
-                'name': f"{row.first_name} {row.last_name}",
-                'username': row.username,
-                'score': row.score if hasattr(row, 'score') else 0,
-                'period_score': row.period_score if hasattr(row, 'period_score') else None
-            })
-        
-        return {
-            'leaderboard': leaderboard.to_dict(),
-            'rankings': rankings,
-            'total_participants': len(rankings),
-            'updated_at': datetime.utcnow().isoformat()
-        }
+        try:
+            leaderboard = Leaderboard.query.filter_by(
+                name=leaderboard_name,
+                is_active=True
+            ).first()
+            
+            if not leaderboard:
+                logger.warning(f"Leaderboard '{leaderboard_name}' not found")
+                return {'error': f'Leaderboard "{leaderboard_name}" not found'}
+            
+            # Get rankings based on metric
+            metric = leaderboard.metric
+            time_period = leaderboard.time_period
+            
+            # Ensure student points exist for all users (filter by role if available)
+            users_query = db.session.query(User).outerjoin(
+                StudentPoints, User.id == StudentPoints.user_id
+            ).filter(StudentPoints.id.is_(None))
+            
+            # Try to filter by student role if role relationship exists
+            try:
+                users_without_points = users_query.join(Role).filter(Role.name == 'student').all()
+            except Exception:
+                # If role filtering fails, get all users without points
+                users_without_points = users_query.all()
+            
+            for user in users_without_points:
+                logger.info(f"Creating student points for user {user.id}")
+                student_points = StudentPoints(
+                    user_id=user.id,
+                    total_points=0,
+                    current_level=1,
+                    xp_to_next_level=100
+                )
+                db.session.add(student_points)
+            
+            db.session.commit()
+            
+            query = db.session.query(
+                User.id,
+                User.first_name,
+                User.last_name,
+                User.username
+            ).join(StudentPoints, User.id == StudentPoints.user_id)
+            
+            if metric == 'total_points':
+                query = query.add_columns(StudentPoints.total_points.label('score'))
+                query = query.order_by(StudentPoints.total_points.desc())
+            elif metric == 'current_level':
+                query = query.add_columns(StudentPoints.current_level.label('score'))
+                query = query.order_by(StudentPoints.current_level.desc())
+            elif metric == 'streak_days':
+                query = query.join(LearningStreak, User.id == LearningStreak.user_id)
+                query = query.add_columns(LearningStreak.current_streak.label('score'))
+                query = query.order_by(LearningStreak.current_streak.desc())
+            
+            # Apply time period filter
+            if time_period == 'weekly':
+                query = query.filter(StudentPoints.week_reset_date >= datetime.utcnow().date() - timedelta(days=7))
+                query = query.add_columns(StudentPoints.points_this_week.label('period_score'))
+                query = query.order_by(StudentPoints.points_this_week.desc())
+            elif time_period == 'monthly':
+                query = query.filter(StudentPoints.month_reset_date >= datetime.utcnow().date() - timedelta(days=30))
+                query = query.add_columns(StudentPoints.points_this_month.label('period_score'))
+                query = query.order_by(StudentPoints.points_this_month.desc())
+            
+            # Apply course filter if specified
+            if leaderboard.scope == 'course' and leaderboard.course_id:
+                query = query.join(Enrollment, User.id == Enrollment.student_id)
+                query = query.filter(Enrollment.course_id == leaderboard.course_id)
+            
+            # Limit results
+            results = query.limit(min(limit, leaderboard.max_displayed)).all()
+            
+            rankings = []
+            for rank, row in enumerate(results, start=1):
+                rankings.append({
+                    'rank': rank,
+                    'user_id': row.id,
+                    'name': f"{row.first_name} {row.last_name}",
+                    'username': row.username,
+                    'score': row.score if hasattr(row, 'score') else 0,
+                    'period_score': row.period_score if hasattr(row, 'period_score') else None
+                })
+            
+            return {
+                'leaderboard': leaderboard.to_dict(),
+                'rankings': rankings,
+                'total_participants': len(rankings),
+                'updated_at': datetime.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting leaderboard '{leaderboard_name}': {str(e)}", exc_info=True)
+            return {'error': f'Failed to get leaderboard: {str(e)}'}
     
     @staticmethod
     def get_user_achievements_summary(user_id: int) -> Dict:
-        """Get comprehensive achievement summary for user"""
-        # Get user achievements
-        user_achievements = UserAchievement.query.filter_by(user_id=user_id).all()
-        
-        # Get points
-        points = StudentPoints.query.filter_by(user_id=user_id).first()
-        if not points:
-            points = StudentPoints(user_id=user_id)
-            db.session.add(points)
-            db.session.commit()
-        
-        # Get streak
-        streak = LearningStreak.query.filter_by(user_id=user_id).first()
-        if not streak:
-            streak = LearningStreak(user_id=user_id)
-            db.session.add(streak)
-            db.session.commit()
-        
-        # Get milestones
-        milestones = UserMilestone.query.filter_by(user_id=user_id).all()
-        
-        # Calculate statistics
-        total_achievements = len(user_achievements)
-        available_achievements = Achievement.query.filter_by(is_active=True).count()
-        
-        achievements_by_category = {}
-        for ua in user_achievements:
-            category = ua.achievement.category
-            if category not in achievements_by_category:
-                achievements_by_category[category] = 0
-            achievements_by_category[category] += 1
-        
-        achievements_by_tier = {}
-        for ua in user_achievements:
-            tier = ua.achievement.tier
-            if tier not in achievements_by_tier:
-                achievements_by_tier[tier] = 0
-            achievements_by_tier[tier] += 1
-        
-        # Get showcased achievements
-        showcased = UserAchievement.query.filter_by(
-            user_id=user_id,
-            is_showcased=True
-        ).order_by(UserAchievement.showcase_order).limit(5).all()
-        
+        """Get comprehensive achievement summary for user with improved error handling"""
+        if not user_id:
+            logger.error("Invalid user_id provided to get_user_achievements_summary")
+            return AchievementService._get_empty_summary()
+            
+        try:
+            logger.debug(f"Getting achievement summary for user {user_id}")
+            
+            # Get user achievements
+            user_achievements = UserAchievement.query.filter_by(user_id=user_id).all()
+            
+            # Get points with creation if needed
+            points = StudentPoints.query.filter_by(user_id=user_id).first()
+            if not points:
+                points = StudentPoints(user_id=user_id)
+                db.session.add(points)
+                try:
+                    db.session.commit()
+                except SQLAlchemyError as e:
+                    db.session.rollback()
+                    logger.error(f"Failed to create points for user {user_id}: {str(e)}")
+            
+            # Get streak with creation if needed
+            streak = LearningStreak.query.filter_by(user_id=user_id).first()
+            if not streak:
+                streak = LearningStreak(user_id=user_id)
+                db.session.add(streak)
+                try:
+                    db.session.commit()
+                except SQLAlchemyError as e:
+                    db.session.rollback()
+                    logger.error(f"Failed to create streak for user {user_id}: {str(e)}")
+            
+            # Get milestones
+            milestones = UserMilestone.query.filter_by(user_id=user_id).all()
+            
+            # Calculate statistics safely
+            total_achievements = len(user_achievements)
+            available_achievements = Achievement.query.filter_by(is_active=True).count()
+            
+            # Group achievements by category
+            achievements_by_category = {}
+            for ua in user_achievements:
+                if ua.achievement:  # Null safety
+                    category = ua.achievement.category
+                    achievements_by_category[category] = achievements_by_category.get(category, 0) + 1
+            
+            # Group achievements by tier
+            achievements_by_tier = {}
+            for ua in user_achievements:
+                if ua.achievement:  # Null safety
+                    tier = ua.achievement.tier
+                    achievements_by_tier[tier] = achievements_by_tier.get(tier, 0) + 1
+            
+            # Get showcased achievements
+            showcased = UserAchievement.query.filter_by(
+                user_id=user_id,
+                is_showcased=True
+            ).order_by(UserAchievement.showcase_order).limit(5).all()
+            
+            completion_rate = 0
+            if available_achievements > 0:
+                completion_rate = (total_achievements / available_achievements) * 100
+            
+            return {
+                'points': points.to_dict() if points else None,
+                'streak': streak.to_dict() if streak else None,
+                'achievements': {
+                    'total_earned': total_achievements,
+                    'total_available': available_achievements,
+                    'completion_rate': completion_rate,
+                    'by_category': achievements_by_category,
+                    'by_tier': achievements_by_tier,
+                    'recent': [ua.to_dict() for ua in user_achievements[-5:] if ua.achievement],
+                    'showcased': [ua.to_dict() for ua in showcased if ua.achievement]
+                },
+                'milestones': {
+                    'total_reached': len(milestones),
+                    'recent': [m.to_dict() for m in milestones[-5:] if m.milestone]
+                }
+            }
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Database error getting achievement summary for user {user_id}: {str(e)}")
+            return AchievementService._get_empty_summary()
+        except Exception as e:
+            logger.error(f"Error getting achievement summary for user {user_id}: {str(e)}")
+            return AchievementService._get_empty_summary()
+    
+    @staticmethod
+    def _get_empty_summary() -> Dict:
+        """Return empty achievement summary structure"""
         return {
-            'points': points.to_dict(),
-            'streak': streak.to_dict(),
+            'points': None,
+            'streak': None,
             'achievements': {
-                'total_earned': total_achievements,
-                'total_available': available_achievements,
-                'completion_rate': (total_earned / available_achievements * 100) if available_achievements > 0 else 0,
-                'by_category': achievements_by_category,
-                'by_tier': achievements_by_tier,
-                'recent': [ua.to_dict() for ua in user_achievements[-5:]],
-                'showcased': [ua.to_dict() for ua in showcased]
+                'total_earned': 0,
+                'total_available': 0,
+                'completion_rate': 0,
+                'by_category': {},
+                'by_tier': {},
+                'recent': [],
+                'showcased': []
             },
             'milestones': {
-                'total_reached': len(milestones),
-                'recent': [m.to_dict() for m in milestones[-5:]]
+                'total_reached': 0,
+                'recent': []
             }
         }
     
@@ -586,65 +710,4 @@ class AchievementService:
         
         return points
     
-    @staticmethod
-    def get_user_achievements_summary(user_id: int) -> dict:
-        """Get comprehensive achievement summary for user"""
-        try:
-            # Get user achievements
-            user_achievements = UserAchievement.query.filter_by(user_id=user_id).all()
-            
-            # Get available achievements
-            all_achievements = Achievement.query.filter_by(is_active=True).all()
-            
-            # Get user's points
-            points = StudentPoints.query.filter_by(user_id=user_id).first()
-            
-            # Get user's streak
-            streak = LearningStreak.query.filter_by(user_id=user_id).first()
-            
-            # Calculate statistics
-            earned_count = len(user_achievements)
-            available_count = len(all_achievements)
-            
-            # Group by category
-            by_category = {}
-            for achievement in all_achievements:
-                category = achievement.category
-                if category not in by_category:
-                    by_category[category] = {'total': 0, 'earned': 0}
-                by_category[category]['total'] += 1
-            
-            for user_achievement in user_achievements:
-                category = user_achievement.achievement.category
-                if category in by_category:
-                    by_category[category]['earned'] += 1
-            
-            # Group by tier
-            by_tier = {}
-            for user_achievement in user_achievements:
-                tier = user_achievement.achievement.tier
-                if tier not in by_tier:
-                    by_tier[tier] = 0
-                by_tier[tier] += 1
-            
-            return {
-                'achievements': {
-                    'earned': earned_count,
-                    'available': available_count,
-                    'percentage': (earned_count / max(available_count, 1)) * 100,
-                    'by_category': by_category,
-                    'by_tier': by_tier
-                },
-                'points': points.to_dict() if points else None,
-                'streak': streak.to_dict() if streak else None,
-                'recent_achievements': [ua.to_dict() for ua in user_achievements[-5:]]  # Last 5
-            }
-            
-        except Exception as e:
-            print(f"Error getting achievement summary: {e}")
-            return {
-                'achievements': {'earned': 0, 'available': 0, 'percentage': 0},
-                'points': None,
-                'streak': None,
-                'recent_achievements': []
-            }
+

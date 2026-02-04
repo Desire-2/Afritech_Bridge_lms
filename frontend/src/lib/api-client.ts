@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with default configuration
 const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1',
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api/v1',
   timeout: 60000, // 60 seconds timeout for better reliability with large data operations
   withCredentials: true, // Enable sending cookies and credentials with CORS requests
   headers: {
@@ -62,7 +62,7 @@ apiClient.interceptors.response.use(
         const refreshToken = localStorage.getItem('refreshToken');
         if (refreshToken) {
           const response = await axios.post(
-            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1'}/auth/refresh`,
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5002/api/v1'}/auth/refresh`,
             {},
             {
               headers: {

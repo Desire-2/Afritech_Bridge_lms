@@ -399,6 +399,8 @@ const CourseBrowser: React.FC = () => {
   const [enrollingCourseId, setEnrollingCourseId] = useState<number | null>(null);
   const [showEnrollmentDialog, setShowEnrollmentDialog] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [mobileMoneyNumber, setMobileMoneyNumber] = useState('');
+  const [payerName, setPayerName] = useState('');
   const { toast } = useToast();
 
   useEffect(() => {
@@ -455,18 +457,65 @@ const CourseBrowser: React.FC = () => {
   const handleEnrollConfirm = async () => {
     if (!selectedCourse) return;
 
+    if (selectedCourse.enrollment_type !== 'free' && (!selectedCourse.price || selectedCourse.price <= 0)) {
+      toast({
+        title: "Invalid Course Price",
+        description: "This course does not have a valid price set. Please contact support.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (selectedCourse.enrollment_type !== 'free' && !mobileMoneyNumber.trim()) {
+      toast({
+        title: "Mobile Money Required",
+        description: "Please enter your mobile money number to proceed.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setEnrollingCourseId(selectedCourse.id);
     setShowEnrollmentDialog(false);
 
     try {
-      const enrollmentData = await StudentApiService.enrollCourse(selectedCourse.id);
-      console.log('Enrollment successful:', enrollmentData);
-      
-      toast({
-        title: "Enrollment Successful",
-        description: `You have successfully enrolled in ${selectedCourse.title}`,
-        variant: "default",
-      });
+      if (selectedCourse.enrollment_type === 'free') {
+        const enrollmentData = await StudentApiService.enrollCourse(selectedCourse.id);
+        console.log('Enrollment successful:', enrollmentData);
+
+        toast({
+          title: "Enrollment Successful",
+          description: `You have successfully enrolled in ${selectedCourse.title}`,
+          variant: "default",
+        });
+      } else {
+        const applicationResponse = await StudentApiService.applyCourse(selectedCourse.id, {
+          type: 'paid'
+        });
+
+        const applicationId = applicationResponse?.data?.id || applicationResponse?.data?.application_id || applicationResponse?.data?.applicationId;
+        if (!applicationId) {
+          throw new Error('Payment application could not be created');
+        }
+
+        const paymentResponse = await StudentApiService.processPayment(applicationId, {
+          payment_method: 'mobile_money',
+          amount: selectedCourse.price || 0,
+          currency: selectedCourse.currency || 'USD',
+          phone_number: mobileMoneyNumber,
+          payer_name: payerName
+        });
+
+        if (!paymentResponse?.success) {
+          throw new Error(paymentResponse?.error || 'Payment failed');
+        }
+
+        toast({
+          title: "Payment Initiated",
+          description: "A mobile money prompt has been sent. Complete the payment to enroll.",
+          variant: "default",
+        });
+      }
 
       // Refresh the courses list to update enrollment status
       const refreshData = await StudentApiService.getBrowseCourses({
@@ -496,18 +545,22 @@ const CourseBrowser: React.FC = () => {
       console.error('Enrollment error:', error);
       toast({
         title: "Enrollment Failed",
-        description: "There was an error enrolling in this course. Please try again.",
+        description: error?.message || "There was an error enrolling in this course. Please try again.",
         variant: "destructive",
       });
     } finally {
       setEnrollingCourseId(null);
       setSelectedCourse(null);
+      setMobileMoneyNumber('');
+      setPayerName('');
     }
   };
 
   const handleEnrollCancel = () => {
     setShowEnrollmentDialog(false);
     setSelectedCourse(null);
+    setMobileMoneyNumber('');
+    setPayerName('');
   };
 
   const featuredCourses = (courses || []).filter(course => (course.rating || 0) >= 4.5).slice(0, 3);
@@ -754,6 +807,33 @@ const CourseBrowser: React.FC = () => {
                     : `You are about to enroll in this course for $${selectedCourse.price}. Payment will be processed after confirmation.`
                   }
                 </div>
+                {selectedCourse.enrollment_type !== 'free' && (
+                  <div className="space-y-3 mb-4">
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-gray-700" htmlFor="payer-name">
+                        Full Name (optional)
+                      </label>
+                      <Input
+                        id="payer-name"
+                        placeholder="Enter your name"
+                        value={payerName}
+                        onChange={(e) => setPayerName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-gray-700" htmlFor="mobile-money-number">
+                        Mobile Money Number
+                      </label>
+                      <Input
+                        id="mobile-money-number"
+                        placeholder="e.g. +256700000000"
+                        value={mobileMoneyNumber}
+                        onChange={(e) => setMobileMoneyNumber(e.target.value)}
+                      />
+                      <p className="text-xs text-gray-500">We will send a payment prompt to this number.</p>
+                    </div>
+                  </div>
+                )}
               </>
             )}
             <div className="flex space-x-3">
@@ -769,7 +849,7 @@ const CourseBrowser: React.FC = () => {
                 className="flex-1"
                 disabled={!selectedCourse}
               >
-                {selectedCourse?.enrollment_type === 'free' ? 'Enroll Now' : 'Proceed to Payment'}
+                {selectedCourse?.enrollment_type === 'free' ? 'Enroll Now' : 'Pay with Mobile Money'}
               </Button>
             </div>
           </div>

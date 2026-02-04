@@ -63,6 +63,9 @@ export interface Course {
   created_at: string;
   updated_at: string;
   is_published: boolean;
+  enrollment_type?: 'free' | 'paid' | 'scholarship';
+  price?: number | null;
+  currency?: string;
   modules?: Module[];
   announcements?: Announcement[];
   // Module release settings

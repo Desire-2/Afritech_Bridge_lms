@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle, User, Mail, Phone, Globe, GraduationCap, Briefcase, Monitor, Target, Clock, Award, Sparkles, TrendingUp, Shield, Zap } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle, User, Mail, Phone, Globe, GraduationCap, Briefcase, Monitor, Target, Clock, Award, Sparkles, TrendingUp, Shield, Zap, CreditCard } from 'lucide-react';
 
 interface CourseApplicationFormProps {
   courseId: number;
@@ -56,6 +56,11 @@ export default function CourseApplicationForm({
   const [applicationId, setApplicationId] = useState<number | null>(null);
   const [scores, setScores] = useState<any>(null);
   
+  // Payment states
+  const [paymentStatus, setPaymentStatus] = useState<'pending' | 'processing' | 'approved' | 'failed'>('pending');
+  const [paymentReference, setPaymentReference] = useState<string | null>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  
   // Duplicate check states
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [existingApplication, setExistingApplication] = useState<any>(null);
@@ -87,6 +92,10 @@ export default function CourseApplicationForm({
     committed_to_complete: false,
     agrees_to_assessments: false,
     referral_source: '',
+    payment_method: 'mobile_money',
+    payment_phone_number: '',
+    payment_payer_name: '',
+    paypal_email: '',
   });
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
@@ -199,10 +208,137 @@ export default function CourseApplicationForm({
       if (!formData.agrees_to_assessments) {
         errors.agrees_to_assessments = 'You must agree to participate in assessments';
       }
+      if (courseData?.enrollment_type === 'paid') {
+        if (formData.payment_method === 'mobile_money' && !formData.payment_phone_number?.trim()) {
+          errors.payment_phone_number = 'Mobile money number is required for payment';
+        }
+      }
     }
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
+  };
+
+  // Handle payment initiation
+  const handlePayNow = async () => {
+    // Validate payment fields first
+    if (!validateSection(6)) return;
+    
+    if (courseData?.enrollment_type !== 'paid') return;
+
+    setPaymentLoading(true);
+    setError(null);
+
+    try {
+      if (formData.payment_method === 'mobile_money') {
+        // For mobile money, call the payment API
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/initiate-payment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            course_id: courseId,
+            amount: courseData.price,
+            currency: courseData.currency || 'USD',
+            phone_number: formData.payment_phone_number || formData.phone,
+            payer_name: formData.payment_payer_name || formData.full_name,
+            email: formData.email,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Payment initiation failed');
+        }
+
+        setPaymentReference(data.reference);
+        setPaymentStatus('processing');
+        
+        // For mobile money, we show processing status and let user confirm after they approve on their phone
+        setError(null);
+      } else if (formData.payment_method === 'paypal') {
+        // For PayPal, redirect to PayPal
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/initiate-payment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            course_id: courseId,
+            amount: courseData.price,
+            currency: courseData.currency || 'USD',
+            payment_method: 'paypal',
+            email: formData.email,
+            return_url: `${window.location.origin}/payment/success?course_id=${courseId}`,
+            cancel_url: `${window.location.origin}/payment/cancel?course_id=${courseId}`,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'PayPal payment initiation failed');
+        }
+
+        if (data.approval_url) {
+          // Store form data in localStorage for when user returns
+          localStorage.setItem('pending_application_form', JSON.stringify({
+            formData,
+            courseId,
+            courseTitle,
+          }));
+          // Redirect to PayPal
+          window.location.href = data.approval_url;
+          return;
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Payment initiation failed');
+      setPaymentStatus('failed');
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  // Handle payment confirmation (for mobile money after user approves on phone)
+  const handleConfirmPayment = async () => {
+    if (!paymentReference) return;
+
+    setPaymentLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/verify-payment`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reference: paymentReference,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Payment verification failed');
+      }
+
+      if (data.status === 'completed' || data.status === 'successful') {
+        setPaymentStatus('approved');
+        setError(null);
+      } else if (data.status === 'pending') {
+        setError('Payment is still processing. Please wait and try again.');
+      } else {
+        throw new Error('Payment was not successful. Please try again.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Payment verification failed');
+    } finally {
+      setPaymentLoading(false);
+    }
   };
 
   const handleNext = () => {
@@ -230,15 +366,49 @@ export default function CourseApplicationForm({
       return;
     }
     
+    // For paid courses, ensure payment is approved first
+    if (courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved') {
+      setError('Please complete payment before submitting your application.');
+      return;
+    }
+    
     if (!validateSection(6)) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const response = await applicationService.submitApplication(formData);
+      const payload: ApplicationSubmitData = {
+        ...formData,
+        payment_method: courseData?.enrollment_type === 'paid' ? formData.payment_method : undefined,
+        payment_phone_number: courseData?.enrollment_type === 'paid' && formData.payment_method === 'mobile_money'
+          ? (formData.payment_phone_number || formData.phone)
+          : undefined,
+        payment_payer_name: courseData?.enrollment_type === 'paid' && formData.payment_method === 'mobile_money'
+          ? (formData.payment_payer_name || formData.full_name)
+          : undefined,
+        paypal_email: courseData?.enrollment_type === 'paid' && formData.payment_method === 'paypal'
+          ? formData.email
+          : undefined,
+      };
+
+      // Add payment reference if payment was completed
+      if (courseData?.enrollment_type === 'paid' && paymentReference) {
+        (payload as any).payment_reference = paymentReference;
+        (payload as any).payment_status = 'completed';
+      }
+
+      if (courseData?.enrollment_type !== 'paid') {
+        delete payload.payment_method;
+        delete payload.payment_phone_number;
+        delete payload.payment_payer_name;
+        delete payload.paypal_email;
+      }
+
+      const response = await applicationService.submitApplication(payload);
       
       if (response && response.application_id) {
+        // Payment already completed before submission, no need to redirect
         setSuccess(true);
         setApplicationId(response.application_id);
         setScores(response.scores);
@@ -1142,6 +1312,180 @@ export default function CourseApplicationForm({
         </p>
       </div>
 
+      {courseData?.enrollment_type === 'paid' && (
+        <div className="bg-indigo-50 border-2 border-indigo-300 p-6 rounded-2xl shadow-sm">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-indigo-600 rounded-lg">
+              <CreditCard className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <p className="text-lg font-bold text-gray-900">Payment Details</p>
+              <p className="text-sm text-gray-700">
+                Course fee: {courseData.currency || 'USD'} {courseData.price}
+              </p>
+            </div>
+          </div>
+
+          {/* Payment Method Selection */}
+          <div className="mb-6">
+            <Label className="text-base font-bold text-gray-900 mb-3 block">
+              Select Payment Method
+            </Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* MTN Mobile Money Option */}
+              <div
+                onClick={() => handleInputChange('payment_method', 'mobile_money')}
+                className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 ${
+                  formData.payment_method === 'mobile_money'
+                    ? 'border-indigo-600 bg-indigo-100 shadow-md'
+                    : 'border-gray-300 bg-white hover:border-indigo-400'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${formData.payment_method === 'mobile_money' ? 'bg-indigo-600' : 'bg-gray-200'}`}>
+                    <Phone className={`w-5 h-5 ${formData.payment_method === 'mobile_money' ? 'text-white' : 'text-gray-600'}`} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-900">MTN Mobile Money</p>
+                    <p className="text-xs text-gray-600">Pay with your mobile wallet</p>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Available in: Ghana, Nigeria, Cameroon, Rwanda, Uganda, Côte d&apos;Ivoire, Benin, Zambia, South Africa, and more
+                </p>
+              </div>
+
+              {/* PayPal Option */}
+              <div
+                onClick={() => handleInputChange('payment_method', 'paypal')}
+                className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 ${
+                  formData.payment_method === 'paypal'
+                    ? 'border-blue-600 bg-blue-100 shadow-md'
+                    : 'border-gray-300 bg-white hover:border-blue-400'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${formData.payment_method === 'paypal' ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                    <CreditCard className={`w-5 h-5 ${formData.payment_method === 'paypal' ? 'text-white' : 'text-gray-600'}`} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-900">PayPal</p>
+                    <p className="text-xs text-gray-600">Pay with PayPal or card</p>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Available worldwide - Pay securely with PayPal, credit or debit card
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile Money Fields */}
+          {formData.payment_method === 'mobile_money' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
+              <div className="space-y-2">
+                <Label htmlFor="payment_payer_name" className="text-base font-bold text-gray-900">
+                  Payer Name (optional)
+                </Label>
+                <Input
+                  id="payment_payer_name"
+                  value={formData.payment_payer_name}
+                  onChange={(e) => handleInputChange('payment_payer_name', e.target.value)}
+                  placeholder="Enter name for payment"
+                  className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="payment_phone_number" className="text-base font-bold text-gray-900">
+                  Mobile Money Number
+                </Label>
+                <Input
+                  id="payment_phone_number"
+                  value={formData.payment_phone_number}
+                  onChange={(e) => handleInputChange('payment_phone_number', e.target.value)}
+                  placeholder="e.g. +256700000000"
+                  className={`py-6 text-base border-2 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 ${
+                    validationErrors.payment_phone_number ? 'border-red-400' : 'border-gray-300'
+                  }`}
+                />
+                {validationErrors.payment_phone_number && (
+                  <p className="text-sm text-red-600 mt-1 font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    {validationErrors.payment_phone_number}
+                  </p>
+                )}
+                <p className="text-xs text-gray-600">We will send a payment prompt to this number.</p>
+              </div>
+            </div>
+          )}
+
+          {/* PayPal Info */}
+          {formData.payment_method === 'paypal' && (
+            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl animate-in fade-in duration-300">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-blue-600 rounded-lg">
+                  <CreditCard className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-bold text-gray-900">PayPal Payment</p>
+                  <p className="text-sm text-gray-700 mt-1">
+                    Click &quot;Pay Now&quot; below to be redirected to PayPal to complete your payment securely.
+                  </p>
+                  <p className="text-sm text-gray-600 mt-2">
+                    Confirmation email will be sent to: <span className="font-semibold">{formData.email}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Payment Status Indicator */}
+          {paymentStatus !== 'pending' && (
+            <div className={`mt-4 p-4 rounded-xl border-2 animate-in fade-in duration-300 ${
+              paymentStatus === 'approved' 
+                ? 'bg-emerald-50 border-emerald-500' 
+                : paymentStatus === 'processing'
+                ? 'bg-amber-50 border-amber-500'
+                : 'bg-red-50 border-red-500'
+            }`}>
+              <div className="flex items-center gap-3">
+                {paymentStatus === 'approved' && (
+                  <>
+                    <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                    <div>
+                      <p className="font-bold text-emerald-700">Payment Approved!</p>
+                      <p className="text-sm text-emerald-600">You can now submit your application.</p>
+                    </div>
+                  </>
+                )}
+                {paymentStatus === 'processing' && (
+                  <>
+                    <Loader2 className="w-6 h-6 text-amber-600 animate-spin" />
+                    <div>
+                      <p className="font-bold text-amber-700">Payment Processing</p>
+                      <p className="text-sm text-amber-600">
+                        {formData.payment_method === 'mobile_money' 
+                          ? 'Please approve the payment on your phone, then click "I\'ve Completed Payment".'
+                          : 'Waiting for PayPal confirmation...'}
+                      </p>
+                    </div>
+                  </>
+                )}
+                {paymentStatus === 'failed' && (
+                  <>
+                    <AlertCircle className="w-6 h-6 text-red-600" />
+                    <div>
+                      <p className="font-bold text-red-700">Payment Failed</p>
+                      <p className="text-sm text-red-600">Please try again or choose a different payment method.</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Application Summary Card */}
       <div className="relative">
         <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 p-8 rounded-2xl shadow-md">
@@ -1323,7 +1667,7 @@ export default function CourseApplicationForm({
               type="button"
               variant="outline"
               onClick={currentSection === 1 ? (onCancel || (() => window.history.back())) : handlePrevious}
-              disabled={loading}
+              disabled={loading || paymentLoading}
               className="px-8 py-6 text-lg border-2 hover:bg-gray-50 rounded-xl transition-all duration-300 font-semibold"
             >
               <ChevronLeft className="w-5 h-5 mr-2" />
@@ -1340,26 +1684,95 @@ export default function CourseApplicationForm({
                 <ChevronRight className="w-5 h-5 ml-2" />
               </Button>
             ) : (
-              <Button 
-                type="submit" 
-                disabled={loading || existingApplication}
-                className="px-12 py-7 text-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? (
+              <div className="flex flex-col sm:flex-row gap-4">
+                {/* Pay Now Button - Only shown for paid courses when payment not yet approved */}
+                {courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved' && (
                   <>
-                    <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                    Submitting Application...
-                  </>
-                ) : existingApplication ? (
-                  'Already Applied'
-                ) : (
-                  <>
-                    <Sparkles className="w-6 h-6 mr-3" />
-                    Submit Application
-                    <CheckCircle2 className="w-6 h-6 ml-3" />
+                    {paymentStatus === 'processing' ? (
+                      <Button 
+                        type="button"
+                        onClick={handleConfirmPayment}
+                        disabled={paymentLoading}
+                        className="px-10 py-7 text-lg bg-amber-500 hover:bg-amber-600 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
+                      >
+                        {paymentLoading ? (
+                          <>
+                            <Loader2 className="w-6 h-6 mr-3 animate-spin" />
+                            Verifying Payment...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-6 h-6 mr-3" />
+                            I&apos;ve Completed Payment
+                          </>
+                        )}
+                      </Button>
+                    ) : (
+                      <Button 
+                        type="button"
+                        onClick={handlePayNow}
+                        disabled={paymentLoading || existingApplication}
+                        className="px-10 py-7 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
+                      >
+                        {paymentLoading ? (
+                          <>
+                            <Loader2 className="w-6 h-6 mr-3 animate-spin" />
+                            Initiating Payment...
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="w-6 h-6 mr-3" />
+                            Pay Now ({courseData?.currency || 'USD'} {courseData?.price})
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </>
                 )}
-              </Button>
+
+                {/* Payment Status Indicator */}
+                {courseData?.enrollment_type === 'paid' && paymentStatus === 'approved' && (
+                  <div className="flex items-center gap-2 px-6 py-4 bg-emerald-100 border-2 border-emerald-500 rounded-2xl">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                    <span className="font-bold text-emerald-700">Payment Approved!</span>
+                  </div>
+                )}
+
+                {/* Submit Application Button */}
+                <Button 
+                  type="submit" 
+                  disabled={
+                    loading || 
+                    existingApplication || 
+                    (courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved')
+                  }
+                  className={`px-12 py-7 text-xl font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed ${
+                    courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved'
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-6 h-6 mr-3 animate-spin" />
+                      Submitting Application...
+                    </>
+                  ) : existingApplication ? (
+                    'Already Applied'
+                  ) : courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved' ? (
+                    <>
+                      <AlertCircle className="w-6 h-6 mr-3" />
+                      Pay First to Submit
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-6 h-6 mr-3" />
+                      Submit Application
+                      <CheckCircle2 className="w-6 h-6 ml-3" />
+                    </>
+                  )}
+                </Button>
+              </div>
             )}
           </div>
         </form>

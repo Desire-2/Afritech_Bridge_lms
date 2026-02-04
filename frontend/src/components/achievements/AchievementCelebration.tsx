@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import confetti from 'canvas-confetti';
 import { toast } from 'sonner';
+import { useAchievementShare } from '@/hooks/useAchievementShare';
 
 // Enhanced icon mapping
 const CELEBRATION_ICONS = {
@@ -124,6 +125,9 @@ const AchievementCelebration: React.FC<AchievementCelebrationProps> = ({
   const [currentAchievementIndex, setCurrentAchievementIndex] = useState(0);
   const [celebrationStage, setCelebrationStage] = useState<'achievements' | 'levelup' | 'streak' | 'complete'>('achievements');
   
+  // Use unified sharing hook
+  const { shareAchievement: shareAchievementHook, downloadAchievementCertificate, isSharing } = useAchievementShare();
+  
   useEffect(() => {
     if (isVisible && rewards) {
       // Start celebration sequence
@@ -214,72 +218,22 @@ const AchievementCelebration: React.FC<AchievementCelebrationProps> = ({
     }
   };
 
-  const shareAchievement = async (achievement: Achievement, method: string) => {
+  const handleShareAchievement = async (achievement: Achievement, method: string) => {
     try {
-      const achievementUrl = `${window.location.origin}/achievements/${achievement.id}`;
-      const shareText = `🎉 I just unlocked "${achievement.title}"! ${achievement.description}`;
-
-      switch (method) {
-        case 'copy':
-          await navigator.clipboard.writeText(shareText + '\n' + achievementUrl);
-          toast.success('Achievement copied to clipboard!');
-          break;
-        case 'twitter':
-          window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(achievementUrl)}`, '_blank');
-          break;
-        case 'download':
-          await downloadCelebrationImage(achievement);
-          break;
+      let success = false;
+      
+      if (method === 'download') {
+        success = await downloadAchievementCertificate(achievement);
+      } else {
+        success = await shareAchievementHook(achievement, method);
       }
-
-      onShare?.(achievement.id, method);
+      
+      if (success) {
+        onShare?.(achievement.id, method);
+      }
     } catch (error) {
-      toast.error('Failed to share achievement');
+      console.error('Share error:', error);
     }
-  };
-
-  const downloadCelebrationImage = async (achievement: Achievement) => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    canvas.width = 1200;
-    canvas.height = 800;
-
-    // Gradient background
-    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    gradient.addColorStop(0, '#667eea');
-    gradient.addColorStop(1, '#764ba2');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Achievement celebration text
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 72px Arial';
-    ctx.textAlign = 'center';
-    ctx.fillText('🎉 ACHIEVEMENT UNLOCKED! 🎉', canvas.width / 2, 150);
-
-    ctx.font = 'bold 48px Arial';
-    ctx.fillText(achievement.title, canvas.width / 2, 300);
-
-    ctx.font = '32px Arial';
-    ctx.fillStyle = '#f0f0f0';
-    ctx.fillText(achievement.description, canvas.width / 2, 380);
-
-    ctx.font = '24px Arial';
-    ctx.fillText(`Tier: ${achievement.tier.toUpperCase()} • Points: ${achievement.points_value}`, canvas.width / 2, 450);
-
-    const date = new Date().toLocaleDateString();
-    ctx.font = '20px Arial';
-    ctx.fillText(`Earned on: ${date}`, canvas.width / 2, 500);
-
-    // Download
-    const link = document.createElement('a');
-    link.download = `${achievement.title.replace(/\s+/g, '_')}_celebration.png`;
-    link.href = canvas.toDataURL();
-    link.click();
-
-    toast.success('Celebration image downloaded!');
   };
 
   if (!isVisible || !rewards) return null;
@@ -372,7 +326,7 @@ const AchievementCelebration: React.FC<AchievementCelebrationProps> = ({
                   <div className="pt-6 space-y-3">
                     <div className="flex justify-center gap-3">
                       <Button
-                        onClick={() => shareAchievement(currentAchievement, 'copy')}
+                        onClick={() => handleShareAchievement(currentAchievement, 'copy')}
                         variant="outline"
                         size="sm"
                       >
@@ -380,7 +334,7 @@ const AchievementCelebration: React.FC<AchievementCelebrationProps> = ({
                         Share
                       </Button>
                       <Button
-                        onClick={() => shareAchievement(currentAchievement, 'download')}
+                        onClick={() => handleShareAchievement(currentAchievement, 'download')}
                         variant="outline"
                         size="sm"
                       >

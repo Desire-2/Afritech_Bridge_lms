@@ -32,6 +32,9 @@ export interface Course {
   enrollment_count: number;
   category: string;
   tags: string[];
+  enrollment_type?: 'free' | 'paid' | 'scholarship';
+  price?: number | null;
+  currency?: string;
   is_published: boolean;
   created_at: string;
   updated_at: string;
@@ -292,7 +295,7 @@ export interface LearningRecommendation {
 export interface EnrollmentRequest {
   course_id: number;
   enrollment_type: 'free' | 'paid' | 'scholarship';
-  payment_method?: 'card' | 'mobile_money' | 'bank_transfer';
+  payment_method?: 'card' | 'mobile_money' | 'paypal' | 'bank_transfer';
 }
 
 export interface ScholarshipApplication {
@@ -428,6 +431,10 @@ export interface ApplicationSubmitData {
   committed_to_complete: boolean;
   agrees_to_assessments: boolean;
   referral_source?: string;
+  payment_method?: 'mobile_money' | 'paypal';
+  payment_phone_number?: string;
+  payment_payer_name?: string;
+  paypal_email?: string;
 }
 
 export interface ApplicationStatistics {

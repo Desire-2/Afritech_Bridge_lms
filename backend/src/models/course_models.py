@@ -16,6 +16,11 @@ class Course(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_published = db.Column(db.Boolean, default=False, nullable=False)
+
+    # Payment & Enrollment Settings
+    enrollment_type = db.Column(db.String(20), nullable=False, default='free')  # 'free', 'paid', 'scholarship'
+    price = db.Column(db.Float, nullable=True)
+    currency = db.Column(db.String(10), nullable=False, default='USD')
     
     # Module Release Settings
     start_date = db.Column(db.DateTime, nullable=True)  # Course start date for module release calculations
@@ -105,6 +110,9 @@ class Course(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'is_published': self.is_published,
+            'enrollment_type': self.enrollment_type,
+            'price': self.price,
+            'currency': self.currency,
             # Module release settings
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'module_release_count': self.module_release_count,

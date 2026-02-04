@@ -357,3 +357,180 @@ class LegacyMailWrapper:
 
 # Create legacy mail instance
 mail = LegacyMailWrapper()
+
+
+def send_test_email(to_email, smtp_host=None, smtp_port=None, from_email=None, from_name=None, enable_tls=None):
+    """
+    Send a test email to verify email configuration
+    
+    Args:
+        to_email: Test recipient email address
+        smtp_host: SMTP server (optional - uses current config if not provided)
+        smtp_port: SMTP port (optional - uses current config if not provided) 
+        from_email: From email address (optional - uses current config if not provided)
+        from_name: From name (optional - uses current config if not provided)
+        enable_tls: Enable TLS (optional - uses current config if not provided)
+    
+    Returns:
+        dict: Result with success status and message/error
+    """
+    try:
+        # Use Brevo service if configured
+        if brevo_service.is_configured:
+            result = brevo_service.send_email(
+                to_emails=[to_email],
+                subject="🧪 Email Configuration Test - Afritec Bridge LMS",
+                html_content=f"""
+                <html>
+                <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <div style="background-color: #f8f9fa; border-radius: 10px; padding: 30px; text-align: center;">
+                        <h2 style="color: #28a745; margin-bottom: 20px;">✅ Email Test Successful!</h2>
+                        <p style="font-size: 16px; color: #333; margin-bottom: 15px;">
+                            Your email configuration is working correctly.
+                        </p>
+                        <p style="font-size: 14px; color: #666; margin-bottom: 20px;">
+                            This test email was sent from Afritec Bridge LMS using Brevo API.
+                        </p>
+                        <div style="background-color: #e9ecef; border-radius: 5px; padding: 15px; margin: 20px 0;">
+                            <p style="margin: 0; font-size: 14px; color: #495057;">
+                                <strong>Test Details:</strong><br>
+                                Sent to: {to_email}<br>
+                                Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC')}<br>
+                                Service: Brevo API
+                            </p>
+                        </div>
+                        <p style="font-size: 12px; color: #999; margin-top: 20px;">
+                            This is an automated test message from Afritec Bridge LMS.
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """,
+                sender_name=from_name or "Afritec Bridge LMS Test",
+                sender_email=from_email or "noreply@afritechbridge.online"
+            )
+            
+            if result.get('success'):
+                return {
+                    'success': True,
+                    'message': 'Test email sent successfully via Brevo API',
+                    'service': 'brevo'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': result.get('error', 'Unknown error with Brevo service'),
+                    'service': 'brevo'
+                }
+        
+        # Fallback to SMTP if Brevo not available
+        else:
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            # Use provided values or current app config
+            smtp_host = smtp_host or current_app.config.get('MAIL_SERVER', 'smtp.gmail.com')
+            smtp_port = smtp_port or current_app.config.get('MAIL_PORT', 587)
+            from_email = from_email or current_app.config.get('MAIL_DEFAULT_SENDER')
+            from_name = from_name or "Afritec Bridge LMS"
+            enable_tls = enable_tls if enable_tls is not None else current_app.config.get('MAIL_USE_TLS', True)
+            
+            if not from_email:
+                return {
+                    'success': False,
+                    'error': 'From email address not configured',
+                    'service': 'smtp'
+                }
+            
+            # Create message
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = "🧪 SMTP Email Configuration Test - Afritec Bridge LMS"
+            msg['From'] = f"{from_name} <{from_email}>"
+            msg['To'] = to_email
+            
+            # Create HTML content
+            html_content = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background-color: #f8f9fa; border-radius: 10px; padding: 30px; text-align: center;">
+                    <h2 style="color: #28a745; margin-bottom: 20px;">✅ SMTP Test Successful!</h2>
+                    <p style="font-size: 16px; color: #333; margin-bottom: 15px;">
+                        Your SMTP email configuration is working correctly.
+                    </p>
+                    <div style="background-color: #e9ecef; border-radius: 5px; padding: 15px; margin: 20px 0;">
+                        <p style="margin: 0; font-size: 14px; color: #495057;">
+                            <strong>Test Details:</strong><br>
+                            SMTP Server: {smtp_host}:{smtp_port}<br>
+                            From: {from_email}<br>
+                            To: {to_email}<br>
+                            TLS Enabled: {enable_tls}<br>
+                            Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC')}
+                        </p>
+                    </div>
+                    <p style="font-size: 12px; color: #999; margin-top: 20px;">
+                        This is an automated test message from Afritec Bridge LMS.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # Create plain text version
+            text_content = f"""
+            SMTP Email Test - Afritec Bridge LMS
+            
+            Your SMTP email configuration is working correctly!
+            
+            Test Details:
+            - SMTP Server: {smtp_host}:{smtp_port}
+            - From: {from_email}
+            - To: {to_email}
+            - TLS Enabled: {enable_tls}
+            - Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC')}
+            
+            This is an automated test message from Afritec Bridge LMS.
+            """
+            
+            # Attach parts
+            text_part = MIMEText(text_content, 'plain')
+            html_part = MIMEText(html_content, 'html')
+            msg.attach(text_part)
+            msg.attach(html_part)
+            
+            # Send email
+            try:
+                server = smtplib.SMTP(smtp_host, smtp_port)
+                if enable_tls:
+                    server.starttls()
+                
+                username = current_app.config.get('MAIL_USERNAME')
+                password = current_app.config.get('MAIL_PASSWORD')
+                
+                if username and password:
+                    server.login(username, password)
+                
+                text = msg.as_string()
+                server.sendmail(from_email, [to_email], text)
+                server.quit()
+                
+                return {
+                    'success': True,
+                    'message': 'Test email sent successfully via SMTP',
+                    'service': 'smtp'
+                }
+                
+            except Exception as smtp_error:
+                return {
+                    'success': False,
+                    'error': f'SMTP error: {str(smtp_error)}',
+                    'service': 'smtp'
+                }
+        
+    except Exception as e:
+        logger.error(f"Error sending test email: {str(e)}")
+        return {
+            'success': False,
+            'error': f'Test email failed: {str(e)}',
+            'service': 'unknown'
+        }

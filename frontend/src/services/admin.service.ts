@@ -387,30 +387,180 @@ export class AdminService {
   }
 
   // Settings - Get all settings
-  static async getSystemSettings(): Promise<any> {
+  static async getSystemSettings(category?: string, includeAudit: boolean = false): Promise<any> {
     try {
-      const response = await apiClient.get(`${this.BASE_PATH}/settings`);
+      const searchParams = new URLSearchParams();
+      if (category) searchParams.set('category', category);
+      if (includeAudit) searchParams.set('include_audit', 'true');
+      
+      const url = searchParams.toString()
+        ? `/admin/settings?${searchParams.toString()}`
+        : '/admin/settings';
+        
+      console.log('📡 Getting settings from:', url);
+      const response = await apiClient.get(url);
+      console.log('📋 Settings received:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('❌ Get settings error:', error);
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Get specific setting
+  static async getSetting(key: string): Promise<any> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/settings/${key}`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }
   }
 
-  // Settings - Update settings
-  static async updateSystemSettings(settings: any): Promise<any> {
+  // Settings - Update specific setting
+  static async updateSetting(key: string, value: any, changeReason?: string): Promise<any> {
     try {
-      const response = await apiClient.put(`${this.BASE_PATH}/settings`, settings);
+      const payload: any = { key, value };
+      if (changeReason) payload.change_reason = changeReason;
+      
+      const response = await apiClient.put(`${this.BASE_PATH}/settings/${key}`, payload);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }
   }
 
-  // Settings - Email settings
+  // Settings - Update multiple settings
+  static async updateSystemSettings(settings: Record<string, any>, changeReason?: string): Promise<any> {
+    try {
+      const payload: any = { settings };
+      if (changeReason) payload.change_reason = changeReason;
+      
+      console.log('🌐 Sending settings to backend:', payload);
+      const response = await apiClient.put('/admin/settings/bulk', payload);
+      console.log('✅ Backend response:', response);
+      return response.data;
+    } catch (error) {
+      console.error('❌ API Error:', error);
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Create new setting
+  static async createSetting(settingData: {
+    key: string;
+    value: any;
+    data_type?: string;
+    category: string;
+    description?: string;
+    is_public?: boolean;
+    is_editable?: boolean;
+    requires_restart?: boolean;
+  }): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/settings`, settingData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Delete setting
+  static async deleteSetting(key: string): Promise<any> {
+    try {
+      const response = await apiClient.delete(`${this.BASE_PATH}/settings/${key}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Export settings
+  static async exportSettings(): Promise<any> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/settings/export`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Import settings
+  static async importSettings(settingsData: any): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/settings/import`, settingsData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Reset to defaults
+  static async resetSettings(confirm: boolean = false): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/settings/reset`, { confirm });
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Initialize default settings
+  static async initializeSettings(): Promise<any> {
+    try {
+      const response = await apiClient.post('/admin/settings/initialize');
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Get audit logs
+  static async getSettingAuditLogs(params?: {
+    page?: number;
+    per_page?: number;
+    setting_key?: string;
+  }): Promise<any> {
+    try {
+      const searchParams = new URLSearchParams();
+      if (params?.page) searchParams.set('page', params.page.toString());
+      if (params?.per_page) searchParams.set('per_page', params.per_page.toString());
+      if (params?.setting_key) searchParams.set('setting_key', params.setting_key);
+
+      const url = searchParams.toString()
+        ? `${this.BASE_PATH}/settings/audit?${searchParams.toString()}`
+        : `${this.BASE_PATH}/settings/audit`;
+
+      const response = await apiClient.get(url);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Clear settings cache
+  static async clearSettingsCache(): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/settings/cache/clear`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Settings - Email settings (deprecated - use updateSetting instead)
   static async updateEmailSettings(emailConfig: any): Promise<any> {
     try {
-      const response = await apiClient.put(`${this.BASE_PATH}/settings/email`, emailConfig);
-      return response.data;
+      console.warn('updateEmailSettings is deprecated. Use updateSystemSettings instead.');
+      const emailSettings: Record<string, any> = {};
+      
+      if (emailConfig.smtpHost) emailSettings['smtp_host'] = emailConfig.smtpHost;
+      if (emailConfig.smtpPort) emailSettings['smtp_port'] = emailConfig.smtpPort;
+      if (emailConfig.fromEmail) emailSettings['from_email'] = emailConfig.fromEmail;
+      if (emailConfig.fromName) emailSettings['from_name'] = emailConfig.fromName;
+      if (emailConfig.enableTls !== undefined) emailSettings['enable_tls'] = emailConfig.enableTls;
+      
+      return this.updateSystemSettings(emailSettings, 'Email settings update');
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }
