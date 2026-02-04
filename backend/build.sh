@@ -105,6 +105,16 @@ if [ -n "$RENDER" ] && [ -n "$DATABASE_URL" ]; then
     echo "   Check logs above for details."
     # Don't exit - allow deployment to continue even if migration has issues
   fi
+  
+  # Run forum course_id nullable migration
+  echo "=================================================="
+  echo "Running forum course_id nullable migration..."
+  echo "=================================================="
+  if $PYTHON_CMD migrate_forum_course_id_nullable.py; then
+    echo "✅ Forum migration completed successfully!"
+  else
+    echo "⚠️  Warning: Forum migration had issues, but continuing deployment..."
+  fi
 else
   echo "Skipping schema sync (not in production environment or DATABASE_URL not set)"
 fi
