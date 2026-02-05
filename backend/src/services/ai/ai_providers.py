@@ -59,6 +59,7 @@ class AIProviderManager:
         self.openrouter_base_url = "https://openrouter.ai/api/v1/chat/completions"
         self.site_url = os.environ.get('SITE_URL', 'https://afritecbridge.com')
         self.site_name = os.environ.get('SITE_NAME', 'Afritec Bridge LMS')
+        self.openrouter_timeout = int(os.environ.get('OPENROUTER_TIMEOUT_SECONDS', '25'))
         
         # Gemini configuration (fallback)
         self.gemini_api_key = os.environ.get('GEMINI_API_KEY')
@@ -89,7 +90,7 @@ class AIProviderManager:
         retry_strategy = Retry(
             total=3,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["POST"]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -311,7 +312,7 @@ class AIProviderManager:
                     self.openrouter_base_url,
                     headers=headers,
                     json=payload,
-                    timeout=90
+                    timeout=self.openrouter_timeout
                 )
                 
                 response.raise_for_status()
@@ -330,11 +331,16 @@ class AIProviderManager:
             except requests.exceptions.HTTPError as e:
                 error_msg = str(e)
                 status_code = e.response.status_code if e.response else None
+
+                if status_code in [401, 402, 403]:
+                    logger.error(f"OpenRouter auth/billing error (status {status_code}): {error_msg}")
+                    self._mark_provider_failure('openrouter')
+                    return None
                 
                 if status_code == 429:
                     logger.warning(f"OpenRouter rate limit hit (attempt {attempt + 1}): {error_msg}")
                     if attempt < retry_count:
-                        backoff_time = (attempt + 1) * 15
+                        backoff_time = (attempt + 1) * 5
                         logger.info(f"Backing off for {backoff_time}s before retry...")
                         time.sleep(backoff_time)
                         continue
