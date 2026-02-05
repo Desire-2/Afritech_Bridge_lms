@@ -8,6 +8,7 @@ import json
 import time
 import hashlib
 import logging
+import concurrent.futures
 from typing import Dict, List, Optional, Any, Tuple
 from collections import deque
 from datetime import datetime
@@ -60,6 +61,8 @@ class AIProviderManager:
         self.site_url = os.environ.get('SITE_URL', 'https://afritecbridge.com')
         self.site_name = os.environ.get('SITE_NAME', 'Afritec Bridge LMS')
         self.openrouter_timeout = int(os.environ.get('OPENROUTER_TIMEOUT_SECONDS', '25'))
+        self.gemini_timeout = int(os.environ.get('GEMINI_TIMEOUT_SECONDS', '25'))
+        self.gemini_max_output_tokens = int(os.environ.get('GEMINI_MAX_OUTPUT_TOKENS', '4096'))
         
         # Gemini configuration (fallback)
         self.gemini_api_key = os.environ.get('GEMINI_API_KEY')
@@ -393,19 +396,26 @@ class AIProviderManager:
                     'temperature': temperature,
                     'top_p': 0.9,
                     'top_k': 40,
-                    'max_output_tokens': 8192,
+                    'max_output_tokens': self.gemini_max_output_tokens,
                 }
-                
-                response = self.gemini_model.generate_content(
-                    optimized_prompt,
-                    generation_config=generation_config
-                )
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        self.gemini_model.generate_content,
+                        optimized_prompt,
+                        generation_config=generation_config
+                    )
+                    response = future.result(timeout=self.gemini_timeout)
                 
                 logger.info(f"Gemini API request successful")
                 self._mark_provider_success('gemini')
                 self._cache_response(cache_key, response.text)
                 return response.text
                 
+            except concurrent.futures.TimeoutError:
+                logger.error(f"Gemini request timed out after {self.gemini_timeout}s")
+                if attempt < retry_count:
+                    continue
             except Exception as e:
                 error_msg = str(e)
                 
