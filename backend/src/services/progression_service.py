@@ -304,7 +304,7 @@ class ProgressionService:
         
         Enhanced with strict validation:
         1. ALL lessons in module must satisfy individual requirements
-        2. Module cumulative score >= 80%
+        2. Module cumulative score >= 70% (reduced from 80% for improved accessibility)
         3. No lesson can have unsatisfied quiz/assignment requirements
         
         Args:
@@ -364,7 +364,7 @@ class ProgressionService:
                     lesson_failures.append(f"Lesson '{lesson.title}': {', '.join(missing_reqs) if missing_reqs else req_reason}")
                     continue
                 
-                # Check lesson score threshold
+                # Check lesson score threshold (80% minimum for lesson completion)
                 lesson_score = completion.calculate_lesson_score()
                 if lesson_score < 80.0:
                     lesson_failures.append(f"Lesson '{lesson.title}' score {lesson_score:.1f}% < 80%")
@@ -382,8 +382,8 @@ class ProgressionService:
             cumulative_score = module_progress.calculate_cumulative_score()
             current_app.logger.info(f"All lessons passed. Module {module_id} cumulative_score={cumulative_score:.2f}% for student {student_id}")
             
-            # Check if meets passing requirement (80%)
-            if cumulative_score >= 80.0:
+            # Check if meets passing requirement (70%)
+            if cumulative_score >= 70.0:
                 current_app.logger.info(f"Module {module_id} PASSED with {cumulative_score:.2f}% - all {lessons_checked} lessons satisfied - unlocking next module")
                 
                 # Mark module as completed and save cumulative score
@@ -403,7 +403,7 @@ class ProgressionService:
                 
             else:
                 # Module score insufficient even though lessons passed
-                current_app.logger.info(f"Module {module_id} lessons passed but score {cumulative_score:.2f}% < 80%")
+                current_app.logger.info(f"Module {module_id} lessons passed but score {cumulative_score:.2f}% < 70%")
                 
                 # Check if this is a final attempt that fails
                 if module_progress.attempts_count >= module_progress.max_attempts:
@@ -421,7 +421,7 @@ class ProgressionService:
                     module_progress.failed_at = datetime.utcnow()
                     db.session.commit()
                     remaining_attempts = module_progress.max_attempts - module_progress.attempts_count
-                    return False, f"All lessons satisfied but module score {cumulative_score:.1f}% < 80% required. {remaining_attempts} attempts remaining."
+                    return False, f"All lessons satisfied but module score {cumulative_score:.1f}% < 70% required. {remaining_attempts} attempts remaining."
                 
         except Exception as e:
             current_app.logger.error(f"Module completion check error: {str(e)}")

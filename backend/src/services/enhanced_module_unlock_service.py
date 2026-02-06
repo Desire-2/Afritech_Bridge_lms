@@ -20,8 +20,8 @@ class EnhancedModuleUnlockService:
     """
     
     # Constants
-    MODULE_PASSING_SCORE = 80.0
-    LESSON_PASSING_SCORE = 80.0
+    MODULE_PASSING_SCORE = 70.0  # Reduced from 80% for improved module accessibility
+    LESSON_PASSING_SCORE = 80.0  # Kept at 80% for lesson completion rigor
     PREVIEW_UNLOCK_THRESHOLD = 60.0  # Allow module preview at 60%
     
     @staticmethod

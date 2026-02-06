@@ -237,7 +237,7 @@ export interface ScoringState {
 export const useModuleScoring = (moduleId: number) => {
   const [scoringState, setScoringState] = useState<ScoringState>({
     cumulativeScore: 0,
-    passingThreshold: 80,
+    passingThreshold: 70,  // Reduced from 80% for improved module accessibility
     isPassing: false,
     breakdown: {
       courseContribution: 0,
@@ -251,7 +251,7 @@ export const useModuleScoring = (moduleId: number) => {
       assignments: 40,
       finalAssessment: 20,
     },
-    missingPoints: 80,
+    missingPoints: 70,
   });
   const [loading, setLoading] = useState(true);
 
@@ -293,7 +293,7 @@ export const useModuleScoring = (moduleId: number) => {
 
           setScoringState({
             cumulativeScore: scoreBreakdown.cumulative_score || 0,
-            passingThreshold: scoreBreakdown.passing_threshold || 80,
+            passingThreshold: scoreBreakdown.passing_threshold || 70,
             isPassing: scoreBreakdown.is_passing || false,
             breakdown: {
               courseContribution: scoreBreakdown.breakdown.course_contribution?.score || 0,
@@ -302,7 +302,7 @@ export const useModuleScoring = (moduleId: number) => {
               finalAssessment: scoreBreakdown.breakdown.final_assessment?.score || 0,
             },
             weights,
-            missingPoints: scoreBreakdown.points_needed || Math.max(0, 80 - (scoreBreakdown.cumulative_score || 0)),
+            missingPoints: scoreBreakdown.points_needed || Math.max(0, 70 - (scoreBreakdown.cumulative_score || 0)),
             assessmentInfo: scoreBreakdown.assessment_info,
           });
           return;
@@ -321,7 +321,7 @@ export const useModuleScoring = (moduleId: number) => {
           console.warn('No progress data available for module:', moduleId);
           setScoringState({
             cumulativeScore: 0,
-            passingThreshold: 80,
+            passingThreshold: 70,
             isPassing: false,
             breakdown: {
               courseContribution: 0,
@@ -335,7 +335,7 @@ export const useModuleScoring = (moduleId: number) => {
               assignments: 40,
               finalAssessment: 20,
             },
-            missingPoints: 80,
+            missingPoints: 70,
           });
           return;
         }
@@ -361,8 +361,8 @@ export const useModuleScoring = (moduleId: number) => {
 
         setScoringState({
           cumulativeScore: cumulative,
-          passingThreshold: 80,
-          isPassing: cumulative >= 80,
+          passingThreshold: 70,
+          isPassing: cumulative >= 70,
           breakdown: {
             courseContribution: progress.course_contribution_score || 0,
             quizzes: progress.quiz_score || 0,
@@ -375,7 +375,7 @@ export const useModuleScoring = (moduleId: number) => {
             assignments: 40,
             finalAssessment: 20,
           },
-          missingPoints: Math.max(0, 80 - cumulative),
+          missingPoints: Math.max(0, 70 - cumulative),
         });
       } catch (error) {
         console.error('Failed to load scoring data:', error);
@@ -423,7 +423,7 @@ export const useModuleScoring = (moduleId: number) => {
 
         setScoringState({
           cumulativeScore: scoreBreakdown.cumulative_score || 0,
-          passingThreshold: scoreBreakdown.passing_threshold || 80,
+          passingThreshold: scoreBreakdown.passing_threshold || 70,
           isPassing: scoreBreakdown.is_passing || false,
           breakdown: {
             courseContribution: scoreBreakdown.breakdown.course_contribution?.score || 0,
@@ -432,7 +432,7 @@ export const useModuleScoring = (moduleId: number) => {
             finalAssessment: scoreBreakdown.breakdown.final_assessment?.score || 0,
           },
           weights,
-          missingPoints: scoreBreakdown.points_needed || Math.max(0, 80 - (scoreBreakdown.cumulative_score || 0)),
+          missingPoints: scoreBreakdown.points_needed || Math.max(0, 70 - (scoreBreakdown.cumulative_score || 0)),
           assessmentInfo: scoreBreakdown.assessment_info,
         });
         return;
@@ -450,7 +450,7 @@ export const useModuleScoring = (moduleId: number) => {
         console.warn('No progress data available for module:', moduleId);
         setScoringState({
           cumulativeScore: 0,
-          passingThreshold: 80,
+          passingThreshold: 70,
           isPassing: false,
           breakdown: {
             courseContribution: 0,
@@ -464,7 +464,7 @@ export const useModuleScoring = (moduleId: number) => {
             assignments: 40,
             finalAssessment: 20,
           },
-          missingPoints: 80,
+          missingPoints: 70,
         });
         return;
       }
@@ -481,8 +481,8 @@ export const useModuleScoring = (moduleId: number) => {
 
       setScoringState({
         cumulativeScore: cumulative,
-        passingThreshold: 80,
-        isPassing: cumulative >= 80,
+        passingThreshold: 70,
+        isPassing: cumulative >= 70,
         breakdown: {
           courseContribution: progress.course_contribution_score || 0,
           quizzes: progress.quiz_score || 0,
@@ -495,7 +495,7 @@ export const useModuleScoring = (moduleId: number) => {
           assignments: 40,
           finalAssessment: 20,
         },
-        missingPoints: Math.max(0, 80 - cumulative),
+        missingPoints: Math.max(0, 70 - cumulative),
       });
     } catch (error) {
       console.error('Failed to recalculate scoring:', error);

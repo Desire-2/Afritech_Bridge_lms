@@ -212,15 +212,18 @@ const SubmissionFileManager: React.FC<SubmissionFileManagerProps> = ({
                 type="checkbox"
                 checked={isSelected}
                 onChange={(e) => handleFileSelection(file.id, e.target.checked)}
-                className="mt-1"
+                className="mt-1 flex-shrink-0"
               />
-              <button className="p-1 text-gray-400 hover:text-gray-600">
+              <button 
+                className="p-1 text-gray-400 hover:text-gray-600 flex-shrink-0"
+                title="More options"
+              >
                 <MoreVertical className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex flex-col items-center space-y-2">
-              <div className={`p-3 rounded-lg ${
+            <div className="flex flex-col items-center space-y-3">
+              <div className={`p-3 rounded-lg flex-shrink-0 ${
                 file.fileInfo.viewable 
                   ? 'bg-green-100 text-green-600'
                   : 'bg-blue-100 text-blue-600'
@@ -231,35 +234,48 @@ const SubmissionFileManager: React.FC<SubmissionFileManagerProps> = ({
                 {!['image', 'document', 'code'].includes(file.fileInfo.category) && <FileText className="w-6 h-6" />}
               </div>
 
-              <div className="text-center">
-                <p className="text-sm font-medium text-gray-900 truncate w-full" title={file.filename}>
+              <div className="text-center w-full min-w-0">
+                <p 
+                  className="text-sm font-medium text-gray-900 truncate px-2" 
+                  title={file.filename}
+                >
                   {file.filename}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-gray-500 mt-1">
                   {formatFileSize(file.file_size || 0)}
                 </p>
               </div>
 
-              <div className="flex items-center space-x-2 w-full">
+              <div className="flex items-center gap-2 w-full justify-center flex-wrap">
                 <button
                   onClick={() => togglePreview(file.id)}
-                  className="flex-1 px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded"
+                  className="px-3 py-1.5 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors flex items-center gap-1"
+                  title="Toggle preview"
                 >
-                  <Eye className="w-3 h-3 mx-auto" />
+                  <Eye className="w-3 h-3" />
+                  <span className="hidden sm:inline">View</span>
                 </button>
                 {allowDownload && (
                   <button
                     onClick={() => onDownloadSingle?.(file.id)}
-                    className="flex-1 px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 rounded"
+                    className="px-3 py-1.5 text-xs bg-blue-100 hover:bg-blue-200 rounded transition-colors flex items-center gap-1"
+                    title="Download file"
                   >
-                    <Download className="w-3 h-3 mx-auto" />
+                    <Download className="w-3 h-3" />
+                    <span className="hidden sm:inline">Download</span>
                   </button>
                 )}
                 {allowComments && (
-                  <button className="flex-1 px-2 py-1 text-xs bg-green-100 hover:bg-green-200 rounded relative">
-                    <MessageSquare className="w-3 h-3 mx-auto" />
+                  <button 
+                    className="px-3 py-1.5 text-xs bg-green-100 hover:bg-green-200 rounded relative transition-colors flex items-center gap-1"
+                    title={`${comments.length} comment${comments.length !== 1 ? 's' : ''}`}
+                  >
+                    <MessageSquare className="w-3 h-3" />
+                    <span className="hidden sm:inline">
+                      {comments.length > 0 ? comments.length : 'Comment'}
+                    </span>
                     {comments.length > 0 && (
-                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
+                      <span className="sm:hidden absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center">
                         {comments.length}
                       </span>
                     )}

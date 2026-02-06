@@ -153,6 +153,9 @@ const LearningPage = () => {
   const [currentLessonAssignmentScore, setCurrentLessonAssignmentScore] = useState(0);
   const [lessonScore, setLessonScore] = useState(0);
   
+  // Track completion attempts to prevent multiple simultaneous calls
+  const completionAttemptRef = useRef<number | null>(null);
+  
   // Video tracking state
   const [videoProgress, setVideoProgress] = useState(0);
   const [videoCompleted, setVideoCompleted] = useState(false);
@@ -330,6 +333,61 @@ const LearningPage = () => {
     }
   }, [currentLesson, isLessonCompleted, autoSaveProgress, handleAutoCompletionEvent]);
 
+  // Auto-complete lesson when score threshold is met
+  useEffect(() => {
+    // Wait for auth to be ready
+    if (!isAuthenticated || authLoading || !user) {
+      console.log('⏳ Waiting for auth to be ready before attempting auto-completion');
+      return;
+    }
+    
+    if (!currentLesson || isLessonCompleted || !checkAutoCompletion) return;
+    
+    // Prevent multiple simultaneous completion attempts for the same lesson
+    if (completionAttemptRef.current === currentLesson.id) {
+      console.log('⏭️ Completion already in progress for lesson', currentLesson.id);
+      return;
+    }
+    
+    // Check if auto-completion criteria are met
+    const shouldAutoComplete = checkAutoCompletion();
+    
+    if (shouldAutoComplete) {
+      console.log('🎯 Auto-completion criteria met, triggering completion...');
+      
+      // Mark this lesson as having a completion attempt
+      completionAttemptRef.current = currentLesson.id;
+      
+      // Set a timer to attempt completion (give a moment for final progress to save)
+      const completionTimer = setTimeout(() => {
+        handleAutoLessonCompletion(
+          (data) => {
+            console.log('✅ Lesson auto-completed:', data);
+            // Update lesson completion status
+            setLessonCompletionStatus(prev => ({
+              ...prev,
+              [currentLesson.id]: true
+            }));
+            // Show celebration
+            setShowCelebration(true);
+            // Clear the completion attempt ref
+            completionAttemptRef.current = null;
+          },
+          (error) => {
+            console.log('❌ Auto-completion failed:', error);
+            // Clear the completion attempt ref on error
+            completionAttemptRef.current = null;
+          }
+        );
+      }, 500);
+      
+      return () => {
+        clearTimeout(completionTimer);
+        // Don't clear completionAttemptRef here as it might be mid-request
+      };
+    }
+  }, [currentLesson, isLessonCompleted, lessonScore, readingProgress, engagementScore, checkAutoCompletion, handleAutoLessonCompletion, isAuthenticated, authLoading, user]);
+
   // Calculate comprehensive lesson score with dynamic weights based on available assessments
   useEffect(() => {
     const hasQuiz = !!lessonQuiz;
@@ -417,13 +475,28 @@ const LearningPage = () => {
 
   // Auto-complete lessons without quiz/assignment when criteria are met
   useEffect(() => {
+    // Ensure auth is ready before attempting API calls
+    if (!isAuthenticated || authLoading || !user) {
+      console.log('⏳ Waiting for auth to be ready before attempting lesson auto-completion');
+      return;
+    }
+    
     if (!currentLesson || !currentModuleId) return;
+
+    // Prevent multiple simultaneous completion attempts for the same lesson
+    if (completionAttemptRef.current === currentLesson.id) {
+      console.log('⏭️ Completion already in progress for lesson', currentLesson.id);
+      return;
+    }
 
     // Check if lesson should auto-complete
     const shouldAutoComplete = checkAutoCompletion();
 
     if (shouldAutoComplete) {
       console.log('🎯 Auto-completing lesson (no quiz/assignment required)...');
+      
+      // Mark this lesson as having a completion attempt
+      completionAttemptRef.current = currentLesson.id;
       
       // Trigger completion
       handleAutoLessonCompletion(
@@ -454,13 +527,18 @@ const LearningPage = () => {
 
           // Show celebration
           setShowCelebration(true);
+          
+          // Clear the completion attempt ref
+          completionAttemptRef.current = null;
         },
         (error) => {
           console.error('❌ Auto-completion failed:', error);
+          // Clear the completion attempt ref on error
+          completionAttemptRef.current = null;
         }
       );
     }
-  }, [readingProgress, engagementScore, currentLesson, currentModuleId, checkAutoCompletion, handleAutoLessonCompletion, lessonScore, moduleScoring]);
+  }, [readingProgress, engagementScore, currentLesson, currentModuleId, checkAutoCompletion, handleAutoLessonCompletion, lessonScore, moduleScoring, isAuthenticated, authLoading, user]);
 
   // Sync lesson completion status with lessonCompletionStatus state
   // This effect ensures that when isLessonCompleted changes (from useProgressTracking),

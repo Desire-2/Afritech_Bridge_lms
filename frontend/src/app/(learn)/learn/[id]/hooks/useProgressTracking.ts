@@ -332,6 +332,16 @@ export const useProgressTracking = ({
       return;
     }
     
+    // CRITICAL: Check if auth token is available before attempting API call
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    if (!token) {
+      console.warn('⚠️ Auth token not available - delaying completion attempt');
+      if (onError) {
+        onError({ type: 'auth_not_ready', message: 'Authentication not ready yet' });
+      }
+      return;
+    }
+    
     try {
       setCompletionInProgress(true);
       

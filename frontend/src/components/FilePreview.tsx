@@ -263,40 +263,46 @@ const FilePreview: React.FC<FilePreviewProps> = ({
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
       {/* File Header */}
-      <div className="flex items-center justify-between p-4 bg-gradient-to-r from-slate-50 to-slate-100 border-b">
-        <div className="flex items-center space-x-3">
-          <div className={`p-2 rounded-lg ${getFileStatusColor()}`}>
+      <div className="flex items-center justify-between gap-3 p-4 bg-gradient-to-r from-slate-50 to-slate-100 border-b">
+        <div className="flex items-center space-x-3 min-w-0 flex-1">
+          <div className={`p-2 rounded-lg flex-shrink-0 ${getFileStatusColor()}`}>
             {getFileIcon()}
           </div>
-          <div>
-            <h4 className="font-medium text-gray-900">{file.filename}</h4>
-            <div className="flex items-center space-x-4 text-xs text-gray-500">
-              <span>{formatFileSize(file.file_size)}</span>
-              <span className="uppercase">{fileInfo.extension}</span>
+          <div className="min-w-0 flex-1">
+            <h4 
+              className="font-medium text-gray-900 truncate" 
+              title={file.filename}
+            >
+              {file.filename}
+            </h4>
+            <div className="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+              <span className="flex-shrink-0">{formatFileSize(file.file_size)}</span>
+              <span className="uppercase flex-shrink-0">{fileInfo.extension}</span>
               {file.uploaded_at && (
-                <span>Uploaded {new Date(file.uploaded_at).toLocaleDateString()}</span>
+                <span className="flex-shrink-0">Uploaded {new Date(file.uploaded_at).toLocaleDateString()}</span>
               )}
             </div>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
           {/* Comments Badge */}
           {comments.length > 0 && (
             <button
               onClick={() => setShowComments(!showComments)}
-              className="flex items-center space-x-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs hover:bg-blue-200"
+              className="flex items-center space-x-1 px-2 py-1.5 bg-blue-100 text-blue-700 rounded-full text-xs hover:bg-blue-200 transition-colors"
+              title={`${comments.length} comment${comments.length > 1 ? 's' : ''}`}
             >
-              <MessageSquare className="w-3 h-3" />
-              <span>{comments.length}</span>
+              <MessageSquare className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden sm:inline">{comments.length}</span>
             </button>
           )}
 
           {/* Action Buttons */}
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
-            title={isExpanded ? 'Collapse' : 'Expand'}
+            className="p-1.5 sm:p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+            title={isExpanded ? 'Collapse preview' : 'Expand preview'}
           >
             {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </button>
@@ -304,12 +310,12 @@ const FilePreview: React.FC<FilePreviewProps> = ({
           <button
             onClick={handleDownload}
             disabled={isDownloading}
-            className={`p-2 rounded transition-colors ${
+            className={`p-1.5 sm:p-2 rounded transition-colors ${
               isDownloading
                 ? 'text-gray-400 cursor-not-allowed'
                 : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
             }`}
-            title="Download"
+            title="Download file"
           >
             {isDownloading ? (
               <div className="animate-spin rounded-full h-4 w-4 border-2 border-gray-400 border-t-transparent"></div>
@@ -322,8 +328,8 @@ const FilePreview: React.FC<FilePreviewProps> = ({
             href={file.file_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
-            title="Open in New Tab"
+            className="p-1.5 sm:p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
+            title="Open in new tab"
           >
             <ExternalLink className="w-4 h-4" />
           </a>

@@ -99,12 +99,13 @@ class LessonCompletionService:
                 engagement_score = lesson_completion.engagement_score or 0
                 
                 # Reading requirements: At least 90% reading progress and 60% engagement
-                reading_met = reading_progress >= 90.0 and engagement_score >= 60.0
+                # OR if lesson score is >= 80%, consider reading requirements met
+                reading_met = (reading_progress >= 90.0 and engagement_score >= 60.0) or lesson_score >= 80.0
                 requirements['reading_requirements_met'] = reading_met
                 
                 if not reading_met:
                     requirements['missing_requirements'].append(
-                        f"Complete reading (need 90% reading progress and 60% engagement, currently {reading_progress:.1f}% reading and {engagement_score:.1f}% engagement)"
+                        f"Complete reading (need 90% reading progress and 60% engagement, currently {reading_progress:.1f}% reading and {engagement_score:.1f}% engagement, or score {lesson_score:.1f}% >= 80%)"
                     )
                 
                 # Overall score requirement

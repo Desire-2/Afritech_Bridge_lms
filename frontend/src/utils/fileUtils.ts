@@ -44,6 +44,42 @@ const FILE_CATEGORIES = {
 };
 
 /**
+ * Truncate filename intelligently, preserving extension
+ * @param filename - The filename to truncate
+ * @param maxLength - Maximum total length (default: 40)
+ * @param keepExtension - Whether to preserve the extension (default: true)
+ * @returns Truncated filename with ellipsis
+ */
+export function truncateFilename(
+  filename: string, 
+  maxLength: number = 40, 
+  keepExtension: boolean = true
+): string {
+  if (filename.length <= maxLength) {
+    return filename;
+  }
+
+  if (!keepExtension) {
+    return filename.substring(0, maxLength - 3) + '...';
+  }
+
+  const lastDotIndex = filename.lastIndexOf('.');
+  const extension = lastDotIndex !== -1 ? filename.substring(lastDotIndex) : '';
+  const nameWithoutExt = lastDotIndex !== -1 ? filename.substring(0, lastDotIndex) : filename;
+  
+  // Reserve space for extension (including the dot) and ellipsis
+  const reservedLength = extension.length + 3;
+  const availableLength = maxLength - reservedLength;
+  
+  if (availableLength <= 0) {
+    // Extension is too long, just truncate the whole thing
+    return filename.substring(0, maxLength - 3) + '...';
+  }
+  
+  return nameWithoutExt.substring(0, availableLength) + '...' + extension;
+}
+
+/**
  * Viewable file types that can be previewed in browser
  */
 const VIEWABLE_TYPES = [
