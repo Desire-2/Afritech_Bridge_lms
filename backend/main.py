@@ -54,6 +54,8 @@ from src.routes.enhanced_file_routes import enhanced_file_bp # Import enhanced f
 from src.routes.admin_routes import admin_bp # Import admin blueprint
 from src.routes.system_settings_routes import settings_bp # Import system settings blueprint
 from src.routes.file_upload_routes import file_upload_bp # Import file upload blueprint
+from src.routes.maintenance_routes import maintenance_bp # Import maintenance routes
+from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance middleware
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
 from flask_cors import CORS
@@ -307,6 +309,11 @@ app.register_blueprint(application_bp) # Register application blueprint
 app.register_blueprint(admin_bp) # Register admin blueprint
 app.register_blueprint(settings_bp) # Register system settings blueprint
 app.register_blueprint(file_upload_bp) # Register file upload blueprint
+app.register_blueprint(maintenance_bp) # Register maintenance routes (public endpoints)
+
+# Initialize maintenance mode middleware - MUST BE AFTER BLUEPRINT REGISTRATION
+maintenance_mode = MaintenanceMode(app)
+logger.info("Maintenance mode middleware initialized and active")
 
 with app.app_context():
     db.create_all()

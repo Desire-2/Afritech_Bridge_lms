@@ -1,6 +1,7 @@
 'use client'
 
 import { AuthProvider } from '@/contexts/AuthContext'
+import { MaintenanceModeWrapper } from '@/components/MaintenanceModeWrapper'
 import { Toaster } from 'sonner'
 
 export default function ClientLayout({
@@ -10,7 +11,9 @@ export default function ClientLayout({
 }) {
   return (
     <AuthProvider>
-      {children}
+      <MaintenanceModeWrapper>
+        {children}
+      </MaintenanceModeWrapper>
       <Toaster 
         position="top-right"
         richColors

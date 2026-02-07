@@ -279,6 +279,46 @@ def initialize_default_settings():
             'default_value': 'false'
         },
         {
+            'key': 'maintenance_message',
+            'value': 'The system is currently undergoing maintenance. We apologize for any inconvenience. Please check back later.',
+            'data_type': 'string',
+            'category': 'general',
+            'description': 'Message displayed to users during maintenance',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': 'The system is currently undergoing maintenance. We apologize for any inconvenience. Please check back later.'
+        },
+        {
+            'key': 'maintenance_start_time',
+            'value': '',
+            'data_type': 'string',
+            'category': 'general',
+            'description': 'Maintenance start time (ISO 8601 format)',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': ''
+        },
+        {
+            'key': 'maintenance_end_time',
+            'value': '',
+            'data_type': 'string',
+            'category': 'general',
+            'description': 'Estimated maintenance end time (ISO 8601 format)',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': ''
+        },
+        {
+            'key': 'maintenance_show_countdown',
+            'value': 'true',
+            'data_type': 'boolean',
+            'category': 'general',
+            'description': 'Show countdown timer on maintenance page',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': 'true'
+        },
+        {
             'key': 'analytics_enabled',
             'value': 'true',
             'data_type': 'boolean',

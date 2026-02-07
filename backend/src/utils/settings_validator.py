@@ -48,6 +48,27 @@ class SettingsValidator:
             'type': 'boolean',
             'description': 'Maintenance mode must be true or false'
         },
+        'maintenance_message': {
+            'type': 'string',
+            'required': False,
+            'min_length': 10,
+            'max_length': 500,
+            'description': 'Maintenance message must be between 10 and 500 characters'
+        },
+        'maintenance_start_time': {
+            'type': 'string',
+            'required': False,
+            'description': 'Maintenance start time (ISO 8601 format)'
+        },
+        'maintenance_end_time': {
+            'type': 'string',
+            'required': False,
+            'description': 'Maintenance end time (ISO 8601 format)'
+        },
+        'maintenance_show_countdown': {
+            'type': 'boolean',
+            'description': 'Show countdown timer on maintenance page'
+        },
         'analytics_enabled': {
             'type': 'boolean',
             'description': 'Analytics enabled must be true or false'

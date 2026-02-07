@@ -32,6 +32,10 @@ interface SystemSettings {
     site_url: string;
     support_email: string;
     maintenance_mode: boolean;
+    maintenance_message: string;
+    maintenance_start_time: string;
+    maintenance_end_time: string;
+    maintenance_show_countdown: boolean;
     analytics_enabled: boolean;
   };
   email: {
@@ -103,6 +107,10 @@ const EnhancedSettingsPanel: React.FC = () => {
       site_url: '',
       support_email: '',
       maintenance_mode: false,
+      maintenance_message: 'The system is currently undergoing maintenance. We apologize for any inconvenience. Please check back later.',
+      maintenance_start_time: '',
+      maintenance_end_time: '',
+      maintenance_show_countdown: true,
       analytics_enabled: true,
     },
     email: {
@@ -245,6 +253,10 @@ const EnhancedSettingsPanel: React.FC = () => {
         site_url: backendSettings.general?.site_url || '',
         support_email: backendSettings.general?.support_email || '',
         maintenance_mode: backendSettings.general?.maintenance_mode || false,
+        maintenance_message: backendSettings.general?.maintenance_message || 'The system is currently undergoing maintenance. We apologize for any inconvenience. Please check back later.',
+        maintenance_start_time: backendSettings.general?.maintenance_start_time || '',
+        maintenance_end_time: backendSettings.general?.maintenance_end_time || '',
+        maintenance_show_countdown: backendSettings.general?.maintenance_show_countdown !== undefined ? backendSettings.general.maintenance_show_countdown : true,
         analytics_enabled: backendSettings.general?.analytics_enabled || true,
       },
       email: {
@@ -944,6 +956,75 @@ const GeneralSettingsTab: React.FC<{
               className="w-4 h-4 text-blue-400 bg-slate-700 border-slate-600 rounded focus:ring-blue-400"
             />
           </div>
+
+          {/* Maintenance Mode Details - Shows when maintenance is enabled */}
+          {settings.general.maintenance_mode && (
+            <div className="ml-4 space-y-4 pt-2 pl-4 border-l-2 border-yellow-500/50 bg-yellow-500/5 p-4 rounded-r-lg">
+              <div>
+                <label className="block text-slate-300 font-medium mb-2">
+                  Maintenance Message
+                  <span className="text-slate-400 text-sm font-normal ml-2">(Shown to users)</span>
+                </label>
+                <textarea
+                  value={settings.general.maintenance_message}
+                  onChange={(e) => handleInputChange('general', 'maintenance_message', e.target.value)}
+                  className="w-full px-4 py-2 border border-slate-600 rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 bg-slate-700 text-white resize-none"
+                  rows={3}
+                  placeholder="The system is currently undergoing maintenance..."
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-300 font-medium mb-2">
+                    Start Time
+                    <span className="text-slate-400 text-sm font-normal ml-2">(Optional)</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={settings.general.maintenance_start_time}
+                    onChange={(e) => handleInputChange('general', 'maintenance_start_time', e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-600 rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 bg-slate-700 text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-medium mb-2">
+                    Estimated End Time
+                    <span className="text-slate-400 text-sm font-normal ml-2">(Optional)</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={settings.general.maintenance_end_time}
+                    onChange={(e) => handleInputChange('general', 'maintenance_end_time', e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-600 rounded-lg focus:ring-2 focus:ring-yellow-400 focus:border-yellow-400 bg-slate-700 text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-slate-300 font-medium">Show Countdown Timer</label>
+                  <p className="text-sm text-slate-400">Display countdown to estimated end time</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.general.maintenance_show_countdown}
+                  onChange={(e) => handleInputChange('general', 'maintenance_show_countdown', e.target.checked)}
+                  className="w-4 h-4 text-yellow-400 bg-slate-700 border-slate-600 rounded focus:ring-yellow-400"
+                />
+              </div>
+
+              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                <p className="text-yellow-200 text-sm flex items-start gap-2">
+                  <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <span><strong>Admin Bypass:</strong> As an admin, you can still access the system while maintenance mode is active. Regular users will be redirected to the maintenance page.</span>
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between">
             <div>
