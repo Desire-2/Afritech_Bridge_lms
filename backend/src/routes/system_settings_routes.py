@@ -13,6 +13,7 @@ from ..models.system_settings_models import (
     initialize_default_settings
 )
 from ..utils.settings_validator import SettingsValidator, SettingsSecurityValidator
+from ..services.maintenance_notification_service import MaintenanceNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,20 @@ def update_settings_bulk(current_user, validated_data):
         # Check for security implications
         security_warnings = SettingsSecurityValidator.validate_security_implications(settings_data)
         
+        # Check if maintenance mode is being enabled with valid schedule
+        maintenance_enabled_raw = settings_data.get('maintenance_mode')
+        # Convert to boolean properly (handle string 'true'/'false' and boolean True/False)
+        maintenance_enabled = str(maintenance_enabled_raw).lower() in ('true', '1', 'yes') if maintenance_enabled_raw is not None else None
+        
+        should_send_notification = False
+        notification_result = None
+        
+        # Get the old maintenance mode value before update
+        old_maintenance_setting = SystemSetting.query.filter_by(key='maintenance_mode').first()
+        was_maintenance_active = old_maintenance_setting.typed_value if old_maintenance_setting else False
+        
+        logger.info(f"🔍 Maintenance check - Was: {was_maintenance_active}, Now: {maintenance_enabled}, Raw: {maintenance_enabled_raw}")
+        
         updated_settings = []
         requires_restart = False
         errors = []
@@ -286,7 +301,75 @@ def update_settings_bulk(current_user, validated_data):
                 errors.append(f"Error updating '{key}': {str(e)}")
                 logger.error(f"Error updating setting {key}: {str(e)}")
         
-        return jsonify({
+        # After all settings are updated, check if we should send maintenance notification
+        if maintenance_enabled is True and was_maintenance_active is False:
+            # Maintenance mode is being enabled (not just updated)
+            logger.info("🚨 Maintenance mode is being ENABLED - preparing to send notifications")
+            try:
+                # Get maintenance details from the just-updated settings
+                settings_mgr = SystemSettingsManager()
+                maintenance_message = settings_data.get(
+                    'maintenance_message',
+                    settings_mgr.get_setting(
+                        'maintenance_message',
+                        'The system is currently undergoing maintenance. We apologize for any inconvenience. Please check back later.'
+                    )
+                )
+                
+                # Parse datetime strings if provided
+                start_time_str = settings_data.get('maintenance_start_time') or settings_mgr.get_setting('maintenance_start_time', None)
+                end_time_str = settings_data.get('maintenance_end_time') or settings_mgr.get_setting('maintenance_end_time', None)
+                
+                start_time = None
+                end_time = None
+                
+                if start_time_str:
+                    try:
+                        from datetime import datetime
+                        # Handle both formats: '2026-02-07T10:00' and '2026-02-07T10:00:00Z'
+                        start_time_clean = start_time_str.replace('Z', '+00:00')
+                        if 'T' in start_time_clean and '+' not in start_time_clean:
+                            start_time_clean += '+00:00'
+                        start_time = datetime.fromisoformat(start_time_clean)
+                        logger.info(f"✅ Parsed start_time: {start_time}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not parse start_time: {start_time_str}, error: {e}")
+                
+                if end_time_str:
+                    try:
+                        from datetime import datetime
+                        end_time_clean = end_time_str.replace('Z', '+00:00')
+                        if 'T' in end_time_clean and '+' not in end_time_clean:
+                            end_time_clean += '+00:00'
+                        end_time = datetime.fromisoformat(end_time_clean)
+                        logger.info(f"✅ Parsed end_time: {end_time}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Could not parse end_time: {end_time_str}, error: {e}")
+                
+                # Send notification to all users
+                logger.info(f"🔔 Sending maintenance notifications - Message: {maintenance_message[:50]}...")
+                logger.info(f"📅 Schedule: {start_time} to {end_time}")
+                
+                notification_result = MaintenanceNotificationService.send_maintenance_scheduled_notification(
+                    maintenance_message=maintenance_message,
+                    start_time=start_time,
+                    end_time=end_time,
+                    notify_all_users=True
+                )
+                
+                logger.info(f"📧 Maintenance notification result: {notification_result}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to send maintenance notifications: {str(e)}", exc_info=True)
+                notification_result = {
+                    'success': False,
+                    'message': f'Error sending notifications: {str(e)}',
+                    'sent_count': 0
+                }
+        elif maintenance_enabled is not None:
+            logger.info(f"ℹ️ Maintenance mode update - but not triggering notifications (was: {was_maintenance_active}, now: {maintenance_enabled})")
+        
+        response_data = {
             "success": True,
             "message": f"Updated {len(updated_settings)} settings",
             "data": {
@@ -295,7 +378,13 @@ def update_settings_bulk(current_user, validated_data):
                 "requires_restart": requires_restart,
                 "security_warnings": security_warnings if security_warnings else []
             }
-        }), 200
+        }
+        
+        # Add notification info if applicable
+        if notification_result:
+            response_data["data"]["notification"] = notification_result
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
         logger.error(f"Error in bulk settings update: {str(e)}")

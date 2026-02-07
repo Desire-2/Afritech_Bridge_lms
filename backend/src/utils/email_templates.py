@@ -1906,3 +1906,275 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
     </div>
     {get_email_footer()}
     """
+
+
+def maintenance_notification_email(recipient_name, maintenance_message, start_time=None, end_time=None, duration=None, show_countdown=True):
+    """
+    Maintenance notification email template
+    
+    Args:
+        recipient_name: str - Name of the recipient
+        maintenance_message: str - Custom maintenance message
+        start_time: datetime - When maintenance starts
+        end_time: datetime - Estimated completion time
+        duration: str - Human-readable duration (e.g., "2 hours")
+        show_countdown: bool - Whether to emphasize the timeline
+    
+    Returns:
+        HTML email content
+    """
+    from datetime import datetime
+    
+    # Format dates if provided
+    start_time_str = start_time.strftime('%B %d, %Y at %I:%M %p') if start_time else "Shortly"
+    end_time_str = end_time.strftime('%B %d, %Y at %I:%M %p') if end_time else "As soon as possible"
+    
+    # Calculate duration if both times provided
+    if start_time and end_time and not duration:
+        time_diff = end_time - start_time
+        hours = time_diff.total_seconds() / 3600
+        if hours < 1:
+            minutes = time_diff.total_seconds() / 60
+            duration = f"approximately {int(minutes)} minutes"
+        else:
+            duration = f"approximately {int(hours)} hours"
+    
+    duration_str = duration or "a few hours"
+    
+    return f"""
+    {get_email_header()}
+    <div class="email-content">
+        <!-- Icon and Title -->
+        <div style="text-align: center; margin-bottom: 35px;">
+            <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); width: 100px; height: 100px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px; box-shadow: 0 10px 40px rgba(245, 158, 11, 0.4);">
+                <span style="font-size: 50px;">🔧</span>
+            </div>
+            <h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0 0 15px 0; text-shadow: 2px 2px 8px rgba(0,0,0,0.3);">
+                Scheduled System Maintenance
+            </h1>
+            <p style="color: #fbbf24; font-size: 18px; font-weight: 600; margin: 0;">
+                Important Update from Afritech Bridge LMS
+            </p>
+        </div>
+        
+        <!-- Greeting -->
+        <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+            Hi <strong style="color: #ffffff; font-size: 17px;">{recipient_name}</strong> 👋
+        </p>
+        
+        <!-- Main Message -->
+        <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border-radius: 16px; padding: 30px; margin: 30px 0; border-left: 6px solid #f59e0b; box-shadow: 0 8px 25px rgba(245, 158, 11, 0.2);">
+            <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                <tr>
+                    <td style="vertical-align: middle; padding-right: 12px;">
+                        <span style="font-size: 28px;">⚠️</span>
+                    </td>
+                    <td style="vertical-align: middle;">
+                        <h3 style="margin: 0; color: #92400e; font-size: 20px; font-weight: 700;">Maintenance Alert</h3>
+                    </td>
+                </tr>
+            </table>
+            <p style="color: #78350f; font-size: 16px; line-height: 1.8; margin: 0;">
+                {maintenance_message}
+            </p>
+        </div>
+        
+        <!-- Maintenance Schedule Details -->
+        <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 8px 25px rgba(0,0,0,0.3);">
+            <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
+                <tr>
+                    <td style="vertical-align: middle; padding-right: 12px;">
+                        <span style="font-size: 28px;">📅</span>
+                    </td>
+                    <td style="vertical-align: middle;">
+                        <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Maintenance Schedule</h3>
+                    </td>
+                </tr>
+            </table>
+            
+            <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 12px;">
+                <tr>
+                    <td style="padding: 15px 20px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 15px; font-weight: 600; width: 45%;">
+                        <span style="margin-right: 8px;">🕐</span> Start Time
+                    </td>
+                    <td style="padding: 15px 20px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 16px; font-weight: 600;">
+                        {start_time_str}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 15px 20px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 15px; font-weight: 600;">
+                        <span style="margin-right: 8px;">✅</span> Est. Completion
+                    </td>
+                    <td style="padding: 15px 20px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 16px; font-weight: 600;">
+                        {end_time_str}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="padding: 15px 20px; background-color: #34495e; border-radius: 8px 0 0 8px; color: #bdc3c7; font-size: 15px; font-weight: 600;">
+                        <span style="margin-right: 8px;">⏱️</span> Duration
+                    </td>
+                    <td style="padding: 15px 20px; background-color: #34495e; border-radius: 0 8px 8px 0; color: #ffffff; font-size: 16px; font-weight: 600;">
+                        {duration_str}
+                    </td>
+                </tr>
+            </table>
+        </div>
+        
+        <!-- What to Expect -->
+        <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
+            <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 25px;">
+                <tr>
+                    <td style="vertical-align: middle; padding-right: 12px;">
+                        <span style="font-size: 28px;">ℹ️</span>
+                    </td>
+                    <td style="vertical-align: middle;">
+                        <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">What to Expect</h3>
+                    </td>
+                </tr>
+            </table>
+            
+            <div style="margin-top: 20px;">
+                <div style="background-color: #34495e; padding: 18px 20px; border-radius: 10px; margin-bottom: 12px; border-left: 4px solid #ef4444;">
+                    <p style="margin: 0; color: #ffffff; font-size: 15px; line-height: 1.6;">
+                        <span style="margin-right: 10px;">🚫</span>
+                        <strong>System will be temporarily unavailable</strong> - You won't be able to access the platform during this time
+                    </p>
+                </div>
+                
+                <div style="background-color: #34495e; padding: 18px 20px; border-radius: 10px; margin-bottom: 12px; border-left: 4px solid #3b82f6;">
+                    <p style="margin: 0; color: #ffffff; font-size: 15px; line-height: 1.6;">
+                        <span style="margin-right: 10px;">💾</span>
+                        <strong>Your data is safe</strong> - All your progress, courses, and achievements are securely backed up
+                    </p>
+                </div>
+                
+                <div style="background-color: #34495e; padding: 18px 20px; border-radius: 10px; margin-bottom: 12px; border-left: 4px solid #10b981;">
+                    <p style="margin: 0; color: #ffffff; font-size: 15px; line-height: 1.6;">
+                        <span style="margin-right: 10px;">🎉</span>
+                        <strong>Improved experience</strong> - We're working to make the platform better for you
+                    </p>
+                </div>
+                
+                <div style="background-color: #34495e; padding: 18px 20px; border-radius: 10px; border-left: 4px solid #8b5cf6;">
+                    <p style="margin: 0; color: #ffffff; font-size: 15px; line-height: 1.6;">
+                        <span style="margin-right: 10px;">🔔</span>
+                        <strong>We'll notify you</strong> - You'll receive an email when the system is back online
+                    </p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Call to Action -->
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 20px; padding: 35px; text-align: center; margin: 35px 0; box-shadow: 0 10px 40px rgba(102, 126, 234, 0.3);">
+            <span style="font-size: 50px; display: block; margin-bottom: 15px;">💡</span>
+            <h3 style="margin: 0 0 20px 0; color: white; font-size: 22px; font-weight: 700;">Need Help?</h3>
+            <p style="color: rgba(255,255,255,0.95); margin: 0 0 25px 0; font-size: 16px; line-height: 1.6;">
+                If you have any urgent questions or concerns, please contact our support team
+            </p>
+            <a href="mailto:afritech.bridge@yahoo.com" style="display: inline-block; background: white; color: #667eea; padding: 15px 40px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2); transition: transform 0.2s;">
+                📧 Contact Support
+            </a>
+        </div>
+        
+        <!-- Thank You Message -->
+        <div style="text-align: center; margin-top: 40px;">
+            <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 15px 0;">
+                Thank you for your patience and understanding. We're committed to providing you with the best learning experience possible! 🚀
+            </p>
+            <p style="color: #d1d5db; font-size: 15px; margin: 20px 0 0 0;">
+                Best regards,<br>
+                <strong style="color: #fbbf24; font-size: 16px;">The Afritech Bridge Team</strong> 🎓
+            </p>
+        </div>
+    </div>
+    {get_email_footer()}
+    """
+
+
+def maintenance_completed_email(recipient_name, downtime_duration=None, improvements=None):
+    """
+    Maintenance completed notification email
+    
+    Args:
+        recipient_name: str - Name of the recipient
+        downtime_duration: str - How long the maintenance took
+        improvements: list - List of improvements made (optional)
+    
+    Returns:
+        HTML email content
+    """
+    downtime_str = downtime_duration or "the scheduled time"
+    
+    improvements_html = ""
+    if improvements and isinstance(improvements, list):
+        improvements_html = '<div style="margin-top: 20px;">'
+        for improvement in improvements:
+            improvements_html += f'''
+                <div style="background-color: #34495e; padding: 15px 20px; border-radius: 10px; margin-bottom: 10px; border-left: 4px solid #10b981;">
+                    <p style="margin: 0; color: #ffffff; font-size: 15px;">
+                        <span style="margin-right: 10px;">✨</span>{improvement}
+                    </p>
+                </div>
+            '''
+        improvements_html += '</div>'
+    
+    return f"""
+    {get_email_header()}
+    <div class="email-content">
+        <!-- Icon and Title -->
+        <div style="text-align: center; margin-bottom: 35px;">
+            <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); width: 100px; height: 100px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px; box-shadow: 0 10px 40px rgba(16, 185, 129, 0.4);">
+                <span style="font-size: 50px;">✅</span>
+            </div>
+            <h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0 0 15px 0; text-shadow: 2px 2px 8px rgba(0,0,0,0.3);">
+                We're Back Online!
+            </h1>
+            <p style="color: #10b981; font-size: 18px; font-weight: 600; margin: 0;">
+                System Maintenance Completed Successfully
+            </p>
+        </div>
+        
+        <!-- Greeting -->
+        <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+            Hi <strong style="color: #ffffff; font-size: 17px;">{recipient_name}</strong> 👋
+        </p>
+        
+        <!-- Success Message -->
+        <div style="background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-radius: 16px; padding: 30px; margin: 30px 0; border-left: 6px solid #10b981; box-shadow: 0 8px 25px rgba(16, 185, 129, 0.2);">
+            <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                <tr>
+                    <td style="vertical-align: middle; padding-right: 12px;">
+                        <span style="font-size: 28px;">🎉</span>
+                    </td>
+                    <td style="vertical-align: middle;">
+                        <h3 style="margin: 0; color: #065f46; font-size: 20px; font-weight: 700;">Great News!</h3>
+                    </td>
+                </tr>
+            </table>
+            <p style="color: #064e3b; font-size: 16px; line-height: 1.8; margin: 0;">
+                Our scheduled maintenance has been completed successfully! The Afritech Bridge LMS is now back online and ready for you to continue your learning journey.
+            </p>
+        </div>
+        
+        {improvements_html if improvements_html else ""}
+        
+        <!-- CTA Button -->
+        <div style="text-align: center; margin: 40px 0;">
+            <a href="https://study.afritechbridge.online" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px 50px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 18px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);">
+                🚀 Resume Learning
+            </a>
+        </div>
+        
+        <!-- Thank You -->
+        <div style="text-align: center; margin-top: 40px;">
+            <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 15px 0;">
+                Thank you for your patience during the maintenance period. We appreciate your understanding! 💙
+            </p>
+            <p style="color: #d1d5db; font-size: 15px; margin: 20px 0 0 0;">
+                Best regards,<br>
+                <strong style="color: #fbbf24; font-size: 16px;">The Afritech Bridge Team</strong> 🎓
+            </p>
+        </div>
+    </div>
+    {get_email_footer()}
+    """

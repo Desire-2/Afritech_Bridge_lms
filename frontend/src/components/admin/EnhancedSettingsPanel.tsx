@@ -152,6 +152,7 @@ const EnhancedSettingsPanel: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testingEmail, setTestingEmail] = useState(false);
+  const [sendingNotification, setSendingNotification] = useState(false);
   const [unsavedChanges, setUnsavedChanges] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
@@ -453,6 +454,63 @@ const EnhancedSettingsPanel: React.FC = () => {
     }
   };
 
+  const handleSendMaintenanceNotification = async () => {
+    try {
+      setSendingNotification(true);
+      
+      if (!settings.general.maintenance_start_time || !settings.general.maintenance_end_time) {
+        toast.error('Please set both start and end times before sending notifications');
+        return;
+      }
+
+      // Convert datetime-local to ISO format
+      const startTime = new Date(settings.general.maintenance_start_time).toISOString();
+      const endTime = new Date(settings.general.maintenance_end_time).toISOString();
+
+      const confirmed = confirm(
+        'This will send email notifications to all active users about the scheduled maintenance. Continue?'
+      );
+
+      if (!confirmed) {
+        return;
+      }
+
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1'}/maintenance/notify-users`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          start_time: startTime,
+          end_time: endTime,
+          message: settings.general.maintenance_message,
+          exclude_admins: true
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        toast.success(
+          `Notifications sent successfully to ${result.details.success_count} users!`
+        );
+        
+        if (result.details.failed_count > 0) {
+          toast.warning(`${result.details.failed_count} emails failed to send`);
+        }
+      } else {
+        toast.error(result.error || 'Failed to send notifications');
+      }
+    } catch (error: any) {
+      console.error('Notification error:', error);
+      toast.error('Failed to send notifications: ' + error.message);
+    } finally {
+      setSendingNotification(false);
+    }
+  };
+
   const handleExportSettings = async () => {
     try {
       const response = await AdminService.exportSettings();
@@ -721,6 +779,8 @@ const EnhancedSettingsPanel: React.FC = () => {
                 errors={errors}
                 validationErrors={validationErrors}
                 settingsDetails={settingsDetails}
+                sendingNotification={sendingNotification}
+                handleSendMaintenanceNotification={handleSendMaintenanceNotification}
               />
             )}
 
@@ -895,7 +955,9 @@ const GeneralSettingsTab: React.FC<{
   errors: Record<string, string>;
   validationErrors: Record<string, string>;
   settingsDetails: Record<string, SettingDetail>;
-}> = ({ settings, handleInputChange, errors, validationErrors, settingsDetails }) => {
+  sendingNotification: boolean;
+  handleSendMaintenanceNotification: () => void;
+}> = ({ settings, handleInputChange, errors, validationErrors, settingsDetails, sendingNotification, handleSendMaintenanceNotification }) => {
   return (
     <div className="p-6">
       <h2 className="text-xl font-semibold text-white mb-4">General Settings</h2>
@@ -1023,6 +1085,38 @@ const GeneralSettingsTab: React.FC<{
                   <span><strong>Admin Bypass:</strong> As an admin, you can still access the system while maintenance mode is active. Regular users will be redirected to the maintenance page.</span>
                 </p>
               </div>
+
+              {/* Send Notification Button */}
+              {settings.general.maintenance_start_time && settings.general.maintenance_end_time && (
+                <div className="pt-4 border-t border-slate-600">
+                  <button
+                    type="button"
+                    onClick={handleSendMaintenanceNotification}
+                    disabled={sendingNotification}
+                    className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-semibold px-4 py-3 rounded-lg transition-all flex items-center justify-center gap-2"
+                  >
+                    {sendingNotification ? (
+                      <>
+                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Sending Notifications...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        Send Email Notifications to All Users
+                      </>
+                    )}
+                  </button>
+                  <p className="text-xs text-slate-400 mt-2 text-center">
+                    This will notify all active users about the scheduled maintenance
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
