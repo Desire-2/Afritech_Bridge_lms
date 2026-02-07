@@ -154,17 +154,30 @@ export class EnhancedModuleUnlockService {
       if (response.data.success) {
         return response.data.result;
       } else {
+        // Extract detailed error information
+        const details = response.data.details || {};
+        console.warn('Module unlock failed:', {
+          error: response.data.error,
+          details: details
+        });
+        
         return {
           success: false,
           error: response.data.error || 'Module unlock failed',
-          details: response.data.details
+          details: details
         };
       }
     } catch (error: any) {
       console.error('Module unlock attempt failed:', error);
+      
+      // Extract detailed error from response
+      const details = error.response?.data?.details || {};
+      const errorMessage = error.response?.data?.error || 'Network error during module unlock';
+      
       return {
         success: false,
-        error: error.response?.data?.error || 'Network error during module unlock'
+        error: errorMessage,
+        details: details
       };
     }
   }
@@ -349,6 +362,95 @@ export class EnhancedModuleUnlockService {
       warnings,
       nextSteps
     };
+  }
+
+  /**
+   * Extract detailed error information from unlock failure
+   */
+  static extractUnlockError(unlockResult: ModuleUnlockResult): {
+    mainError: string;
+    failedLessons: Array<{
+      id: number;
+      title: string;
+      order: number;
+      requirements: string[];
+      lessonScore: number;
+    }>;
+    previousModule?: {
+      id: number;
+      title: string;
+      order: number;
+    };
+    validationErrors: string[];
+    lessonsChecked: number;
+    lessonsPassed: number;
+    moduleScore: number;
+    actionRequired: string;
+  } {
+    const details = unlockResult.details || {};
+    const failedLessons = (details.failed_lessons || []).map((lesson: any) => ({
+      id: lesson.id,
+      title: lesson.title,
+      order: lesson.order,
+      requirements: lesson.requirements || [],
+      lessonScore: lesson.lesson_score || 0
+    }));
+
+    // Debug logging
+    console.log('📊 Extracting unlock error - Raw details:', details);
+    console.log('📊 lessons_checked from details:', details.lessons_checked);
+    console.log('📊 lessons_passed from details:', details.lessons_passed);
+    console.log('📊 total_score from details:', details.total_score);
+
+    const extracted = {
+      mainError: unlockResult.error || 'Module unlock failed',
+      failedLessons,
+      previousModule: details.previous_module,
+      validationErrors: details.validation_errors || [],
+      lessonsChecked: details.lessons_checked || 0,
+      lessonsPassed: details.lessons_passed || 0,
+      moduleScore: details.total_score || 0,
+      actionRequired: details.action_required || 'complete_requirements'
+    };
+
+    console.log('📊 Extracted error info:', extracted);
+    return extracted;
+  }
+
+  /**
+   * Format error requirements into user-friendly categories
+   */
+  static categorizeRequirements(requirements: string[]): {
+    quizzes: string[];
+    assignments: string[];
+    reading: string[];
+    scores: string[];
+    other: string[];
+  } {
+    const categorized = {
+      quizzes: [] as string[],
+      assignments: [] as string[],
+      reading: [] as string[],
+      scores: [] as string[],
+      other: [] as string[]
+    };
+
+    requirements.forEach(req => {
+      const reqLower = req.toLowerCase();
+      if (reqLower.includes('quiz')) {
+        categorized.quizzes.push(req);
+      } else if (reqLower.includes('assignment')) {
+        categorized.assignments.push(req);
+      } else if (reqLower.includes('reading') || reqLower.includes('engagement')) {
+        categorized.reading.push(req);
+      } else if (reqLower.includes('score') || reqLower.includes('%')) {
+        categorized.scores.push(req);
+      } else {
+        categorized.other.push(req);
+      }
+    });
+
+    return categorized;
   }
 
   /**

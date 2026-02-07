@@ -23,6 +23,7 @@ import { LessonContent } from './components/LessonContent';
 import { CelebrationModal } from './components/CelebrationModal';
 import { UnlockAnimation } from './components/UnlockAnimation';
 import { LessonScoreDisplay } from './components/LessonScoreDisplay';
+import { ModuleUnlockErrorDialog } from '@/components/ui/ModuleUnlockErrorDialog';
 import { useProgressTracking } from './hooks/useProgressTracking';
 import * as NavUtils from './utils/navigationUtils';
 import type { 
@@ -221,6 +222,11 @@ const LearningPage = () => {
   const [lockedModuleEligibility, setLockedModuleEligibility] = useState<any | null>(null);
   const [lockedModuleEligibilityLoading, setLockedModuleEligibilityLoading] = useState(false);
   const [modalUnlocking, setModalUnlocking] = useState(false);
+  
+  // Module unlock error dialog state
+  const [showUnlockErrorDialog, setShowUnlockErrorDialog] = useState(false);
+  const [unlockErrorInfo, setUnlockErrorInfo] = useState<any>(null);
+  const [unlockTargetModuleId, setUnlockTargetModuleId] = useState<number | null>(null);
   
   // Refs for tracking
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -1651,8 +1657,10 @@ const LearningPage = () => {
       try {
         setLockedModuleEligibilityLoading(true);
         const elig = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(lockedModuleInfo.moduleId);
+        console.log('✅ Eligibility loaded for module', lockedModuleInfo.moduleId, ':', elig);
         setLockedModuleEligibility(elig);
       } catch (e) {
+        console.error('❌ Eligibility check failed:', e);
         setLockedModuleEligibility(null);
       } finally {
         setLockedModuleEligibilityLoading(false);
@@ -1777,15 +1785,23 @@ const LearningPage = () => {
       return;
     }
     
+    // Check if there's a next module to unlock
+    if (!nextModule) {
+      console.log('📚 Last module in course - checking for course completion');
+      await checkCourseCompletion();
+      return;
+    }
+    
     // Prefer enhanced unlock flow
     unlockingRef.current = true;
     try {
-      const unlock = await EnhancedModuleUnlockService.attemptModuleUnlock(currentModuleId);
+      // Pass the next module ID (the one to unlock), not the current module ID
+      const unlock = await EnhancedModuleUnlockService.attemptModuleUnlock(nextModule.id);
       // Refresh progress after attempt
       await progressiveLearning.refreshProgress();
 
       if (unlock?.success) {
-        if (unlock?.course_completed || !nextModule) {
+        if (unlock?.course_completed) {
           console.log('🎉 Course completion detected via enhanced unlock!');
           await checkCourseCompletion();
           return;
@@ -1799,7 +1815,7 @@ const LearningPage = () => {
 
       // If enhanced unlock failed, surface eligibility guidance
       try {
-        const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(currentModuleId);
+        const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(nextModule.id);
         const fallbackMissing = Array.isArray(eligibility?.recommendations) ? eligibility.recommendations : [];
         const breakdown = moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, finalAssessment: 0 };
         setModuleProgressInfo({
@@ -2808,17 +2824,39 @@ const LearningPage = () => {
                   </div>
                   {lockedModuleEligibility && (
                     <div className="space-y-3">
+                      {/* Previous Module Info */}
+                      {lockedModuleEligibility.previous_module && (
+                        <div className="text-xs text-slate-400 mb-2">
+                          Checking: <span className="text-slate-200 font-semibold">{lockedModuleEligibility.previous_module.title}</span>
+                        </div>
+                      )}
+                      
                       <div className="flex flex-wrap gap-2">
                         <span className={`px-2 py-1 text-xs rounded border ${lockedModuleEligibility.eligible ? 'bg-green-500/10 text-green-300 border-green-600/30' : 'bg-yellow-500/10 text-yellow-300 border-yellow-600/30'}`}>
                           {lockedModuleEligibility.eligible ? 'Eligible' : 'Not Eligible'}
                         </span>
                         <span className="px-2 py-1 text-xs rounded border bg-slate-700/40 text-slate-300 border-slate-600/40">
-                          Score: {Math.round(lockedModuleEligibility.total_score)}% / {Math.round(lockedModuleEligibility.required_score)}%
+                          Score: {Math.round(lockedModuleEligibility.total_score || 0)}% / {Math.round(lockedModuleEligibility.required_score || 80)}%
                         </span>
                         {lockedModuleEligibility.can_preview && (
                           <span className="px-2 py-1 text-xs rounded border bg-blue-500/10 text-blue-300 border-blue-600/30">Preview Allowed</span>
                         )}
                       </div>
+                      
+                      {/* Detailed Lesson Status */}
+                      {lockedModuleEligibility.lesson_requirements && (
+                        <div className="text-xs text-slate-300">
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
+                              <div className={`w-2 h-2 rounded-full ${lockedModuleEligibility.lesson_requirements.all_lessons_passed ? 'bg-green-400' : 'bg-yellow-400'}`} />
+                              <span>
+                                Lessons: {lockedModuleEligibility.lesson_requirements.passed_count || 0} / {lockedModuleEligibility.lesson_requirements.total_count || 0} passed
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
                       {Array.isArray(lockedModuleEligibility.recommendations) && lockedModuleEligibility.recommendations.length > 0 && (
                         <div>
                           <p className="text-xs text-slate-300 mb-2">Recommendations:</p>
@@ -2892,9 +2930,9 @@ const LearningPage = () => {
                         try {
                           if (modalUnlocking) return;
                           setModalUnlocking(true);
-                          // Call enhanced API to unlock next module from previous module context
-                          console.log(`🔓 Manually unlocking via enhanced API from previous module ${lockedModuleInfo.previousModuleId}`);
-                          const result = await EnhancedModuleUnlockService.attemptModuleUnlock(lockedModuleInfo.previousModuleId);
+                          // Call enhanced API to unlock the target module
+                          console.log(`🔓 Manually unlocking module ${lockedModuleInfo.moduleId} via enhanced API`);
+                          const result = await EnhancedModuleUnlockService.attemptModuleUnlock(lockedModuleInfo.moduleId);
                           console.log('🔓 Unlock result (enhanced):', result);
                           
                           // Refresh progress data
@@ -2912,6 +2950,13 @@ const LearningPage = () => {
                               handleLessonSelect(unlockedModuleLessons[0].id, lockedModuleInfo.moduleId);
                               handleModuleUnlock(lockedModuleInfo.moduleTitle);
                             }
+                          } else {
+                            // Extract and show detailed error in modal dialog
+                            const errorInfo = EnhancedModuleUnlockService.extractUnlockError(result);
+                            setUnlockErrorInfo(errorInfo);
+                            setUnlockTargetModuleId(lockedModuleInfo.moduleId);
+                            setShowUnlockErrorDialog(true);
+                            // Keep modal open so user can see the error dialog
                           }
                         } catch (error: any) {
                           console.error('Failed to unlock module:', error);
@@ -3020,6 +3065,22 @@ const LearningPage = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Module Unlock Error Dialog */}
+      {unlockErrorInfo && unlockTargetModuleId && (
+        <ModuleUnlockErrorDialog
+          open={showUnlockErrorDialog}
+          onOpenChange={(open) => {
+            setShowUnlockErrorDialog(open);
+            if (!open) {
+              setUnlockErrorInfo(null);
+              setUnlockTargetModuleId(null);
+            }
+          }}
+          targetModuleId={unlockTargetModuleId}
+          errorInfo={unlockErrorInfo}
+        />
+      )}
     </div>
   );
 };

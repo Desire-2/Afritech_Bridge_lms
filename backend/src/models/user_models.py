@@ -159,6 +159,10 @@ class User(db.Model):
             return self.last_name
         else:
             return self.username
+    
+    def get_display_name(self):
+        """Get user's display name (same as full_name, but as method for consistency)"""
+        return self.full_name
 
     def __repr__(self):
         return f'<User {self.username}>'

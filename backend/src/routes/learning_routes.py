@@ -730,6 +730,9 @@ def attempt_enhanced_module_unlock(module_id):
             student_id, module_id, enrollment.id
         )
         
+        # Log the unlock attempt result for debugging
+        current_app.logger.info(f"Module unlock attempt for module {module_id} by student {student_id}: {unlock_result.get('error') or 'success'}")
+        
         if unlock_result["success"]:
             return jsonify({
                 "success": True,
@@ -737,6 +740,7 @@ def attempt_enhanced_module_unlock(module_id):
                 "result": unlock_result
             }), 200
         else:
+            current_app.logger.warning(f"Module unlock failed for module {module_id}: {unlock_result.get('error')}. Details: {unlock_result.get('details')}")
             return jsonify({
                 "success": False,
                 "error": unlock_result.get("error", "Unlock failed"),

@@ -1059,6 +1059,131 @@ def delete_assignment(assignment_id):
         logger.error(f"Error deleting assignment {assignment_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to delete assignment", "error": str(e)}), 500
 
+@instructor_assessment_bp.route("/assignments", methods=["GET"])
+@instructor_required
+def get_all_instructor_assignments():
+    """Get all assignments across all instructor's courses with statistics"""
+    try:
+        current_user_id = get_user_id()
+        
+        # Get all courses taught by the instructor
+        courses = Course.query.filter_by(instructor_id=current_user_id).all()
+        course_ids = [course.id for course in courses]
+        
+        if not course_ids:
+            return jsonify([]), 200
+        
+        # Get all assignments for these courses
+        assignments = Assignment.query.filter(Assignment.course_id.in_(course_ids)).all()
+        
+        # Build response with statistics
+        assignments_data = []
+        for assignment in assignments:
+            assignment_dict = assignment.to_dict()
+            
+            # Add course title
+            course = next((c for c in courses if c.id == assignment.course_id), None)
+            if course:
+                assignment_dict['course_title'] = course.title
+            
+            # Add submission statistics
+            submissions = AssignmentSubmission.query.filter_by(assignment_id=assignment.id).all()
+            assignment_dict['total_submissions'] = len(submissions)
+            assignment_dict['pending_grading'] = len([s for s in submissions if s.grade is None])
+            assignment_dict['graded'] = len([s for s in submissions if s.grade is not None])
+            
+            # Calculate average score
+            graded_submissions = [s for s in submissions if s.grade is not None]
+            if graded_submissions:
+                assignment_dict['average_score'] = sum(s.grade for s in graded_submissions) / len(graded_submissions)
+            else:
+                assignment_dict['average_score'] = 0
+            
+            assignments_data.append(assignment_dict)
+        
+        return jsonify(assignments_data), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch instructor assignments: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch assignments", "error": str(e)}), 500
+
+@instructor_assessment_bp.route("/assignments/<int:assignment_id>/stats", methods=["GET"])
+@instructor_required
+def get_assignment_stats(assignment_id):
+    """Get detailed statistics for a specific assignment"""
+    try:
+        current_user_id = get_user_id()
+        
+        assignment = Assignment.query.get(assignment_id)
+        if not assignment:
+            return jsonify({"message": "Assignment not found"}), 404
+        
+        # Check if assignment has a course
+        if not assignment.course:
+            return jsonify({"message": "Assignment has no associated course"}), 400
+        
+        # Verify instructor owns the course
+        if assignment.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+        
+        # Get all submissions
+        submissions = AssignmentSubmission.query.filter_by(assignment_id=assignment_id).all()
+        
+        # Build submission details
+        submission_details = []
+        for submission in submissions:
+            student = User.query.get(submission.student_id)
+            if student:
+                # Determine status
+                status = 'pending' if submission.grade is None else 'graded'
+                if assignment.due_date and submission.submitted_at > assignment.due_date:
+                    status = 'late'
+                
+                submission_details.append({
+                    'id': submission.id,
+                    'student_name': f"{student.first_name} {student.last_name}",
+                    'student_email': student.email,
+                    'submitted_at': submission.submitted_at.isoformat(),
+                    'grade': submission.grade,
+                    'status': status
+                })
+        
+        # Calculate statistics
+        total_submissions = len(submissions)
+        pending_grading = len([s for s in submissions if s.grade is None])
+        graded = total_submissions - pending_grading
+        
+        graded_submissions = [s for s in submissions if s.grade is not None]
+        average_score = sum(s.grade for s in graded_submissions) / len(graded_submissions) if graded_submissions else 0
+        
+        # Count on-time vs late submissions
+        on_time = 0
+        late = 0
+        if assignment.due_date:
+            for submission in submissions:
+                if submission.submitted_at <= assignment.due_date:
+                    on_time += 1
+                else:
+                    late += 1
+        else:
+            on_time = total_submissions
+        
+        return jsonify({
+            'assignment_id': assignment.id,
+            'assignment_title': assignment.title,
+            'total_submissions': total_submissions,
+            'pending_grading': pending_grading,
+            'graded': graded,
+            'average_score': round(average_score, 2),
+            'on_time_submissions': on_time,
+            'late_submissions': late,
+            'submissions': submission_details
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch assignment statistics: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch statistics", "error": str(e)}), 500
+
 # =====================
 # PROJECT MANAGEMENT
 # =====================

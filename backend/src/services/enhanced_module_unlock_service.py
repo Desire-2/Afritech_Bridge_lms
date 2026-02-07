@@ -27,78 +27,104 @@ class EnhancedModuleUnlockService:
     @staticmethod
     def check_module_unlock_eligibility(student_id: int, module_id: int, enrollment_id: int) -> Dict[str, Any]:
         """
-        Comprehensive check if a module can be unlocked.
+        Comprehensive check if a module can be unlocked by validating the PREVIOUS module completion.
         
         Returns detailed information about unlock eligibility including:
-        - Current progress state
-        - Requirements status
+        - Previous module completion status
+        - Requirements for the previous module
         - Actionable recommendations
         - Preview availability
+        
+        Args:
+            module_id: The TARGET module we want to unlock (we'll check the previous module)
         """
         try:
-            # Get module and validate
-            module = Module.query.get(module_id)
-            if not module:
+            # Get target module and validate
+            target_module = Module.query.get(module_id)
+            if not target_module:
                 return {"eligible": False, "error": "Module not found"}
             
-            # Get current module progress
-            module_progress = ModuleProgress.query.filter_by(
+            # Check if target module is already unlocked
+            target_module_progress = ModuleProgress.query.filter_by(
                 student_id=student_id,
                 module_id=module_id,
                 enrollment_id=enrollment_id
             ).first()
             
-            if not module_progress:
-                # Initialize if missing
-                module_progress = EnhancedModuleUnlockService._safe_initialize_module_progress(
-                    student_id, module_id, enrollment_id
-                )
+            if target_module_progress and target_module_progress.status in ['unlocked', 'in_progress', 'completed']:
+                return {
+                    "eligible": True,
+                    "already_unlocked": True,
+                    "current_status": target_module_progress.status,
+                    "total_score": target_module_progress.cumulative_score or 0,
+                    "required_score": EnhancedModuleUnlockService.MODULE_PASSING_SCORE,
+                    "recommendations": []
+                }
             
-            # Check prerequisite modules
-            prerequisite_status = EnhancedModuleUnlockService._check_prerequisite_modules(
-                student_id, module, enrollment_id
-            )
+            # Find the previous module that needs to be completed to unlock target
+            previous_module = target_module.course.modules.filter(
+                Module.order < target_module.order
+            ).order_by(Module.order.desc()).first()
             
-            # Get detailed lesson requirements status
+            if not previous_module:
+                # This is the first module - should be unlocked by default
+                return {
+                    "eligible": True,
+                    "is_first_module": True,
+                    "total_score": 0,
+                    "required_score": 0,
+                    "recommendations": ["This is the first module - it should unlock automatically"]
+                }
+            
+            # Get detailed lesson requirements status for PREVIOUS module (not target)
             lesson_requirements = EnhancedModuleUnlockService._check_lesson_requirements(
-                student_id, module_id
+                student_id, previous_module.id
             )
             
-            # Calculate comprehensive scoring
+            # Calculate comprehensive scoring for PREVIOUS module
             scoring_breakdown = EnhancedModuleUnlockService._calculate_comprehensive_module_score(
-                student_id, module_id, enrollment_id
+                student_id, previous_module.id, enrollment_id
             )
             
-            # Determine unlock status
+            # Determine unlock status based on PREVIOUS module completion
             can_unlock_fully = (
-                prerequisite_status["all_completed"] and 
                 lesson_requirements["all_lessons_passed"] and 
                 scoring_breakdown["total_score"] >= EnhancedModuleUnlockService.MODULE_PASSING_SCORE
             )
             
             # Check preview eligibility
             can_preview = (
-                prerequisite_status["all_completed"] and 
                 scoring_breakdown["total_score"] >= EnhancedModuleUnlockService.PREVIEW_UNLOCK_THRESHOLD
             )
             
-            # Generate recommendations
+            # Generate recommendations based on PREVIOUS module
             recommendations = EnhancedModuleUnlockService._generate_unlock_recommendations(
-                prerequisite_status, lesson_requirements, scoring_breakdown
+                {"all_completed": True, "failed_modules": []},  # Prerequisites before previous module
+                lesson_requirements, 
+                scoring_breakdown,
+                previous_module
             )
             
             return {
                 "eligible": can_unlock_fully,
                 "can_preview": can_preview,
-                "current_status": module_progress.status if module_progress else "not_started",
+                "current_status": target_module_progress.status if target_module_progress else "locked",
                 "total_score": scoring_breakdown["total_score"],
                 "required_score": EnhancedModuleUnlockService.MODULE_PASSING_SCORE,
-                "prerequisites": prerequisite_status,
+                "previous_module": {
+                    "id": previous_module.id,
+                    "title": previous_module.title,
+                    "order": previous_module.order
+                },
                 "lesson_requirements": lesson_requirements,
                 "scoring_breakdown": scoring_breakdown,
                 "recommendations": recommendations,
                 "unlock_timestamp": datetime.utcnow().isoformat(),
-                "next_module_info": EnhancedModuleUnlockService._get_next_module_info(module)
+                "target_module": {
+                    "id": target_module.id,
+                    "title": target_module.title,
+                    "order": target_module.order
+                }
             }
             
         except Exception as e:
@@ -106,79 +132,103 @@ class EnhancedModuleUnlockService:
             return {"eligible": False, "error": f"Eligibility check failed: {str(e)}"}
     
     @staticmethod
-    def attempt_module_unlock(student_id: int, current_module_id: int, enrollment_id: int) -> Dict[str, Any]:
+    def attempt_module_unlock(student_id: int, target_module_id: int, enrollment_id: int) -> Dict[str, Any]:
         """
-        Attempt to unlock the next module with comprehensive validation and error handling.
+        Attempt to unlock a target module by completing its prerequisite module.
         
+        Args:
+            target_module_id: The module ID that the student wants to unlock
+            
         Returns:
             Dict with unlock result, any errors, and detailed feedback
         """
         try:
-            # First check if current module is eligible for completion
-            current_module = Module.query.get(current_module_id)
-            if not current_module:
-                return {"success": False, "error": "Current module not found"}
+            # Get the target module (the one to unlock)
+            target_module = Module.query.get(target_module_id)
+            if not target_module:
+                return {"success": False, "error": "Target module not found"}
             
-            # Validate current module completion
+            # Check if module is already unlocked
+            module_progress = ModuleProgress.query.filter_by(
+                student_id=student_id,
+                module_id=target_module_id,
+                enrollment_id=enrollment_id
+            ).first()
+            
+            if module_progress and module_progress.status in ['unlocked', 'in_progress', 'completed']:
+                return {
+                    "success": False,
+                    "error": "Module is already unlocked",
+                    "current_status": module_progress.status
+                }
+            
+            # Find the previous module that needs to be completed
+            previous_module = target_module.course.modules.filter(
+                Module.order < target_module.order
+            ).order_by(Module.order.desc()).first()
+            
+            if not previous_module:
+                # This is the first module, it should be unlocked by default
+                unlock_result = EnhancedModuleUnlockService._perform_next_module_unlock(
+                    student_id, target_module_id, enrollment_id
+                )
+                unlock_result.update({
+                    "message": "First module unlocked successfully",
+                    "next_module": {
+                        "id": target_module_id,
+                        "title": target_module.title,
+                        "order": target_module.order
+                    }
+                })
+                return unlock_result
+            
+            # Validate previous module completion
             completion_status = EnhancedModuleUnlockService._validate_current_module_completion(
-                student_id, current_module_id, enrollment_id
+                student_id, previous_module.id, enrollment_id
             )
             
             if not completion_status["can_complete"]:
                 return {
                     "success": False,
-                    "error": "Current module requirements not met",
+                    "error": "Previous module requirements not met",
                     "details": completion_status,
-                    "action_required": "complete_current_module"
+                    "action_required": "complete_previous_module",
+                    "previous_module": {
+                        "id": previous_module.id,
+                        "title": previous_module.title,
+                        "order": previous_module.order
+                    }
                 }
             
-            # Complete current module
+            # Complete previous module
             completion_result = EnhancedModuleUnlockService._complete_current_module(
-                student_id, current_module_id, enrollment_id
+                student_id, previous_module.id, enrollment_id
             )
             
             if not completion_result["success"]:
                 return completion_result
             
-            # Find and unlock next module
-            next_module = current_module.course.modules.filter(
-                Module.order > current_module.order
-            ).order_by(Module.order).first()
-            
-            if not next_module:
-                # This was the last module - check for course completion
-                course_completion = EnhancedModuleUnlockService._check_course_completion(
-                    student_id, current_module.course_id, enrollment_id
-                )
-                return {
-                    "success": True,
-                    "message": "Course completed successfully!",
-                    "course_completed": True,
-                    "completion_details": course_completion,
-                    "unlock_type": "course_completion"
-                }
-            
-            # Unlock next module
+            # Unlock target module
             unlock_result = EnhancedModuleUnlockService._perform_next_module_unlock(
-                student_id, next_module.id, enrollment_id
+                student_id, target_module_id, enrollment_id
             )
             
             # Add celebration and notification data
             unlock_result.update({
                 "current_module": {
-                    "id": current_module_id,
-                    "title": current_module.title,
+                    "id": previous_module.id,
+                    "title": previous_module.title,
                     "completed_score": completion_status["total_score"]
                 },
                 "next_module": {
-                    "id": next_module.id,
-                    "title": next_module.title,
-                    "order": next_module.order
+                    "id": target_module_id,
+                    "title": target_module.title,
+                    "order": target_module.order
                 },
                 "celebration_data": {
-                    "achievement_unlocked": f"Module {current_module.order} completed!",
+                    "achievement_unlocked": f"Module {previous_module.order} completed!",
                     "score_achieved": completion_status["total_score"],
-                    "next_challenge": f"Module {next_module.order}: {next_module.title}"
+                    "next_challenge": f"Module {target_module.order}: {target_module.title}"
                 }
             })
             
@@ -546,41 +596,71 @@ class EnhancedModuleUnlockService:
         }
     
     @staticmethod
-    def _generate_unlock_recommendations(prerequisite_status: Dict, lesson_requirements: Dict, scoring_breakdown: Dict) -> List[str]:
-        """Generate actionable recommendations for module unlock."""
+    def _generate_unlock_recommendations(prerequisite_status: Dict, lesson_requirements: Dict, scoring_breakdown: Dict, previous_module: Module = None) -> List[str]:
+        """Generate actionable recommendations for module unlock based on previous module completion."""
         recommendations = []
         
-        if not prerequisite_status["all_completed"]:
-            recommendations.append(f"Complete {len(prerequisite_status['failed_modules'])} prerequisite module(s)")
-            for failed_mod in prerequisite_status["failed_modules"][:2]:  # Show top 2
-                recommendations.append(f"Complete '{failed_mod['title']}' with 80%+ score")
-        
-        if not lesson_requirements["all_lessons_passed"]:
-            recommendations.append(f"Complete {len(lesson_requirements['failed_lessons'])} lesson(s) with requirements")
-            for failed_lesson in lesson_requirements["failed_lessons"][:2]:  # Show top 2
-                if failed_lesson.get("requirements"):
-                    recommendations.append(f"Lesson '{failed_lesson['title']}': {', '.join(failed_lesson['requirements'])}")
-        
-        current_score = scoring_breakdown["total_score"]
-        required_score = EnhancedModuleUnlockService.MODULE_PASSING_SCORE
-        
-        if current_score < required_score:
-            gap = required_score - current_score
-            recommendations.append(f"Increase overall score by {gap:.1f}% points")
+        # If checking against a specific previous module, focus on that
+        if previous_module:
+            module_name = f"Module {previous_module.order}: '{previous_module.title}'"
             
-            # Specific scoring recommendations
-            breakdown = scoring_breakdown["breakdown"]
-            if breakdown["quiz_score"] < 70:
-                recommendations.append("Improve quiz performance (target: 70%+)")
-            if breakdown["assignment_score"] < 70:
-                recommendations.append("Complete assignments with higher quality")
-            if breakdown["lessons_average"] < 80:
-                recommendations.append("Review lessons for better reading/engagement scores")
+            if not lesson_requirements["all_lessons_passed"]:
+                failed_count = len(lesson_requirements["failed_lessons"])
+                recommendations.append(f"Complete {failed_count} lesson(s) with requirements in {module_name}")
+                for failed_lesson in lesson_requirements["failed_lessons"][:3]:  # Show top 3
+                    if failed_lesson.get("requirements"):
+                        req_summary = []
+                        for req in failed_lesson['requirements']:
+                            if 'quiz' in req.lower():
+                                req_summary.append('complete quiz')
+                            elif 'assignment' in req.lower():
+                                req_summary.append('submit assignment')
+                            elif 'score' in req.lower():
+                                req_summary.append('achieve 80%+ score')
+                            elif 'must_be_started' in req.lower():
+                                req_summary.append('start lesson')
+                        if req_summary:
+                            recommendations.append(f"Lesson '{failed_lesson['title']}': {', '.join(req_summary)}")
+            
+            current_score = scoring_breakdown["total_score"]
+            required_score = EnhancedModuleUnlockService.MODULE_PASSING_SCORE
+            
+            if current_score < required_score:
+                gap = required_score - current_score
+                recommendations.append(f"Complete '{module_name}' with 80%+ score (currently {current_score:.1f}%, need {gap:.1f}% more)")
+        else:
+            # Original logic for prerequisite modules
+            if not prerequisite_status["all_completed"]:
+                recommendations.append(f"Complete {len(prerequisite_status['failed_modules'])} prerequisite module(s)")
+                for failed_mod in prerequisite_status["failed_modules"][:2]:  # Show top 2
+                    recommendations.append(f"Complete '{failed_mod['title']}' with 80%+ score")
+            
+            if not lesson_requirements["all_lessons_passed"]:
+                recommendations.append(f"Complete {len(lesson_requirements['failed_lessons'])} lesson(s) with requirements")
+                for failed_lesson in lesson_requirements["failed_lessons"][:2]:  # Show top 2
+                    if failed_lesson.get("requirements"):
+                        recommendations.append(f"Lesson '{failed_lesson['title']}': {', '.join(failed_lesson['requirements'])}")
+            
+            current_score = scoring_breakdown["total_score"]
+            required_score = EnhancedModuleUnlockService.MODULE_PASSING_SCORE
+            
+            if current_score < required_score:
+                gap = required_score - current_score
+                recommendations.append(f"Increase overall score by {gap:.1f}% points")
+                
+                # Specific scoring recommendations
+                breakdown = scoring_breakdown["breakdown"]
+                if breakdown["quiz_score"] < 70:
+                    recommendations.append("Improve quiz performance (target: 70%+)")
+                if breakdown["assignment_score"] < 70:
+                    recommendations.append("Complete assignments with higher quality")
+                if breakdown["lessons_average"] < 80:
+                    recommendations.append("Review lessons for better reading/engagement scores")
         
         if len(recommendations) == 0:
             recommendations.append("All requirements met! Module ready to unlock.")
         
-        return recommendations[:5]  # Limit to top 5 recommendations
+        return recommendations[:6]  # Limit to top 6 recommendations
     
     @staticmethod
     def _safe_initialize_module_progress(student_id: int, module_id: int, enrollment_id: int) -> ModuleProgress:

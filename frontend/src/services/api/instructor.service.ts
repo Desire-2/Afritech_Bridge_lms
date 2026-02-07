@@ -9,8 +9,9 @@ import { Course } from './types';
 class InstructorApiService extends BaseApiService {
   /**
    * Get courses taught by the current instructor
+   * Backend returns Course[] directly
    */
-  async getInstructorCourses(): Promise<{ courses: Course[] }> {
+  async getInstructorCourses(): Promise<Course[]> {
     return this.get('/instructor/courses');
   }
 
