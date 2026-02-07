@@ -52,6 +52,8 @@ def get_assignment_submissions():
         
         # Get filter parameters
         course_id = request.args.get('course_id', type=int)
+        module_id = request.args.get('module_id', type=int)
+        lesson_id = request.args.get('lesson_id', type=int)
         assignment_id = request.args.get('assignment_id', type=int)
         status = request.args.get('status', 'pending')  # pending, graded, all, resubmitted, modification_requested
         student_id = request.args.get('student_id', type=int)
@@ -72,6 +74,12 @@ def get_assignment_submissions():
         # Apply filters
         if course_id:
             query = query.filter(Assignment.course_id == course_id)
+        
+        if module_id:
+            query = query.filter(Assignment.module_id == module_id)
+        
+        if lesson_id:
+            query = query.filter(Assignment.lesson_id == lesson_id)
         
         if assignment_id:
             query = query.filter(AssignmentSubmission.assignment_id == assignment_id)
@@ -694,7 +702,10 @@ def get_project_submissions():
         current_user_id = int(get_jwt_identity())
         
         # Get filter parameters
+        # Get filter parameters
         course_id = request.args.get('course_id', type=int)
+        module_id = request.args.get('module_id', type=int)
+        lesson_id = request.args.get('lesson_id', type=int)
         project_id = request.args.get('project_id', type=int)
         status = request.args.get('status', 'pending')  # pending, graded, all, resubmitted, modification_requested
         student_id = request.args.get('student_id', type=int)
@@ -710,6 +721,21 @@ def get_project_submissions():
         # Apply filters
         if course_id:
             query = query.filter(Project.course_id == course_id)
+        
+        if module_id:
+            # Projects have module_ids as JSON array, so we need to check if module_id is in the array
+            # Pattern matching for JSON array: [module_id], [module_id, ...], [..., module_id], [..., module_id, ...]
+            query = query.filter(
+                db.or_(
+                    Project.module_ids.like(f'%[{module_id},%'),    # Start of array
+                    Project.module_ids.like(f'%, {module_id},%'),   # Middle of array
+                    Project.module_ids.like(f'%, {module_id}]%'),   # End of array
+                    Project.module_ids == f'[{module_id}]'          # Only element
+                )
+            )
+        
+        # Note: Projects don't have lesson_id field as they span multiple modules/lessons
+        # Lesson filtering is only applicable to assignments, not projects
         
         if project_id:
             query = query.filter(ProjectSubmission.project_id == project_id)
@@ -1211,6 +1237,469 @@ def get_feedback_templates():
     except Exception as e:
         logger.error(f"Error fetching feedback templates: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to fetch templates", "error": str(e)}), 500
+
+
+# =====================
+# RUBRIC MANAGEMENT
+# =====================
+
+@grading_bp.route("/rubrics", methods=["GET"])
+@instructor_required
+def get_rubrics():
+    """Get all rubrics for the instructor."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        course_id = request.args.get('course_id', type=int)
+        include_templates = request.args.get('include_templates', 'true').lower() == 'true'
+        
+        from ..models.grading_models import Rubric
+        
+        query = Rubric.query.filter(
+            or_(
+                Rubric.instructor_id == current_user_id,
+                and_(Rubric.is_template == True, include_templates)
+            )
+        )
+        
+        if course_id:
+            query = query.filter(Rubric.course_id == course_id)
+        
+        rubrics = query.order_by(Rubric.updated_at.desc()).all()
+        
+        return jsonify([r.to_dict() for r in rubrics]), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching rubrics: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch rubrics", "error": str(e)}), 500
+
+
+@grading_bp.route("/rubrics", methods=["POST"])
+@instructor_required
+def create_rubric():
+    """Create a new rubric."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        from ..models.grading_models import Rubric, RubricCriterion
+        
+        # Create rubric
+        rubric = Rubric(
+            title=data['title'],
+            description=data.get('description', ''),
+            instructor_id=current_user_id,
+            course_id=data.get('course_id'),
+            is_template=data.get('is_template', False),
+            total_points=data['total_points']
+        )
+        db.session.add(rubric)
+        db.session.flush()
+        
+        # Add criteria
+        for idx, criterion_data in enumerate(data.get('criteria', [])):
+            criterion = RubricCriterion(
+                rubric_id=rubric.id,
+                name=criterion_data['name'],
+                description=criterion_data.get('description', ''),
+                max_points=criterion_data['max_points'],
+                order_index=idx,
+                performance_levels=criterion_data.get('performance_levels', [])
+            )
+            db.session.add(criterion)
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Rubric created successfully",
+            "rubric": rubric.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating rubric: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to create rubric", "error": str(e)}), 500
+
+
+@grading_bp.route("/rubrics/<int:rubric_id>", methods=["PUT"])
+@instructor_required
+def update_rubric(rubric_id):
+    """Update an existing rubric."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        from ..models.grading_models import Rubric, RubricCriterion
+        
+        rubric = Rubric.query.get(rubric_id)
+        if not rubric or rubric.instructor_id != current_user_id:
+            return jsonify({"message": "Rubric not found or access denied"}), 404
+        
+        rubric.title = data.get('title', rubric.title)
+        rubric.description = data.get('description', rubric.description)
+        rubric.total_points = data.get('total_points', rubric.total_points)
+        rubric.is_template = data.get('is_template', rubric.is_template)
+        rubric.updated_at = datetime.utcnow()
+        
+        # Update criteria if provided
+        if 'criteria' in data:
+            # Delete existing criteria
+            RubricCriterion.query.filter_by(rubric_id=rubric_id).delete()
+            
+            # Add new criteria
+            for idx, criterion_data in enumerate(data['criteria']):
+                criterion = RubricCriterion(
+                    rubric_id=rubric.id,
+                    name=criterion_data['name'],
+                    description=criterion_data.get('description', ''),
+                    max_points=criterion_data['max_points'],
+                    order_index=idx,
+                    performance_levels=criterion_data.get('performance_levels', [])
+                )
+                db.session.add(criterion)
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Rubric updated successfully",
+            "rubric": rubric.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating rubric: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to update rubric", "error": str(e)}), 500
+
+
+@grading_bp.route("/rubrics/<int:rubric_id>", methods=["DELETE"])
+@instructor_required
+def delete_rubric(rubric_id):
+    """Delete a rubric."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        from ..models.grading_models import Rubric
+        
+        rubric = Rubric.query.get(rubric_id)
+        if not rubric or rubric.instructor_id != current_user_id:
+            return jsonify({"message": "Rubric not found or access denied"}), 404
+        
+        db.session.delete(rubric)
+        db.session.commit()
+        
+        return jsonify({"message": "Rubric deleted successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting rubric: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to delete rubric", "error": str(e)}), 500
+
+
+# =====================
+# ENHANCED FEEDBACK TEMPLATES
+# =====================
+
+@grading_bp.route("/feedback-templates/enhanced", methods=["GET"])
+@instructor_required
+def get_enhanced_feedback_templates():
+    """Get feedback templates with filtering by category/tags."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        category = request.args.get('category')
+        tags = request.args.get('tags', '').split(',') if request.args.get('tags') else None
+        include_public = request.args.get('include_public', 'true').lower() == 'true'
+        
+        from ..models.grading_models import FeedbackTemplate
+        
+        query = FeedbackTemplate.query.filter(
+            or_(
+                FeedbackTemplate.instructor_id == current_user_id,
+                and_(FeedbackTemplate.is_public == True, include_public)
+            )
+        )
+        
+        if category:
+            query = query.filter(FeedbackTemplate.category == category)
+        
+        templates = query.order_by(FeedbackTemplate.usage_count.desc()).all()
+        
+        # Filter by tags if provided
+        if tags:
+            templates = [t for t in templates if any(tag in (t.tags or []) for tag in tags)]
+        
+        return jsonify([t.to_dict() for t in templates]), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching feedback templates: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch templates", "error": str(e)}), 500
+
+
+@grading_bp.route("/feedback-templates", methods=["POST"])
+@instructor_required
+def create_feedback_template():
+    """Create a new feedback template."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        from ..models.grading_models import FeedbackTemplate
+        
+        template = FeedbackTemplate(
+            instructor_id=current_user_id,
+            category=data['category'],
+            title=data['title'],
+            content=data['content'],
+            is_public=data.get('is_public', False),
+            tags=data.get('tags', [])
+        )
+        
+        db.session.add(template)
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Template created successfully",
+            "template": template.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating template: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to create template", "error": str(e)}), 500
+
+
+@grading_bp.route("/feedback-templates/<int:template_id>", methods=["PUT"])
+@instructor_required
+def update_feedback_template(template_id):
+    """Update a feedback template."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        from ..models.grading_models import FeedbackTemplate
+        
+        template = FeedbackTemplate.query.get(template_id)
+        if not template or template.instructor_id != current_user_id:
+            return jsonify({"message": "Template not found or access denied"}), 404
+        
+        template.category = data.get('category', template.category)
+        template.title = data.get('title', template.title)
+        template.content = data.get('content', template.content)
+        template.is_public = data.get('is_public', template.is_public)
+        template.tags = data.get('tags', template.tags)
+        template.updated_at = datetime.utcnow()
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Template updated successfully",
+            "template": template.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating template: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to update template", "error": str(e)}), 500
+
+
+@grading_bp.route("/feedback-templates/<int:template_id>", methods=["DELETE"])
+@instructor_required
+def delete_feedback_template(template_id):
+    """Delete a feedback template."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        from ..models.grading_models import FeedbackTemplate
+        
+        template = FeedbackTemplate.query.get(template_id)
+        if not template or template.instructor_id != current_user_id:
+            return jsonify({"message": "Template not found or access denied"}), 404
+        
+        db.session.delete(template)
+        db.session.commit()
+        
+        return jsonify({"message": "Template deleted successfully"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting template: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to delete template", "error": str(e)}), 500
+
+
+@grading_bp.route("/feedback-templates/<int:template_id>/use", methods=["POST"])
+@instructor_required
+def use_feedback_template(template_id):
+    """Increment usage count for a template."""
+    try:
+        from ..models.grading_models import FeedbackTemplate
+        
+        template = FeedbackTemplate.query.get(template_id)
+        if template:
+            template.usage_count += 1
+            db.session.commit()
+            return jsonify({"message": "Usage count updated"}), 200
+        return jsonify({"message": "Template not found"}), 404
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Failed to update usage", "error": str(e)}), 500
+
+
+# =====================
+# GRADING HISTORY
+# =====================
+
+@grading_bp.route("/history/<string:submission_type>/<int:submission_id>", methods=["GET"])
+@instructor_required
+def get_grading_history(submission_type, submission_id):
+    """Get grading history for a submission."""
+    try:
+        from ..models.grading_models import GradingHistory
+        
+        history = GradingHistory.query.filter_by(
+            submission_type=submission_type,
+            submission_id=submission_id
+        ).order_by(GradingHistory.created_at.desc()).all()
+        
+        return jsonify([h.to_dict() for h in history]), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching grading history: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch history", "error": str(e)}), 500
+
+
+# =====================
+# QUICK GRADING
+# =====================
+
+@grading_bp.route("/quick-grade", methods=["POST"])
+@instructor_required
+def quick_grade():
+    """Quick grade with minimal data - for rapid grading workflow."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        submission_type = data['type']  # 'assignment' or 'project'
+        submission_id = data['submission_id']
+        grade = float(data['grade'])
+        feedback = data.get('feedback', '')
+        rubric_scores = data.get('rubric_scores')
+        
+        if submission_type == 'assignment':
+            submission = AssignmentSubmission.query.get(submission_id)
+            if not submission or submission.assignment.course.instructor_id != current_user_id:
+                return jsonify({"message": "Access denied"}), 403
+            
+            # Log history
+            from ..models.grading_models import GradingHistory
+            history = GradingHistory(
+                submission_id=submission_id,
+                submission_type='assignment',
+                instructor_id=current_user_id,
+                action='updated' if submission.grade else 'created',
+                previous_grade=submission.grade,
+                new_grade=grade,
+                previous_feedback=submission.feedback,
+                new_feedback=feedback,
+                rubric_data=rubric_scores
+            )
+            db.session.add(history)
+            
+            submission.grade = grade
+            submission.feedback = feedback
+            submission.graded_at = datetime.utcnow()
+            submission.graded_by = current_user_id
+            
+        elif submission_type == 'project':
+            submission = ProjectSubmission.query.get(submission_id)
+            if not submission or submission.project.course.instructor_id != current_user_id:
+                return jsonify({"message": "Access denied"}), 403
+            
+            # Log history
+            from ..models.grading_models import GradingHistory
+            history = GradingHistory(
+                submission_id=submission_id,
+                submission_type='project',
+                instructor_id=current_user_id,
+                action='updated' if submission.grade else 'created',
+                previous_grade=submission.grade,
+                new_grade=grade,
+                previous_feedback=submission.feedback,
+                new_feedback=feedback,
+                rubric_data=rubric_scores
+            )
+            db.session.add(history)
+            
+            submission.grade = grade
+            submission.feedback = feedback
+            submission.graded_at = datetime.utcnow()
+            submission.graded_by = current_user_id
+        
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Graded successfully",
+            "submission": submission.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error in quick grading: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to grade", "error": str(e)}), 500
+
+
+# =====================
+# BATCH EXPORT
+# =====================
+
+@grading_bp.route("/export", methods=["POST"])
+@instructor_required
+def export_grades():
+    """Export grades for selected submissions as CSV."""
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        submission_type = data.get('type', 'assignment')
+        submission_ids = data.get('submission_ids', [])
+        course_id = data.get('course_id')
+        
+        if not submission_ids and not course_id:
+            return jsonify({"message": "Provide submission_ids or course_id"}), 400
+        
+        export_data = []
+        
+        if submission_type == 'assignment':
+            query = AssignmentSubmission.query.join(Assignment).join(Course)
+            if submission_ids:
+                query = query.filter(AssignmentSubmission.id.in_(submission_ids))
+            if course_id:
+                query = query.filter(Assignment.course_id == course_id)
+            query = query.filter(Course.instructor_id == current_user_id)
+            
+            submissions = query.all()
+            for sub in submissions:
+                export_data.append({
+                    'Student Name': f"{sub.student.first_name} {sub.student.last_name}",
+                    'Student Email': sub.student.email,
+                    'Assignment': sub.assignment.title,
+                    'Course': sub.assignment.course.title,
+                    'Submitted At': sub.submitted_at.isoformat(),
+                    'Grade': sub.grade or 'Not Graded',
+                    'Max Points': sub.assignment.points_possible,
+                    'Percentage': round((sub.grade / sub.assignment.points_possible) * 100, 2) if sub.grade else 'N/A',
+                    'Days Late': max(0, (sub.submitted_at - sub.assignment.due_date).days) if sub.assignment.due_date else 0,
+                    'Feedback': sub.feedback or ''
+                })
+        
+        return jsonify({
+            "message": "Export data generated",
+            "data": export_data,
+            "count": len(export_data)
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error exporting grades: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to export", "error": str(e)}), 500
 
 
 # Register blueprint

@@ -8,6 +8,8 @@ import { ApiErrorHandler } from '@/lib/error-handler';
 
 export interface SubmissionFilters {
   course_id?: number;
+  module_id?: number;
+  lesson_id?: number;
   assignment_id?: number;
   project_id?: number;
   status?: 'pending' | 'graded' | 'all' | 'resubmitted' | 'modification_requested';
@@ -568,6 +570,205 @@ export class GradingService {
    */
   static needsImmediateAttention(submission: AssignmentSubmission | ProjectSubmission): boolean {
     return this.getSubmissionPriority(submission) === 'high';
+  }
+
+  // =====================
+  // RUBRIC MANAGEMENT
+  // =====================
+
+  /**
+   * Get all rubrics for the instructor
+   */
+  static async getRubrics(courseId?: number, includeTemplates: boolean = true): Promise<any[]> {
+    try {
+      const params = new URLSearchParams();
+      if (courseId) params.append('course_id', courseId.toString());
+      params.append('include_templates', includeTemplates.toString());
+
+      const response = await apiClient.get(
+        `${this.BASE_PATH}/rubrics?${params.toString()}`
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Create a new rubric
+   */
+  static async createRubric(rubricData: any): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/rubrics`, rubricData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Update an existing rubric
+   */
+  static async updateRubric(rubricId: number, rubricData: any): Promise<any> {
+    try {
+      const response = await apiClient.put(`${this.BASE_PATH}/rubrics/${rubricId}`, rubricData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Delete a rubric
+   */
+  static async deleteRubric(rubricId: number): Promise<any> {
+    try {
+      const response = await apiClient.delete(`${this.BASE_PATH}/rubrics/${rubricId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // =====================
+  // ENHANCED FEEDBACK TEMPLATES
+  // =====================
+
+  /**
+   * Get enhanced feedback templates with filtering
+   */
+  static async getEnhancedFeedbackTemplates(
+    category?: string,
+    tags?: string[],
+    includePublic: boolean = true
+  ): Promise<any[]> {
+    try {
+      const params = new URLSearchParams();
+      if (category) params.append('category', category);
+      if (tags && tags.length > 0) params.append('tags', tags.join(','));
+      params.append('include_public', includePublic.toString());
+
+      const response = await apiClient.get(
+        `${this.BASE_PATH}/feedback-templates/enhanced?${params.toString()}`
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Create a new feedback template
+   */
+  static async createFeedbackTemplate(templateData: any): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/feedback-templates`, templateData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Update a feedback template
+   */
+  static async updateFeedbackTemplate(templateId: number, templateData: any): Promise<any> {
+    try {
+      const response = await apiClient.put(
+        `${this.BASE_PATH}/feedback-templates/${templateId}`,
+        templateData
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Delete a feedback template
+   */
+  static async deleteFeedbackTemplate(templateId: number): Promise<any> {
+    try {
+      const response = await apiClient.delete(`${this.BASE_PATH}/feedback-templates/${templateId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Track template usage
+   */
+  static async useFeedbackTemplate(templateId: number): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/feedback-templates/${templateId}/use`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // =====================
+  // GRADING HISTORY
+  // =====================
+
+  /**
+   * Get grading history for a submission
+   */
+  static async getGradingHistory(
+    submissionType: 'assignment' | 'project',
+    submissionId: number
+  ): Promise<any[]> {
+    try {
+      const response = await apiClient.get(
+        `${this.BASE_PATH}/history/${submissionType}/${submissionId}`
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // =====================
+  // QUICK GRADING
+  // =====================
+
+  /**
+   * Quick grade a submission
+   */
+  static async quickGrade(gradeData: {
+    type: 'assignment' | 'project';
+    submission_id: number;
+    grade: number;
+    feedback?: string;
+    rubric_scores?: any;
+  }): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/quick-grade`, gradeData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // =====================
+  // BATCH OPERATIONS
+  // =====================
+
+  /**
+   * Export grades for submissions
+   */
+  static async exportGrades(params: {
+    type: 'assignment' | 'project';
+    submission_ids?: number[];
+    course_id?: number;
+  }): Promise<any> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/export`, params);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
   }
 }
 

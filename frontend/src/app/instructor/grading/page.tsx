@@ -11,7 +11,11 @@ import GradingService, {
   SubmissionFilters
 } from '@/services/grading.service';
 import { Course } from '@/types/api';
-import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award, Search, Filter, RefreshCw, Repeat, AlertTriangle, FileEdit } from 'lucide-react';
+import { Clock, CheckCircle, AlertCircle, User, BookOpen, Calendar, Award, Search, Filter, RefreshCw, Repeat, AlertTriangle, FileEdit, Zap, Download, CheckSquare } from 'lucide-react';
+import { QuickGradingModal } from '@/components/grading/QuickGradingModal';
+
+// API Base URL
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
 type GradingItem = {
   id: number;
@@ -51,6 +55,16 @@ const ImprovedGradingPage = () => {
   const [selectedCourse, setSelectedCourse] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<'pending' | 'graded' | 'all' | 'resubmitted' | 'modification_requested'>('pending');
   const [selectedType, setSelectedType] = useState<'all' | 'assignment' | 'project'>('all');
+  
+  // New filtering states
+  const [selectedModule, setSelectedModule] = useState<string>('all');
+  const [selectedLesson, setSelectedLesson] = useState<string>('all');
+  const [selectedStudent, setSelectedStudent] = useState<string>('all');
+  const [modules, setModules] = useState<any[]>([]);
+  const [lessons, setLessons] = useState<any[]>([]);
+  const [students, setStudents] = useState<any[]>([]);
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -68,13 +82,55 @@ const ImprovedGradingPage = () => {
     overdue: 0
   });
 
+  // Quick grading modal state
+  const [quickGradeSubmission, setQuickGradeSubmission] = useState<GradingItem | null>(null);
+  const [showQuickGrade, setShowQuickGrade] = useState(false);
+
+  // Batch operations state
+  const [selectedSubmissions, setSelectedSubmissions] = useState<Set<number>>(new Set());
+  const [showBatchActions, setShowBatchActions] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  // Fetch courses once on mount when token is available
   useEffect(() => {
     if (token) {
       fetchCourses();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) {
       fetchGradingData();
       fetchSummary();
     }
-  }, [token, selectedCourse, selectedStatus, selectedType, currentPage]);
+  }, [token, selectedCourse, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent, currentPage]);
+  
+  // Fetch modules when course changes
+  useEffect(() => {
+    if (selectedCourse !== 'all') {
+      fetchModules(parseInt(selectedCourse));
+      fetchStudents(parseInt(selectedCourse));
+      setStudentSearchQuery(''); // Reset student search when course changes
+    } else {
+      setModules([]);
+      setLessons([]);
+      setStudents([]);
+      setSelectedModule('all');
+      setSelectedLesson('all');
+      setSelectedStudent('all');
+      setStudentSearchQuery('');
+    }
+  }, [selectedCourse]);
+  
+  // Fetch lessons when module changes
+  useEffect(() => {
+    if (selectedModule !== 'all') {
+      fetchLessons(parseInt(selectedModule));
+    } else {
+      setLessons([]);
+      setSelectedLesson('all');
+    }
+  }, [selectedModule]);
 
   useEffect(() => {
     // Handle URL query params on initial load
@@ -111,6 +167,18 @@ const ImprovedGradingPage = () => {
 
       if (selectedCourse !== 'all') {
         allFilters.course_id = parseInt(selectedCourse);
+      }
+      
+      if (selectedModule !== 'all') {
+        allFilters.module_id = parseInt(selectedModule);
+      }
+      
+      if (selectedLesson !== 'all') {
+        allFilters.lesson_id = parseInt(selectedLesson);
+      }
+      
+      if (selectedStudent !== 'all') {
+        allFilters.student_id = parseInt(selectedStudent);
       }
 
       const allItems: GradingItem[] = [];
@@ -307,18 +375,89 @@ const ImprovedGradingPage = () => {
 
   const fetchCourses = async () => {
     try {
-      const response = await fetch('/api/v1/instructor/courses', {
+      console.log('Fetching courses with token:', token ? 'present' : 'missing');
+      const response = await fetch(`${API_BASE_URL}/instructor/courses`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      console.log('Courses response status:', response.status);
+      if (response.ok) {
+        const coursesData = await response.json();
+        console.log('Courses fetched:', coursesData.length, ' courses');
+        console.log('Courses data:', coursesData);
+        setCourses(coursesData);
+      } else {
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Failed to fetch courses:', response.status, errorData);
+      }
+    } catch (err) {
+      console.error('Failed to fetch courses - error:', err);
+    }
+  };
+  
+  const fetchModules = async (courseId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/courses/${courseId}/modules`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
       if (response.ok) {
-        const coursesData = await response.json();
-        setCourses(coursesData);
+        const modulesData = await response.json();
+        setModules(modulesData);
       }
     } catch (err) {
-      console.error('Failed to fetch courses:', err);
+      console.error('Failed to fetch modules:', err);
+      setModules([]);
+    }
+  };
+  
+  const fetchLessons = async (moduleId: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/modules/${moduleId}/lessons`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      if (response.ok) {
+        const lessonsData = await response.json();
+        setLessons(lessonsData);
+      }
+    } catch (err) {
+      console.error('Failed to fetch lessons:', err);
+      setLessons([]);
+    }
+  };
+  
+  const fetchStudents = async (courseId: number) => {
+    try {
+      console.log('Fetching students for course:', courseId);
+      const response = await fetch(`${API_BASE_URL}/instructor/courses/${courseId}/enrollments`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      console.log('Students response status:', response.status);
+      if (response.ok) {
+        const enrollmentsData = await response.json();
+        console.log('Enrollments data:', enrollmentsData);
+        console.log('Number of students:', enrollmentsData.length);
+        // enrollmentsData is already an array of enrollment objects
+        // Each enrollment has: id, student_id, student_username, etc.
+        setStudents(enrollmentsData);
+      } else {
+        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
+        console.error('Failed to fetch students:', response.status, errorData);
+        setStudents([]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch students - error:', err);
+      setStudents([]);
     }
   };
 
@@ -337,6 +476,9 @@ const ImprovedGradingPage = () => {
     params.set('status', selectedStatus);
     if (selectedType !== 'all') params.set('type', selectedType);
     if (selectedCourse !== 'all') params.set('course_id', selectedCourse);
+    if (selectedModule !== 'all') params.set('module_id', selectedModule);
+    if (selectedLesson !== 'all') params.set('lesson_id', selectedLesson);
+    if (selectedStudent !== 'all') params.set('student_id', selectedStudent);
     
     const newURL = `/instructor/grading${params.toString() ? '?' + params.toString() : ''}`;
     router.push(newURL, { scroll: false });
@@ -450,6 +592,147 @@ const ImprovedGradingPage = () => {
     return badges;
   };
 
+  const handleQuickGrade = (item: GradingItem) => {
+    setQuickGradeSubmission(item);
+    setShowQuickGrade(true);
+  };
+
+  const handleNextSubmission = () => {
+    if (!quickGradeSubmission) return;
+    const currentIndex = gradingItems.findIndex(item => 
+      item.id === quickGradeSubmission.id && item.type === quickGradeSubmission.type
+    );
+    if (currentIndex < gradingItems.length - 1) {
+      setQuickGradeSubmission(gradingItems[currentIndex + 1]);
+    }
+  };
+
+  const handlePreviousSubmission = () => {
+    if (!quickGradeSubmission) return;
+    const currentIndex = gradingItems.findIndex(item => 
+      item.id === quickGradeSubmission.id && item.type === quickGradeSubmission.type
+    );
+    if (currentIndex > 0) {
+      setQuickGradeSubmission(gradingItems[currentIndex - 1]);
+    }
+  };
+
+  const hasNextSubmission = () => {
+    if (!quickGradeSubmission) return false;
+    const currentIndex = gradingItems.findIndex(item => 
+      item.id === quickGradeSubmission.id && item.type === quickGradeSubmission.type
+    );
+    return currentIndex < gradingItems.length - 1;
+  };
+
+  const hasPreviousSubmission = () => {
+    if (!quickGradeSubmission) return false;
+    const currentIndex = gradingItems.findIndex(item => 
+      item.id === quickGradeSubmission.id && item.type === quickGradeSubmission.type
+    );
+    return currentIndex > 0;
+  };
+
+  const handleGradingComplete = (submissionId: number) => {
+    // Refresh the grading data
+    fetchGradingData();
+    fetchSummary();
+  };
+
+  const toggleSelectSubmission = (itemId: number, itemType: string) => {
+    const key = `${itemType}-${itemId}`;
+    setSelectedSubmissions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleExportGrades = async () => {
+    if (selectedSubmissions.size === 0 && !selectedCourse) {
+      alert('Please select submissions or a course to export');
+      return;
+    }
+
+    setExporting(true);
+    try {
+      const result = await GradingService.exportGrades({
+        type: selectedType as any,
+        submission_ids: selectedSubmissions.size > 0 ? Array.from(selectedSubmissions) : undefined,
+        course_id: selectedCourse !== 'all' ? parseInt(selectedCourse) : undefined
+      });
+
+      // Convert to CSV and download
+      const csvContent = convertToCSV(result.data);
+      downloadCSV(csvContent, `grades_export_${new Date().toISOString().split('T')[0]}.csv`);
+
+      alert(`Exported ${result.count} submissions successfully`);
+    } catch (error: any) {
+      alert(error.message || 'Failed to export grades');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const convertToCSV = (data: any[]) => {
+    if (data.length === 0) return '';
+    
+    const headers = Object.keys(data[0]);
+    const csvRows = [
+      headers.join(','),
+      ...data.map(row => 
+        headers.map(header => {
+          const value = row[header];
+          return typeof value === 'string' && value.includes(',') 
+            ? `"${value}"` 
+            : value;
+        }).join(',')
+      )
+    ];
+    
+    return csvRows.join('\n');
+  };
+
+  const downloadCSV = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+  
+  const clearAllFilters = () => {
+    setSelectedCourse('all');
+    setSelectedModule('all');
+    setSelectedLesson('all');
+    setSelectedStudent('all');
+    setSelectedStatus('pending');
+    setSelectedType('all');
+    setSearchQuery('');
+    setStudentSearchQuery('');
+    setCurrentPage(1);
+  };
+  
+  const getActiveFilterCount = () => {
+    let count = 0;
+    if (selectedCourse !== 'all') count++;
+    if (selectedModule !== 'all') count++;
+    if (selectedLesson !== 'all') count++;
+    if (selectedStudent !== 'all') count++;
+    if (selectedStatus !== 'pending') count++; // pending is default
+    if (selectedType !== 'all') count++;
+    if (searchQuery) count++;
+    return count;
+  };
+
   if (loading && gradingItems.length === 0) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -486,9 +769,22 @@ const ImprovedGradingPage = () => {
                 <span>Refreshing...</span>
               </div>
             ) : (
-              'Refresh'
+              <div className="flex items-center space-x-2">
+                <RefreshCw className="w-4 h-4" />
+                <span>Refresh</span>
+              </div>
             )}
           </button>
+          {selectedSubmissions.size > 0 && (
+            <button
+              onClick={handleExportGrades}
+              disabled={exporting}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+            >
+              <Download className="w-4 h-4 inline mr-2" />
+              {exporting ? 'Exporting...' : `Export ${selectedSubmissions.size} Selected`}
+            </button>
+          )}
           <Link
             href="/instructor/grading/analytics"
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -695,7 +991,24 @@ const ImprovedGradingPage = () => {
 
       {/* Filters */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Filters</h2>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-3">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Filters</h2>
+            {getActiveFilterCount() > 0 && (
+              <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-xs font-medium rounded-full">
+                {getActiveFilterCount()} active
+              </span>
+            )}
+          </div>
+          {getActiveFilterCount() > 0 && (
+            <button
+              onClick={clearAllFilters}
+              className="px-3 py-1.5 text-sm bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+            >
+              Clear All Filters
+            </button>
+          )}
+        </div>
         
         {/* Search Bar */}
         <div className="mb-4">
@@ -726,17 +1039,22 @@ const ImprovedGradingPage = () => {
             <select
               value={selectedCourse}
               onChange={(e) => { 
+                console.log('Course changed to:', e.target.value);
                 setSelectedCourse(e.target.value); 
                 setCurrentPage(1);
               }}
               className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
             >
               <option value="all">All Courses</option>
-              {courses.map((course) => (
-                <option key={course.id} value={course.id}>
-                  {course.title}
-                </option>
-              ))}
+              {courses && courses.length > 0 ? (
+                courses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.title}
+                  </option>
+                ))
+              ) : (
+                <option disabled>Loading courses...</option>
+              )}
             </select>
           </div>
 
@@ -788,6 +1106,132 @@ const ImprovedGradingPage = () => {
             </select>
           </div>
         </div>
+        
+        {/* Additional Filters Row */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+          {/* Module Filter */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              Module
+            </label>
+            <select
+              value={selectedModule}
+              onChange={(e) => { 
+                setSelectedModule(e.target.value); 
+                setCurrentPage(1);
+              }}
+              disabled={selectedCourse === 'all'}
+              className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="all">All Modules</option>
+              {modules.map((module) => (
+                <option key={module.id} value={module.id}>
+                  {module.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Lesson Filter */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              Lesson
+            </label>
+            <select
+              value={selectedLesson}
+              onChange={(e) => { 
+                setSelectedLesson(e.target.value); 
+                setCurrentPage(1);
+              }}
+              disabled={selectedModule === 'all'}
+              className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="all">All Lessons</option>
+              {lessons.map((lesson) => (
+                <option key={lesson.id} value={lesson.id}>
+                  {lesson.title}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Student Filter */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              Student
+            </label>
+            <div className="space-y-2">
+              {/* Student Search Input */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search students..."
+                  value={studentSearchQuery}
+                  onChange={(e) => setStudentSearchQuery(e.target.value)}
+                  disabled={selectedCourse === 'all'}
+                  className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+              
+              {/* Student Dropdown */}
+              <select
+                value={selectedStudent}
+                onChange={(e) => { 
+                  console.log('Student changed to:', e.target.value);
+                  setSelectedStudent(e.target.value); 
+                  setCurrentPage(1);
+                }}
+                disabled={selectedCourse === 'all'}
+                className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="all">All Students {students.length > 0 ? `(${students.length})` : ''}</option>
+                {students.length === 0 && selectedCourse !== 'all' ? (
+                  <option disabled>No students enrolled</option>
+                ) : (
+                  students
+                    .filter((enrollment) => {
+                      if (!studentSearchQuery) return true;
+                      const username = (enrollment.student_username || '').toLowerCase();
+                      const fullName = (enrollment.student?.full_name || '').toLowerCase();
+                      const searchLower = studentSearchQuery.toLowerCase();
+                      return username.includes(searchLower) || fullName.includes(searchLower);
+                    })
+                    .map((enrollment) => {
+                      const displayName = enrollment.student?.full_name || enrollment.student_username || `Student ${enrollment.student_id}`;
+                      return (
+                        <option key={enrollment.student_id} value={enrollment.student_id}>
+                          {displayName}
+                        </option>
+                      );
+                    })
+                )}
+              </select>
+              
+              {/* Show count of filtered results */}
+              {studentSearchQuery && students.length > 0 && (() => {
+                const filteredCount = students.filter((enrollment) => {
+                  const username = (enrollment.student_username || '').toLowerCase();
+                  const fullName = (enrollment.student?.full_name || '').toLowerCase();
+                  const searchLower = studentSearchQuery.toLowerCase();
+                  return username.includes(searchLower) || fullName.includes(searchLower);
+                }).length;
+                return (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {filteredCount} student(s) found
+                  </p>
+                );
+              })()}
+              
+              {/* Debug info */}
+              {selectedCourse !== 'all' && students.length === 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  ⚠️ No students enrolled in this course
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Enhanced Submissions List */}
@@ -835,7 +1279,15 @@ const ImprovedGradingPage = () => {
               {gradingItems.map((item) => (
                 <div key={`${item.type}-${item.id}`} className="p-6 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
                   <div className="flex items-start justify-between">
-                    <div className="flex-1">
+                    <div className="flex items-start space-x-4">
+                      {/* Checkbox for batch selection */}
+                      <input
+                        type="checkbox"
+                        checked={selectedSubmissions.has(item.id)}
+                        onChange={() => toggleSelectSubmission(item.id, item.type)}
+                        className="mt-1 w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
+                      />
+                      <div className="flex-1">
                       <div className="flex items-center space-x-3 mb-3">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                           item.type === 'assignment'
@@ -909,24 +1361,35 @@ const ImprovedGradingPage = () => {
                           </span>
                         )}
                       </div>
+                      </div>
                     </div>
 
                     <div className="flex space-x-2 ml-4">
+                      {/* Quick Grade Button */}
+                      <button
+                        onClick={() => handleQuickGrade(item)}
+                        className="flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all shadow-md text-sm font-medium"
+                      >
+                        <Zap className="w-4 h-4" />
+                        <span>Quick Grade</span>
+                      </button>
+                      
+                      {/* Detailed Review Link */}
                       <Link
                         href={`/instructor/grading/${item.type}/${item.id}`}
-                        className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                        className={`px-4 py-2 rounded-lg transition-colors text-sm font-medium border-2 ${
                           item.is_resubmission 
-                            ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                            ? 'border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20' 
                             : item.grade !== undefined 
-                            ? 'bg-green-600 text-white hover:bg-green-700'
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                            ? 'border-green-600 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20'
+                            : 'border-blue-600 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
                         }`}
                       >
                         {item.is_resubmission 
-                          ? 'Review Resubmission' 
+                          ? 'Full Review' 
                           : item.grade !== undefined 
-                          ? 'Review' 
-                          : 'Grade'
+                          ? 'View Details' 
+                          : 'Detailed Grade'
                         }
                       </Link>
                     </div>
@@ -960,6 +1423,20 @@ const ImprovedGradingPage = () => {
           </>
         )}
       </div>
+
+      {/* Quick Grading Modal */}
+      {showQuickGrade && quickGradeSubmission && (
+        <QuickGradingModal
+          submission={quickGradeSubmission}
+          isOpen={showQuickGrade}
+          onClose={() => setShowQuickGrade(false)}
+          onGraded={handleGradingComplete}
+          onNext={handleNextSubmission}
+          onPrevious={handlePreviousSubmission}
+          hasNext={hasNextSubmission()}
+          hasPrevious={hasPreviousSubmission()}
+        />
+      )}
     </div>
   );
 };

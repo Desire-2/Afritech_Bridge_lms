@@ -384,9 +384,22 @@ def get_course_enrollments(course_id):
         return jsonify({"message": "Course not found or access denied"}), 404
     
     try:
-        enrollments = Enrollment.query.filter_by(course_id=course_id).all()
-        return jsonify([enrollment.to_dict() for enrollment in enrollments]), 200
+        # Get all enrollments for this course (active and completed)
+        enrollments = Enrollment.query.filter_by(course_id=course_id).filter(
+            Enrollment.status.in_(['active', 'completed'])
+        ).all()
+        
+        logger.info(f"Found {len(enrollments)} enrollments for course {course_id}")
+        
+        enrollment_data = [enrollment.to_dict() for enrollment in enrollments]
+        
+        # Log sample data for debugging
+        if enrollment_data:
+            logger.info(f"Sample enrollment data: {enrollment_data[0]}")
+        
+        return jsonify(enrollment_data), 200
     except Exception as e:
+        logger.error(f"Failed to fetch enrollments for course {course_id}: {str(e)}")
         return jsonify({"message": "Failed to fetch enrollments", "error": str(e)}), 500
 
 @instructor_bp.route("/enrollments/<int:enrollment_id>", methods=["DELETE"])

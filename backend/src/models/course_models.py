@@ -265,6 +265,17 @@ class Enrollment(db.Model):
         return (total_score / scored_modules) if scored_modules > 0 else 0.0
 
     def to_dict(self):
+        student_data = None
+        if self.student:
+            student_data = {
+                'id': self.student.id,
+                'username': self.student.username,
+                'email': self.student.email,
+                'first_name': self.student.first_name,
+                'last_name': self.student.last_name,
+                'full_name': f"{self.student.first_name} {self.student.last_name}".strip() if self.student.first_name or self.student.last_name else self.student.username
+            }
+        
         return {
             'id': self.id,
             'student_id': self.student_id,
@@ -278,6 +289,7 @@ class Enrollment(db.Model):
             'termination_reason': self.termination_reason,
             'terminated_by': self.terminated_by,
             'student_username': self.student.username if self.student else None,
+            'student': student_data,
             'course_title': self.course.title if self.course else None
         }
 

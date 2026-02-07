@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import MarkdownRenderer from '@/components/ui/MarkdownRenderer';
@@ -12,6 +12,8 @@ import GradingService, { SubmissionDetail, FeedbackTemplate } from '@/services/g
 import { EnhancedFileService } from '@/services/enhanced-file.service';
 import { parseFileInfo } from '@/utils/fileUtils';
 import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
+import { CommentBankPanel } from '@/components/grading/CommentBankPanel';
+import { RubricGradingPanel } from '@/components/grading/RubricGradingPanel';
 import { 
   FileText, 
   User, 
@@ -30,7 +32,11 @@ import {
   Target,
   Info,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Save,
+  Sparkles,
+  Calculator,
+  FileBarChart
 } from 'lucide-react';
 
 const AssignmentGradingDetail = () => {
@@ -50,6 +56,13 @@ const AssignmentGradingDetail = () => {
   const [feedback, setFeedback] = useState<string>('');
   const [showTemplates, setShowTemplates] = useState(false);
   const [showModificationModal, setShowModificationModal] = useState(false);
+  
+  // Enhanced grading features
+  const [showCommentBank, setShowCommentBank] = useState(false);
+  const [showRubricPanel, setShowRubricPanel] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [rubricScores, setRubricScores] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (token && submissionId) {
@@ -141,6 +154,65 @@ const AssignmentGradingDetail = () => {
   const applyTemplate = (template: FeedbackTemplate) => {
     setFeedback(template.content);
     setShowTemplates(false);
+  };
+
+  // Auto-save draft functionality
+  const autoSaveDraft = useCallback(async () => {
+    if (!grade && !feedback) return;
+    
+    setAutoSaving(true);
+    try {
+      const draftKey = `grading_draft_assignment_${submissionId}`;
+      localStorage.setItem(draftKey, JSON.stringify({
+        grade,
+        feedback,
+        rubricScores,
+        timestamp: new Date().toISOString()
+      }));
+      setLastSaved(new Date());
+    } catch (error) {
+      console.error('Auto-save failed:', error);
+    } finally {
+      setAutoSaving(false);
+    }
+  }, [grade, feedback, rubricScores, submissionId]);
+
+  // Load draft on mount
+  useEffect(() => {
+    const draftKey = `grading_draft_assignment_${submissionId}`;
+    const savedDraft = localStorage.getItem(draftKey);
+    if (savedDraft && !grade && !feedback) {
+      try {
+        const draft = JSON.parse(savedDraft);
+        setGrade(draft.grade || '');
+        setFeedback(draft.feedback || '');
+        setRubricScores(draft.rubricScores || {});
+      } catch (error) {
+        console.error('Failed to load draft:', error);
+      }
+    }
+  }, [submissionId]);
+
+  // Auto-save every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(autoSaveDraft, 30000);
+    return () => clearInterval(interval);
+  }, [autoSaveDraft]);
+
+  const handleCommentSelect = (comment: string) => {
+    setFeedback(prev => prev ? `${prev}\n\n${comment}` : comment);
+  };
+
+  const handleRubricApply = (totalScore: number, scores: Record<string, number>) => {
+    setGrade(totalScore.toString());
+    setRubricScores(scores);
+  };
+
+  const calculatePercentage = () => {
+    if (!grade || !submission?.assignment_points) return 0;
+    const gradeValue = parseFloat(grade);
+    if (isNaN(gradeValue)) return 0;
+    return (gradeValue / submission.assignment_points) * 100;
   };
 
   if (loading) {
@@ -557,21 +629,91 @@ const AssignmentGradingDetail = () => {
           {/* Grading Form */}
           <form onSubmit={handleSubmitGrade} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
             <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4">
-              <div className="flex items-center space-x-2">
-                <Award className="w-6 h-6 text-white" />
-                <h3 className="text-lg font-bold text-white">
-                  {submission.grade !== undefined ? 'Update Grade' : 'Submit Grade'}
-                </h3>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Award className="w-6 h-6 text-white" />
+                  <h3 className="text-lg font-bold text-white">
+                    {submission.grade !== undefined ? 'Update Grade' : 'Submit Grade'}
+                  </h3>
+                </div>
+                {lastSaved && (
+                  <div className="flex items-center text-white/80 text-sm">
+                    <Save className="w-4 h-4 mr-1" />
+                    <span>Saved {lastSaved.toLocaleTimeString()}</span>
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="p-6">
               <div className="space-y-6">
+                {/* Quick Actions */}
+                <div className="flex gap-2 pb-4 border-b border-slate-200 dark:border-slate-700">
+                  <button
+                    type="button"
+                    onClick={() => setShowRubricPanel(!showRubricPanel)}
+                    className="flex items-center px-3 py-2 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors text-sm font-medium"
+                  >
+                    <FileBarChart className="w-4 h-4 mr-2" />
+                    {showRubricPanel ? 'Hide' : 'Use'} Rubric
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCommentBank(!showCommentBank)}
+                    className="flex items-center px-3 py-2 bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors text-sm font-medium"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {showCommentBank ? 'Hide' : 'Show'} Comment Bank
+                  </button>
+                  <button
+                    type="button"
+                    onClick={autoSaveDraft}
+                    disabled={autoSaving}
+                    className="flex items-center px-3 py-2 bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-lg hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors text-sm font-medium disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    {autoSaving ? 'Saving...' : 'Save Draft'}
+                  </button>
+                </div>
+
+                {/* Rubric Panel */}
+                {showRubricPanel && (
+                  <div className="border border-purple-200 dark:border-purple-800 rounded-lg p-4 bg-purple-50 dark:bg-purple-900/10">
+                    <RubricGradingPanel
+                      assignmentId={submission.assignment?.id}
+                      maxPoints={submission.assignment_points}
+                      onApplyScores={handleRubricApply}
+                      initialScores={rubricScores}
+                    />
+                  </div>
+                )}
+
                 {/* Grade Input */}
                 <div>
-                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                    Grade (out of {submission.assignment_points})
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Grade (out of {submission.assignment_points})
+                    </label>
+                    {grade && !isNaN(parseFloat(grade)) && (
+                      <div className="flex items-center space-x-2 text-sm">
+                        <Calculator className="w-4 h-4 text-blue-500" />
+                        <span className="font-bold text-blue-600 dark:text-blue-400">
+                          {calculatePercentage().toFixed(1)}%
+                        </span>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          GradingService.getLetterGrade(calculatePercentage()) === 'A'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                            : GradingService.getLetterGrade(calculatePercentage()) === 'B'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
+                            : GradingService.getLetterGrade(calculatePercentage()) === 'C'
+                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                            : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                        }`}>
+                          {GradingService.getLetterGrade(calculatePercentage())}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type="number"
@@ -587,32 +729,17 @@ const AssignmentGradingDetail = () => {
                       <span className="text-sm">/{submission.assignment_points}</span>
                     </div>
                   </div>
-                  
-                  {/* Grade Preview */}
-                  {grade && !isNaN(parseFloat(grade)) && (
-                    <div className="mt-2 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-slate-600 dark:text-slate-400">Preview:</span>
-                        <div className="flex items-center space-x-3">
-                          <span className="font-bold text-slate-900 dark:text-white">
-                            {GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points).toFixed(1)}%
-                          </span>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            GradingService.getLetterGrade(GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points)) === 'A'
-                              ? 'bg-green-100 text-green-800'
-                              : GradingService.getLetterGrade(GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points)) === 'B'
-                              ? 'bg-blue-100 text-blue-800'
-                              : GradingService.getLetterGrade(GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points)) === 'C'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {GradingService.getLetterGrade(GradingService.calculatePercentage(parseFloat(grade), submission.assignment_points))}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
+
+                {/* Comment Bank Panel */}
+                {showCommentBank && (
+                  <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/10">
+                    <CommentBankPanel
+                      onSelectComment={handleCommentSelect}
+                      currentFeedback={feedback}
+                    />
+                  </div>
+                )}
 
                 {/* Feedback Section */}
                 <div>

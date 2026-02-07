@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import FileViewer from '@/components/FileViewer';
@@ -8,6 +8,8 @@ import DocumentAnalysis from '@/components/DocumentAnalysis';
 import SubmissionReview from '@/components/SubmissionReview';
 import GradingService, { SubmissionDetail, FeedbackTemplate } from '@/services/grading.service';
 import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
+import { CommentBankPanel } from '@/components/grading/CommentBankPanel';
+import { RubricGradingPanel } from '@/components/grading/RubricGradingPanel';
 import { 
   FileText, 
   User, 
@@ -28,7 +30,11 @@ import {
   Users,
   Layers,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Save,
+  Sparkles,
+  Calculator,
+  FileBarChart
 } from 'lucide-react';
 
 const ProjectGradingDetail = () => {
@@ -48,6 +54,13 @@ const ProjectGradingDetail = () => {
   const [feedback, setFeedback] = useState<string>('');
   const [showTemplates, setShowTemplates] = useState(false);
   const [showModificationModal, setShowModificationModal] = useState(false);
+  
+  // Enhanced grading features
+  const [showCommentBank, setShowCommentBank] = useState(false);
+  const [showRubricPanel, setShowRubricPanel] = useState(false);
+  const [autoSaving, setAutoSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [rubricScores, setRubricScores] = useState<Record<string, number>>({});
 
   useEffect(() => {
     if (token && submissionId) {
@@ -121,6 +134,65 @@ const ProjectGradingDetail = () => {
   const applyTemplate = (template: FeedbackTemplate) => {
     setFeedback(template.content);
     setShowTemplates(false);
+  };
+
+  // Auto-save draft functionality
+  const autoSaveDraft = useCallback(async () => {
+    if (!grade && !feedback) return;
+    
+    setAutoSaving(true);
+    try {
+      const draftKey = `grading_draft_project_${submissionId}`;
+      localStorage.setItem(draftKey, JSON.stringify({
+        grade,
+        feedback,
+        rubricScores,
+        timestamp: new Date().toISOString()
+      }));
+      setLastSaved(new Date());
+    } catch (error) {
+      console.error('Auto-save failed:', error);
+    } finally {
+      setAutoSaving(false);
+    }
+  }, [grade, feedback, rubricScores, submissionId]);
+
+  // Load draft on mount
+  useEffect(() => {
+    const draftKey = `grading_draft_project_${submissionId}`;
+    const savedDraft = localStorage.getItem(draftKey);
+    if (savedDraft && !grade && !feedback) {
+      try {
+        const draft = JSON.parse(savedDraft);
+        setGrade(draft.grade || '');
+        setFeedback(draft.feedback || '');
+        setRubricScores(draft.rubricScores || {});
+      } catch (error) {
+        console.error('Failed to load draft:', error);
+      }
+    }
+  }, [submissionId]);
+
+  // Auto-save every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(autoSaveDraft, 30000);
+    return () => clearInterval(interval);
+  }, [autoSaveDraft]);
+
+  const handleCommentSelect = (comment: string) => {
+    setFeedback(prev => prev ? `${prev}\n\n${comment}` : comment);
+  };
+
+  const handleRubricApply = (totalScore: number, scores: Record<string, number>) => {
+    setGrade(totalScore.toString());
+    setRubricScores(scores);
+  };
+
+  const calculatePercentage = () => {
+    if (!grade || !submission?.project_points) return 0;
+    const gradeValue = parseFloat(grade);
+    if (isNaN(gradeValue)) return 0;
+    return (gradeValue / submission.project_points) * 100;
   };
 
   if (loading) {
@@ -407,75 +479,169 @@ const ProjectGradingDetail = () => {
           </div>
 
           {/* Grading Form */}
-          <form onSubmit={handleSubmitGrade} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-              {submission.grade !== undefined ? 'Update Grade' : 'Submit Grade'}
-            </h3>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Grade (out of {submission.project_points})
-                </label>
-                <input
-                  type="number"
-                  value={grade}
-                  onChange={(e) => setGrade(e.target.value)}
-                  min="0"
-                  max={submission.project_points}
-                  step="0.5"
-                  required
-                  className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter grade"
-                />
-                {grade && submission.project_points && (
-                  <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                    Percentage: {GradingService.calculatePercentage(parseFloat(grade), submission.project_points).toFixed(1)}%
-                    {' '}({GradingService.getLetterGrade(GradingService.calculatePercentage(parseFloat(grade), submission.project_points))})
-                  </p>
+          <form onSubmit={handleSubmitGrade} className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Award className="w-6 h-6 text-white" />
+                  <h3 className="text-lg font-bold text-white">
+                    {submission.grade !== undefined ? 'Update Grade' : 'Submit Grade'}
+                  </h3>
+                </div>
+                {lastSaved && (
+                  <div className="flex items-center text-white/80 text-sm">
+                    <Save className="w-4 h-4 mr-1" />
+                    <span>Saved {lastSaved.toLocaleTimeString()}</span>
+                  </div>
                 )}
               </div>
+            </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                    Feedback
-                  </label>
+            <div className="p-6">
+              <div className="space-y-6">
+                {/* Quick Actions */}
+                <div className="flex gap-2 pb-4 border-b border-slate-200 dark:border-slate-700">
                   <button
                     type="button"
-                    onClick={() => setShowTemplates(!showTemplates)}
-                    className="text-sm text-blue-600 hover:text-blue-700"
+                    onClick={() => setShowRubricPanel(!showRubricPanel)}
+                    className="flex items-center px-3 py-2 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 rounded-lg hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors text-sm font-medium"
                   >
-                    Use Template
+                    <FileBarChart className="w-4 h-4 mr-2" />
+                    {showRubricPanel ? 'Hide' : 'Use'} Rubric
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowCommentBank(!showCommentBank)}
+                    className="flex items-center px-3 py-2 bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-lg hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors text-sm font-medium"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {showCommentBank ? 'Hide' : 'Show'} Comment Bank
+                  </button>
+                  <button
+                    type="button"
+                    onClick={autoSaveDraft}
+                    disabled={autoSaving}
+                    className="flex items-center px-3 py-2 bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded-lg hover:bg-green-200 dark:hover:bg-green-900/30 transition-colors text-sm font-medium disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    {autoSaving ? 'Saving...' : 'Save Draft'}
                   </button>
                 </div>
 
-                {showTemplates && (
-                  <div className="mb-3 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg space-y-2">
-                    {templates.map(template => (
-                      <button
-                        key={template.id}
-                        type="button"
-                        onClick={() => applyTemplate(template)}
-                        className="block w-full text-left px-3 py-2 text-sm hover:bg-white dark:hover:bg-slate-800 rounded transition-colors"
-                      >
-                        <div className="font-medium text-slate-900 dark:text-white">{template.name}</div>
-                        <div className="text-slate-600 dark:text-slate-400 text-xs mt-1 line-clamp-1">
-                          {template.content}
-                        </div>
-                      </button>
-                    ))}
+                {/* Rubric Panel */}
+                {showRubricPanel && (
+                  <div className="border border-purple-200 dark:border-purple-800 rounded-lg p-4 bg-purple-50 dark:bg-purple-900/10">
+                    <RubricGradingPanel
+                      projectId={submission.project?.id}
+                      maxPoints={submission.project_points}
+                      onApplyScores={handleRubricApply}
+                      initialScores={rubricScores}
+                    />
                   </div>
                 )}
 
-                <textarea
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                  rows={6}
-                  className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500"
-                  placeholder="Provide detailed feedback on the project..."
-                />
-              </div>
+                {/* Grade Input */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Grade (out of {submission.project_points})
+                    </label>
+                    {grade && !isNaN(parseFloat(grade)) && (
+                      <div className="flex items-center space-x-2 text-sm">
+                        <Calculator className="w-4 h-4 text-blue-500" />
+                        <span className="font-bold text-blue-600 dark:text-blue-400">
+                          {calculatePercentage().toFixed(1)}%
+                        </span>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          GradingService.getLetterGrade(calculatePercentage()) === 'A'
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                            : GradingService.getLetterGrade(calculatePercentage()) === 'B'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400'
+                            : GradingService.getLetterGrade(calculatePercentage()) === 'C'
+                            ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                            : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+                        }`}>
+                          {GradingService.getLetterGrade(calculatePercentage())}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      value={grade}
+                      onChange={(e) => setGrade(e.target.value)}
+                      min="0"
+                      max={submission.project_points}
+                      step="0.5"
+                      className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500 text-lg font-semibold"
+                      placeholder="Enter grade..."
+                    />
+                    <div className="absolute right-3 top-3 text-slate-500">
+                      <span className="text-sm">/{submission.project_points}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Comment Bank Panel */}
+                {showCommentBank && (
+                  <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-4 bg-blue-50 dark:bg-blue-900/10">
+                    <CommentBankPanel
+                      onSelectComment={handleCommentSelect}
+                      currentFeedback={feedback}
+                    />
+                  </div>
+                )}
+
+                {/* Feedback Section */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Feedback
+                    </label>
+                    {templates.length > 0 && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowTemplates(!showTemplates)}
+                          className="flex items-center px-3 py-1 text-sm bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/30 transition-colors"
+                        >
+                          <Eye className="w-4 h-4 mr-1" />
+                          Templates ({templates.length})
+                        </button>
+                        
+                        {showTemplates && (
+                          <div className="absolute right-0 top-8 w-64 bg-white dark:bg-slate-700 rounded-lg shadow-xl border border-slate-200 dark:border-slate-600 z-10 max-h-48 overflow-y-auto">
+                            {templates.map((template) => (
+                              <button
+                                key={template.id}
+                                type="button"
+                                onClick={() => applyTemplate(template)}
+                                className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-600 rounded transition-colors"
+                              >
+                                <div className="font-medium text-slate-900 dark:text-white">{template.name}</div>
+                                <div className="text-slate-600 dark:text-slate-400 text-xs mt-1 line-clamp-2">
+                                  {template.content}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <textarea
+                    value={feedback}
+                    onChange={(e) => setFeedback(e.target.value)}
+                    rows={6}
+                    className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    placeholder="Provide detailed feedback on the project..."
+                  />
+                  <div className="mt-2 text-xs text-slate-500">
+                    {feedback.length} characters
+                  </div>
+                </div>
 
               <div className="flex space-x-3">
                 <button
