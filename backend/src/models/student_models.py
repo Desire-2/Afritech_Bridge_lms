@@ -1250,7 +1250,7 @@ class Certificate(db.Model):
     
     certificate_number = db.Column(db.String(100), unique=True, nullable=False)
     overall_score = db.Column(db.Float, nullable=False)
-    grade = db.Column(db.String(10), nullable=False)  # 'A', 'B', 'C', etc.
+    grade = db.Column(db.String(10), nullable=True)  # Deprecated - kept for backward compatibility
     
     skills_acquired = db.Column(db.Text, nullable=True)  # JSON list of skills
     portfolio_items = db.Column(db.Text, nullable=True)  # JSON list of portfolio work

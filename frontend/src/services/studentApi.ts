@@ -589,6 +589,18 @@ export class StudentApiService {
     }
   }
 
+  static async downloadCertificate(certificateId: number): Promise<Blob> {
+    try {
+      const response = await api.get(`/student/certificate/download/${certificateId}`, {
+        responseType: 'blob', // Important: tell axios to expect binary data
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Error downloading certificate:', error.response?.data || error.message);
+      throw error;
+    }
+  }
+
   static async getBadges(): Promise<SkillBadge[]> {
     const response = await api.get('/student/certificate/badges');
     return response.data.badges;

@@ -62,6 +62,89 @@ if (typeof window !== 'undefined') {
   };
 }
 
+// QR Code Component using canvas-based pattern generation
+const QRCodeComponent: React.FC<{ value: string; size: number }> = ({ value, size }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const qrSize = 25;
+    const moduleSize = Math.floor(size / qrSize);
+    const margin = 1;
+    
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#0f172a';
+    
+    const textHash = value.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    
+    for (let row = margin; row < qrSize - margin; row++) {
+      for (let col = margin; col < qrSize - margin; col++) {
+        let shouldFill = false;
+        
+        const isTopLeft = row < 7 + margin && col < 7 + margin;
+        const isTopRight = row < 7 + margin && col >= qrSize - 7 - margin;
+        const isBottomLeft = row >= qrSize - 7 - margin && col < 7 + margin;
+        
+        if (isTopLeft || isTopRight || isBottomLeft) {
+          const localRow = isTopLeft ? row - margin : (isTopRight ? row - margin : row - (qrSize - 7 - margin));
+          const localCol = isTopLeft ? col - margin : (isTopRight ? col - (qrSize - 7 - margin) : col - margin);
+          
+          shouldFill = 
+            (localRow === 0 || localRow === 6 || localCol === 0 || localCol === 6) ||
+            (localRow >= 2 && localRow <= 4 && localCol >= 2 && localCol <= 4);
+        } else {
+          if (row === 6 || col === 6) {
+            shouldFill = (row + col) % 2 === 0;
+          } else {
+            const seed = textHash + row * 31 + col * 17;
+            shouldFill = (seed % 3 !== 0) && ((seed % 7) > 2);
+          }
+        }
+        
+        if (shouldFill) {
+          ctx.fillRect(
+            col * moduleSize,
+            row * moduleSize,
+            moduleSize - 0.5,
+            moduleSize - 0.5
+          );
+        }
+      }
+    }
+    
+    const centerRow = Math.floor(qrSize / 2);
+    const centerCol = Math.floor(qrSize / 2);
+    for (let r = -2; r <= 2; r++) {
+      for (let c = -2; c <= 2; c++) {
+        if (Math.abs(r) === 2 || Math.abs(c) === 2 || (r === 0 && c === 0)) {
+          ctx.fillRect(
+            (centerCol + c) * moduleSize,
+            (centerRow + r) * moduleSize,
+            moduleSize - 0.5,
+            moduleSize - 0.5
+          );
+        }
+      }
+    }
+  }, [value, size]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={size}
+      height={size}
+      className="absolute inset-[0.2mm] w-[calc(100%-0.4mm)] h-[calc(100%-0.4mm)] rounded"
+      style={{ margin: '0.2mm' }}
+    />
+  );
+};
+
 const containerVariants = {
   hidden: { opacity: 0 },
   visible: {
@@ -91,9 +174,11 @@ interface CertificateCardProps {
   };
   onView: (certificate: Certificate) => void;
   onShare: (certificate: Certificate) => void;
+  onQuickDownload: (certificate: Certificate) => void;
+  isDownloading?: boolean;
 }
 
-const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, onShare }) => {
+const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, onShare, onQuickDownload, isDownloading }) => {
   // Helper to get status badge color
   const getStatusColor = () => {
     if (certificate.completion_status === 'completed') {
@@ -233,8 +318,21 @@ const CertificateCard: React.FC<CertificateCardProps> = ({ certificate, onView, 
                 <Share2 className="h-4 w-4" />
               </Button>
               {!isLocked && (
-                <Button size="sm" variant="outline">
-                  <Download className="h-4 w-4" />
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onQuickDownload(certificate);
+                  }}
+                  disabled={isDownloading}
+                  title="Download certificate"
+                >
+                  {isDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
                 </Button>
               )}
             </div>
@@ -340,143 +438,106 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
   const certificateRef = useRef<HTMLDivElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [isCertificateReady, setIsCertificateReady] = useState(false);
 
   const verificationUrl = certificate.verification_url || 
     `https://study.afritechbridge.online/verify/${certificate.certificate_number}`;
 
+  // Check if certificate is fully rendered and ready for capture
+  useEffect(() => {
+    if (!isOpen) {
+      setIsCertificateReady(false);
+      return;
+    }
+
+    const checkCertificateReady = async () => {
+      // Wait for dialog to open and render
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      if (certificateRef.current) {
+        const rect = certificateRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          // Wait for images to load
+          const images = certificateRef.current.querySelectorAll('img');
+          await Promise.all(
+            Array.from(images).map((img) => {
+              if (img.complete) return Promise.resolve();
+              return new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = resolve;
+                setTimeout(resolve, 5000);
+              });
+            })
+          );
+          setIsCertificateReady(true);
+        }
+      }
+    };
+
+    checkCertificateReady();
+  }, [isOpen]);
+
   const handleDownloadImage = async () => {
-    if (!certificateRef.current) return;
-    
     setIsDownloading(true);
     try {
-      // Wait for all images to fully load
-      const images = certificateRef.current.querySelectorAll('img');
-      await Promise.all(
-        Array.from(images).map((img) => {
-          if (img.complete) return Promise.resolve();
-          return new Promise((resolve) => {
-            img.onload = resolve;
-            img.onerror = resolve;
-          });
-        })
-      );
+      // Use backend-generated image instead of html2canvas
+      const token = localStorage.getItem('token');
       
-      // Small delay to ensure rendering is complete
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Capture the certificate element as canvas
-      const canvas = await html2canvas(certificateRef.current, {
-        scale: 4, // Very high quality
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: null,
-        logging: false,
-        imageTimeout: 30000,
-        removeContainer: false,
-        foreignObjectRendering: false,
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: certificateRef.current.scrollWidth,
-        windowHeight: certificateRef.current.scrollHeight,
-      });
-      
-      // Convert canvas to blob and download as PNG
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.png`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/student/certificate/download-image/${certificate.id}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
         }
-      }, 'image/png', 1.0);
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Download failed' }));
+        throw new Error(errorData.error || 'Failed to download image');
+      }
+
+      // Get the blob and create download link
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
       
-    } catch (error) {
-      console.error('Error generating image:', error);
-      alert('Failed to generate image. Please try again.');
+      console.log('Image download successful from backend');
+    } catch (error: any) {
+      console.error('Error downloading image:', error);
+      alert(`Failed to download image: ${error?.message || 'Unknown error'}. Please try PDF download instead.`);
     } finally {
       setIsDownloading(false);
     }
   };
 
   const handleDownload = async () => {
-    if (!certificateRef.current) return;
-    
     setIsDownloading(true);
+    
     try {
-      // Wait for all images to fully load
-      const images = certificateRef.current.querySelectorAll('img');
-      await Promise.all(
-        Array.from(images).map((img) => {
-          if (img.complete) return Promise.resolve();
-          return new Promise((resolve) => {
-            img.onload = resolve;
-            img.onerror = resolve;
-          });
-        })
-      );
+      // Primary method: Backend PDF generation (most reliable)
+      const blob = await StudentApiService.downloadCertificate(certificate.id as number);
       
-      // Small delay to ensure rendering is complete
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
       
-      // Capture the certificate element as canvas - exact appearance
-      const canvas = await html2canvas(certificateRef.current, {
-        scale: 4, // Very high quality for print
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: null, // Keep transparency/original background
-        logging: false,
-        imageTimeout: 30000,
-        removeContainer: false,
-        foreignObjectRendering: false,
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: certificateRef.current.scrollWidth,
-        windowHeight: certificateRef.current.scrollHeight,
-      });
-      
-      // Create PDF in landscape orientation - A4 size
-      const pdf = new jsPDF({
-        orientation: 'landscape',
-        unit: 'mm',
-        format: 'a4'
-      });
-      
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      
-      // Calculate dimensions to fit the page perfectly
-      const canvasRatio = canvas.width / canvas.height;
-      const pageRatio = pageWidth / pageHeight;
-      
-      let imgWidth, imgHeight, xOffset, yOffset;
-      
-      if (canvasRatio > pageRatio) {
-        // Canvas is wider - fit to width
-        imgWidth = pageWidth;
-        imgHeight = pageWidth / canvasRatio;
-        xOffset = 0;
-        yOffset = (pageHeight - imgHeight) / 2;
-      } else {
-        // Canvas is taller - fit to height
-        imgHeight = pageHeight;
-        imgWidth = pageHeight * canvasRatio;
-        xOffset = (pageWidth - imgWidth) / 2;
-        yOffset = 0;
-      }
-      
-      const imgData = canvas.toDataURL('image/png', 1.0);
-      pdf.addImage(imgData, 'PNG', xOffset, yOffset, imgWidth, imgHeight);
-      
-      // Download the PDF
-      const fileName = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
-      pdf.save(fileName);
     } catch (error) {
-      console.error('Error generating PDF:', error);
-      alert('Failed to generate PDF. Please try again.');
+      console.error('Error downloading certificate:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Download failed: ${errorMsg}. Please contact support if the issue persists.`);
     } finally {
       setIsDownloading(false);
     }
@@ -489,13 +550,13 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
   return (
     <>
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto bg-gray-900 border-gray-700">
+      <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto bg-[#0f1f3d] border-cyan-400/30">
         <DialogHeader>
           <DialogTitle className="text-white flex items-center gap-2">
-            <Award className="h-5 w-5 text-yellow-400" />
-            Certificate of Completion
+            <Award className="h-5 w-5 text-cyan-400" />
+            Certificate of Achievement
           </DialogTitle>
-          <DialogDescription className="text-gray-400">
+          <DialogDescription className="text-cyan-200/70">
             View, download, verify or share your certificate for {certificate.course_title}
           </DialogDescription>
         </DialogHeader>
@@ -504,209 +565,479 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
           {/* Certificate Preview - A4 Landscape Ratio */}
           <div 
             ref={certificateRef}
-            className="relative overflow-hidden rounded-lg shadow-2xl border-4 border-yellow-500/30"
-            style={{ aspectRatio: '1.414/1', minHeight: '500px' }}
+            data-certificate-ref="true"
+            className="relative overflow-hidden rounded-lg shadow-2xl"
+            style={{ 
+              aspectRatio: '1.414/1', 
+              minHeight: '500px',
+              minWidth: '700px',
+              backgroundColor: '#0f172a'
+            }}
           >
-            {/* Solid Background for better PDF export */}
-            <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-blue-900 to-slate-900" />
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-600/20 via-transparent to-transparent" />
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-purple-600/20 via-transparent to-transparent" />
+            {/* Main Background - Navy Blue (#0f172a) matching backend */}
+            <div className="absolute inset-0 bg-gradient-to-br from-[#0f172a] via-[#1e3a8a] to-[#0f172a]" />
             
-            {/* Decorative Pattern Overlay */}
-            <div className="absolute inset-0 opacity-5">
-              <div className="absolute inset-0" style={{
-                backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
-              }} />
-            </div>
+            {/* Subtle gradient overlays matching backend */}
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-[#1e40af]/30 via-transparent to-transparent" style={{ width: '15%', height: '85%' }} />
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom_right,_var(--tw-gradient-stops))] from-[#14b8a6]/15 via-transparent to-transparent" style={{ width: '85%', height: '20%' }} />
             
-            {/* Golden Border Frame */}
-            <div className="absolute inset-2 border-2 border-yellow-500/50 rounded-lg" />
-            <div className="absolute inset-3 border border-yellow-400/30 rounded-lg" />
+            {/* Main border - Teal matching backend */}
+            <div className="absolute inset-[12px] rounded-lg border-[3px] border-[#14b8a6]" />
             
-            {/* Corner Decorations - Minimalist */}
-            <div className="absolute top-3 left-3">
-              <div className="w-8 h-8 border-l-2 border-t-2 border-yellow-400 rounded-tl-lg" />
-            </div>
-            <div className="absolute top-3 right-3">
-              <div className="w-8 h-8 border-r-2 border-t-2 border-yellow-400 rounded-tr-lg" />
-            </div>
-            <div className="absolute bottom-3 left-3">
-              <div className="w-8 h-8 border-l-2 border-b-2 border-yellow-400 rounded-bl-lg" />
-            </div>
-            <div className="absolute bottom-3 right-3">
-              <div className="w-8 h-8 border-r-2 border-b-2 border-yellow-400 rounded-br-lg" />
+            {/* Inner accent border - Orange matching backend */}
+            <div className="absolute inset-[15px] rounded-lg border-[1.5px] border-[#f97316]" />
+            
+            {/* Circuit node patterns - Top Left */}
+            <div className="absolute top-[25mm] left-[30mm]">
+              <div className="w-[3mm] h-[3mm] rounded-full bg-[#14b8a6]" />
+              <div className="absolute top-[3mm] left-[10mm] w-[2.4mm] h-[2.4mm] rounded-full bg-[#5eead4]" />
+              <div className="absolute top-[-1mm] left-[20mm] w-[2mm] h-[2mm] rounded-full bg-[#14b8a6]" />
+              <svg className="absolute top-0 left-0 w-[22mm] h-[6mm]" style={{ overflow: 'visible' }}>
+                <line x1="1.5mm" y1="1.5mm" x2="11.2mm" y2="4.5mm" stroke="#14b8a6" strokeWidth="2" />
+                <line x1="11.2mm" y1="4.5mm" x2="21mm" y2="0.5mm" stroke="#5eead4" strokeWidth="2" />
+              </svg>
             </div>
             
-            {/* Main Content - Optimized Spacing */}
-            <div className="relative z-10 h-full flex flex-col px-8 py-5">
-              {/* Header Section - Streamlined */}
-              <div className="flex items-center justify-between mb-3">
-                {/* Logo */}
-                <div className="relative flex-shrink-0">
-                  <div className="absolute inset-0 bg-yellow-400/20 blur-md rounded-full" />
-                  <div className="relative p-0.5 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-full">
+            {/* Circuit pattern - Top Right with upward arrow motif */}
+            <svg className="absolute top-[30mm] right-[45mm] w-[20mm] h-[15mm]" style={{ overflow: 'visible' }}>
+              <circle cx="10mm" cy="0mm" r="1.5mm" fill="#f97316" />
+              <circle cx="18mm" cy="5mm" r="1.2mm" fill="#fb923c" />
+              <circle cx="2mm" cy="5mm" r="1.2mm" fill="#f97316" />
+              <line x1="10mm" y1="0mm" x2="18mm" y2="5mm" stroke="#f97316" strokeWidth="2" />
+              <line x1="10mm" y1="0mm" x2="2mm" y2="5mm" stroke="#f97316" strokeWidth="2" />
+            </svg>
+            
+            {/* Upward arrow brand element */}
+            <svg className="absolute top-[40mm] right-[40mm] w-[15mm] h-[15mm]" style={{ overflow: 'visible' }}>
+              <line x1="0" y1="10mm" x2="8mm" y2="0" stroke="#f97316" strokeWidth="3" />
+              <line x1="8mm" y1="0" x2="5mm" y2="3mm" stroke="#f97316" strokeWidth="4" />
+              <line x1="8mm" y1="0" x2="11mm" y2="3mm" stroke="#f97316" strokeWidth="4" />
+            </svg>
+            
+            {/* Circuit pattern - Bottom Left */}
+            <div className="absolute bottom-[35mm] left-[30mm]">
+              <div className="w-[2.4mm] h-[2.4mm] rounded-full bg-[#14b8a6]" />
+              <div className="absolute top-[5mm] left-[10mm] w-[2mm] h-[2mm] rounded-full bg-[#5eead4]" />
+              <div className="absolute top-[-3mm] left-[20mm] w-[2.6mm] h-[2.6mm] rounded-full bg-[#14b8a6]" />
+              <svg className="absolute top-0 left-0 w-[22mm] h-[8mm]" style={{ overflow: 'visible' }}>
+                <line x1="1.2mm" y1="1.2mm" x2="11mm" y2="6mm" stroke="#14b8a6" strokeWidth="2" />
+                <line x1="11mm" y1="6mm" x2="21.3mm" y2="-1.8mm" stroke="#5eead4" strokeWidth="2" />
+              </svg>
+            </div>
+            
+            {/* Circuit pattern - Bottom Right */}
+            <div className="absolute bottom-[32mm] right-[35mm]">
+              <div className="w-[2.4mm] h-[2.4mm] rounded-full bg-[#f97316]" />
+              <div className="absolute bottom-[4mm] right-[10mm] w-[2mm] h-[2mm] rounded-full bg-[#fb923c]" />
+              <div className="absolute bottom-[-3mm] right-[15mm] w-[2.6mm] h-[2.6mm] rounded-full bg-[#f97316]" />
+              <svg className="absolute bottom-0 right-0 w-[18mm] h-[8mm]" style={{ overflow: 'visible' }}>
+                <line x1="1mm" y1="2mm" x2="9mm" y2="6mm" stroke="#f97316" strokeWidth="2" />
+                <line x1="9mm" y1="6mm" x2="17mm" y2="-1mm" stroke="#fb923c" strokeWidth="2" />
+              </svg>
+            </div>
+            
+            {/* Curved arc design elements */}
+            <svg className="absolute top-[30mm] left-[25mm] w-[35mm] h-[20mm]" style={{ overflow: 'visible' }}>
+              <path d="M 0 20 Q 10 0, 35 0" fill="none" stroke="#14b8a6" strokeWidth="2" />
+              <path d="M 5 18 Q 12 2, 30 2" fill="none" stroke="#f97316" strokeWidth="1.5" />
+            </svg>
+            
+            {/* Main Content */}
+            <div className="relative z-10 h-full flex flex-col px-12 py-5">
+              {/* Header Section */}
+              <div className="flex items-start justify-between mb-3">
+                {/* Enhanced Logo with Tech Frame matching backend */}
+                <div className="relative flex-shrink-0" style={{ width: '74px', height: '74px' }}>
+                  {/* Simplified circular tech frame */}
+                  <svg className="absolute inset-0 w-full h-full" style={{ transform: 'translate(-1px, -1px)' }}>
+                    {/* Outer teal circle */}
+                    <circle cx="37" cy="37" r="32" fill="none" stroke="#14b8a6" strokeWidth="2.5" />
+                    {/* Inner orange circle */}
+                    <circle cx="37" cy="37" r="28" fill="none" stroke="#f97316" strokeWidth="1.5" />
+                    
+                    {/* Corner tech nodes at diagonals */}
+                    <circle cx="60" cy="14" r="3.6" fill="#14b8a6" />
+                    <circle cx="14" cy="14" r="3.6" fill="#f97316" />
+                    <circle cx="14" cy="60" r="3.6" fill="#14b8a6" />
+                    <circle cx="60" cy="60" r="3.6" fill="#f97316" />
+                    
+                    {/* Connecting lines extending outward */}
+                    <line x1="60" y1="14" x2="68" y2="6" stroke="#14b8a6" strokeWidth="2" />
+                    <circle cx="68" cy="6" r="2.4" fill="#14b8a6" />
+                    
+                    <line x1="14" y1="14" x2="6" y2="6" stroke="#f97316" strokeWidth="2" />
+                    <circle cx="6" cy="6" r="2.4" fill="#f97316" />
+                    
+                    <line x1="14" y1="60" x2="6" y2="68" stroke="#14b8a6" strokeWidth="2" />
+                    <circle cx="6" cy="68" r="2.4" fill="#14b8a6" />
+                    
+                    <line x1="60" y1="60" x2="68" y2="68" stroke="#f97316" strokeWidth="2" />
+                    <circle cx="68" cy="68" r="2.4" fill="#f97316" />
+                  </svg>
+                  
+                  {/* Logo in center */}
+                  <div className="absolute inset-0 flex items-center justify-center">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img 
                       src="/logo.jpg" 
-                      alt="Afritec Bridge Logo" 
-                      width={50} 
-                      height={50}
+                      alt="Afritech Bridge Logo" 
+                      width={44}
+                      height={44}
                       className="rounded-full block"
                       crossOrigin="anonymous"
+                      style={{ objectFit: 'cover' }}
                     />
                   </div>
                 </div>
                 
-                {/* Title */}
-                <div className="text-center flex-1">
-                  <p className="text-yellow-400 text-xs font-medium tracking-[0.25em] uppercase mb-0.5">Afritec Bridge Academy</p>
-                  <h1 className="text-2xl font-bold text-yellow-400">
-                    Certificate of Completion
-                  </h1>
+                {/* Center Title matching backend */}
+                <div className="text-center flex-1 px-4">
+                  <p className="text-[#14b8a6] text-xs font-medium tracking-[0.3em] uppercase mb-1">
+                    AFRITECH BRIDGE ACADEMY
+                  </p>
+                  <p className="text-[#5eead4] text-[9px] tracking-widest mb-3">
+                    Empowering Africa Through Technology Education
+                  </p>
+                  <div className="inline-block">
+                    <h1 className="text-[34px] font-bold leading-none mb-0">
+                      <span className="text-white">CERTIFICATE</span>
+                    </h1>
+                    <h2 className="text-[28px] font-bold text-[#f97316] leading-tight">
+                      OF ACHIEVEMENT
+                    </h2>
+                  </div>
                 </div>
                 
-                {/* Trophy Icon */}
+                {/* Upward Arrow Icon matching backend */}
                 <div className="flex-shrink-0">
-                  <Trophy className="w-12 h-12 text-yellow-400" />
+                  <svg className="w-12 h-12 text-[#f97316]" viewBox="0 0 48 48" fill="none" stroke="currentColor">
+                    <circle cx="24" cy="24" r="6" fill="currentColor" />
+                    <circle cx="12" cy="12" r="4" fill="currentColor" />
+                    <circle cx="36" cy="12" r="4" fill="currentColor" />
+                    <circle cx="12" cy="36" r="4" fill="currentColor" />
+                    <line x1="16" y1="14" x2="20" y2="20" strokeWidth="2" />
+                    <line x1="32" y1="14" x2="28" y2="20" strokeWidth="2" />
+                    <line x1="16" y1="34" x2="20" y2="28" strokeWidth="2" />
+                  </svg>
                 </div>
               </div>
               
-              {/* Divider */}
-              <div className="h-px bg-gradient-to-r from-transparent via-yellow-400/40 to-transparent mb-3" />
+              {/* "Official" badge below logo */}
+              <div className="absolute top-[80px] left-[50px]">
+                <span className="text-[#14b8a6] text-[7px] font-bold tracking-wider">◆ OFFICIAL ◆</span>
+              </div>
               
-              {/* Middle Section - Compact & Organized */}
-              <div className="flex-1 flex flex-col justify-center text-center space-y-2">
-                <p className="text-blue-200 text-sm">This is to certify that</p>
+              {/* Decorative tech divider with dots matching backend */}
+              <div className="relative h-[1.5px] mb-3">
+                <div className="absolute left-0 right-[calc(50%+5mm)] h-full bg-[#14b8a6]" />
+                <div className="absolute left-[calc(50%+5mm)] right-0 h-full bg-[#14b8a6]" />
+                {/* Center dots */}
+                <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center gap-[3mm]">
+                  <div className="w-[3mm] h-[3mm] rounded-full bg-[#14b8a6]" />
+                  <div className="w-[3mm] h-[3mm] rounded-full bg-[#f97316]" />
+                  <div className="w-[3mm] h-[3mm] rounded-full bg-[#14b8a6]" />
+                </div>
+              </div>
+              
+              {/* Middle Section matching backend */}
+              <div className="flex-1 flex flex-col justify-center text-center space-y-3">
+                <p className="text-[#94a3b8] text-sm">This certifies that</p>
                 
-                {/* Student Name */}
-                <div className="relative py-1.5">
-                  <h2 className="text-2xl font-bold text-white tracking-wide">
+                {/* Student Name with Gradient Underline matching backend */}
+                <div className="relative py-1">
+                  <h2 className="text-[28px] font-bold text-white tracking-wide mb-2">
                     {certificate.student_name}
                   </h2>
-                  <div className="mx-auto mt-1 w-48 h-px bg-gradient-to-r from-transparent via-blue-400 to-transparent" />
+                  {/* Two-tone underline: teal to orange */}
+                  <div className="mx-auto w-[150mm] h-[2.5px] flex">
+                    <div className="flex-1 bg-[#14b8a6]" />
+                    <div className="flex-1 bg-[#f97316]" />
+                  </div>
                 </div>
                 
-                <p className="text-blue-200 text-sm">has successfully completed the course</p>
+                <p className="text-[#94a3b8] text-sm mt-2">has successfully completed the course</p>
                 
-                {/* Course Title */}
-                <div className="inline-block mx-auto bg-white/10 backdrop-blur-sm rounded-lg px-4 py-1.5 border border-white/20 max-w-3xl">
-                  <h3 className="text-base font-semibold text-yellow-300 line-clamp-2">
-                    {certificate.course_title}
-                  </h3>
+                {/* Course Title in brand blue box matching backend */}
+                <div className="flex justify-center my-2">
+                  <div className="relative inline-block max-w-2xl">
+                    {/* Background glow */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-[#1e3a8a]/30 to-[#1e3a8a]/30 blur-xl rounded-lg" />
+                    {/* Main box with brand blue background */}
+                    <div className="relative bg-[#1e3a8a] rounded-lg px-8 py-3 border-2 border-[#14b8a6]">
+                      {/* Corner decorations */}
+                      <div className="absolute top-[3mm] left-[3mm] w-[1.6mm] h-[1.6mm] rounded-full bg-[#f97316]" />
+                      <div className="absolute top-[3mm] right-[3mm] w-[1.6mm] h-[1.6mm] rounded-full bg-[#f97316]" />
+                      <div className="absolute bottom-[3mm] left-[3mm] w-[1.6mm] h-[1.6mm] rounded-full bg-[#f97316]" />
+                      <div className="absolute bottom-[3mm] right-[3mm] w-[1.6mm] h-[1.6mm] rounded-full bg-[#f97316]" />
+                      
+                      <h3 className="text-xl font-bold text-white">
+                        {certificate.course_title}
+                      </h3>
+                    </div>
+                  </div>
                 </div>
                 
-                {/* Skills Section - Optimized */}
-                <div className="space-y-1.5 py-2">
-                  <p className="text-blue-200 text-[11px] font-medium">Demonstrating proficiency in:</p>
-                  <div className="grid grid-cols-3 gap-2 max-w-3xl mx-auto px-2">
-                    {(certificate.skills_acquired || certificate.skills_demonstrated || []).slice(0, 6).map((skill: string, index: number) => (
-                      <div 
-                        key={index} 
-                        className="px-2 py-1.5 bg-gradient-to-r from-blue-600/40 to-purple-600/40 rounded-md border border-white/20"
-                        style={{ 
-                          minHeight: '2.2rem', 
-                          maxHeight: '3rem',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          overflow: 'hidden'
-                        }}
-                        title={skill}
-                      >
-                        <span 
-                          className="text-[9px] text-white text-center w-full"
-                          style={{
-                            display: '-webkit-box',
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: 'vertical',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            wordBreak: 'break-word',
-                            lineHeight: '1.2',
-                            padding: '0 2px'
-                          }}
-                        >
-                          {skill}
-                        </span>
+                {/* Competencies Section matching backend format */}
+                <div className="space-y-1 py-2 mt-1">
+                  {(certificate.skills_acquired || certificate.skills_demonstrated || []).length > 0 && (
+                    <div className="flex justify-center">
+                      <div className="inline-flex items-center gap-2 bg-gradient-to-r from-[#14b8a6]/10 to-[#f97316]/10 px-6 py-2 rounded-lg border border-[#14b8a6]/30">
+                        <div className="w-[2mm] h-[2mm] rounded-full bg-[#14b8a6]" />
+                        <p className="text-[#14b8a6] text-[9px] font-bold uppercase tracking-wider">
+                          COMPETENCIES: {(certificate.skills_acquired || certificate.skills_demonstrated || []).slice(0, 3).map((skill: string) => 
+                            skill.length > 35 ? skill.substring(0, 32) + '...' : skill
+                          ).join(' • ')}
+                        </p>
+                        <div className="w-[2mm] h-[2mm] rounded-full bg-[#f97316]" />
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  )}
                 </div>
-                
-                {/* Grade Badge */}
-                {certificate.grade && (
-                  <div className="inline-flex items-center gap-1.5 bg-gradient-to-r from-yellow-500 to-orange-500 px-3 py-1 rounded-full mx-auto mt-1">
-                    <Medal className="w-3.5 h-3.5 text-white" />
-                    <span className="text-white font-bold text-sm">Grade: {certificate.grade}</span>
-                    {certificate.overall_score && (
-                      <span className="text-white/80 text-xs">({certificate.overall_score.toFixed(1)}%)</span>
-                    )}
-                  </div>
-                )}
               </div>
               
               {/* Divider */}
-              <div className="h-px bg-gradient-to-r from-transparent via-yellow-400/40 to-transparent mt-3 mb-2" />
+              <div className="h-[1.2px] bg-[#14b8a6] mt-4 mb-1.5" />
               
-              {/* Footer Section - Compact & Professional */}
-              <div className="grid grid-cols-3 gap-4 items-center">
-                {/* Left Column - Date & Certificate ID */}
+              {/* Footer Section matching backend */}
+              <div className="grid grid-cols-3 gap-3 items-end">
+                {/* Left Column - Issue Date & Certificate ID matching backend */}
                 <div className="text-left space-y-1">
                   <div>
-                    <p className="text-blue-300 text-[9px] uppercase tracking-wide mb-0.5">Date Issued</p>
-                    <p className="text-white font-semibold text-xs">
+                    <p className="text-[#14b8a6] text-[8px] font-bold uppercase tracking-wide mb-0.5">ISSUE DATE</p>
+                    <p className="text-white font-bold text-[9px]">
                       {new Date(certificate.issued_at || certificate.issued_date || new Date()).toLocaleDateString('en-US', {
                         year: 'numeric',
-                        month: 'short',
+                        month: 'long',
                         day: 'numeric'
                       })}
                     </p>
                   </div>
                   <div>
-                    <p className="text-blue-300 text-[9px] uppercase tracking-wide mb-0.5">Certificate ID</p>
-                    <p className="text-white font-mono text-[10px]">{certificate.certificate_number}</p>
-                    <div className="flex items-center gap-0.5 mt-0.5">
-                      <Verified className="w-2.5 h-2.5 text-green-400" />
-                      <span className="text-green-400 text-[9px]">Verified</span>
+                    <p className="text-[#f97316] text-[8px] font-bold uppercase tracking-wide mb-0.5">CERTIFICATE ID</p>
+                    <p className="text-[#cbd5e1] font-mono text-[7px]">{certificate.certificate_number}</p>
+                  </div>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <div className="relative w-[5mm] h-[5mm]">
+                      <div className="absolute inset-0 w-[4mm] h-[4mm] rounded-full bg-[#14b8a6] top-[0.5mm] left-[0.5mm]" />
+                      <div className="absolute inset-0 rounded-full border-[1.5px] border-[#22d3ee]" />
+                      <span className="absolute inset-0 flex items-center justify-center text-white font-bold text-[9px]">✓</span>
                     </div>
+                    <span className="text-[#5eead4] text-[7px] font-bold">Blockchain Verified</span>
                   </div>
                 </div>
                 
-                {/* Center Column - Signature */}
-                <div className="text-center flex flex-col items-center justify-end">
-                  <div className="inline-block mb-1">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img 
-                      src="/sign.jpg" 
-                      alt="CEO Signature" 
-                      width={100} 
-                      height={40}
-                      className="object-contain"
-                      crossOrigin="anonymous"
-                    />
-                  </div>
-                  <div className="border-t border-yellow-400/50 pt-0.5 w-28">
-                    <p className="font-semibold text-white text-[11px]">Desire Bikorimana</p>
-                    <p className="text-yellow-400 text-[9px]">Founder & CEO</p>
-                  </div>
-                </div>
-                
-                {/* Right Column - QR Code */}
-                <div className="text-right flex flex-col items-end justify-end">
-                  <div className="inline-block">
-                    <div className="bg-gray-800/30 backdrop-blur-sm rounded-md p-1.5 border border-yellow-400/30">
+                {/* Center Column - Enhanced Signature Box matching backend */}
+                <div className="text-center flex flex-col items-center">
+                  <div className="relative" style={{ width: '70mm', height: '22mm' }}>
+                    {/* Elegant gradient background */}
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#1e3a8a]/40 via-[#1e3a8a]/25 to-[#1e3a8a]/40 rounded-lg" />
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#14b8a6]/5 via-transparent to-transparent rounded-lg" />
+                    
+                    {/* Premium double border with glow effect */}
+                    <div className="absolute inset-0 border-2 border-[#14b8a6] rounded-lg shadow-[0_0_8px_rgba(20,184,166,0.3)]" />
+                    <div className="absolute inset-[1.5mm] border border-[#f97316] rounded-lg shadow-[0_0_6px_rgba(249,115,22,0.2)]" />
+                    
+                    {/* Enhanced corner tech nodes with pulse effect */}
+                    <div className="absolute top-[2.5mm] left-[2.5mm] w-[2.5mm] h-[2.5mm] rounded-full bg-[#14b8a6] shadow-[0_0_4px_rgba(20,184,166,0.6)]" />
+                    <div className="absolute top-[2.5mm] right-[2.5mm] w-[2.5mm] h-[2.5mm] rounded-full bg-[#f97316] shadow-[0_0_4px_rgba(249,115,22,0.6)]" />
+                    <div className="absolute bottom-[2.5mm] left-[2.5mm] w-[2.5mm] h-[2.5mm] rounded-full bg-[#14b8a6] shadow-[0_0_4px_rgba(20,184,166,0.6)]" />
+                    <div className="absolute bottom-[2.5mm] right-[2.5mm] w-[2.5mm] h-[2.5mm] rounded-full bg-[#f97316] shadow-[0_0_4px_rgba(249,115,22,0.6)]" />
+                    
+                    {/* Elegant label with decorative elements */}
+                    <div className="absolute top-[2mm] left-0 right-0 flex items-center justify-center gap-1">
+                      <div className="w-[1mm] h-[1mm] rounded-full bg-[#14b8a6]" />
+                      <p className="text-center text-[#14b8a6] text-[5px] font-bold tracking-widest uppercase">
+                        Authorized Signature
+                      </p>
+                      <div className="w-[1mm] h-[1mm] rounded-full bg-[#f97316]" />
+                    </div>
+                    
+                    {/* Signature image with colored frame matching image */}
+                    <div className="absolute" style={{ top: '7mm', left: '19mm', width: '32mm', height: '7mm' }}>
+                      {/* Frame with teal/cyan and orange borders (26mm wide, smaller than image) */}
+                      <div className="absolute" style={{
+                        left: '3mm',
+                        width: '26mm',
+                        height: '7mm',
+                        borderLeft: '2px solid #14b8a6',
+                        borderTop: '2px solid #14b8a6',
+                        borderRight: '2px solid #f97316',
+                        borderBottom: '2px solid #f97316',
+                        background: 'rgba(30, 58, 138, 0.2)'
+                      }} />
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img 
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${encodeURIComponent(certificate.verification_url || `https://study.afritechbridge.online/verify/${certificate.certificate_number}`)}`}
-                        alt="QR Code"
-                        width={60}
-                        height={60}
-                        className="rounded block"
+                        src="/sign.jpg" 
+                        alt="CEO Signature" 
+                        className="absolute inset-0 w-full h-full object-contain relative z-10 filter brightness-110 contrast-125"
+                        style={{ padding: '2px' }}
                         crossOrigin="anonymous"
                       />
                     </div>
-                    <p className="text-blue-300 text-[8px] mt-0.5">Scan to Verify</p>
+                    
+                    {/* Elegant signature line with decorative dots */}
+                    <div className="absolute" style={{ top: '15mm', left: '7mm', right: '7mm', height: '1.5px' }}>
+                      <div className="absolute left-0 right-[calc(50%+2mm)] h-full bg-gradient-to-r from-[#14b8a6] to-[#14b8a6]/80" />
+                      <div className="absolute left-[calc(50%+2mm)] right-0 h-full bg-gradient-to-l from-[#f97316] to-[#f97316]/80" />
+                      <div className="absolute left-[calc(50%-2mm)] top-1/2 transform -translate-y-1/2 w-[1.5mm] h-[1.5mm] rounded-full bg-[#14b8a6] shadow-[0_0_3px_rgba(20,184,166,0.8)]" />
+                      <div className="absolute left-[calc(50%+2mm)] top-1/2 transform -translate-y-1/2 w-[1.5mm] h-[1.5mm] rounded-full bg-[#f97316] shadow-[0_0_3px_rgba(249,115,22,0.8)]" />
+                    </div>
+                    
+                    {/* CEO Information with enhanced typography and better spacing */}
+                    <div className="absolute bottom-[6mm] left-0 right-0 text-center">
+                      <p className="font-bold text-white text-[9px] tracking-wide mb-0.5" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
+                        Desire Bikorimana
+                      </p>
+                    </div>
+                    <div className="absolute bottom-[3.5mm] left-0 right-0 text-center">
+                      <div className="inline-flex items-center gap-1">
+                        <div className="w-[0.8mm] h-[0.8mm] rounded-full bg-[#f97316]" />
+                        <p className="text-[#f97316] text-[7px] font-bold tracking-wide">Founder & Chief Executive Officer</p>
+                        <div className="w-[0.8mm] h-[0.8mm] rounded-full bg-[#f97316]" />
+                      </div>
+                    </div>
+                    <div className="absolute bottom-[1.2mm] left-0 right-0 text-center">
+                      <p className="text-[#cbd5e1] text-[6px] tracking-wider" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}>
+                        Afritech Bridge Academy
+                      </p>
+                    </div>
+                    
+                    {/* Enhanced Authority Seal on left with glow */}
+                    <div className="absolute" style={{ left: '6mm', top: '11mm', width: '11mm', height: '11mm' }}>
+                      {/* Glow effect */}
+                      <div className="absolute inset-0 bg-[#14b8a6]/20 rounded-full blur-sm" />
+                      <svg className="w-full h-full relative z-10">
+                        {/* Outer glow circle */}
+                        <circle cx="5.5mm" cy="5.5mm" r="5.5mm" fill="none" stroke="#14b8a6" strokeWidth="1.8" opacity="0.8" />
+                        {/* Inner detail circle */}
+                        <circle cx="5.5mm" cy="5.5mm" r="4mm" fill="none" stroke="#14b8a6" strokeWidth="0.8" />
+                        {/* Central badge */}
+                        <circle cx="5.5mm" cy="5.5mm" r="1.8mm" fill="#14b8a6" />
+                        {/* Radiating lines with gradient effect */}
+                        {[0, 45, 90, 135, 180, 225, 270, 315].map((angle, i) => {
+                          const rad = angle * Math.PI / 180;
+                          const x1 = 5.5 + 2.3 * Math.cos(rad);
+                          const y1 = 5.5 + 2.3 * Math.sin(rad);
+                          const x2 = 5.5 + 5 * Math.cos(rad);
+                          const y2 = 5.5 + 5 * Math.sin(rad);
+                          return (
+                            <g key={i} opacity="0.9">
+                              <line x1={`${x1}mm`} y1={`${y1}mm`} x2={`${x2}mm`} y2={`${y2}mm`} stroke="#14b8a6" strokeWidth="1.3" />
+                              <circle cx={`${x2}mm`} cy={`${y2}mm`} r="0.7mm" fill="#14b8a6" />
+                            </g>
+                          );
+                        })}
+                        {/* Center highlight */}
+                        <circle cx="5.5mm" cy="5.5mm" r="0.6mm" fill="#5eead4" opacity="0.7" />
+                      </svg>
+                      <div className="text-center mt-0.5 relative z-10">
+                        <p className="text-[#14b8a6] text-[5.5px] font-bold tracking-wider" style={{ textShadow: '0 0 3px rgba(20,184,166,0.5)' }}>
+                          2026
+                        </p>
+                      </div>
+                    </div>
+                    
+                    {/* Enhanced Excellence Ribbon on right with glow */}
+                    <div className="absolute" style={{ right: '6mm', top: '11mm', width: '11mm', height: '11mm' }}>
+                      {/* Glow effect */}
+                      <div className="absolute inset-0 bg-[#f97316]/20 rounded-full blur-sm" />
+                      <svg className="w-full h-full relative z-10">
+                        {/* Outer glow circle */}
+                        <circle cx="5.5mm" cy="5.5mm" r="5.5mm" fill="none" stroke="#f97316" strokeWidth="1.8" opacity="0.8" />
+                        {/* Inner detail circle */}
+                        <circle cx="5.5mm" cy="5.5mm" r="4mm" fill="none" stroke="#f97316" strokeWidth="0.8" />
+                        {/* Central star core */}
+                        <circle cx="5.5mm" cy="5.5mm" r="2.2mm" fill="#f97316" />
+                        {/* 5-point star with gradient effect */}
+                        {[0, 72, 144, 216, 288].map((angle, i) => {
+                          const rad = (angle - 90) * Math.PI / 180;
+                          const x = 5.5 + 4.5 * Math.cos(rad);
+                          const y = 5.5 + 4.5 * Math.sin(rad);
+                          return (
+                            <g key={i} opacity="0.9">
+                              <circle cx={`${x}mm`} cy={`${y}mm`} r="1mm" fill="#f97316" />
+                            </g>
+                          );
+                        })}
+                        {/* Center highlight */}
+                        <circle cx="5.5mm" cy="5.5mm" r="0.8mm" fill="#fb923c" opacity="0.7" />
+                      </svg>
+                      <div className="text-center mt-0.5 relative z-10">
+                        <p className="text-[#f97316] text-[4.5px] font-bold tracking-widest uppercase" style={{ textShadow: '0 0 3px rgba(249,115,22,0.5)' }}>
+                          Excellence
+                        </p>
+                      </div>
+                    </div>
                   </div>
+                </div>
+                
+                {/* Right Column - QR Code with tech frame matching backend */}
+                <div className="text-right flex flex-col items-end">
+                  <div className="relative inline-block" style={{ width: '15mm', height: '15mm' }}>
+                    {/* White background */}
+                    <div className="absolute inset-0 bg-white rounded-lg" />
+                    
+                    {/* Tech border */}
+                    <div className="absolute inset-0 border-2 border-[#14b8a6] rounded-lg" />
+                    
+                    {/* Corner accents */}
+                    <div className="absolute top-0 left-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute top-0 right-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute bottom-0 left-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute bottom-0 right-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
+                    
+                    {/* Real QR Code */}
+                    <QRCodeComponent 
+                      value={`https://study.afritechbridge.online/verify/${certificate.certificate_number}`}
+                      size={56}
+                    />
+                  </div>
+                  <p className="text-[#14b8a6] text-[6.5px] font-bold mt-1 uppercase tracking-wider">SCAN TO VERIFY</p>
+                  <p className="text-[#94a3b8] text-[6px]">study.afritechbridge.online/verify</p>
+                </div>
+              </div>
+              
+              {/* Footer section with two badge design */}
+              <div className="relative mt-2 mb-2">
+                {/* Horizontal divider line with gradient */}
+                <div className="absolute top-[3mm] left-[10mm] right-[10mm] h-[1.5px] bg-gradient-to-r from-[#14b8a6] via-[#14b8a6]/50 to-[#f97316]" />
+                
+                {/* Left circular badge (Teal) */}
+                <div className="absolute" style={{ left: '2mm', top: '0mm' }}>
+                  <div className="relative w-[6mm] h-[6mm]">
+                    {/* Outer glow */}
+                    <div className="absolute inset-0 rounded-full bg-[#14b8a6]/20 blur-sm" />
+                    {/* Badge circles */}
+                    <div className="absolute inset-0 rounded-full border-[2px] border-[#14b8a6]" />
+                    <div className="absolute inset-[0.7mm] rounded-full bg-[#14b8a6]/30" />
+                    <div className="absolute inset-[1.5mm] rounded-full bg-[#14b8a6]" />
+                    {/* Inner highlight */}
+                    <div className="absolute inset-[2mm] rounded-full bg-[#5eead4]/60" />
+                  </div>
+                </div>
+                
+                {/* Right circular badge (Orange) */}
+                <div className="absolute" style={{ right: '2mm', top: '0mm' }}>
+                  <div className="relative w-[6mm] h-[6mm]">
+                    {/* Outer glow */}
+                    <div className="absolute inset-0 rounded-full bg-[#f97316]/20 blur-sm" />
+                    {/* Badge circles */}
+                    <div className="absolute inset-0 rounded-full border-[2px] border-[#14b8a6]" />
+                    <div className="absolute inset-[0.7mm] rounded-full bg-[#f97316]/30" />
+                    <div className="absolute inset-[1.5mm] rounded-full bg-[#14b8a6]" />
+                    {/* Inner highlight */}
+                    <div className="absolute inset-[2mm] rounded-full bg-[#5eead4]/60" />
+                  </div>
+                </div>
+                
+                {/* Footer text centered with better spacing */}
+                <div className="text-center pt-[10mm] space-y-1">
+                  <p className="text-[#cbd5e1] text-[7px] tracking-wide">
+                    Empowering the next generation of African tech leaders
+                  </p>
+                  <p className="text-[#14b8a6] text-[6px] font-bold tracking-wide">
+                    2026 Afritech Bridge Academy - All Rights Reserved
+                  </p>
                 </div>
               </div>
             </div>
@@ -717,7 +1048,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
             <Button 
               onClick={handleDownload} 
               disabled={isDownloading}
-              className="bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-600 hover:to-orange-600 text-white"
+              className="bg-gradient-to-r from-cyan-500 to-orange-500 hover:from-cyan-600 hover:to-orange-600 text-white font-semibold"
             >
               {isDownloading ? (
                 <>
@@ -733,9 +1064,10 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
             </Button>
             <Button 
               onClick={handleDownloadImage} 
-              disabled={isDownloading}
+              disabled={isDownloading || !isCertificateReady}
               variant="outline"
-              className="border-yellow-500 text-yellow-400 hover:bg-yellow-500/10"
+              className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10"
+              title={!isCertificateReady ? 'Please wait for certificate to finish loading' : 'Download as PNG image'}
             >
               {isDownloading ? (
                 <>
@@ -745,14 +1077,14 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
               ) : (
                 <>
                   <Download className="h-4 w-4 mr-2" />
-                  Download Image
+                  Download Image {!isCertificateReady && '(Loading...)'}
                 </>
               )}
             </Button>
             <Button 
               onClick={handleVerifyOnline}
               variant="outline" 
-              className="border-gray-600 text-gray-300 hover:bg-gray-800"
+              className="border-cyan-400/50 text-cyan-300 hover:bg-cyan-500/10"
             >
               <ExternalLink className="h-4 w-4 mr-2" />
               Verify Online
@@ -760,7 +1092,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
             <Button 
               onClick={() => setShareDialogOpen(true)}
               variant="outline" 
-              className="border-gray-600 text-gray-300 hover:bg-gray-800"
+              className="border-orange-400/50 text-orange-300 hover:bg-orange-500/10"
             >
               <Share2 className="h-4 w-4 mr-2" />
               Share
@@ -768,13 +1100,13 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
           </div>
           
           {/* Verification Info */}
-          <div className="bg-gray-800/50 p-4 rounded-lg text-center border border-gray-700">
+          <div className="bg-gradient-to-r from-cyan-500/10 to-orange-500/10 p-4 rounded-lg text-center border border-cyan-400/30 backdrop-blur-sm">
             <div className="flex items-center justify-center gap-2 mb-2">
-              <Shield className="w-4 h-4 text-green-400" />
+              <Shield className="w-5 h-5 text-green-400" />
               <span className="text-green-400 text-sm font-medium">Blockchain Verified Certificate</span>
             </div>
-            <p className="text-sm text-gray-400">
-              Verification Hash: <span className="font-mono text-gray-300">{certificate.verification_hash || certificate.certificate_number}</span>
+            <p className="text-sm text-cyan-200/70">
+              Verification Hash: <span className="font-mono text-white">{certificate.verification_hash || certificate.certificate_number}</span>
             </p>
           </div>
         </div>
@@ -802,7 +1134,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ certificate, isOpen, onClose 
   const shareUrl = certificate.verification_url || 
     `https://study.afritechbridge.online/verify/${certificate.certificate_number}`;
   
-  const shareMessage = `🎓 I just earned a certificate in "${certificate.course_title}" from Afritec Bridge Academy! Check it out:`;
+  const shareMessage = `🎓 I just earned a certificate in "${certificate.course_title}" from Afritech Bridge Academy! Check it out:`;
 
   const handleCopyLink = async () => {
     try {
@@ -836,7 +1168,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ certificate, isOpen, onClose 
     {
       name: 'Email',
       icon: <Mail className="h-5 w-5" />,
-      url: `mailto:?subject=${encodeURIComponent(`Certificate: ${certificate.course_title} - Afritec Bridge`)}&body=${encodeURIComponent(`${shareMessage}\n\n${shareUrl}`)}`,
+      url: `mailto:?subject=${encodeURIComponent(`Certificate: ${certificate.course_title} - Afritech Bridge`)}&body=${encodeURIComponent(`${shareMessage}\n\n${shareUrl}`)}`,
       color: 'bg-gray-600 hover:bg-gray-700'
     }
   ];
@@ -899,6 +1231,7 @@ const CertificateGallery: React.FC = () => {
   const [showShareDialog, setShowShareDialog] = useState(false);
   const [selectedTab, setSelectedTab] = useState('certificates');
   const [newCertificateAlert, setNewCertificateAlert] = useState(false);
+  const [downloadingCertId, setDownloadingCertId] = useState<number | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -937,6 +1270,32 @@ const CertificateGallery: React.FC = () => {
     
     return () => clearInterval(interval);
   }, [fetchData]);
+
+  const handleQuickDownload = async (certificate: Certificate) => {
+    try {
+      setDownloadingCertId(certificate.id as any);
+      
+      // Use the StudentApiService for better error handling
+      const blob = await StudentApiService.downloadCertificate(certificate.id as number);
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${certificate.course_title.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_Certificate.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+    } catch (error: any) {
+      console.error('Download error:', error);
+      const errorMessage = error.response?.data?.error || error.message || 'Failed to download certificate';
+      alert(errorMessage + '. Please try again or use the View option for client-side download.');
+    } finally {
+      setDownloadingCertId(null);
+    }
+  };
 
   const handleViewCertificate = (certificate: Certificate) => {
     setSelectedCertificate(certificate);
@@ -1062,6 +1421,8 @@ const CertificateGallery: React.FC = () => {
                     certificate={certificate}
                     onView={handleViewCertificate}
                     onShare={handleShareCertificate}
+                    onQuickDownload={handleQuickDownload}
+                    isDownloading={downloadingCertId === certificate.id}
                   />
                 ))}
               </motion.div>

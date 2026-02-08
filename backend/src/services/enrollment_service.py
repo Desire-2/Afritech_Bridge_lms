@@ -428,7 +428,8 @@ class EnrollmentService:
             progress = enrollment.module_progress.first()
             if progress:
                 enrollment_data['current_module'] = progress.module.title
-                enrollment_data['overall_progress'] = enrollment.progress_percentage
+                # Use enrollment.progress field (0.0-1.0) and convert to percentage
+                enrollment_data['overall_progress'] = (enrollment.progress or 0.0) * 100
             
             result.append(enrollment_data)
         

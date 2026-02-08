@@ -938,7 +938,9 @@ class EnhancedModuleUnlockService:
                 
                 # Update enrollment
                 enrollment = Enrollment.query.get(enrollment_id)
-                enrollment.completed_at = datetime.utcnow()
+                if not enrollment.completed_at:
+                    enrollment.completed_at = datetime.utcnow()
+                enrollment.status = 'completed'
                 enrollment.progress = 1.0
                 
                 db.session.commit()

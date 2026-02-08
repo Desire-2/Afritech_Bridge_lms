@@ -254,37 +254,132 @@ def get_transcript():
 @certificate_bp.route("/download/<int:certificate_id>", methods=["GET"])
 @student_required
 def download_certificate(certificate_id):
-    """Download certificate (would generate PDF in real implementation)"""
+    """Download certificate as PDF file"""
     try:
         student_id = int(get_jwt_identity())
         
         from ..models.student_models import Certificate
+        from flask import send_file, current_app
+        import io
+        import traceback
         
         certificate = Certificate.query.filter_by(
             id=certificate_id, student_id=student_id, is_active=True
         ).first()
         
         if not certificate:
+            current_app.logger.error(f"Certificate not found: ID={certificate_id}, Student={student_id}")
             return jsonify({
                 "success": False,
                 "error": "Certificate not found"
             }), 404
         
-        # In a real implementation, this would generate and return a PDF
-        # For now, return certificate data with download instructions
-        return jsonify({
-            "success": True,
-            "data": {
-                "certificate": certificate.to_dict(),
-                "download_url": f"/api/v1/student/certificate/pdf/{certificate.id}",
-                "message": "Certificate data ready for PDF generation"
-            }
-        }), 200
+        # Check if certificate is unlocked (course completed)
+        if certificate.enrollment and not (certificate.enrollment.completed_at or certificate.enrollment.status == 'completed'):
+            current_app.logger.warning(f"Attempted download of locked certificate: ID={certificate_id}")
+            return jsonify({
+                "success": False,
+                "error": "Certificate is locked. Complete the course to download."
+            }), 403
+        
+        # Log certificate details for debugging
+        current_app.logger.info(f"Generating PDF for certificate ID={certificate_id}, Student={student_id}")
+        current_app.logger.debug(f"Certificate has student: {certificate.student is not None}, course: {certificate.course is not None}")
+        
+        # Generate PDF using the service
+        pdf_buffer = CertificateService.generate_certificate_pdf(certificate)
+        
+        if not pdf_buffer:
+            current_app.logger.error(f"PDF generation returned None for certificate ID={certificate_id}")
+            return jsonify({
+                "success": False,
+                "error": "Failed to generate PDF. Please try again or contact support."
+            }), 500
+        
+        # Prepare filename
+        course_title_safe = certificate.course.title.replace(' ', '_').replace('/', '_') if certificate.course else "Course"
+        filename = f"{course_title_safe}_Certificate.pdf"
+        
+        current_app.logger.info(f"PDF generated successfully for certificate ID={certificate_id}, filename={filename}")
+        
+        # Return PDF file
+        return send_file(
+            pdf_buffer,
+            mimetype='application/pdf',
+            as_attachment=True,
+            download_name=filename
+        )
         
     except Exception as e:
+        current_app.logger.error(f"Certificate download error: {str(e)}")
+        current_app.logger.error(f"Traceback: {traceback.format_exc()}")
         return jsonify({
             "success": False,
-            "error": "Failed to prepare certificate download"
+            "error": f"Internal server error: {str(e)}"
+        }), 500
+
+@certificate_bp.route("/download-image/<int:certificate_id>", methods=["GET"])
+@student_required
+def download_certificate_image(certificate_id):
+    """Download certificate as PNG image file"""
+    try:
+        student_id = int(get_jwt_identity())
+        
+        from ..models.student_models import Certificate
+        from flask import send_file, current_app
+        import traceback
+        
+        certificate = Certificate.query.filter_by(
+            id=certificate_id, student_id=student_id, is_active=True
+        ).first()
+        
+        if not certificate:
+            current_app.logger.error(f"Certificate not found: ID={certificate_id}, Student={student_id}")
+            return jsonify({
+                "success": False,
+                "error": "Certificate not found"
+            }), 404
+        
+        # Check if certificate is unlocked (course completed)
+        if certificate.enrollment and not (certificate.enrollment.completed_at or certificate.enrollment.status == 'completed'):
+            current_app.logger.warning(f"Attempted download of locked certificate: ID={certificate_id}")
+            return jsonify({
+                "success": False,
+                "error": "Certificate is locked. Complete the course to download."
+            }), 403
+        
+        current_app.logger.info(f"Generating PNG for certificate ID={certificate_id}, Student={student_id}")
+        
+        # Generate PNG using the service
+        img_buffer = CertificateService.generate_certificate_image(certificate)
+        
+        if not img_buffer:
+            current_app.logger.error(f"PNG generation returned None for certificate ID={certificate_id}")
+            return jsonify({
+                "success": False,
+                "error": "Failed to generate image. Please try PDF download instead."
+            }), 500
+        
+        # Prepare filename
+        course_title_safe = certificate.course.title.replace(' ', '_').replace('/', '_') if certificate.course else "Course"
+        filename = f"{course_title_safe}_Certificate.png"
+        
+        current_app.logger.info(f"PNG generated successfully for certificate ID={certificate_id}, filename={filename}")
+        
+        # Return PNG file
+        return send_file(
+            img_buffer,
+            mimetype='image/png',
+            as_attachment=True,
+            download_name=filename
+        )
+        
+    except Exception as e:
+        current_app.logger.error(f"Certificate image download error: {str(e)}")
+        current_app.logger.error(f"Traceback: {traceback.format_exc()}")
+        return jsonify({
+            "success": False,
+            "error": f"Internal server error: {str(e)}"
         }), 500
 
 @certificate_bp.route("/badge-progress", methods=["GET"])

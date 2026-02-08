@@ -51,7 +51,7 @@ export const CertificateDisplay: React.FC<CertificateDisplayProps> = ({
   const getCredentialId = () => certificate.credentialId || certificate.certificate_number || 'N/A';
   const getCompletionDate = () => certificate.completionDate || certificate.issued_date || new Date().toISOString();
   const getSkills = () => certificate.skillsEarned || certificate.skills_demonstrated || [];
-  const getInstructor = () => certificate.instructor || 'AfriTec Bridge Instructor';
+  const getInstructor = () => certificate.instructor || 'AfriTech Bridge Instructor';
   const getGrade = () => certificate.finalGrade || 85;
   const isCourseCompleted = () => certificate.courseCompleted || certificate.completionPercentage === 100 || !isBlurred;
 
@@ -121,7 +121,7 @@ export const CertificateDisplay: React.FC<CertificateDisplayProps> = ({
           <div className="relative w-20 h-20 rounded-full overflow-hidden border-4 border-blue-600 shadow-lg bg-white">
             <Image
               src="/sign.jpg"
-              alt="AfriTec Bridge Logo"
+              alt="AfriTech Bridge Logo"
               width={80}
               height={80}
               className="object-cover"
@@ -225,7 +225,7 @@ export const CertificateDisplay: React.FC<CertificateDisplayProps> = ({
         <div className="flex justify-between items-center">
           {/* Platform Info */}
           <div className="text-left">
-            <p className="font-bold text-gray-800">AfriTec Bridge LMS</p>
+            <p className="font-bold text-gray-800">AfriTech Bridge LMS</p>
             <p className="text-sm text-gray-600">Empowering African Tech Talent</p>
           </div>
 

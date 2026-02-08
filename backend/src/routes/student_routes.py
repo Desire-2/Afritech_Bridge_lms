@@ -372,8 +372,9 @@ def update_lesson_progress(lesson_id):
         
         if total_lessons > 0:
             enrollment.progress = completed_lessons / total_lessons
-            if enrollment.progress >= 1.0:
+            if enrollment.progress >= 1.0 and not enrollment.completed_at:
                 enrollment.completed_at = datetime.utcnow()
+                enrollment.status = 'completed'
         
         # Unlock next lesson in the module
         next_lesson_info = _unlock_next_lesson(lesson, current_user_id, enrollment.id)
@@ -718,8 +719,9 @@ def complete_lesson(lesson_id):
                 
                 # Update enrollment progress
                 enrollment.progress = progress_percentage
-                if progress_percentage >= 1.0:
+                if progress_percentage >= 1.0 and not enrollment.completed_at:
                     enrollment.completed_at = datetime.utcnow()
+                    enrollment.status = 'completed'
                 
                 user_progress.completion_percentage = progress_percentage * 100
                 
@@ -1474,6 +1476,11 @@ def complete_module(module_id):
             # Update enrollment progress
             total_modules = len(module.course.modules) if module.course.modules else 1
             enrollment.progress = min(progress.modules_completed / total_modules, 1.0)
+            
+            # Mark enrollment as completed when progress reaches 100%
+            if enrollment.progress >= 1.0 and not enrollment.completed_at:
+                enrollment.completed_at = datetime.utcnow()
+                enrollment.status = 'completed'
             
             if score > (enrollment.grade or 0):
                 enrollment.grade = score

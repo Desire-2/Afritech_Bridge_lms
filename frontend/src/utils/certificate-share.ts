@@ -49,7 +49,7 @@ export class CertificateShareService {
     linkedInUrl.searchParams.set('url', url);
     linkedInUrl.searchParams.set('summary', message);
     linkedInUrl.searchParams.set('title', `Certificate - ${certificate.courseTitle}`);
-    linkedInUrl.searchParams.set('source', 'AfriTec Bridge LMS');
+    linkedInUrl.searchParams.set('source', 'AfriTech Bridge LMS');
 
     this.openShareWindow(linkedInUrl.toString(), 'linkedin');
   }
@@ -59,7 +59,7 @@ export class CertificateShareService {
    */
   private static shareOnTwitter(certificate: Certificate, url: string, message: string, hashtags?: string[]): void {
     const twitterUrl = new URL('https://twitter.com/intent/tweet');
-    const defaultHashtags = ['AfriTecBridge', 'OnlineLearning', 'Certificate', 'SkillDevelopment'];
+    const defaultHashtags = ['AfriTechBridge', 'OnlineLearning', 'Certificate', 'SkillDevelopment'];
     const allHashtags = [...defaultHashtags, ...(hashtags || [])];
     
     const tweetText = `${message} ${url} ${allHashtags.map(tag => `#${tag}`).join(' ')}`;
@@ -157,7 +157,7 @@ Skills gained: ${certificate.skillsEarned.slice(0, 3).join(', ')}${certificate.s
 
 Final Grade: ${certificate.finalGrade}%
 Instructor: ${certificate.instructor}
-Platform: AfriTec Bridge LMS`;
+Platform: AfriTech Bridge LMS`;
   }
 
   /**
@@ -266,7 +266,7 @@ Platform: AfriTec Bridge LMS`;
       case 'professional':
         return `I'm pleased to announce that I have successfully completed "${certificate.courseTitle}" with a ${certificate.finalGrade}% grade. This certification validates my expertise in ${certificate.skillsEarned.join(', ')}. 
 
-Grateful for the quality education provided by AfriTec Bridge LMS.`;
+Grateful for the quality education provided by AfriTech Bridge LMS.`;
 
       case 'casual':
         return `Just finished "${certificate.courseTitle}" and I'm super excited! 🚀 
@@ -282,7 +282,7 @@ Successfully completed: ${certificate.courseTitle}
 Final Score: ${certificate.finalGrade}%
 Skills Mastered: ${certificate.skillsEarned.join(' • ')}
 
-Another step forward in my learning journey with AfriTec Bridge LMS! 📚✨`;
+Another step forward in my learning journey with AfriTech Bridge LMS! 📚✨`;
 
       default:
         return this.getDefaultMessage(certificate);
