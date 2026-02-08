@@ -693,7 +693,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                 {/* Center Title matching backend */}
                 <div className="text-center flex-1 px-4">
                   <p className="text-[#14b8a6] text-xs font-medium tracking-[0.3em] uppercase mb-1">
-                    AFRITECH BRIDGE ACADEMY
+                    AFRITECH BRIDGE
                   </p>
                   <p className="text-[#5eead4] text-[9px] tracking-widest mb-3">
                     Empowering Africa Through Technology Education
@@ -898,7 +898,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     </div>
                     <div className="absolute bottom-[1.2mm] left-0 right-0 text-center">
                       <p className="text-[#cbd5e1] text-[6px] tracking-wider" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}>
-                        Afritech Bridge Academy
+                        Afritech Bridge
                       </p>
                     </div>
                     
@@ -1036,7 +1036,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     Empowering the next generation of African tech leaders
                   </p>
                   <p className="text-[#14b8a6] text-[6px] font-bold tracking-wide">
-                    2026 Afritech Bridge Academy - All Rights Reserved
+                    2026 Afritech Bridge - All Rights Reserved
                   </p>
                 </div>
               </div>
@@ -1134,7 +1134,7 @@ const ShareDialog: React.FC<ShareDialogProps> = ({ certificate, isOpen, onClose 
   const shareUrl = certificate.verification_url || 
     `https://study.afritechbridge.online/verify/${certificate.certificate_number}`;
   
-  const shareMessage = `🎓 I just earned a certificate in "${certificate.course_title}" from Afritech Bridge Academy! Check it out:`;
+  const shareMessage = `🎓 I just earned a certificate in "${certificate.course_title}" from Afritech Bridge! Check it out:`;
 
   const handleCopyLink = async () => {
     try {

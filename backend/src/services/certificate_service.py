@@ -891,7 +891,7 @@ class CertificateService:
             # Header - Academy name with tech style
             pdf_canvas.setFont('Helvetica-Bold', 12)
             pdf_canvas.setFillColor(teal)
-            pdf_canvas.drawCentredString(width / 2, height - 35*mm, 'AFRITECH BRIDGE ACADEMY')
+            pdf_canvas.drawCentredString(width / 2, height - 35*mm, 'AFRITECH BRIDGE')
             
             # Subtitle - tech-focused tagline
             pdf_canvas.setFont('Helvetica', 9)
@@ -1167,7 +1167,7 @@ class CertificateService:
             # Company name
             pdf_canvas.setFont('Helvetica', 6.5)
             pdf_canvas.setFillColor(light_gray)
-            pdf_canvas.drawCentredString(center_x, sig_box_y + 2*mm, 'Afritech Bridge Academy')
+            pdf_canvas.drawCentredString(center_x, sig_box_y + 2*mm, 'Afritech Bridge')
             
             # Add authority seal/badge on left side of signature
             seal_x = sig_box_x + 8*mm
@@ -1352,7 +1352,7 @@ class CertificateService:
             pdf_canvas.drawCentredString(width / 2, 13*mm, 'Empowering the next generation of African tech leaders')
             pdf_canvas.setFillColor(teal)
             pdf_canvas.setFont('Helvetica-Bold', 6.5)
-            pdf_canvas.drawCentredString(width / 2, 9*mm, '2026 Afritech Bridge Academy - All Rights Reserved')
+            pdf_canvas.drawCentredString(width / 2, 9*mm, '2026 Afritech Bridge - All Rights Reserved')
             
             # Save PDF - this must be called to finalize the document
             pdf_canvas.showPage()  # Finish the current page

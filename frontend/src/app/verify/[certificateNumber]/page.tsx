@@ -111,12 +111,12 @@ export default function VerifyCertificatePage() {
           <Link href="/" className="flex items-center gap-3">
             <Image 
               src="/logo.jpg" 
-              alt="Afritec Bridge Logo" 
+              alt="Afritech Bridge Logo" 
               width={40} 
               height={40}
               className="rounded-full"
             />
-            <span className="text-white font-bold text-xl">Afritec Bridge</span>
+            <span className="text-white font-bold text-xl">Afritech Bridge</span>
           </Link>
           <Badge variant="outline" className="border-blue-400 text-blue-400">
             <Shield className="w-3 h-3 mr-1" />
@@ -314,14 +314,14 @@ export default function VerifyCertificatePage() {
                 <div className="flex items-center gap-4">
                   <Image 
                     src="/logo.jpg" 
-                    alt="Afritec Bridge Logo" 
+                    alt="Afritech Bridge Logo" 
                     width={60} 
                     height={60}
                     className="rounded-full"
                   />
                   <div>
                     <p className="text-xs text-gray-400 uppercase tracking-wider mb-1">Issued By</p>
-                    <p className="text-xl font-semibold text-white">Afritec Bridge Academy</p>
+                    <p className="text-xl font-semibold text-white">Afritech Bridge</p>
                     <p className="text-gray-400 text-sm">Empowering Africa Through Technology Education</p>
                   </div>
                 </div>
@@ -344,7 +344,7 @@ export default function VerifyCertificatePage() {
       {/* Footer */}
       <footer className="py-8 px-4 border-t border-white/10 mt-auto">
         <div className="max-w-4xl mx-auto text-center text-gray-400 text-sm">
-          <p>© {new Date().getFullYear()} Afritec Bridge Academy. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} Afritech Bridge. All rights reserved.</p>
           <p className="mt-2">
             <Link href="https://study.afritechbridge.online" className="text-blue-400 hover:underline">
               study.afritechbridge.online
