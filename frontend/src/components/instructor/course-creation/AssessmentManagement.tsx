@@ -1755,12 +1755,35 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     return module?.title || 'No Module';
   };
 
+  // Get module index (position in course)
+  const getModuleIndex = (moduleId?: number) => {
+    if (!moduleId) return null;
+    const index = course.modules?.findIndex(m => m.id === moduleId);
+    return index !== undefined && index >= 0 ? index + 1 : null;
+  };
+
   // Get lesson name helper
   const getLessonName = (moduleId?: number, lessonId?: number) => {
     if (!moduleId || !lessonId) return null;
     const module = course.modules?.find(m => m.id === moduleId);
     const lesson = module?.lessons?.find(l => l.id === lessonId);
     return lesson?.title || null;
+  };
+
+  // Get lesson index (position in module)
+  const getLessonIndex = (moduleId?: number, lessonId?: number) => {
+    if (!moduleId || !lessonId) return null;
+    const module = course.modules?.find(m => m.id === moduleId);
+    const index = module?.lessons?.findIndex(l => l.id === lessonId);
+    return index !== undefined && index >= 0 ? index + 1 : null;
+  };
+
+  // Get total lesson count for multiple modules
+  const getTotalLessonCount = (moduleIds: number[]) => {
+    return moduleIds.reduce((total, moduleId) => {
+      const module = course.modules?.find(m => m.id === moduleId);
+      return total + (module?.lessons?.length || 0);
+    }, 0);
   };
 
   // Question builder helpers
@@ -3488,19 +3511,33 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     <p className="text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">{assignment.description}</p>
                     
                     {/* Module and Lesson Information */}
-                    {(assignment.module_id || assignment.lesson_id) && (
-                      <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 mb-4">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-purple-600 dark:text-purple-400">📚</span>
-                          <span className="text-sm font-medium text-purple-800 dark:text-purple-300">
-                            Attached to: {getModuleName(assignment.module_id)}
+                    {(assignment.module_id || assignment.lesson_id) && (() => {
+                      const moduleIndex = getModuleIndex(assignment.module_id);
+                      const moduleName = getModuleName(assignment.module_id);
+                      const lessonIndex = getLessonIndex(assignment.module_id, assignment.lesson_id);
+                      const lessonName = getLessonName(assignment.module_id, assignment.lesson_id);
+                      
+                      return (
+                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 mb-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-purple-600 dark:text-purple-400">📚</span>
+                              <span className="text-sm font-medium text-purple-800 dark:text-purple-300">
+                                Attached to Module {moduleIndex}: {moduleName}
+                                {assignment.lesson_id && lessonName && (
+                                  <span className="text-purple-600 dark:text-purple-400"> Lesson {lessonIndex}: {lessonName}</span>
+                                )}
+                              </span>
+                            </div>
                             {assignment.lesson_id && (
-                              <span className="text-purple-600 dark:text-purple-400"> → {getLessonName(assignment.module_id, assignment.lesson_id)}</span>
+                              <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded-md text-xs font-bold">
+                                1 lesson
+                              </span>
                             )}
-                          </span>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                     
                     {/* Assignment Details */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -3594,8 +3631,156 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           <div className="space-y-4">
             {filterAssessments(assessments?.projects).length > 0 ? (
               filterAssessments(assessments?.projects).map((project) => (
-                <div key={project.id} className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-                  <div className="flex items-start justify-between">
+                <div key={project.id} className="bg-white dark:bg-slate-800 rounded-xl shadow-lg border-2 border-slate-200 dark:border-slate-700 overflow-hidden hover:shadow-xl transition-all duration-200 transform hover:-translate-y-1">
+                  {/* Project Header */}
+                  <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border-b border-slate-200 dark:border-slate-700 px-6 py-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-2">
+                          <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg flex items-center justify-center shadow-md">
+                            <span className="text-white text-lg font-bold">🎯</span>
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-slate-900 dark:text-white text-lg">{project.title}</h4>
+                            <div className="flex items-center space-x-2 mt-1">
+                              <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                                project.is_published 
+                                  ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                                  : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'
+                              }`}>
+                                {project.is_published ? '✅ Published' : '📝 Draft'}
+                              </span>
+                              <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 rounded-full text-xs font-semibold">
+                                🎯 Project
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button 
+                          onClick={() => handleEditProject(project)}
+                          className="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-all duration-200 transform hover:scale-105 text-sm font-medium"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => handlePublishProject(project.id, project.is_published)}
+                          className={`px-3 py-2 rounded-lg transition-all duration-200 transform hover:scale-105 text-sm font-medium ${
+                            project.is_published
+                              ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-200'
+                              : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200'
+                          }`}
+                        >
+                          {project.is_published ? '📤 Unpublish' : '📣 Publish'}
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteProject(project.id)}
+                          className="px-3 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 transform hover:scale-105 text-sm font-medium"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-6">
+                    {/* Description */}
+                    <p className="text-slate-600 dark:text-slate-400 mb-4 leading-relaxed">{project.description}</p>
+                    
+                    {/* Module Information */}
+                    {project.module_ids && project.module_ids.length > 0 && (() => {
+                      const totalLessons = getTotalLessonCount(project.module_ids);
+                      return (
+                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3 mb-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-start space-x-2 flex-1">
+                              <span className="text-purple-600 dark:text-purple-400 mt-0.5">📚</span>
+                              <div className="flex-1">
+                                <span className="text-sm font-medium text-purple-800 dark:text-purple-300">
+                                  Covers {project.module_ids.length} module{project.module_ids.length > 1 ? 's' : ''}:
+                                </span>
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                  {project.module_ids.map(moduleId => {
+                                    const moduleIndex = getModuleIndex(moduleId);
+                                    const moduleName = getModuleName(moduleId);
+                                    return (
+                                      <span 
+                                        key={moduleId} 
+                                        className="px-2 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded-md text-xs font-medium"
+                                      >
+                                        Module {moduleIndex}: {moduleName}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                            {totalLessons > 0 && (
+                              <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded-md text-xs font-bold whitespace-nowrap ml-2">
+                                {totalLessons} lesson{totalLessons > 1 ? 's' : ''}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    
+                    {/* Project Details */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                      <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-900/10 rounded-lg p-3 border border-green-200 dark:border-green-800">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-green-600 dark:text-green-400 text-lg">🎯</span>
+                          <div>
+                            <p className="text-xs font-medium text-green-600 dark:text-green-400 uppercase">Points</p>
+                            <p className="text-sm font-semibold text-green-900 dark:text-green-100">{project.points_possible}</p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-900/10 rounded-lg p-3 border border-orange-200 dark:border-orange-800">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-orange-600 dark:text-orange-400 text-lg">📅</span>
+                          <div>
+                            <p className="text-xs font-medium text-orange-600 dark:text-orange-400 uppercase">Due Date</p>
+                            <p className="text-sm font-semibold text-orange-900 dark:text-orange-100">
+                              {new Date(project.due_date).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-900/10 rounded-lg p-3 border border-blue-200 dark:border-blue-800">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-blue-600 dark:text-blue-400 text-lg">📄</span>
+                          <div>
+                            <p className="text-xs font-medium text-blue-600 dark:text-blue-400 uppercase">Format</p>
+                            <p className="text-sm font-semibold text-blue-900 dark:text-blue-100 capitalize">
+                              {project.submission_format.replace('_', ' ')}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {project.collaboration_allowed && (
+                        <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/20 dark:to-indigo-900/10 rounded-lg p-3 border border-indigo-200 dark:border-indigo-800">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-indigo-600 dark:text-indigo-400 text-lg">👥</span>
+                            <div>
+                              <p className="text-xs font-medium text-indigo-600 dark:text-indigo-400 uppercase">Team</p>
+                              <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-100">
+                                Max {project.max_team_size}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Keep old bottom section for reference but hidden */}
+                  <div className="hidden">
+                    <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <h4 className="font-semibold text-slate-900 dark:text-white">{project.title}</h4>
                       <p className="text-slate-600 dark:text-slate-400 mt-1">{project.description}</p>
@@ -3614,6 +3799,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                           {project.is_published ? 'Published' : 'Draft'}
                         </span>
                       </div>
+                    </div>
                     </div>
                     <div className="flex items-center space-x-2 ml-4">
                       <button 
@@ -3803,6 +3989,37 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                             </div>
                           </div>
                         </div>
+
+                        {/* Module and Lesson Information */}
+                        {(quiz.module_id || quiz.lesson_id) && (() => {
+                          const moduleIndex = getModuleIndex(quiz.module_id);
+                          const moduleName = getModuleName(quiz.module_id);
+                          const lessonIndex = getLessonIndex(quiz.module_id, quiz.lesson_id);
+                          const lessonName = getLessonName(quiz.module_id, quiz.lesson_id);
+                          
+                          return (
+                            <div className="px-5 pt-4">
+                              <div className="bg-gradient-to-r from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-2">
+                                    <span className="text-purple-600 dark:text-purple-400">📚</span>
+                                    <span className="text-sm font-medium text-purple-800 dark:text-purple-300">
+                                      Attached to Module {moduleIndex}: {moduleName}
+                                      {quiz.lesson_id && lessonName && (
+                                        <span className="text-purple-600 dark:text-purple-400"> Lesson {lessonIndex}: {lessonName}</span>
+                                      )}
+                                    </span>
+                                  </div>
+                                  {quiz.lesson_id && (
+                                    <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 rounded-md text-xs font-bold">
+                                      1 lesson
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         {/* Stats Grid */}
                         <div className="grid grid-cols-4 gap-4 p-5 bg-slate-50 dark:bg-slate-900/30">
