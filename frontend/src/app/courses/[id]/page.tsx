@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, use } from 'react';
+import React, { useState, useEffect, use, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -43,8 +43,19 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useAuth } from '@/contexts/AuthContext';
 import { StudentService } from '@/services/student.service';
+import { CourseApiService } from '@/services/api';
 import ModuleUnlockAnimation from '@/components/student/ModuleUnlockAnimation';
 import ContextualHelpDialog from '@/components/student/ContextualHelpDialog';
+import {
+  normalizeApplicationWindows,
+  getPrimaryWindow,
+  getCurrentCohort,
+  getNextCohort,
+  formatDate as cohortFormatDate,
+  formatDateTime as cohortFormatDateTime,
+  getStatusBadgeStyles,
+} from '@/utils/cohort-utils';
+import type { ApplicationWindowData } from '@/types/api';
 
 interface CourseLesson {
   id: number;
@@ -88,6 +99,16 @@ interface Course {
   total_students?: number;
   is_published?: boolean;
   created_at?: string;
+  application_start_date?: string | null;
+  application_end_date?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  cohort_label?: string | null;
+  application_timezone?: string;
+  enrollment_type?: 'free' | 'paid' | 'scholarship';
+  currency?: string | null;
+  application_window?: ApplicationWindowData;
+  application_windows?: ApplicationWindowData[];
 }
 
 interface Enrollment {
@@ -127,6 +148,39 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const { user } = useAuth();
   const router = useRouter();
 
+  const enhanceWithApplicationData = async (courseIdValue: number) => {
+    try {
+      const detailedCourse = await CourseApiService.getCourseDetails(courseIdValue);
+      setCourseData(prev => {
+        if (!prev) return prev;
+
+        const applicationFields = {
+          application_start_date: detailedCourse.application_start_date,
+          application_end_date: detailedCourse.application_end_date,
+          cohort_start_date: detailedCourse.cohort_start_date,
+          cohort_end_date: detailedCourse.cohort_end_date,
+          cohort_label: detailedCourse.cohort_label,
+          application_timezone: detailedCourse.application_timezone,
+          application_window: detailedCourse.application_window as ApplicationWindowData | undefined,
+          application_windows: detailedCourse.application_windows || [],
+          enrollment_type: detailedCourse.enrollment_type,
+          currency: detailedCourse.currency ?? prev.course.currency ?? null,
+          price: detailedCourse.price ?? prev.course.price
+        };
+
+        return {
+          ...prev,
+          course: {
+            ...prev.course,
+            ...applicationFields
+          }
+        };
+      });
+    } catch (metaErr) {
+      console.warn('Failed to load application window metadata', metaErr);
+    }
+  };
+
   useEffect(() => {
     const fetchCourseData = async () => {
       try {
@@ -139,6 +193,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           setCourseData(enrolledCourseData);
           setIsEnrolled(true);
           console.log('Enrolled course data:', enrolledCourseData);
+          enhanceWithApplicationData(courseId);
         } catch (enrolledError) {
           console.log('Not enrolled, fetching browse data:', enrolledError);
           
@@ -168,6 +223,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
             }
           });
           setIsEnrolled(false);
+          enhanceWithApplicationData(courseId);
         }
       } catch (err: any) {
         console.error('Error fetching course data:', err);
@@ -238,6 +294,23 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     }
   };
 
+  const formatDate = (value?: string | null) => cohortFormatDate(value);
+
+  const formatDateTime = (value?: string | null) => cohortFormatDateTime(value);
+
+  const getApplicationStatusStyles = (status?: string) => getStatusBadgeStyles(status);
+
+  const applicationWindows = useMemo(() => {
+    if (!courseData?.course) return [] as ApplicationWindowData[];
+    return normalizeApplicationWindows(courseData.course);
+  }, [courseData?.course]);
+
+  const primaryApplicationWindow = useMemo(() => getPrimaryWindow(applicationWindows), [applicationWindows]);
+
+  const currentCohort = useMemo(() => getCurrentCohort(applicationWindows), [applicationWindows]);
+
+  const nextCohort = useMemo(() => getNextCohort(applicationWindows, currentCohort), [applicationWindows, currentCohort]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -266,6 +339,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   }
 
   const { course, progress, enrollment } = courseData;
+  const applicationWindow = primaryApplicationWindow;
+  const heroCohortLabel = applicationWindow?.cohort_label || course.cohort_label;
+  const hasMultipleApplicationWindows = applicationWindows.length > 1;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
@@ -287,9 +363,11 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 text-white"
+            className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 text-white shadow-2xl"
           >
             <div className="absolute inset-0 bg-black/20" />
+            <div className="absolute -left-10 -top-10 h-48 w-48 rounded-full bg-white/15 blur-3xl" />
+            <div className="absolute -right-10 -bottom-16 h-56 w-56 rounded-full bg-indigo-400/30 blur-3xl" />
             <div className="relative p-8 md:p-12">
               <div className="grid md:grid-cols-2 gap-8 items-center">
                 <div className="space-y-6">
@@ -303,6 +381,28 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     <p className="text-lg md:text-xl text-blue-100 leading-relaxed">
                       {course.description}
                     </p>
+                    <div className="flex flex-wrap gap-3 pt-2">
+                      {heroCohortLabel && (
+                        <Badge className="bg-white/15 border-white/20 text-white">
+                          Cohort • {heroCohortLabel}
+                        </Badge>
+                      )}
+                      {applicationWindow?.status && (
+                        <Badge className="bg-white/15 border-white/20 text-white capitalize">
+                          Application {applicationWindow.status}
+                        </Badge>
+                      )}
+                      {course.application_timezone && (
+                        <Badge className="bg-white/10 border-white/10 text-white">
+                          TZ {course.application_timezone}
+                        </Badge>
+                      )}
+                      {course.enrollment_type && (
+                        <Badge className="bg-emerald-400/30 border-white/10 text-white capitalize">
+                          {course.enrollment_type} enrollment
+                        </Badge>
+                      )}
+                    </div>
                   </div>
 
                   {/* Course Stats */}
@@ -333,6 +433,44 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
                   </div>
 
+                  {/* Application highlights */}
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl bg-white/10 border border-white/15 px-4 py-3 backdrop-blur">
+                      <div className="flex items-center gap-2 text-sm text-blue-100">
+                        <Target className="h-4 w-4" />
+                        Current cohort
+                      </div>
+                      <div className="text-lg font-semibold flex items-center gap-2">
+                        <span>{currentCohort?.cohort_label || 'No active cohort'}</span>
+                        {currentCohort?.status && (
+                          <Badge className="bg-white/15 border-white/20 text-white capitalize">
+                            {currentCohort.status}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-blue-100 mt-1">
+                        {formatDate(currentCohort?.cohort_start) || 'Start date TBA'}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-white/10 border border-white/15 px-4 py-3 backdrop-blur">
+                      <div className="flex items-center gap-2 text-sm text-blue-100">
+                        <Calendar className="h-4 w-4" />
+                        Next cohort
+                      </div>
+                      <div className="text-lg font-semibold flex items-center gap-2">
+                        <span>{nextCohort?.cohort_label || 'Not scheduled yet'}</span>
+                        {nextCohort?.status && (
+                          <Badge className="bg-white/15 border-white/20 text-white capitalize">
+                            {nextCohort.status}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-blue-100 mt-1">
+                        {formatDateTime(nextCohort?.opens_at) || formatDate(nextCohort?.cohort_start) || 'Date TBA'}
+                      </p>
+                    </div>
+                  </div>
+
                   {/* Action Buttons */}
                   <div className="flex flex-wrap gap-4">
                     {!isEnrolled ? (
@@ -340,7 +478,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                         size="lg"
                         onClick={handleEnroll}
                         disabled={enrolling}
-                        className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                        className="bg-white text-blue-600 hover:bg-blue-50 font-semibold shadow-lg shadow-blue-900/30"
                       >
                         {enrolling ? (
                           <>
@@ -358,7 +496,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       <Button
                         size="lg"
                         onClick={handleStartLearning}
-                        className="bg-green-500 hover:bg-green-600 text-white font-semibold"
+                        className="bg-green-500 hover:bg-green-600 text-white font-semibold shadow-lg shadow-green-900/30"
                       >
                         <Play className="h-5 w-5 mr-2" />
                         {progress?.overall_progress > 0 ? 'Continue Learning' : 'Start Learning'}
@@ -369,7 +507,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                       variant="outline"
                       size="lg"
                       onClick={() => setShowHelpDialog(true)}
-                      className="border-white/30 text-white hover:bg-white/10"
+                      className="border-white/30 text-white hover:bg-white/10 backdrop-blur"
                     >
                       <HelpCircle className="h-5 w-5 mr-2" />
                       Get Help
@@ -796,6 +934,186 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                   </div>
                 </CardContent>
               </Card>
+
+              {/* Application Cycle & Cohort */}
+              <Card className="border-blue-200/70 shadow-lg shadow-blue-100/60 bg-gradient-to-b from-white to-blue-50">
+                <CardHeader className="space-y-3">
+                  <CardTitle className="text-lg flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-blue-900">
+                      <Calendar className="h-4 w-4" />
+                      Application Cycle & Cohort
+                    </span>
+                    <Badge variant="outline" className={getApplicationStatusStyles(applicationWindow?.status)}>
+                      {applicationWindow?.status ? applicationWindow.status : 'Not set'}
+                    </Badge>
+                  </CardTitle>
+                  <div className="flex flex-wrap gap-2">
+                    {heroCohortLabel && (
+                      <Badge variant="outline" className="border-blue-200 bg-blue-100 text-blue-900">
+                        <Target className="h-3 w-3 mr-1" />
+                        {heroCohortLabel}
+                      </Badge>
+                    )}
+                    {course.enrollment_type && (
+                      <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800 capitalize">
+                        <Sparkles className="h-3 w-3 mr-1" />
+                        {course.enrollment_type}
+                      </Badge>
+                    )}
+                  </div>
+                  {applicationWindow?.reason && (
+                    <p className="text-xs text-amber-700 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{applicationWindow.reason}</span>
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
+                    <div className="rounded-md border border-blue-100 bg-blue-50/60 p-2">
+                      <div className="flex items-center gap-2 font-semibold text-blue-900">
+                        <Target className="h-3 w-3" />
+                        Current cohort
+                      </div>
+                      <div className="text-slate-800 mt-1">
+                        {currentCohort?.cohort_label || 'No active cohort'}
+                      </div>
+                      <div className="text-slate-600">
+                        {formatDate(currentCohort?.cohort_start) || 'Start TBA'}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-slate-200 bg-white p-2">
+                      <div className="flex items-center gap-2 font-semibold text-slate-900">
+                        <Calendar className="h-3 w-3" />
+                        Next cohort
+                      </div>
+                      <div className="text-slate-800 mt-1">
+                        {nextCohort?.cohort_label || 'Not scheduled'}
+                      </div>
+                      <div className="text-slate-600">
+                        {formatDateTime(nextCohort?.opens_at) || formatDate(nextCohort?.cohort_start) || 'Date TBA'}
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center space-x-2 text-gray-600">
+                      <Clock className="h-4 w-4" />
+                      <span>Opens</span>
+                    </div>
+                    <span className="font-semibold text-gray-900">
+                      {formatDateTime(applicationWindow?.opens_at ?? course.application_start_date) || 'Not set'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center space-x-2 text-gray-600">
+                      <Clock className="h-4 w-4" />
+                      <span>Closes</span>
+                    </div>
+                    <span className="font-semibold text-gray-900">
+                      {formatDateTime(applicationWindow?.closes_at ?? course.application_end_date) || 'Not set'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center space-x-2 text-gray-600">
+                      <Calendar className="h-4 w-4" />
+                      <span>Cohort Start</span>
+                    </div>
+                    <span className="font-semibold text-gray-900">
+                      {formatDate(applicationWindow?.cohort_start ?? course.cohort_start_date) || 'Not set'}
+                    </span>
+                  </div>
+
+                  {(applicationWindow?.cohort_end || course.cohort_end_date) && (
+                    <div className="flex items-center justify-between text-sm">
+                      <div className="flex items-center space-x-2 text-gray-600">
+                        <Calendar className="h-4 w-4" />
+                        <span>Cohort End</span>
+                      </div>
+                      <span className="font-semibold text-gray-900">
+                        {formatDate(applicationWindow?.cohort_end ?? course.cohort_end_date)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center space-x-2 text-gray-600">
+                      <Globe className="h-4 w-4" />
+                      <span>Timezone</span>
+                    </div>
+                    <span className="font-medium text-gray-900">
+                      {course.application_timezone || 'UTC'}
+                    </span>
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    className="w-full border-blue-200 text-blue-700 hover:bg-blue-100"
+                    onClick={() => router.push(`/courses/${courseId}/apply`)}
+                  >
+                    <ArrowRight className="h-4 w-4 mr-2" />
+                    View application details
+                  </Button>
+                </CardContent>
+              </Card>
+
+              {applicationWindows.length > 0 && (
+                <Card className="border-slate-200 shadow-sm bg-white">
+                  <CardHeader className="space-y-1">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Users className="h-4 w-4 text-blue-600" />
+                      Cohorts & Application Windows
+                    </CardTitle>
+                    <p className="text-sm text-slate-600">
+                      {hasMultipleApplicationWindows
+                        ? 'Multiple cohorts available with separate timelines.'
+                        : 'Cohort timeline for this course.'}
+                    </p>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {applicationWindows.map((window, index) => (
+                      <div
+                        key={`cohort-${window.id ?? index}`}
+                        className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge className="bg-blue-100 text-blue-900 border-blue-200">
+                              {window.cohort_label || `Cohort ${index + 1}`}
+                            </Badge>
+                            <Badge variant="outline" className={getApplicationStatusStyles(window.status)}>
+                              {window.status || 'pending'}
+                            </Badge>
+                          </div>
+                          <span className="text-xs text-slate-600">
+                            {formatDate(window.cohort_start) || 'Start TBA'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs text-slate-700 mt-3">
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-3 w-3" />
+                            <span>Opens {formatDateTime(window.opens_at) || 'TBA'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Clock className="h-3 w-3" />
+                            <span>Closes {formatDateTime(window.closes_at) || 'TBA'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="h-3 w-3" />
+                            <span>Cohort start {formatDate(window.cohort_start) || 'TBA'}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Calendar className="h-3 w-3" />
+                            <span>Cohort end {formatDate(window.cohort_end) || 'TBD'}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Quick Stats */}
               <Card>

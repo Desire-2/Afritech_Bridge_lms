@@ -333,9 +333,16 @@ def create_announcement():
 @instructor_bp.route("/students", methods=["GET"])
 @instructor_required
 def get_instructor_students():
-    """Get all students enrolled in instructor's courses."""
+    """Get all students enrolled in instructor's courses.
+    Query params:
+      - course_id: filter by course
+      - cohort_id: filter by application_window_id
+      - cohort_label: filter by cohort label
+    """
     current_user_id = get_jwt_identity()
     course_id = request.args.get('course_id', type=int)
+    cohort_id = request.args.get('cohort_id', type=int)  # application_window_id
+    cohort_label = request.args.get('cohort_label', type=str)
     
     try:
         # Get instructor's courses
@@ -347,23 +354,34 @@ def get_instructor_students():
         course_ids = [c.id for c in courses]
         
         # Get enrollments for these courses
-        enrollments = db.session.query(Enrollment).filter(
+        enrollment_query = db.session.query(Enrollment).filter(
             Enrollment.course_id.in_(course_ids)
-        ).join(User, Enrollment.student_id == User.id).all()
+        )
+        if cohort_id:
+            enrollment_query = enrollment_query.filter(Enrollment.application_window_id == cohort_id)
+        if cohort_label:
+            enrollment_query = enrollment_query.filter(Enrollment.cohort_label == cohort_label)
+
+        enrollments = enrollment_query.join(User, Enrollment.student_id == User.id).all()
         
         students_data = []
         for enrollment in enrollments:
-            user = enrollment.student  # Enrollment model uses 'student' relationship, not 'user'
+            user = enrollment.student
             course = enrollment.course
             
             student_data = user.to_dict()
             student_data.update({
-                "enrollment_id": enrollment.id,  # Include enrollment_id for unenroll action
+                "enrollment_id": enrollment.id,
                 "course_id": course.id,
                 "course_title": course.title,
                 "enrollment_date": enrollment.enrollment_date.isoformat(),
                 "progress": 0,  # Placeholder - would need progress tracking
-                "last_accessed": None  # Placeholder - would need activity tracking
+                "last_accessed": None,  # Placeholder - would need activity tracking
+                # Cohort fields
+                "cohort_label": enrollment.cohort_label,
+                "cohort_start_date": enrollment.cohort_start_date.isoformat() if enrollment.cohort_start_date else None,
+                "cohort_end_date": enrollment.cohort_end_date.isoformat() if enrollment.cohort_end_date else None,
+                "application_window_id": enrollment.application_window_id,
             })
             students_data.append(student_data)
         
@@ -375,8 +393,14 @@ def get_instructor_students():
 @instructor_bp.route("/courses/<int:course_id>/enrollments", methods=["GET"])
 @instructor_required
 def get_course_enrollments(course_id):
-    """Get enrollments for a specific course."""
+    """Get enrollments for a specific course.
+    Query params:
+      - cohort_id: filter by application_window_id
+      - cohort_label: filter by cohort label
+    """
     current_user_id = get_jwt_identity()
+    cohort_id = request.args.get('cohort_id', type=int)
+    cohort_label = request.args.get('cohort_label', type=str)
     
     # Verify instructor owns this course
     course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
@@ -384,23 +408,91 @@ def get_course_enrollments(course_id):
         return jsonify({"message": "Course not found or access denied"}), 404
     
     try:
-        # Get all enrollments for this course (active and completed)
-        enrollments = Enrollment.query.filter_by(course_id=course_id).filter(
+        # Get enrollments for this course (active and completed)
+        enrollment_query = Enrollment.query.filter_by(course_id=course_id).filter(
             Enrollment.status.in_(['active', 'completed'])
-        ).all()
+        )
+        if cohort_id:
+            enrollment_query = enrollment_query.filter_by(application_window_id=cohort_id)
+        if cohort_label:
+            enrollment_query = enrollment_query.filter_by(cohort_label=cohort_label)
+
+        enrollments = enrollment_query.all()
         
         logger.info(f"Found {len(enrollments)} enrollments for course {course_id}")
         
         enrollment_data = [enrollment.to_dict() for enrollment in enrollments]
         
-        # Log sample data for debugging
-        if enrollment_data:
-            logger.info(f"Sample enrollment data: {enrollment_data[0]}")
-        
         return jsonify(enrollment_data), 200
     except Exception as e:
         logger.error(f"Failed to fetch enrollments for course {course_id}: {str(e)}")
         return jsonify({"message": "Failed to fetch enrollments", "error": str(e)}), 500
+
+
+@instructor_bp.route("/courses/<int:course_id>/cohorts", methods=["GET"])
+@instructor_required
+def get_course_cohorts(course_id):
+    """Return the distinct cohorts for a course with student counts.
+    Uses both the ApplicationWindow table and enrollment cohort_label data.
+    """
+    current_user_id = get_jwt_identity()
+    course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
+    if not course:
+        return jsonify({"message": "Course not found or access denied"}), 404
+
+    try:
+        from ..models.course_models import ApplicationWindow
+
+        # 1) Cohorts from ApplicationWindow rows
+        windows = ApplicationWindow.query.filter_by(course_id=course_id).order_by(ApplicationWindow.opens_at.asc()).all()
+
+        # 2) Cohort labels from existing enrollments (may include legacy data)
+        enrollment_labels = (
+            db.session.query(Enrollment.cohort_label, db.func.count(Enrollment.id))
+            .filter(
+                Enrollment.course_id == course_id,
+                Enrollment.status.in_(["active", "completed"]),
+            )
+            .group_by(Enrollment.cohort_label)
+            .all()
+        )
+        label_counts = {lbl: cnt for lbl, cnt in enrollment_labels}
+
+        cohorts = []
+        seen_labels = set()
+
+        for w in windows:
+            wd = w.to_dict()
+            wd["student_count"] = label_counts.get(w.cohort_label, 0)
+            cohorts.append(wd)
+            if w.cohort_label:
+                seen_labels.add(w.cohort_label)
+
+        # Add cohort labels that exist only in enrollments (no matching window)
+        for lbl, cnt in label_counts.items():
+            if lbl and lbl not in seen_labels:
+                cohorts.append({
+                    "id": None,
+                    "cohort_label": lbl,
+                    "status": "closed",
+                    "student_count": cnt,
+                })
+
+        # Unlabelled count
+        unlabelled_count = label_counts.get(None, 0)
+        if unlabelled_count > 0:
+            cohorts.append({
+                "id": None,
+                "cohort_label": None,
+                "status": "unknown",
+                "student_count": unlabelled_count,
+            })
+
+        return jsonify(cohorts), 200
+    except Exception as e:
+        logger.error(f"Failed to fetch cohorts for course {course_id}: {str(e)}")
+        return jsonify({"message": "Failed to fetch cohorts", "error": str(e)}), 500
+
 
 @instructor_bp.route("/enrollments/<int:enrollment_id>", methods=["DELETE"])
 @instructor_required

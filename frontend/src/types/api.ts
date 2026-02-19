@@ -50,6 +50,38 @@ export interface PasswordResetConfirm {
   new_password: string;
 }
 
+// Cohort / Application Window Types
+export type CohortStatus = 'open' | 'closed' | 'upcoming';
+
+export interface ApplicationWindowData {
+  id?: number | string;
+  course_id?: number;
+  status: CohortStatus;
+  reason?: string | null;
+  cohort_label?: string | null;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  cohort_start?: string | null;
+  cohort_end?: string | null;
+  status_override?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CohortOption {
+  id: string;
+  label: string;
+  courseId: number | null;
+  courseTitle?: string;
+  applicationWindowId?: number | null;
+  status: CohortStatus;
+  opensAt?: string | null;
+  closesAt?: string | null;
+  cohortStart?: string | null;
+  cohortEnd?: string | null;
+  applicationsCount?: number;
+}
+
 // Course-related Types
 export interface Course {
   id: number;
@@ -66,6 +98,14 @@ export interface Course {
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   price?: number | null;
   currency?: string;
+  application_start_date?: string | null;
+  application_end_date?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  cohort_label?: string | null;
+  application_timezone?: string;
+  application_window?: ApplicationWindowData;
+  application_windows?: ApplicationWindowData[];
   modules?: Module[];
   announcements?: Announcement[];
   // Module release settings
@@ -85,6 +125,20 @@ export interface CreateCourseRequest {
   target_audience?: string;
   estimated_duration?: string;
   instructor_id?: number; // For admin use
+  application_start_date?: string | null;
+  application_end_date?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  cohort_label?: string | null;
+  application_timezone?: string;
+  application_windows?: Array<{
+    cohort_label?: string;
+    opens_at?: string | null;
+    closes_at?: string | null;
+    cohort_start?: string | null;
+    cohort_end?: string | null;
+    status?: string;
+  }>;
 }
 
 export interface Module {
@@ -132,10 +186,22 @@ export interface Enrollment {
   student_id: number;
   course_id: number;
   enrolled_at: string;
+  enrollment_date?: string;
   completed_at?: string;
   progress_percentage: number;
+  progress?: number;
+  course_score?: number;
+  status?: string;
   student?: User;
   course?: Course;
+  course_title?: string;
+  // Cohort separation
+  cohort_label?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  application_window_id?: number | null;
+  application_id?: number | null;
+  application_window?: ApplicationWindowData | null;
 }
 
 export interface Quiz {

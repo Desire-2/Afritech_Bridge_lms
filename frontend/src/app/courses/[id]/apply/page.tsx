@@ -1,14 +1,23 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import CourseApplicationForm from '@/components/applications/CourseApplicationForm';
 import { CourseApiService } from '@/services/api';
 import { Course } from '@/services/api/types';
-import { Loader2, AlertCircle, CheckCircle2, BookOpen, Clock, User, ArrowLeft } from 'lucide-react';
+import type { ApplicationWindowData } from '@/types/api';
+import {
+  normalizeApplicationWindows,
+  getPrimaryWindow,
+  formatDate,
+  formatDateTime,
+} from '@/utils/cohort-utils';
+import { Loader2, AlertCircle, CheckCircle2, BookOpen, Clock, User, ArrowLeft, ChevronDown } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
 import Link from 'next/link';
 
 export default function CourseApplicationPage() {
@@ -21,6 +30,23 @@ export default function CourseApplicationPage() {
   const [error, setError] = useState<string | null>(null);
   const [checkingExisting, setCheckingExisting] = useState(false);
   const [existingApplication, setExistingApplication] = useState<any>(null);
+  const [selectedWindowId, setSelectedWindowId] = useState<string | null>(null);
+
+  // Normalise all windows from the course
+  const allWindows = useMemo(() => {
+    if (!course) return [];
+    return normalizeApplicationWindows(course);
+  }, [course]);
+
+  // Determine the active/selected window
+  const selectedWindow = useMemo<ApplicationWindowData | undefined>(() => {
+    if (!allWindows.length) return undefined;
+    if (selectedWindowId) {
+      const match = allWindows.find((w) => String(w.id) === selectedWindowId);
+      if (match) return match;
+    }
+    return getPrimaryWindow(allWindows);
+  }, [allWindows, selectedWindowId]);
 
   useEffect(() => {
     const loadCourse = async () => {
@@ -91,6 +117,99 @@ export default function CourseApplicationPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-blue-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 py-12">
       <div className="container mx-auto px-4 max-w-4xl">
+        {allWindows.length > 0 && (
+          <div className="mb-6 space-y-4">
+            {/* Cohort picker — shown when multiple windows exist */}
+            {allWindows.length > 1 && (
+              <Card className="border-blue-100 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/30">
+                <CardContent className="pt-5 pb-4">
+                  <label className="block text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">
+                    Select a cohort to apply for
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {allWindows.map((win) => {
+                      const isSelected = String(win.id) === String(selectedWindow?.id);
+                      const statusColor =
+                        win.status === 'open'
+                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                          : win.status === 'upcoming'
+                          ? 'bg-blue-100 text-blue-800 border-blue-300'
+                          : 'bg-amber-100 text-amber-800 border-amber-300';
+                      return (
+                        <Button
+                          key={String(win.id)}
+                          variant={isSelected ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setSelectedWindowId(String(win.id))}
+                          className={isSelected ? 'bg-blue-600 text-white' : 'border-blue-200'}
+                        >
+                          <span className="mr-1.5">{win.cohort_label || `Cohort ${win.id}`}</span>
+                          <Badge variant="outline" className={`text-[10px] px-1 py-0 ${statusColor}`}>
+                            {win.status}
+                          </Badge>
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Selected window info banner */}
+            {selectedWindow && (
+              <Alert className="border-sky-200 dark:border-sky-900 bg-white dark:bg-slate-800">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-md bg-sky-100 dark:bg-sky-900">
+                    <Clock className="w-5 h-5 text-sky-700 dark:text-sky-300" />
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white uppercase">
+                        Application window: {selectedWindow.status}
+                      </p>
+                      {selectedWindow.cohort_label && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600">
+                          {selectedWindow.cohort_label}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-slate-700 dark:text-slate-300">
+                      {selectedWindow.status === 'open' && (
+                        <span>Apply now before the deadline below. Late submissions are not accepted.</span>
+                      )}
+                      {selectedWindow.status === 'upcoming' && (
+                        <span>Applications are not open yet. You can review details now and return when the window opens.</span>
+                      )}
+                      {selectedWindow.status === 'closed' && (
+                        <span>The window has closed. New applications cannot be submitted for this cohort.</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 flex flex-wrap gap-3">
+                      <span>
+                        Opens: {formatDateTime(selectedWindow.opens_at || course?.application_start_date) || 'Not set'}
+                      </span>
+                      <span>
+                        Closes: {formatDateTime(selectedWindow.closes_at || course?.application_end_date) || 'Not set'}
+                      </span>
+                      <span>
+                        Cohort Start: {formatDate(selectedWindow.cohort_start || course?.cohort_start_date) || 'Not set'}
+                      </span>
+                      {(selectedWindow.cohort_end || course?.cohort_end_date) && (
+                        <span>
+                          Cohort End: {formatDate(selectedWindow.cohort_end || course?.cohort_end_date)}
+                        </span>
+                      )}
+                      {selectedWindow.reason && (
+                        <span className="text-amber-700 dark:text-amber-300">Note: {selectedWindow.reason}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </Alert>
+            )}
+          </div>
+        )}
+
         {/* Back Button */}
         <div className="mb-6">
           <Button
@@ -167,21 +286,51 @@ export default function CourseApplicationPage() {
         </Card>
 
         {/* Application Form */}
-        <CourseApplicationForm
-          courseId={courseId}
-          courseTitle={course.title}
-          courseData={course}
-          onSuccess={(applicationId) => {
-            console.log('Application submitted:', applicationId);
-            // Show success and redirect after delay
-            setTimeout(() => {
-              router.push('/courses');
-            }, 5000);
-          }}
-          onCancel={() => {
-            router.back();
-          }}
-        />
+        {selectedWindow?.status === 'closed' || selectedWindow?.status === 'upcoming' ? (
+          <Card className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40">
+            <CardContent className="py-8">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-300 mt-1" />
+                <div className="space-y-2">
+                  <h3 className="text-lg font-semibold text-amber-900 dark:text-amber-100">
+                    Applications are {selectedWindow?.status}
+                    {selectedWindow?.cohort_label ? ` for ${selectedWindow.cohort_label}` : ''}
+                  </h3>
+                  {selectedWindow?.reason && (
+                    <p className="text-sm text-amber-800 dark:text-amber-200">{selectedWindow.reason}</p>
+                  )}
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    You will not be able to submit this form while the window is {selectedWindow?.status}.
+                    {allWindows.some(w => w.status === 'open') 
+                      ? ' Try selecting a different cohort above.'
+                      : ' Please check the dates above and return when it is open.'}
+                  </p>
+                  <div className="flex gap-3">
+                    <Button onClick={() => router.push('/courses')} variant="outline" className="border-amber-300 text-amber-800">
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                      Browse other courses
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <CourseApplicationForm
+            courseId={courseId}
+            courseTitle={course.title}
+            courseData={course}
+            onSuccess={(applicationId) => {
+              console.log('Application submitted:', applicationId);
+              setTimeout(() => {
+                router.push('/courses');
+              }, 5000);
+            }}
+            onCancel={() => {
+              router.back();
+            }}
+          />
+        )}
       </div>
     </div>
   );

@@ -23,7 +23,9 @@ import {
   Save,
   RefreshCw,
   Layers,
-  CreditCard
+  CreditCard,
+  Plus,
+  Trash
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Course } from '@/types/api';
@@ -64,6 +66,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [moduleReleaseData, setModuleReleaseData] = useState<ModuleReleaseData | null>(null);
+  const [savingApplication, setSavingApplication] = useState(false);
   
   // Form state
   const [enableModuleRelease, setEnableModuleRelease] = useState(false);
@@ -71,6 +74,22 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [moduleReleaseCount, setModuleReleaseCount] = useState<number>(1);
   const [releaseInterval, setReleaseInterval] = useState<string>('manual');
   const [customIntervalDays, setCustomIntervalDays] = useState<number>(7);
+
+  const [applicationStartDate, setApplicationStartDate] = useState<string>('');
+  const [applicationEndDate, setApplicationEndDate] = useState<string>('');
+  const [cohortStartDate, setCohortStartDate] = useState<string>('');
+  const [cohortEndDate, setCohortEndDate] = useState<string>('');
+  const [cohortLabel, setCohortLabel] = useState<string>('');
+  const [applicationTimezone, setApplicationTimezone] = useState<string>('UTC');
+  const [additionalCohorts, setAdditionalCohorts] = useState<Array<{
+    id: string;
+    label: string;
+    opensAt: string;
+    closesAt: string;
+    startDate: string;
+    endDate: string;
+    status: 'open' | 'upcoming' | 'closed';
+  }>>([]);
 
   const [paymentEnabled, setPaymentEnabled] = useState(false);
   const [coursePrice, setCoursePrice] = useState<number>(0);
@@ -119,7 +138,96 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     setPaymentEnabled(course.enrollment_type === 'paid');
     setCoursePrice(course.price ?? 0);
     setCurrency(course.currency || 'USD');
+    setApplicationStartDate(course.application_start_date ? course.application_start_date.split('T')[0] : '');
+    setApplicationEndDate(course.application_end_date ? course.application_end_date.split('T')[0] : '');
+    setCohortStartDate(course.cohort_start_date ? course.cohort_start_date.split('T')[0] : '');
+    setCohortEndDate(course.cohort_end_date ? course.cohort_end_date.split('T')[0] : '');
+    setCohortLabel(course.cohort_label || '');
+    setApplicationTimezone(course.application_timezone || 'UTC');
+
+    // Hydrate multi-cohort data if available
+    const windows = course.application_windows || [];
+    if (windows.length > 0) {
+      setAdditionalCohorts(
+        windows.map((w, idx) => ({
+          id: (w.id ?? `${course.id}-cohort-${idx}`).toString(),
+          label: w.cohort_label || w.label || w.name || `Cohort ${idx + 1}`,
+          opensAt: (w.opens_at || w.opensAt || '').split('T')[0] || '',
+          closesAt: (w.closes_at || w.closesAt || '').split('T')[0] || '',
+          startDate: (w.cohort_start || w.start_date || w.startDate || '').split('T')[0] || '',
+          endDate: (w.cohort_end || w.end_date || w.endDate || '').split('T')[0] || '',
+          status: (w.status || 'open') as 'open' | 'upcoming' | 'closed',
+        }))
+      );
+    } else {
+      setAdditionalCohorts([]);
+    }
   }, [course]);
+
+  const handleSaveApplicationWindow = async () => {
+    if (!token) return;
+
+    setSavingApplication(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      // Combine primary window with any additional cohorts
+      const application_windows = [
+        {
+          cohort_label: cohortLabel || 'Primary Cohort',
+          opens_at: applicationStartDate || null,
+          closes_at: applicationEndDate || null,
+          cohort_start: cohortStartDate || null,
+          cohort_end: cohortEndDate || null,
+          status: 'open',
+        },
+        ...additionalCohorts.map(c => ({
+          cohort_label: c.label || 'Cohort',
+          opens_at: c.opensAt || null,
+          closes_at: c.closesAt || null,
+          cohort_start: c.startDate || null,
+          cohort_end: c.endDate || null,
+          status: c.status || 'open',
+        })),
+      ];
+
+      const payload = {
+        application_start_date: applicationStartDate || null,
+        application_end_date: applicationEndDate || null,
+        cohort_start_date: cohortStartDate || null,
+        cohort_end_date: cohortEndDate || null,
+        cohort_label: cohortLabel || null,
+        application_timezone: applicationTimezone || 'UTC',
+        application_windows,
+      };
+
+      const response = await fetch(`${API_URL}/courses/${course.id}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData?.message || 'Failed to save application window');
+      }
+
+      const updatedCourse: Course = await response.json();
+      setSuccess('Application window updated successfully');
+
+      if (onCourseUpdate) {
+        onCourseUpdate(updatedCourse);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to save application window');
+    } finally {
+      setSavingApplication(false);
+    }
+  };
 
   // Save module release settings
   const handleSaveSettings = async () => {
@@ -277,6 +385,246 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           <AlertDescription className="text-green-700 dark:text-green-300">{success}</AlertDescription>
         </Alert>
       )}
+
+      {/* Application & Cohort Settings */}
+      <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
+            <Calendar className="h-5 w-5" />
+            Application & Cohort Settings
+          </CardTitle>
+          <CardDescription className="text-slate-600 dark:text-slate-400">
+            Configure application windows and cohort timing for this course
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="application-start" className="text-slate-900 dark:text-white">Application Start</Label>
+              <Input
+                id="application-start"
+                type="date"
+                value={applicationStartDate}
+                onChange={(e) => setApplicationStartDate(e.target.value)}
+                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="application-end" className="text-slate-900 dark:text-white">Application Deadline</Label>
+              <Input
+                id="application-end"
+                type="date"
+                value={applicationEndDate}
+                onChange={(e) => setApplicationEndDate(e.target.value)}
+                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cohort-start" className="text-slate-900 dark:text-white">Cohort Start</Label>
+              <Input
+                id="cohort-start"
+                type="date"
+                value={cohortStartDate}
+                onChange={(e) => setCohortStartDate(e.target.value)}
+                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cohort-end" className="text-slate-900 dark:text-white">Cohort End</Label>
+              <Input
+                id="cohort-end"
+                type="date"
+                value={cohortEndDate}
+                onChange={(e) => setCohortEndDate(e.target.value)}
+                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cohort-label" className="text-slate-900 dark:text-white">Cohort Label</Label>
+              <Input
+                id="cohort-label"
+                type="text"
+                value={cohortLabel}
+                onChange={(e) => setCohortLabel(e.target.value)}
+                placeholder="e.g., January 2025 Cohort"
+                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="application-timezone" className="text-slate-900 dark:text-white">Application Timezone</Label>
+              <Input
+                id="application-timezone"
+                type="text"
+                value={applicationTimezone}
+                onChange={(e) => setApplicationTimezone(e.target.value)}
+                placeholder="UTC"
+                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+              />
+              <p className="text-xs text-slate-500 dark:text-slate-400">Used to evaluate window open/close times.</p>
+            </div>
+          </div>
+
+          {course.application_window && (
+            <Alert className="bg-slate-50 dark:bg-slate-700/40 border-slate-200 dark:border-slate-600">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="space-y-1">
+                <div className="font-medium text-slate-900 dark:text-white flex items-center gap-2">
+                  <Badge variant="outline" className="uppercase">
+                    {course.application_window.status}
+                  </Badge>
+                  {course.application_window.cohort_label && (
+                    <span className="text-sm text-slate-600 dark:text-slate-300">
+                      {course.application_window.cohort_label}
+                    </span>
+                  )}
+                </div>
+                {course.application_window.reason && (
+                  <p className="text-sm text-slate-600 dark:text-slate-300">{course.application_window.reason}</p>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Additional Cohorts */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <p className="font-medium text-slate-900 dark:text-white">Additional Cohorts</p>
+                <p className="text-sm text-slate-600 dark:text-slate-400">Add multiple cohorts/windows for this course</p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setAdditionalCohorts([...additionalCohorts, {
+                  id: `${Date.now()}`,
+                  label: `Cohort ${additionalCohorts.length + 2}`,
+                  opensAt: '',
+                  closesAt: '',
+                  startDate: '',
+                  endDate: '',
+                  status: 'open',
+                }])}
+              >
+                <Plus className="h-4 w-4 mr-1" /> Add cohort
+              </Button>
+            </div>
+
+            {additionalCohorts.length === 0 && (
+              <p className="text-sm text-slate-500 dark:text-slate-400">No extra cohorts yet.</p>
+            )}
+
+            <div className="space-y-4">
+              {additionalCohorts.map((cohort, idx) => (
+                <div key={cohort.id} className="p-4 border rounded-lg border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-slate-900 dark:text-white">Cohort {idx + 2}</div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setAdditionalCohorts(additionalCohorts.filter((c) => c.id !== cohort.id))}
+                    >
+                      <Trash className="h-4 w-4 mr-1" /> Remove
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-sm">Label</Label>
+                      <Input
+                        value={cohort.label}
+                        onChange={(e) => setAdditionalCohorts(additionalCohorts.map(c => c.id === cohort.id ? { ...c, label: e.target.value } : c))}
+                        placeholder="e.g., March 2025 Cohort"
+                        className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-sm">Application Opens</Label>
+                      <Input
+                        type="date"
+                        value={cohort.opensAt}
+                        onChange={(e) => setAdditionalCohorts(additionalCohorts.map(c => c.id === cohort.id ? { ...c, opensAt: e.target.value } : c))}
+                        className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-sm">Application Closes</Label>
+                      <Input
+                        type="date"
+                        value={cohort.closesAt}
+                        onChange={(e) => setAdditionalCohorts(additionalCohorts.map(c => c.id === cohort.id ? { ...c, closesAt: e.target.value } : c))}
+                        className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-sm">Cohort Start</Label>
+                      <Input
+                        type="date"
+                        value={cohort.startDate}
+                        onChange={(e) => setAdditionalCohorts(additionalCohorts.map(c => c.id === cohort.id ? { ...c, startDate: e.target.value } : c))}
+                        className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-sm">Cohort End</Label>
+                      <Input
+                        type="date"
+                        value={cohort.endDate}
+                        onChange={(e) => setAdditionalCohorts(additionalCohorts.map(c => c.id === cohort.id ? { ...c, endDate: e.target.value } : c))}
+                        className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-sm">Status</Label>
+                      <Select
+                        value={cohort.status}
+                        onValueChange={(value) => setAdditionalCohorts(additionalCohorts.map(c => c.id === cohort.id ? { ...c, status: value as 'open' | 'upcoming' | 'closed' } : c))}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="open">Open</SelectItem>
+                          <SelectItem value="upcoming">Upcoming</SelectItem>
+                          <SelectItem value="closed">Closed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              onClick={handleSaveApplicationWindow}
+              disabled={savingApplication}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {savingApplication ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="h-4 w-4 mr-2" />
+                  Save Application Settings
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Module Release Settings Card */}
       <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">

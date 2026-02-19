@@ -112,9 +112,16 @@ class CourseApplication(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     reviewed_at = db.Column(db.DateTime, nullable=True)
 
+    # Cohort snapshot
+    application_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)
+    cohort_label = db.Column(db.String(120), nullable=True)
+    cohort_start_date = db.Column(db.DateTime, nullable=True)
+    cohort_end_date = db.Column(db.DateTime, nullable=True)
+
     # ========== Relationships ==========
     course = db.relationship('Course', backref=db.backref('course_applications', lazy='dynamic'))
     approver = db.relationship('User', foreign_keys=[approved_by], backref=db.backref('approved_applications', lazy='dynamic'))
+    application_window = db.relationship('ApplicationWindow', backref=db.backref('applications', lazy='dynamic'))
 
     def to_dict(self, include_sensitive=False):
         """Convert application to dictionary for API responses"""
@@ -156,6 +163,10 @@ class CourseApplication(db.Model):
             "commitment_score": self.commitment_score,
             "is_high_risk": self.is_high_risk,
             "status": self.status,
+            "application_window_id": self.application_window_id,
+            "cohort_label": self.cohort_label,
+            "cohort_start_date": self.cohort_start_date.isoformat() if self.cohort_start_date else None,
+            "cohort_end_date": self.cohort_end_date.isoformat() if self.cohort_end_date else None,
             
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

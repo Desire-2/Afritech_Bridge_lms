@@ -7,7 +7,7 @@ import logging
 from sqlalchemy import or_, func, and_, case
 from ..models.course_application import CourseApplication
 from ..models.user_models import db, User, Role
-from ..models.course_models import Enrollment, Course
+from ..models.course_models import Enrollment, Course, ApplicationWindow
 from ..utils.application_scoring import (
     calculate_risk,
     calculate_application_score,
@@ -38,6 +38,61 @@ import os
 from flask import current_app
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_cohort_for_application(application, course):
+    """
+    Resolve cohort data from an application.
+    Returns (application_window_id, cohort_label, cohort_start_date, cohort_end_date).
+    Tries:
+      1. Match the application's cohort_label to an ApplicationWindow row
+      2. Fall back to any ApplicationWindow for this course
+      3. Fall back to the application's snapshot fields
+      4. Fall back to the course's flat cohort fields
+    """
+    window = None
+    # 1) Try to find matching window by label
+    if application.cohort_label:
+        window = ApplicationWindow.query.filter_by(
+            course_id=course.id,
+            cohort_label=application.cohort_label
+        ).first()
+
+    # 2) Fall back to any window for this course
+    if not window:
+        window = ApplicationWindow.query.filter_by(
+            course_id=course.id
+        ).first()
+
+    if window:
+        return (
+            window.id,
+            window.cohort_label or application.cohort_label or getattr(course, 'cohort_label', None),
+            window.cohort_start or getattr(application, 'cohort_start_date', None) or getattr(course, 'cohort_start_date', None),
+            window.cohort_end or getattr(application, 'cohort_end_date', None) or getattr(course, 'cohort_end_date', None),
+        )
+
+    # 3/4) No window rows — use application snapshot or course flat fields
+    return (
+        None,
+        application.cohort_label or getattr(course, 'cohort_label', None),
+        getattr(application, 'cohort_start_date', None) or getattr(course, 'cohort_start_date', None),
+        getattr(application, 'cohort_end_date', None) or getattr(course, 'cohort_end_date', None),
+    )
+
+
+def _make_enrollment(student_id, course_id, application, course):
+    """Create an Enrollment with cohort fields populated."""
+    win_id, label, start, end = _resolve_cohort_for_application(application, course)
+    return Enrollment(
+        student_id=student_id,
+        course_id=course_id,
+        application_window_id=win_id,
+        application_id=application.id,
+        cohort_label=label,
+        cohort_start_date=start,
+        cohort_end_date=end,
+    )
 
 def send_emails_with_brevo(emails_data, retries=3):
     """
@@ -174,6 +229,16 @@ def apply_for_course():
     course = Course.query.get(data.get("course_id"))
     if not course:
         return jsonify({"error": "Course not found"}), 404
+    if not course.is_published:
+        return jsonify({"error": "Applications are not available for unpublished courses"}), 403
+
+    window_status = course.get_primary_application_window()
+    if window_status.get("status") != "open":
+        return jsonify({
+            "error": "Applications are not being accepted right now",
+            "window": window_status,
+            "all_windows": course.get_all_application_windows_list()
+        }), 400
 
     # Check for duplicate applications (only check count to avoid loading invalid enum data)
     try:
@@ -241,6 +306,28 @@ def apply_for_course():
 
     # Payment processing has been disabled - handle externally if needed
 
+    # Resolve the currently open ApplicationWindow for proper cohort linking
+    open_window = None
+    open_window_id = None
+    resolved_cohort_label = getattr(course, 'cohort_label', None)
+    resolved_cohort_start = getattr(course, 'cohort_start_date', None)
+    resolved_cohort_end = getattr(course, 'cohort_end_date', None)
+    try:
+        windows = ApplicationWindow.query.filter_by(course_id=course.id).all()
+        for w in windows:
+            if w.compute_status() == 'open':
+                open_window = w
+                break
+        if not open_window and windows:
+            open_window = windows[0]  # fallback to first
+        if open_window:
+            open_window_id = open_window.id
+            resolved_cohort_label = open_window.cohort_label or resolved_cohort_label
+            resolved_cohort_start = open_window.cohort_start or resolved_cohort_start
+            resolved_cohort_end = open_window.cohort_end or resolved_cohort_end
+    except Exception as e:
+        logger.warning(f"Failed to resolve application window: {e}")
+
     # Create application with all fields
     application = CourseApplication(
         course_id=data.get("course_id"),
@@ -281,6 +368,12 @@ def apply_for_course():
         committed_to_complete=data.get("committed_to_complete", False),
         agrees_to_assessments=data.get("agrees_to_assessments", False),
         referral_source=data.get("referral_source"),
+
+        # Cohort snapshot — link to the specific open ApplicationWindow
+        application_window_id=open_window_id,
+        cohort_label=resolved_cohort_label,
+        cohort_start_date=resolved_cohort_start,
+        cohort_end_date=resolved_cohort_end,
         
         # Legacy compatibility fields
         online_learning_experience=data.get("online_learning_experience", False),
@@ -542,6 +635,8 @@ def list_applications():
     # Basic parameters
     course_id = request.args.get("course_id", type=int)
     status = request.args.get("status")
+    cohort_label = request.args.get("cohort_label")
+    application_window_id_raw = request.args.get("application_window_id")  # May be int or "none"
     sort_by = request.args.get("sort_by", "final_rank_score")
     order = request.args.get("order", "desc")
     page = request.args.get("page", 1, type=int)
@@ -573,6 +668,17 @@ def list_applications():
     
     if status:
         query = query.filter_by(status=status)
+    
+    # Cohort filters — "none" means unassigned (no window)
+    if application_window_id_raw and application_window_id_raw.lower() == 'none':
+        query = query.filter(CourseApplication.application_window_id.is_(None))
+    elif application_window_id_raw:
+        try:
+            query = query.filter_by(application_window_id=int(application_window_id_raw))
+        except (ValueError, TypeError):
+            pass
+    elif cohort_label:
+        query = query.filter_by(cohort_label=cohort_label)
     
     # Apply enhanced text search across multiple fields with exact match priority
     if search_term:
@@ -1217,13 +1323,19 @@ def approve_application(app_id):
         # Check if user already exists with this email
         existing_user = User.query.filter_by(email=application.email).first()
         existing_enrollment = None  # Track if enrollment already exists
+
+        # Resolve which cohort this application belongs to
+        win_id, cohort_lbl, cohort_s, cohort_e = _resolve_cohort_for_application(application, course)
         
         if existing_user:
-            # User exists - check enrollment
-            existing_enrollment = Enrollment.query.filter_by(
+            # User exists - check enrollment (cohort-aware)
+            enrollment_query = Enrollment.query.filter_by(
                 student_id=existing_user.id,
                 course_id=application.course_id
-            ).first()
+            )
+            if win_id:
+                enrollment_query = enrollment_query.filter_by(application_window_id=win_id)
+            existing_enrollment = enrollment_query.first()
             
             if existing_enrollment:
                 # Enrollment exists - handle re-approval
@@ -1238,12 +1350,15 @@ def approve_application(app_id):
                 # Re-activate existing enrollment
                 logger.info(f"Re-approving application {app_id} - reactivating existing enrollment {existing_enrollment.id}")
                 enrollment = existing_enrollment
+                # Update cohort data on reactivation
+                enrollment.cohort_label = cohort_lbl
+                enrollment.cohort_start_date = cohort_s
+                enrollment.cohort_end_date = cohort_e
+                enrollment.application_window_id = win_id
+                enrollment.application_id = application.id
             else:
                 # Create new enrollment for existing user
-                enrollment = Enrollment(
-                    student_id=existing_user.id,
-                    course_id=application.course_id
-                )
+                enrollment = _make_enrollment(existing_user.id, application.course_id, application, course)
                 db.session.add(enrollment)
             
             # For existing user, generate password reset token instead of password
@@ -1280,10 +1395,7 @@ def approve_application(app_id):
             db.session.flush()
             
             # Create enrollment for new user
-            enrollment = Enrollment(
-                student_id=user.id,
-                course_id=application.course_id
-            )
+            enrollment = _make_enrollment(user.id, application.course_id, application, course)
             db.session.add(enrollment)
             new_account = True
         
@@ -1607,16 +1719,102 @@ def recalculate_scores(app_id):
     }), 200
 
 
-# 📊 Get application statistics
+# 🎯 Get courses for filtering (with cohort/window info)
+@application_bp.route("/courses", methods=["GET"])
+@jwt_required()
+def get_courses_for_filtering():
+    """
+    Return courses that have applications OR application windows,
+    along with their application windows and per-window application counts.
+    """
+    from sqlalchemy import func, or_, distinct
+
+    # Get IDs of courses that have applications
+    course_ids_with_apps = (
+        db.session.query(CourseApplication.course_id)
+        .distinct()
+    )
+
+    # Get IDs of courses that have application windows
+    course_ids_with_windows = (
+        db.session.query(ApplicationWindow.course_id)
+        .distinct()
+    )
+
+    # Courses with either applications OR application windows
+    course_rows = (
+        db.session.query(
+            Course.id,
+            Course.title,
+            func.count(distinct(CourseApplication.id)).label('applications_count'),
+        )
+        .outerjoin(CourseApplication, CourseApplication.course_id == Course.id)
+        .filter(
+            or_(
+                Course.id.in_(course_ids_with_apps),
+                Course.id.in_(course_ids_with_windows)
+            )
+        )
+        .group_by(Course.id, Course.title)
+        .order_by(Course.title)
+        .all()
+    )
+
+    courses_data = []
+    for row in course_rows:
+        course = Course.query.get(row.id)
+        windows = ApplicationWindow.query.filter_by(course_id=row.id).order_by(ApplicationWindow.id).all()
+        
+        windows_data = []
+        for w in windows:
+            app_count = CourseApplication.query.filter_by(
+                course_id=row.id, application_window_id=w.id
+            ).count()
+            wd = w.to_dict()
+            wd['applications_count'] = app_count
+            windows_data.append(wd)
+
+        # Count applications with no window (legacy)
+        no_window_count = CourseApplication.query.filter_by(
+            course_id=row.id, application_window_id=None
+        ).count()
+
+        courses_data.append({
+            "id": row.id,
+            "title": row.title,
+            "applications_count": row.applications_count,
+            "application_windows": windows_data,
+            "no_window_applications_count": no_window_count,
+            # Include flat cohort fields for fallback
+            "cohort_label": getattr(course, 'cohort_label', None),
+            "cohort_start_date": course.cohort_start_date.isoformat() if getattr(course, 'cohort_start_date', None) else None,
+            "cohort_end_date": course.cohort_end_date.isoformat() if getattr(course, 'cohort_end_date', None) else None,
+        })
+
+    return jsonify({"courses": courses_data}), 200
+
+
+# �📊 Get application statistics
 @application_bp.route("/statistics", methods=["GET"])
 @jwt_required()
 def get_statistics():
-    """Get statistics for applications"""
+    """Get statistics for applications, optionally filtered by course and/or cohort"""
     course_id = request.args.get("course_id", type=int)
+    cohort_label = request.args.get("cohort_label")
+    application_window_id_raw = request.args.get("application_window_id")
     
     query = CourseApplication.query
     if course_id:
         query = query.filter_by(course_id=course_id)
+    if application_window_id_raw and application_window_id_raw.lower() == 'none':
+        query = query.filter(CourseApplication.application_window_id.is_(None))
+    elif application_window_id_raw:
+        try:
+            query = query.filter_by(application_window_id=int(application_window_id_raw))
+        except (ValueError, TypeError):
+            pass
+    elif cohort_label:
+        query = query.filter_by(cohort_label=cohort_label)
     
     total = query.count()
     pending = query.filter_by(status="pending").count()
@@ -1625,14 +1823,27 @@ def get_statistics():
     waitlisted = query.filter_by(status="waitlisted").count()
     high_risk = query.filter_by(is_high_risk=True).count()
     
-    # Average scores
     from sqlalchemy import func
+    base_filter = []
+    if course_id:
+        base_filter.append(CourseApplication.course_id == course_id)
+    if application_window_id_raw and application_window_id_raw.lower() == 'none':
+        base_filter.append(CourseApplication.application_window_id.is_(None))
+    elif application_window_id_raw:
+        try:
+            base_filter.append(CourseApplication.application_window_id == int(application_window_id_raw))
+        except (ValueError, TypeError):
+            pass
+    elif cohort_label:
+        base_filter.append(CourseApplication.cohort_label == cohort_label)
+    filter_expr = db.and_(*base_filter) if base_filter else True
+    
     avg_scores = db.session.query(
         func.avg(CourseApplication.application_score).label('avg_app_score'),
         func.avg(CourseApplication.readiness_score).label('avg_readiness'),
         func.avg(CourseApplication.commitment_score).label('avg_commitment'),
         func.avg(CourseApplication.risk_score).label('avg_risk'),
-    ).filter(CourseApplication.course_id == course_id if course_id else True).first()
+    ).filter(filter_expr).first()
     
     return jsonify({
         "total_applications": total,
@@ -1659,12 +1870,23 @@ def export_applications():
     """Export applications to Excel file with comprehensive data"""
     course_id = request.args.get("course_id", type=int)
     status = request.args.get("status")
+    cohort_label = request.args.get("cohort_label")
+    application_window_id_raw = request.args.get("application_window_id")
     
     query = CourseApplication.query
     if course_id:
         query = query.filter_by(course_id=course_id)
     if status:
         query = query.filter_by(status=status)
+    if application_window_id_raw and application_window_id_raw.lower() == 'none':
+        query = query.filter(CourseApplication.application_window_id.is_(None))
+    elif application_window_id_raw:
+        try:
+            query = query.filter_by(application_window_id=int(application_window_id_raw))
+        except (ValueError, TypeError):
+            pass
+    elif cohort_label:
+        query = query.filter_by(cohort_label=cohort_label)
     
     apps = query.order_by(CourseApplication.final_rank_score.desc()).all()
     
@@ -1695,6 +1917,7 @@ def export_applications():
             "Commitment Score": a.commitment_score,
             "Final Rank": a.final_rank_score,
             "Status": a.status,
+            "Cohort": a.cohort_label or "",
             "Referral Source": a.referral_source,
             "Applied At": a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else "",
         })
@@ -2160,24 +2383,32 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
         # Check if user already exists
         existing_user = User.query.filter_by(email=application.email).first()
         existing_enrollment = None
+
+        # Resolve which cohort this application belongs to
+        win_id, cohort_lbl, cohort_s, cohort_e = _resolve_cohort_for_application(application, course)
         
         if existing_user:
-            # Check for duplicate enrollment
-            existing_enrollment = Enrollment.query.filter_by(
+            # Check for duplicate enrollment (cohort-aware)
+            enrollment_query = Enrollment.query.filter_by(
                 student_id=existing_user.id,
                 course_id=application.course_id
-            ).first()
+            )
+            if win_id:
+                enrollment_query = enrollment_query.filter_by(application_window_id=win_id)
+            existing_enrollment = enrollment_query.first()
             
             if existing_enrollment:
                 # Re-approval case - reactivate existing enrollment
                 logger.info(f"Re-approving application {application.id} - reactivating existing enrollment {existing_enrollment.id}")
                 enrollment = existing_enrollment
+                enrollment.cohort_label = cohort_lbl
+                enrollment.cohort_start_date = cohort_s
+                enrollment.cohort_end_date = cohort_e
+                enrollment.application_window_id = win_id
+                enrollment.application_id = application.id
             else:
                 # Create enrollment for existing user
-                enrollment = Enrollment(
-                    student_id=existing_user.id,
-                    course_id=application.course_id
-                )
+                enrollment = _make_enrollment(existing_user.id, application.course_id, application, course)
                 db.session.add(enrollment)
             
             # Generate password reset token for existing user
@@ -2212,10 +2443,7 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
             db.session.flush()
             
             # Create enrollment
-            enrollment = Enrollment(
-                student_id=user.id,
-                course_id=application.course_id
-            )
+            enrollment = _make_enrollment(user.id, application.course_id, application, course)
             db.session.add(enrollment)
             new_account = True
         

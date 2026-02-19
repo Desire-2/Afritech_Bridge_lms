@@ -321,6 +321,13 @@ const MyLearningPage = () => {
                       <UserCircle className="w-4 h-4 mr-2 text-gray-400" />
                       <span className="truncate">{course.instructor_name}</span>
                     </div>
+                    {course.cohort_label && (
+                      <div className="flex items-center">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
+                          {course.cohort_label}
+                        </span>
+                      </div>
+                    )}
                     {course.current_lesson && (
                       <div className="flex items-start text-gray-600">
                         <PlayCircle className="w-4 h-4 mr-2 text-gray-400 mt-0.5 flex-shrink-0" />

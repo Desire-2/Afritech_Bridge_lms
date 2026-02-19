@@ -65,6 +65,12 @@ def get_student_dashboard():
         course_data = enrollment.course.to_dict()
         course_data['progress'] = enrollment.progress * 100
         course_data['enrollment_date'] = enrollment.enrollment_date.isoformat()
+        course_data['enrollment_id'] = enrollment.id
+        # Cohort fields
+        course_data['cohort_label'] = enrollment.cohort_label
+        course_data['cohort_start_date'] = enrollment.cohort_start_date.isoformat() if enrollment.cohort_start_date else None
+        course_data['cohort_end_date'] = enrollment.cohort_end_date.isoformat() if enrollment.cohort_end_date else None
+        course_data['application_window_id'] = enrollment.application_window_id
         
         # Get current lesson
         user_progress = UserProgress.query.filter_by(
@@ -150,6 +156,11 @@ def get_my_learning():
         course_data['progress'] = enrollment.progress * 100
         course_data['enrollment_date'] = enrollment.enrollment_date.isoformat()
         course_data['completed_at'] = enrollment.completed_at.isoformat() if enrollment.completed_at else None
+        # Cohort fields
+        course_data['cohort_label'] = enrollment.cohort_label
+        course_data['cohort_start_date'] = enrollment.cohort_start_date.isoformat() if enrollment.cohort_start_date else None
+        course_data['cohort_end_date'] = enrollment.cohort_end_date.isoformat() if enrollment.cohort_end_date else None
+        course_data['application_window_id'] = enrollment.application_window_id
         
         # Add module progress
         for module in course_data['modules']:

@@ -18,6 +18,35 @@ export interface AuthResponse {
   user: User;
 }
 
+// ============== Cohort / Application Window ==============
+export type CohortStatus = 'open' | 'closed' | 'upcoming';
+
+export interface ApplicationWindowData {
+  id?: number | string;
+  course_id?: number;
+  status: CohortStatus;
+  reason?: string | null;
+  cohort_label?: string | null;
+  opens_at?: string | null;
+  closes_at?: string | null;
+  cohort_start?: string | null;
+  cohort_end?: string | null;
+  status_override?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface CohortOption {
+  id: string;
+  label: string;
+  courseId: number | null;
+  status: CohortStatus;
+  opensAt?: string | null;
+  closesAt?: string | null;
+  cohortStart?: string | null;
+  cohortEnd?: string | null;
+}
+
 // ============== Course & Module ==============
 export interface Course {
   id: number;
@@ -35,6 +64,14 @@ export interface Course {
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   price?: number | null;
   currency?: string;
+  application_start_date?: string | null;
+  application_end_date?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  cohort_label?: string | null;
+  application_timezone?: string;
+  application_window?: ApplicationWindowData;
+  application_windows?: ApplicationWindowData[];
   is_published: boolean;
   created_at: string;
   updated_at: string;

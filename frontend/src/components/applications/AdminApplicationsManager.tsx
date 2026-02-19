@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import applicationService from '@/services/api/application.service';
 import { CourseApplication, ApplicationStatistics } from '@/services/api/types';
+import type { CohortOption, CohortStatus } from '@/types/api';
+import { getStatusBadgeStyles as getCohortBadgeStyles } from '@/utils/cohort-utils';
 import AdvancedFilters from './AdvancedFilters';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,14 +34,40 @@ import {
   RefreshCw,
   FileText,
   Send,
+  CalendarDays,
+  GraduationCap,
+  Layers,
 } from 'lucide-react';
+
+// ─── Types ──────────────────────────────────────────────────────────────
+interface CourseWithCohorts {
+  id: number;
+  title: string;
+  applications_count: number;
+  application_windows?: Array<{
+    id: number;
+    cohort_label?: string;
+    status?: string;
+    opens_at?: string;
+    closes_at?: string;
+    cohort_start?: string;
+    cohort_end?: string;
+    applications_count?: number;
+  }>;
+  no_window_applications_count?: number;
+  cohort_label?: string;
+}
 
 export default function AdminApplicationsManager() {
   const [applications, setApplications] = useState<CourseApplication[]>([]);
   const [statistics, setStatistics] = useState<ApplicationStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [courses, setCourses] = useState<Array<{ id: number; title: string; applications_count: number }>>([]);
+  const [courses, setCourses] = useState<CourseWithCohorts[]>([]);
+  const [cohorts, setCohorts] = useState<CohortOption[]>([]);
+  const [selectedCohortId, setSelectedCohortId] = useState<string>('all');
+  const [selectedCourseId, setSelectedCourseId] = useState<string>('');
+  const [courseSelected, setCourseSelected] = useState(false);
   
   // Add debounced search state
   const [searchInput, setSearchInput] = useState('');
@@ -48,6 +76,8 @@ export default function AdminApplicationsManager() {
   const [filters, setFilters] = useState({
     status: 'all',
     course_id: '',
+    cohort_label: '',
+    application_window_id: '',
     search: '',
     sort_by: 'submission_date',
     sort_order: 'desc' as 'asc' | 'desc',
@@ -159,17 +189,70 @@ export default function AdminApplicationsManager() {
   const [retryEmailsLoading, setRetryEmailsLoading] = useState(false);
 
   useEffect(() => {
-    loadApplications();
-    loadStatistics();
+    if (courseSelected && filters.course_id) {
+      loadApplications();
+      loadStatistics();
+    }
+  }, [filters, courseSelected]);
+
+  useEffect(() => {
     loadCourses();
-  }, [filters]);
+  }, []);
 
   const loadCourses = async () => {
     try {
       const response = await applicationService.getCoursesForFiltering();
-      setCourses(response.courses || []);
+      const courseList: CourseWithCohorts[] = response.courses || [];
+      console.log('[DEBUG-ADMIN] API response courses:', JSON.stringify(courseList.map(c => ({ id: c.id, title: c.title, windows: c.application_windows?.length || 0 }))));
+      setCourses(courseList);
+
+      // Build cohort options from actual application windows only
+      const options: CohortOption[] = [];
+      for (const course of courseList) {
+        // Only create cohort cards for actual application windows
+        if (course.application_windows && course.application_windows.length > 0) {
+          for (const win of course.application_windows) {
+            options.push({
+              id: `window-${win.id}`,
+              label: win.cohort_label || `Cohort ${win.id}`,
+              courseId: course.id,
+              courseTitle: course.title,
+              applicationWindowId: win.id,
+              status: (win.status || 'open') as CohortStatus,
+              opensAt: win.opens_at || null,
+              closesAt: win.closes_at || null,
+              cohortStart: win.cohort_start || null,
+              cohortEnd: win.cohort_end || null,
+              applicationsCount: win.applications_count || 0,
+            });
+          }
+        }
+        // Applications not linked to any window (legacy / unassigned)
+        const unassignedCount = course.no_window_applications_count || 
+          ((!course.application_windows || course.application_windows.length === 0) ? course.applications_count : 0);
+        if (unassignedCount > 0) {
+          options.push({
+            id: `unassigned-${course.id}`,
+            label: 'Unassigned',
+            courseId: course.id,
+            courseTitle: course.title,
+            status: 'closed' as CohortStatus,
+            applicationsCount: unassignedCount,
+          });
+        }
+      }
+      console.log('[DEBUG-ADMIN] cohort options built:', JSON.stringify(options.map(o => ({ id: o.id, label: o.label, courseId: o.courseId }))));
+      setCohorts(options);
+
+      // Auto-select course if only one
+      if (courseList.length === 1) {
+        const course = courseList[0];
+        setSelectedCourseId(course.id.toString());
+        setCourseSelected(true);
+        setFilters(prev => ({ ...prev, course_id: course.id.toString(), page: 1 }));
+      }
     } catch (err) {
-      console.error('Failed to load courses:', err);
+      console.error('[DEBUG-ADMIN] Failed to load courses:', err);
     }
   };
 
@@ -205,7 +288,11 @@ export default function AdminApplicationsManager() {
 
   const loadStatistics = async () => {
     try {
-      const stats = await applicationService.getStatistics();
+      const stats = await applicationService.getStatistics({
+        course_id: filters.course_id ? parseInt(filters.course_id) : undefined,
+        application_window_id: filters.application_window_id === 'none' ? 'none' : (filters.application_window_id ? parseInt(filters.application_window_id) : undefined),
+        cohort_label: filters.cohort_label || undefined,
+      });
       setStatistics(stats);
     } catch (err) {
       console.error('Failed to load statistics:', err);
@@ -354,10 +441,12 @@ export default function AdminApplicationsManager() {
 
   const handleExport = async () => {
     try {
-      await applicationService.downloadExport(
-        filters.status !== 'all' ? filters.status : undefined,
-        filters.course_id || undefined
-      );
+      await applicationService.downloadExport({
+        status: filters.status !== 'all' ? filters.status : undefined,
+        course_id: filters.course_id || undefined,
+        cohort_label: filters.cohort_label || undefined,
+        application_window_id: filters.application_window_id === 'none' ? 'none' : (filters.application_window_id ? parseInt(filters.application_window_id) : undefined),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to export applications');
     }
@@ -378,6 +467,8 @@ export default function AdminApplicationsManager() {
         subject: customEmailSubject.trim(),
         message: customEmailMessage.trim(),
         course_id: filters.course_id ? parseInt(filters.course_id) : undefined,
+        application_window_id: filters.application_window_id === 'none' ? 'none' : (filters.application_window_id ? parseInt(filters.application_window_id) : undefined),
+        cohort_label: filters.cohort_label || undefined,
         status_filter: filters.status !== 'all' ? filters.status : undefined,
         include_all: !filters.course_id && filters.status === 'all'
       });
@@ -459,6 +550,72 @@ export default function AdminApplicationsManager() {
       // Retry polling after a delay
       setTimeout(() => pollCustomEmailTask(taskId), 3000);
     }
+  };
+
+  const handleCohortSelect = (cohortId: string) => {
+    setSelectedCohortId(cohortId);
+    if (cohortId === 'all') {
+      // Show all apps for the selected course
+      setFilters(prev => ({
+        ...prev,
+        course_id: selectedCourseId,
+        cohort_label: '',
+        application_window_id: '',
+        page: 1,
+      }));
+      return;
+    }
+
+    const selected = cohorts.find((c) => c.id === cohortId);
+    if (!selected) return;
+
+    const isUnassigned = cohortId.startsWith('unassigned-');
+    setFilters(prev => ({
+      ...prev,
+      course_id: selected.courseId ? selected.courseId.toString() : '',
+      application_window_id: isUnassigned ? 'none' : (selected.applicationWindowId ? selected.applicationWindowId.toString() : ''),
+      cohort_label: !isUnassigned && !selected.applicationWindowId && selected.label ? selected.label : '',
+      page: 1,
+    }));
+  };
+
+  const handleCourseSelect = (courseId: string) => {
+    setSelectedCourseId(courseId);
+    setSelectedCohortId('all');
+    setCourseSelected(true);
+    setFilters(prev => ({
+      ...prev,
+      course_id: courseId,
+      cohort_label: '',
+      application_window_id: '',
+      page: 1,
+    }));
+  };
+
+  const handleBackToCourses = () => {
+    setSelectedCourseId('');
+    setSelectedCohortId('all');
+    setCourseSelected(false);
+    setApplications([]);
+    setStatistics(null);
+    setFilters(prev => ({
+      ...prev,
+      course_id: '',
+      cohort_label: '',
+      application_window_id: '',
+      page: 1,
+    }));
+  };
+
+  // Filter cohorts to show only for the selected course
+  const displayedCohorts = cohorts.filter(c => c.courseId?.toString() === selectedCourseId);
+  console.log('[DEBUG-ADMIN] selectedCourseId:', selectedCourseId, 'courseSelected:', courseSelected, 'cohorts:', cohorts.length, 'displayedCohorts:', displayedCohorts.length);
+  const selectedCourse = courses.find(c => c.id.toString() === selectedCourseId);
+
+  const formatShortDate = (value?: string | null) => {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
   const handleRetryFailedEmails = async () => {
@@ -667,7 +824,7 @@ export default function AdminApplicationsManager() {
     
     try {
       const result = await applicationService.changeStatus(selectedApplication.id, {
-        status: newStatus as any,
+        status: newStatus as 'pending' | 'approved' | 'rejected' | 'waitlisted' | 'withdrawn',
         reason: statusChangeReason || undefined
       });
       
@@ -799,8 +956,74 @@ export default function AdminApplicationsManager() {
     );
   };
 
+  const selectedCohort = cohorts.find(c => c.id === selectedCohortId);
+
+  // ── Step 1: Select a course (when no course selected and multiple courses exist)
+  if (!courseSelected && courses.length > 1) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <GraduationCap className="w-6 h-6 text-blue-600" />
+            Select a Course
+          </h2>
+          <p className="text-gray-500 mt-1">Choose a course to view and manage its applications by cohort.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {courses.map(course => {
+            const windowCount = course.application_windows?.length || 0;
+            return (
+              <button
+                key={course.id}
+                onClick={() => handleCourseSelect(course.id.toString())}
+                className="text-left p-5 rounded-xl border-2 border-gray-200 bg-white hover:border-blue-400 hover:shadow-lg transition-all group"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <GraduationCap className="w-8 h-8 text-blue-500 group-hover:text-blue-600" />
+                  <span className="text-2xl font-bold text-blue-600">{course.applications_count}</span>
+                </div>
+                <h3 className="font-semibold text-gray-900 text-base mb-1 line-clamp-2">{course.title}</h3>
+                <div className="flex items-center gap-2 mt-3 text-xs text-gray-500">
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>{windowCount} cohort{windowCount !== 1 ? 's' : ''}</span>
+                  <span className="text-gray-300">•</span>
+                  <Users className="w-3.5 h-3.5" />
+                  <span>{course.applications_count} application{course.applications_count !== 1 ? 's' : ''}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (!courseSelected && courses.length === 0) {
+    return (
+      <div className="text-center py-16">
+        <GraduationCap className="w-16 h-16 mx-auto text-gray-300" />
+        <h3 className="text-lg font-semibold text-gray-700 mt-4">No Courses Found</h3>
+        <p className="text-gray-500 mt-1">No courses with applications found yet.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* Back to courses button (multi-course) */}
+      {courses.length > 1 && (
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={handleBackToCourses} className="text-gray-500 hover:text-gray-700">
+            ← Back to courses
+          </Button>
+          <div className="h-5 w-px bg-gray-300" />
+          <GraduationCap className="w-5 h-5 text-blue-600" />
+          <span className="font-semibold text-gray-900">{selectedCourse?.title}</span>
+          <Badge variant="outline" className="text-blue-700 border-blue-200">{selectedCourse?.applications_count} apps</Badge>
+        </div>
+      )}
+
       {/* Background Task Progress Indicator */}
       {taskInProgress && (
         <Card className="border-blue-500 bg-blue-50">
@@ -914,8 +1137,21 @@ export default function AdminApplicationsManager() {
         <CardHeader>
           <div className="flex justify-between items-center">
             <div>
-              <CardTitle>Course Applications</CardTitle>
-              <CardDescription>Review and manage all course applications</CardDescription>
+              <CardTitle>
+                {selectedCohort 
+                  ? `${selectedCohort.label} — Applications` 
+                  : selectedCourse 
+                    ? `${selectedCourse.title} — Applications`
+                    : 'Course Applications'}
+              </CardTitle>
+              <CardDescription>
+                {selectedCohort
+                  ? `Showing applications for ${selectedCohort.label} in ${selectedCourse?.title || 'selected course'}`
+                  : selectedCourse
+                    ? `Review and manage applications for ${selectedCourse.title}`
+                    : 'Review and manage all course applications'
+                }
+              </CardDescription>
             </div>
             <div className="flex gap-2">
               <Button 
@@ -975,6 +1211,90 @@ export default function AdminApplicationsManager() {
           )}
         </CardHeader>
         <CardContent>
+          {/* Cohort Switcher */}
+          <div className="mb-6 rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Layers className="w-5 h-5 text-blue-600" />
+                <span className="text-base font-semibold text-blue-900">
+                  Cohorts{selectedCourse ? ` — ${selectedCourse.title}` : ''}
+                </span>
+                {selectedCohort && (
+                  <Badge variant="outline" className="ml-2 text-blue-700 border-blue-300">
+                    {selectedCohort.label}
+                  </Badge>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleCohortSelect('all')}
+                className={selectedCohortId === 'all' ? 'bg-blue-100' : ''}
+              >
+                All ({displayedCohorts.reduce((s, c) => s + (c.applicationsCount || 0), 0)})
+              </Button>
+            </div>
+
+            {displayedCohorts.length === 0 ? (
+              <p className="text-sm text-gray-500">No cohorts detected yet.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {displayedCohorts.map(cohort => (
+                  <button
+                    key={cohort.id}
+                    onClick={() => handleCohortSelect(cohort.id)}
+                    className={`text-left p-3 rounded-lg border transition-all ${
+                      selectedCohortId === cohort.id
+                        ? 'border-blue-500 bg-blue-600 text-white shadow-md'
+                        : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-sm font-semibold truncate ${
+                        selectedCohortId === cohort.id ? 'text-white' : 'text-gray-900'
+                      }`}>
+                        {cohort.label}
+                      </span>
+                      <Badge
+                        variant="outline"
+                        className={selectedCohortId === cohort.id
+                          ? 'bg-white/20 text-white border-white/40 text-xs'
+                          : `${getCohortBadgeStyles(cohort.status)} text-xs`
+                        }
+                      >
+                        {cohort.status}
+                      </Badge>
+                    </div>
+                    {cohort.courseTitle && courses.length > 1 && (
+                      <p className={`text-xs truncate mb-1 ${
+                        selectedCohortId === cohort.id ? 'text-blue-100' : 'text-gray-500'
+                      }`}>
+                        {cohort.courseTitle}
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs ${
+                        selectedCohortId === cohort.id ? 'text-blue-100' : 'text-gray-500'
+                      }`}>
+                        {cohort.opensAt && (
+                          <>
+                            <CalendarDays className="w-3 h-3 inline mr-1" />
+                            {formatShortDate(cohort.opensAt)}
+                          </>
+                        )}
+                      </span>
+                      <span className={`text-sm font-bold ${
+                        selectedCohortId === cohort.id ? 'text-white' : 'text-blue-600'
+                      }`}>
+                        {cohort.applicationsCount ?? 0} <span className="text-xs font-normal">apps</span>
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-4 mb-6">
             <div className="flex-1 min-w-[200px]">
               <div className="relative">
@@ -992,22 +1312,6 @@ export default function AdminApplicationsManager() {
                 )}
               </div>
             </div>
-
-            <Select
-              value={filters.course_id || undefined}
-              onValueChange={(value) => setFilters({ ...filters, course_id: value || '', page: 1 })}
-            >
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="All Courses" />
-              </SelectTrigger>
-              <SelectContent>
-                {courses.map(course => (
-                  <SelectItem key={course.id} value={course.id.toString()}>
-                    {course.title} ({course.applications_count})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
 
             <Select
               value={filters.status}
@@ -1162,9 +1466,14 @@ export default function AdminApplicationsManager() {
                     />
                     
                     <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
                         <h3 className="font-semibold text-lg">{application.full_name}</h3>
                         {getStatusBadge(application.status)}
+                        {application.cohort_label && (
+                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs">
+                            {application.cohort_label}
+                          </Badge>
+                        )}
                       </div>
                       
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-gray-600 mb-3">
@@ -1299,9 +1608,16 @@ export default function AdminApplicationsManager() {
           {selectedApplication && (
             <>
               <DialogHeader>
-                <DialogTitle>Application Details</DialogTitle>
+                <DialogTitle className="flex items-center gap-2">
+                  Application Details
+                  {selectedApplication.cohort_label && (
+                    <Badge variant="outline" className="text-sm bg-indigo-50 text-indigo-700 border-indigo-200">
+                      {selectedApplication.cohort_label}
+                    </Badge>
+                  )}
+                </DialogTitle>
                 <DialogDescription>
-                  Review complete application information and take action
+                  {selectedApplication.full_name} — {selectedApplication.email}
                 </DialogDescription>
               </DialogHeader>
 
@@ -1876,8 +2192,8 @@ export default function AdminApplicationsManager() {
                 <div>• Course Filter: {filters.course_id 
                   ? courses.find(c => c.id.toString() === filters.course_id)?.title || `Course ID: ${filters.course_id}`
                   : 'All Courses'}</div>
+                <div>• Cohort: {selectedCohort ? selectedCohort.label : 'All Cohorts'}</div>
                 <div>• Status Filter: {filters.status === 'all' ? 'All Statuses' : filters.status}</div>
-                <div>• Search Filter: {filters.search || 'None'}</div>
               </div>
               {applications.length > 0 && (
                 <div className="mt-2">

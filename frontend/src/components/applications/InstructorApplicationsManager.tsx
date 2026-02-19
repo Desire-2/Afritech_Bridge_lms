@@ -5,6 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import applicationService from '@/services/api/application.service';
 import instructorService from '@/services/api/instructor.service';
 import { CourseApplication, ApplicationStatistics } from '@/services/api/types';
+import type { CohortOption, CohortStatus } from '@/types/api';
+import { getStatusBadgeStyles as getCohortBadgeStyles } from '@/utils/cohort-utils';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,34 +23,61 @@ import {
   Clock,
   Download,
   Eye,
-  Filter,
   Search,
   Users,
   TrendingUp,
   AlertCircle,
-  ThumbsUp,
-  ThumbsDown,
   Pause,
   RefreshCw,
   FileText,
+  CalendarDays,
+  GraduationCap,
+  Layers,
 } from 'lucide-react';
 
+// ─── Types ──────────────────────────────────────────────────────────────
+interface CourseWithCohorts {
+  id: number;
+  title: string;
+  applications_count: number;
+  application_windows?: Array<{
+    id: number;
+    cohort_label?: string;
+    status?: string;
+    opens_at?: string;
+    closes_at?: string;
+    cohort_start?: string;
+    cohort_end?: string;
+    applications_count?: number;
+  }>;
+  no_window_applications_count?: number;
+  cohort_label?: string;
+}
+
+// ─── Component ──────────────────────────────────────────────────────────
 export default function InstructorApplicationsManager() {
   const { user } = useAuth();
+
+  // Data
   const [applications, setApplications] = useState<CourseApplication[]>([]);
-  const [instructorCourses, setInstructorCourses] = useState<any[]>([]);
   const [statistics, setStatistics] = useState<ApplicationStatistics | null>(null);
+  const [courses, setCourses] = useState<CourseWithCohorts[]>([]);
+  const [cohorts, setCohorts] = useState<CohortOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [courses, setCourses] = useState<Array<{ id: number; title: string; applications_count: number }>>([]);
-  
-  // Add debounced search state
+
+  // Filters — course must be selected first, then cohort
+  const [selectedCourseId, setSelectedCourseId] = useState<string>('');
+  const [selectedCohortId, setSelectedCohortId] = useState<string>('all');
+  const [courseSelected, setCourseSelected] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const searchTimeoutRef = useRef<NodeJS.Timeout>();
-  
+
   const [filters, setFilters] = useState({
     status: 'all',
-    course_id: '',
+    course_id: '' as string,
+    cohort_label: '' as string,
+    application_window_id: '' as string,
     search: '',
     sort_by: 'submission_date',
     sort_order: 'desc' as 'asc' | 'desc',
@@ -56,99 +85,226 @@ export default function InstructorApplicationsManager() {
     per_page: 20,
   });
 
-  // Debounced search function
+  // Detail modal
+  const [selectedApplication, setSelectedApplication] = useState<CourseApplication | null>(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notes, setNotes] = useState('');
+
+  // ─── Search debouncing ────────────────────────────────────────
   const debouncedSetSearch = useCallback((value: string) => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-    
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
     searchTimeoutRef.current = setTimeout(() => {
       setFilters(prev => ({ ...prev, search: value, page: 1 }));
-    }, 300); // 300ms delay
+    }, 300);
   }, []);
 
-  // Handle search input changes
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchInput(value);
     debouncedSetSearch(value);
   };
 
-  // Cleanup timeout on unmount
   useEffect(() => {
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
+    return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
   }, []);
 
-  const [selectedApplication, setSelectedApplication] = useState<CourseApplication | null>(null);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-  
-  const [notes, setNotes] = useState('');
-  const [rejectionReason, setRejectionReason] = useState('');
-
+  // ─── Load courses & build cohorts ─────────────────────────────
   useEffect(() => {
-    loadInstructorCourses();
-    loadCourses();
+    if (user) loadCoursesAndCohorts();
   }, [user]);
 
+  // When filters change, reload data (only if a course is selected)
   useEffect(() => {
-    if (instructorCourses.length > 0) {
+    if (courseSelected && filters.course_id) {
       loadApplications();
       loadStatistics();
     }
-  }, [filters, instructorCourses]);
+  }, [filters, courseSelected]);
 
-  const loadInstructorCourses = async () => {
-    if (!user) return;
-    
+  const loadCoursesAndCohorts = async () => {
     try {
-      const data = await instructorService.getInstructorCourses();
-      setInstructorCourses(data.courses || []);
-    } catch (err) {
-      console.error('Failed to load instructor courses:', err);
-    }
-  };
+      // Get instructor's courses first
+      const instructorData = await instructorService.getInstructorCourses();
+      const instructorCourseList = Array.isArray(instructorData) ? instructorData : instructorData?.courses || [];
 
-  const loadCourses = async () => {
-    try {
-      const response = await applicationService.getCoursesForFiltering();
-      setCourses(response.courses || []);
+      if (instructorCourseList.length === 0) {
+        setCourses([]);
+        setCohorts([]);
+        setLoading(false);
+        return;
+      }
+
+      // Try to get enriched course data from /applications/courses
+      let enrichedCourses: CourseWithCohorts[] = [];
+      try {
+        const response = await applicationService.getCoursesForFiltering();
+        const allCourses = response.courses || [];
+        // Only keep courses the instructor owns
+        const instructorIds = new Set(instructorCourseList.map((c: any) => c.id));
+        enrichedCourses = allCourses.filter((c: any) => instructorIds.has(c.id));
+
+        // Also include instructor courses not in the API response 
+        // (courses with no applications AND no windows)
+        const enrichedIds = new Set(enrichedCourses.map(c => c.id));
+        for (const ic of instructorCourseList) {
+          if (!enrichedIds.has(ic.id)) {
+            enrichedCourses.push({
+              id: ic.id,
+              title: ic.title,
+              applications_count: 0,
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[DEBUG] getCoursesForFiltering FAILED:', err);
+        // Fallback: use instructor courses without window data
+        enrichedCourses = instructorCourseList.map((c: any) => ({
+          id: c.id,
+          title: c.title,
+          applications_count: c.applications_count || 0,
+        }));
+      }
+
+      setCourses(enrichedCourses);
+      console.log('[DEBUG] enrichedCourses:', JSON.stringify(enrichedCourses.map(c => ({ id: c.id, title: c.title, windows: c.application_windows?.length || 0 }))));
+
+      // Build cohort options from actual application windows only
+      const options: CohortOption[] = [];
+      for (const course of enrichedCourses) {
+        // Only create cohort cards for actual application windows
+        if (course.application_windows && course.application_windows.length > 0) {
+          for (const win of course.application_windows) {
+            options.push({
+              id: `window-${win.id}`,
+              label: win.cohort_label || `Cohort ${win.id}`,
+              courseId: course.id,
+              courseTitle: course.title,
+              applicationWindowId: win.id,
+              status: (win.status || 'open') as CohortStatus,
+              opensAt: win.opens_at || null,
+              closesAt: win.closes_at || null,
+              cohortStart: win.cohort_start || null,
+              cohortEnd: win.cohort_end || null,
+              applicationsCount: win.applications_count || 0,
+            });
+          }
+        }
+        // Applications not linked to any window (legacy / unassigned)
+        const unassignedCount = course.no_window_applications_count || 
+          ((!course.application_windows || course.application_windows.length === 0) ? course.applications_count : 0);
+        if (unassignedCount > 0) {
+          options.push({
+            id: `unassigned-${course.id}`,
+            label: 'Unassigned',
+            courseId: course.id,
+            courseTitle: course.title,
+            status: 'closed' as CohortStatus,
+            applicationsCount: unassignedCount,
+          });
+        }
+      }
+      console.log('[DEBUG] cohort options built:', JSON.stringify(options.map(o => ({ id: o.id, label: o.label, courseId: o.courseId }))));
+      setCohorts(options);
+
+      // Auto-select course if only one
+      if (enrichedCourses.length === 1) {
+        const course = enrichedCourses[0];
+        setSelectedCourseId(course.id.toString());
+        setCourseSelected(true);
+        setFilters(prev => ({ ...prev, course_id: course.id.toString(), page: 1 }));
+      }
+
+      setLoading(false);
     } catch (err) {
       console.error('Failed to load courses:', err);
+      setError('Failed to load your courses');
+      setLoading(false);
     }
   };
 
+  // ─── Cohort selection handler ─────────────────────────────────
+  const handleCohortSelect = (cohortId: string) => {
+    setSelectedCohortId(cohortId);
+
+    if (cohortId === 'all') {
+      // Show all applications for the selected course
+      setFilters(prev => ({
+        ...prev,
+        course_id: selectedCourseId,
+        cohort_label: '',
+        application_window_id: '',
+        page: 1,
+      }));
+      return;
+    }
+
+    const selected = cohorts.find(c => c.id === cohortId);
+    if (!selected) return;
+
+    const isUnassigned = cohortId.startsWith('unassigned-');
+    setFilters(prev => ({
+      ...prev,
+      course_id: selected.courseId ? selected.courseId.toString() : '',
+      application_window_id: isUnassigned ? 'none' : (selected.applicationWindowId ? selected.applicationWindowId.toString() : ''),
+      cohort_label: !isUnassigned && !selected.applicationWindowId && selected.label ? selected.label : '',
+      page: 1,
+    }));
+  };
+
+  const handleCourseSelect = (courseId: string) => {
+    setSelectedCourseId(courseId);
+    setSelectedCohortId('all');
+    setCourseSelected(true);
+    setFilters(prev => ({
+      ...prev,
+      course_id: courseId,
+      cohort_label: '',
+      application_window_id: '',
+      page: 1,
+    }));
+  };
+
+  const handleBackToCourses = () => {
+    setSelectedCourseId('');
+    setSelectedCohortId('all');
+    setCourseSelected(false);
+    setApplications([]);
+    setStatistics(null);
+    setFilters(prev => ({
+      ...prev,
+      course_id: '',
+      cohort_label: '',
+      application_window_id: '',
+      page: 1,
+    }));
+  };
+
+  // Filter cohorts to show only for the selected course
+  const displayedCohorts = cohorts.filter(c => c.courseId?.toString() === selectedCourseId);
+  console.log('[DEBUG] selectedCourseId:', selectedCourseId, 'courseSelected:', courseSelected, 'cohorts:', cohorts.length, 'displayedCohorts:', displayedCohorts.length);
+  const selectedCourse = courses.find(c => c.id.toString() === selectedCourseId);
+
+  // ─── API calls ────────────────────────────────────────────────
   const loadApplications = async () => {
     setLoading(true);
     setError(null);
     try {
-      // Backend now handles instructor filtering automatically
       const response = await applicationService.listApplications({
         status: filters.status !== 'all' ? filters.status : undefined,
         course_id: filters.course_id ? parseInt(filters.course_id) : undefined,
+        application_window_id: filters.application_window_id === 'none' ? 'none' : (filters.application_window_id ? parseInt(filters.application_window_id) : undefined),
+        cohort_label: filters.cohort_label || undefined,
         search: filters.search || undefined,
         sort_by: filters.sort_by,
         sort_order: filters.sort_order,
         page: filters.page,
-        per_page: filters.per_page
+        per_page: filters.per_page,
       });
-      
       setApplications(response.applications || []);
     } catch (err: any) {
-      // Enhanced error handling
-      if (err.message.includes('Invalid date format')) {
-        setError('Invalid date format in filters. Please check your date inputs.');
-      } else if (err.message.includes('Invalid score filter')) {
-        setError('Invalid score filter. Please check your score range.');
-      } else {
-        setError(err.message || 'Failed to load applications');
-      }
-      console.error('Error loading applications:', err);
+      setError(err.message || 'Failed to load applications');
     } finally {
       setLoading(false);
     }
@@ -156,40 +312,30 @@ export default function InstructorApplicationsManager() {
 
   const loadStatistics = async () => {
     try {
-      const stats = await applicationService.getStatistics();
+      const stats = await applicationService.getStatistics({
+        course_id: filters.course_id ? parseInt(filters.course_id) : undefined,
+        application_window_id: filters.application_window_id === 'none' ? 'none' : (filters.application_window_id ? parseInt(filters.application_window_id) : undefined),
+        cohort_label: filters.cohort_label || undefined,
+      });
       setStatistics(stats);
     } catch (err) {
       console.error('Failed to load statistics:', err);
     }
   };
 
-  const handleViewDetails = async (application: CourseApplication) => {
+  // ─── Actions ──────────────────────────────────────────────────
+  const handleViewDetails = (application: CourseApplication) => {
     setSelectedApplication(application);
     setNotes(application.admin_notes || '');
     setDetailModalOpen(true);
-  };
-
-  const handleApprove = async (applicationId: number) => {
-    alert('Only administrators can approve applications. Please contact an admin to approve this application.');
-  };
-
-  const handleReject = async (applicationId: number, reason: string) => {
-    alert('Only administrators can reject applications. Please contact an admin to reject this application.');
-  };
-
-  const handleWaitlist = async (applicationId: number) => {
-    alert('Only administrators can waitlist applications. Please contact an admin to manage this application.');
   };
 
   const handleUpdateNotes = async (applicationId: number) => {
     setActionLoading(true);
     setActionError(null);
     try {
-      await applicationService.updateNotes(applicationId, {
-        admin_notes: notes
-      });
+      await applicationService.updateNotes(applicationId, { admin_notes: notes });
       await loadApplications();
-      setActionError(null);
     } catch (err: any) {
       setActionError(err.message || 'Failed to update notes');
     } finally {
@@ -216,172 +362,326 @@ export default function InstructorApplicationsManager() {
 
   const handleExport = async () => {
     try {
-      await applicationService.downloadExport(
-        filters.status !== 'all' ? filters.status : undefined,
-        filters.course_id || undefined
-      );
+      await applicationService.downloadExport({
+        status: filters.status !== 'all' ? filters.status : undefined,
+        course_id: filters.course_id || undefined,
+        cohort_label: filters.cohort_label || undefined,
+        application_window_id: filters.application_window_id === 'none' ? 'none' : (filters.application_window_id ? parseInt(filters.application_window_id) : undefined),
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to export applications');
     }
   };
 
+  // ─── Badge helpers ────────────────────────────────────────────
   const getStatusBadge = (status: string) => {
-    const statusConfig: Record<string, { variant: any; icon: any; label: string }> = {
-      pending: { variant: 'default', icon: Clock, label: 'Pending Review' },
+    const cfg: Record<string, { variant: any; icon: any; label: string }> = {
+      pending: { variant: 'default', icon: Clock, label: 'Pending' },
       approved: { variant: 'success', icon: CheckCircle, label: 'Approved' },
       rejected: { variant: 'destructive', icon: XCircle, label: 'Rejected' },
       waitlisted: { variant: 'secondary', icon: Pause, label: 'Waitlisted' },
     };
-    
-    const config = statusConfig[status] || statusConfig.pending;
-    const Icon = config.icon;
-    
+    const c = cfg[status] || cfg.pending;
+    const Icon = c.icon;
     return (
-      <Badge variant={config.variant} className="flex items-center gap-1">
+      <Badge variant={c.variant} className="flex items-center gap-1">
         <Icon className="w-3 h-3" />
-        {config.label}
+        {c.label}
       </Badge>
     );
   };
 
   const getScoreBadge = (score: number | null | undefined, label: string) => {
     if (score === null || score === undefined) return null;
-    
-    let colorClass = 'bg-gray-100 text-gray-800';
-    if (score >= 80) colorClass = 'bg-green-100 text-green-800';
-    else if (score >= 60) colorClass = 'bg-blue-100 text-blue-800';
-    else if (score >= 40) colorClass = 'bg-yellow-100 text-yellow-800';
-    else colorClass = 'bg-red-100 text-red-800';
-    
+    let cls = 'bg-gray-100 text-gray-800';
+    if (score >= 80) cls = 'bg-green-100 text-green-800';
+    else if (score >= 60) cls = 'bg-blue-100 text-blue-800';
+    else if (score >= 40) cls = 'bg-yellow-100 text-yellow-800';
+    else cls = 'bg-red-100 text-red-800';
+    return <span className={`px-2 py-0.5 rounded text-xs font-medium ${cls}`}>{label}: {score}</span>;
+  };
+
+  const formatShortDate = (value?: string | null) => {
+    if (!value) return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const selectedCohort = cohorts.find(c => c.id === selectedCohortId);
+
+  // ─── Render ───────────────────────────────────────────────────
+  if (loading && courses.length === 0) {
     return (
-      <div className={`px-2 py-1 rounded text-xs font-medium ${colorClass}`}>
-        {label}: {score}
+      <div className="text-center py-12">
+        <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" />
+        <p className="text-gray-500 mt-2">Loading your courses…</p>
       </div>
     );
-  };
+  }
+
+  if (courses.length === 0) {
+    return (
+      <div className="text-center py-16">
+        <GraduationCap className="w-16 h-16 mx-auto text-gray-300" />
+        <h3 className="text-lg font-semibold text-gray-700 mt-4">No Courses Found</h3>
+        <p className="text-gray-500 mt-1">You don't have any courses with applications yet.</p>
+      </div>
+    );
+  }
+
+  // ── Step 1: Select a course (shown when no course selected and multiple courses exist)
+  if (!courseSelected && courses.length > 1) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <GraduationCap className="w-6 h-6 text-blue-600" />
+            Select a Course
+          </h2>
+          <p className="text-gray-500 mt-1">Choose a course to view and manage its applications by cohort.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {courses.map(course => {
+            const windowCount = course.application_windows?.length || 0;
+            return (
+              <button
+                key={course.id}
+                onClick={() => handleCourseSelect(course.id.toString())}
+                className="text-left p-5 rounded-xl border-2 border-gray-200 bg-white hover:border-blue-400 hover:shadow-lg transition-all group"
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <GraduationCap className="w-8 h-8 text-blue-500 group-hover:text-blue-600" />
+                  <span className="text-2xl font-bold text-blue-600">{course.applications_count}</span>
+                </div>
+                <h3 className="font-semibold text-gray-900 text-base mb-1 line-clamp-2">{course.title}</h3>
+                <div className="flex items-center gap-2 mt-3 text-xs text-gray-500">
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>{windowCount} cohort{windowCount !== 1 ? 's' : ''}</span>
+                  <span className="text-gray-300">•</span>
+                  <Users className="w-3.5 h-3.5" />
+                  <span>{course.applications_count} application{course.applications_count !== 1 ? 's' : ''}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Statistics Cards */}
+      {/* ── Course header with back button (multi-course) ── */}
+      {courses.length > 1 && (
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={handleBackToCourses} className="text-gray-500 hover:text-gray-700">
+            ← Back to courses
+          </Button>
+          <div className="h-5 w-px bg-gray-300" />
+          <GraduationCap className="w-5 h-5 text-blue-600" />
+          <span className="font-semibold text-gray-900">{selectedCourse?.title}</span>
+          <Badge variant="outline" className="text-blue-700 border-blue-200">{selectedCourse?.applications_count} apps</Badge>
+        </div>
+      )}
+
+      {/* ── Cohort switcher — only visible after course is selected ── */}
+      <Card className="border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-blue-600" />
+              <CardTitle className="text-base text-blue-900">
+                Cohorts{selectedCourse ? ` — ${selectedCourse.title}` : ''}
+              </CardTitle>
+              {selectedCohort && (
+                <Badge variant="outline" className="ml-2 text-blue-700 border-blue-300">
+                  {selectedCohort.label}
+                </Badge>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleCohortSelect('all')}
+              className={selectedCohortId === 'all' ? 'bg-blue-100' : ''}
+            >
+              All ({displayedCohorts.reduce((s, c) => s + (c.applicationsCount || 0), 0)})
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {displayedCohorts.length === 0 ? (
+            <p className="text-sm text-gray-500">No cohorts found for this course. All applications will be shown below.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {displayedCohorts.map(cohort => (
+                <button
+                  key={cohort.id}
+                  onClick={() => handleCohortSelect(cohort.id)}
+                  className={`text-left p-3 rounded-lg border transition-all ${
+                    selectedCohortId === cohort.id
+                      ? 'border-blue-500 bg-blue-600 text-white shadow-md'
+                      : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-sm font-semibold truncate ${
+                      selectedCohortId === cohort.id ? 'text-white' : 'text-gray-900'
+                    }`}>
+                      {cohort.label}
+                    </span>
+                    <Badge
+                      variant="outline"
+                      className={selectedCohortId === cohort.id
+                        ? 'bg-white/20 text-white border-white/40 text-xs'
+                        : `${getCohortBadgeStyles(cohort.status)} text-xs`
+                      }
+                    >
+                      {cohort.status}
+                    </Badge>
+                  </div>
+                  {cohort.courseTitle && courses.length > 1 && (
+                    <p className={`text-xs truncate mb-1 ${
+                      selectedCohortId === cohort.id ? 'text-blue-100' : 'text-gray-500'
+                    }`}>
+                      {cohort.courseTitle}
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className={`text-xs ${
+                      selectedCohortId === cohort.id ? 'text-blue-100' : 'text-gray-500'
+                    }`}>
+                      {cohort.opensAt && (
+                        <>
+                          <CalendarDays className="w-3 h-3 inline mr-1" />
+                          {formatShortDate(cohort.opensAt)}
+                        </>
+                      )}
+                    </span>
+                    <span className={`text-sm font-bold ${
+                      selectedCohortId === cohort.id ? 'text-white' : 'text-blue-600'
+                    }`}>
+                      {cohort.applicationsCount ?? 0} <span className="text-xs font-normal">apps</span>
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Statistics ── */}
       {statistics && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-5 pb-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total Applications</p>
-                  <p className="text-3xl font-bold">{statistics.total_applications}</p>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Total</p>
+                  <p className="text-2xl font-bold mt-1">{statistics.total_applications}</p>
                 </div>
-                <Users className="w-10 h-10 text-blue-500" />
+                <Users className="w-8 h-8 text-blue-500 opacity-80" />
               </div>
             </CardContent>
           </Card>
-
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-5 pb-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Pending Review</p>
-                  <p className="text-3xl font-bold text-yellow-600">{statistics.pending}</p>
-                </div>
-                <Clock className="w-10 h-10 text-yellow-500" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Approved</p>
-                  <p className="text-3xl font-bold text-green-600">{statistics.approved}</p>
-                </div>
-                <CheckCircle className="w-10 h-10 text-green-500" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-gray-600">Avg Score</p>
-                  <p className="text-3xl font-bold text-blue-600">
-                    {statistics.average_score?.toFixed(1) || 'N/A'}
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Pending</p>
+                  <p className="text-2xl font-bold mt-1 text-amber-600">
+                    {statistics.status_breakdown?.pending ?? statistics.pending ?? 0}
                   </p>
                 </div>
-                <TrendingUp className="w-10 h-10 text-blue-500" />
+                <Clock className="w-8 h-8 text-amber-500 opacity-80" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Approved</p>
+                  <p className="text-2xl font-bold mt-1 text-green-600">
+                    {statistics.status_breakdown?.approved ?? statistics.approved ?? 0}
+                  </p>
+                </div>
+                <CheckCircle className="w-8 h-8 text-green-500 opacity-80" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide">Avg Score</p>
+                  <p className="text-2xl font-bold mt-1 text-indigo-600">
+                    {statistics.average_scores?.application_score != null
+                      ? statistics.average_scores.application_score.toFixed(0)
+                      : statistics.average_score?.toFixed(0) ?? 'N/A'
+                    }
+                  </p>
+                </div>
+                <TrendingUp className="w-8 h-8 text-indigo-500 opacity-80" />
               </div>
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Instructor Info Alert */}
+      {/* ── Instructor info alert ── */}
       <Alert className="bg-blue-50 border-blue-200">
         <AlertCircle className="h-4 w-4 text-blue-600" />
         <AlertDescription className="text-blue-900">
-          <strong>Instructor View:</strong> You can review applications for your courses and add notes, 
-          but only administrators can approve, reject, or waitlist applications. 
-          Contact an admin for application decisions.
+          <strong>Instructor View:</strong> You can review applications and add notes.
+          Only administrators can approve, reject, or waitlist applications.
         </AlertDescription>
       </Alert>
 
-      {/* Filters and Actions */}
+      {/* ── Main table card ── */}
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <CardTitle>My Course Applications</CardTitle>
-              <CardDescription>Review and manage applications for your courses</CardDescription>
+              <CardTitle>
+                {selectedCohort ? `${selectedCohort.label} — Applications` : `${selectedCourse?.title || 'All'} — Applications`}
+              </CardTitle>
+              <CardDescription>
+                {selectedCohort
+                  ? `Showing applications for ${selectedCohort.label}${selectedCohort.courseTitle ? ` (${selectedCohort.courseTitle})` : ''}`
+                  : 'Review and manage applications for your courses'
+                }
+              </CardDescription>
             </div>
-            <Button onClick={handleExport} variant="outline">
+            <Button onClick={handleExport} variant="outline" size="sm">
               <Download className="w-4 h-4 mr-2" />
               Export CSV
             </Button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap gap-4 mb-6">
+          {/* Filters row */}
+          <div className="flex flex-wrap gap-3 mb-6">
             <div className="flex-1 min-w-[200px]">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
                 <Input
-                  placeholder="Search by name or email..."
+                  placeholder="Search by name, email..."
                   value={searchInput}
                   onChange={handleSearchChange}
                   className="pl-10"
                 />
-                {searchInput && searchInput !== filters.search && (
-                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                )}
               </div>
             </div>
 
             <Select
-              value={filters.course_id || undefined}
-              onValueChange={(value) => setFilters({ ...filters, course_id: value || '', page: 1 })}
-            >
-              <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="All My Courses" />
-              </SelectTrigger>
-              <SelectContent>
-                {courses.map(course => (
-                  <SelectItem key={course.id} value={course.id.toString()}>
-                    {course.title} ({course.applications_count})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
               value={filters.status}
-              onValueChange={(value) => setFilters({ ...filters, status: value, page: 1 })}
+              onValueChange={v => setFilters(prev => ({ ...prev, status: v, page: 1 }))}
             >
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter by status" />
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
@@ -394,21 +694,21 @@ export default function InstructorApplicationsManager() {
 
             <Select
               value={filters.sort_by}
-              onValueChange={(value) => setFilters({ ...filters, sort_by: value, page: 1 })}
+              onValueChange={v => setFilters(prev => ({ ...prev, sort_by: v, page: 1 }))}
             >
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-[170px]">
                 <SelectValue placeholder="Sort by" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="submission_date">Submission Date</SelectItem>
-                <SelectItem value="final_rank">Final Rank</SelectItem>
-                <SelectItem value="application_score">Application Score</SelectItem>
-                <SelectItem value="readiness_score">Readiness Score</SelectItem>
-                <SelectItem value="risk_score">Risk Score</SelectItem>
+                <SelectItem value="submission_date">Date Applied</SelectItem>
+                <SelectItem value="final_rank_score">Final Rank</SelectItem>
+                <SelectItem value="application_score">App Score</SelectItem>
+                <SelectItem value="readiness_score">Readiness</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
+          {/* Error */}
           {error && (
             <Alert variant="destructive" className="mb-4">
               <AlertCircle className="h-4 w-4" />
@@ -416,70 +716,82 @@ export default function InstructorApplicationsManager() {
             </Alert>
           )}
 
+          {/* Loading */}
           {loading ? (
             <div className="text-center py-12">
               <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" />
-              <p className="text-gray-500 mt-2">Loading applications...</p>
+              <p className="text-gray-500 mt-2">Loading applications…</p>
             </div>
           ) : applications.length === 0 ? (
             <div className="text-center py-12">
-              <FileText className="w-12 h-12 mx-auto text-gray-400" />
-              <p className="text-gray-500 mt-2">No applications found</p>
+              <FileText className="w-12 h-12 mx-auto text-gray-300" />
+              <p className="text-gray-500 mt-2 font-medium">No applications found</p>
+              <p className="text-gray-400 text-sm mt-1">
+                {selectedCohort
+                  ? `No applications for ${selectedCohort.label} with the current filters.`
+                  : 'Try adjusting your filters or select a different cohort.'}
+              </p>
             </div>
           ) : (
             <div className="space-y-3">
-              {applications.map((application) => (
+              {applications.map(app => (
                 <div
-                  key={application.id}
-                  className="border rounded-lg p-4 hover:shadow-md transition-shadow"
+                  key={app.id}
+                  className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-white"
                 >
                   <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-semibold text-lg">{application.full_name}</h3>
-                        {getStatusBadge(application.status)}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <h3 className="font-semibold text-base truncate">{app.full_name}</h3>
+                        {getStatusBadge(app.status)}
+                        {app.cohort_label && (
+                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs">
+                            {app.cohort_label}
+                          </Badge>
+                        )}
                       </div>
-                      
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-gray-600 mb-3">
-                        <div>
-                          <span className="font-medium">Email:</span> {application.email}
+
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-sm text-gray-600 mb-3">
+                        <div className="truncate">
+                          <span className="font-medium text-gray-500">Email:</span> {app.email}
                         </div>
                         <div>
-                          <span className="font-medium">Phone:</span> {application.phone}
+                          <span className="font-medium text-gray-500">Phone:</span> {app.phone}
                         </div>
                         <div>
-                          <span className="font-medium">Excel Level:</span>{' '}
-                          {application.excel_skill_level?.replace('_', ' ')}
+                          <span className="font-medium text-gray-500">Excel:</span>{' '}
+                          {app.excel_skill_level?.replace(/_/g, ' ')}
                         </div>
                         <div>
-                          <span className="font-medium">Location:</span>{' '}
-                          {application.city}, {application.country}
+                          <span className="font-medium text-gray-500">Location:</span>{' '}
+                          {[app.city, app.country].filter(Boolean).join(', ')}
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        {getScoreBadge(application.final_rank, 'Final Rank')}
-                        {getScoreBadge(application.application_score, 'App')}
-                        {getScoreBadge(application.readiness_score, 'Readiness')}
-                        {getScoreBadge(application.commitment_score, 'Commitment')}
-                        {getScoreBadge(application.risk_score, 'Risk')}
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {getScoreBadge(app.final_rank_score ?? app.final_rank, 'Rank')}
+                        {getScoreBadge(app.application_score, 'App')}
+                        {getScoreBadge(app.readiness_score, 'Ready')}
+                        {getScoreBadge(app.commitment_score, 'Commit')}
+                        {app.is_high_risk && (
+                          <Badge variant="destructive" className="text-xs">High Risk</Badge>
+                        )}
                       </div>
 
-                      <p className="text-xs text-gray-500">
-                        Submitted: {new Date(application.submission_date).toLocaleString()}
+                      <p className="text-xs text-gray-400">
+                        Applied: {app.created_at ? formatShortDate(app.created_at) : app.submission_date ? formatShortDate(app.submission_date) : '—'}
                       </p>
                     </div>
 
-                    <div className="flex flex-col gap-2 ml-4">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleViewDetails(application)}
-                      >
-                        <Eye className="w-4 h-4 mr-1" />
-                        View Details
-                      </Button>
-                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleViewDetails(app)}
+                      className="ml-3 shrink-0"
+                    >
+                      <Eye className="w-4 h-4 mr-1" />
+                      Details
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -488,20 +800,18 @@ export default function InstructorApplicationsManager() {
 
           {/* Pagination */}
           {applications.length > 0 && (
-            <div className="flex justify-center gap-2 mt-6">
+            <div className="flex justify-center items-center gap-2 mt-6">
               <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setFilters({ ...filters, page: Math.max(1, filters.page - 1) })}
+                variant="outline" size="sm"
+                onClick={() => setFilters(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
                 disabled={filters.page === 1}
               >
                 Previous
               </Button>
-              <span className="px-4 py-2 text-sm">Page {filters.page}</span>
+              <span className="px-3 py-1 text-sm text-gray-600">Page {filters.page}</span>
               <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setFilters({ ...filters, page: filters.page + 1 })}
+                variant="outline" size="sm"
+                onClick={() => setFilters(prev => ({ ...prev, page: prev.page + 1 }))}
                 disabled={applications.length < filters.per_page}
               >
                 Next
@@ -511,15 +821,22 @@ export default function InstructorApplicationsManager() {
         </CardContent>
       </Card>
 
-      {/* Detail Modal */}
+      {/* ── Detail Modal ── */}
       <Dialog open={detailModalOpen} onOpenChange={setDetailModalOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           {selectedApplication && (
             <>
               <DialogHeader>
-                <DialogTitle>Application Details</DialogTitle>
+                <DialogTitle className="flex items-center gap-2">
+                  Application Details
+                  {selectedApplication.cohort_label && (
+                    <Badge variant="outline" className="text-sm bg-indigo-50 text-indigo-700 border-indigo-200">
+                      {selectedApplication.cohort_label}
+                    </Badge>
+                  )}
+                </DialogTitle>
                 <DialogDescription>
-                  Review complete application information and take action
+                  {selectedApplication.full_name} — {selectedApplication.email}
                 </DialogDescription>
               </DialogHeader>
 
@@ -539,66 +856,32 @@ export default function InstructorApplicationsManager() {
 
                 <TabsContent value="details" className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label>Full Name</Label>
-                      <p className="font-medium">{selectedApplication.full_name}</p>
-                    </div>
-                    <div>
-                      <Label>Email</Label>
-                      <p className="font-medium">{selectedApplication.email}</p>
-                    </div>
-                    <div>
-                      <Label>Phone</Label>
-                      <p className="font-medium">{selectedApplication.phone}</p>
-                    </div>
-                    <div>
-                      <Label>WhatsApp</Label>
-                      <p className="font-medium">{selectedApplication.whatsapp_number || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label>Gender</Label>
-                      <p className="font-medium">{selectedApplication.gender || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label>Age Range</Label>
-                      <p className="font-medium">{selectedApplication.age_range || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label>Country</Label>
-                      <p className="font-medium">{selectedApplication.country}</p>
-                    </div>
-                    <div>
-                      <Label>City</Label>
-                      <p className="font-medium">{selectedApplication.city}</p>
-                    </div>
-                    <div>
-                      <Label>Education Level</Label>
-                      <p className="font-medium">{selectedApplication.education_level || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label>Current Status</Label>
-                      <p className="font-medium">{selectedApplication.current_status || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label>Field of Study</Label>
-                      <p className="font-medium">{selectedApplication.field_of_study || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <Label>Excel Skill Level</Label>
-                      <p className="font-medium">{selectedApplication.excel_skill_level}</p>
-                    </div>
-                    <div>
-                      <Label>Has Computer</Label>
-                      <p className="font-medium">{selectedApplication.has_computer ? 'Yes' : 'No'}</p>
-                    </div>
-                    <div>
-                      <Label>Internet Access</Label>
-                      <p className="font-medium">{selectedApplication.internet_access_type || 'N/A'}</p>
-                    </div>
+                    {[
+                      ['Full Name', selectedApplication.full_name],
+                      ['Email', selectedApplication.email],
+                      ['Phone', selectedApplication.phone],
+                      ['WhatsApp', selectedApplication.whatsapp_number || 'N/A'],
+                      ['Gender', selectedApplication.gender || 'N/A'],
+                      ['Age Range', selectedApplication.age_range || 'N/A'],
+                      ['Country', selectedApplication.country],
+                      ['City', selectedApplication.city],
+                      ['Education', selectedApplication.education_level || 'N/A'],
+                      ['Status', selectedApplication.current_status || 'N/A'],
+                      ['Field', selectedApplication.field_of_study || 'N/A'],
+                      ['Excel Level', selectedApplication.excel_skill_level],
+                      ['Has Computer', selectedApplication.has_computer ? 'Yes' : 'No'],
+                      ['Internet', selectedApplication.internet_access_type || 'N/A'],
+                      ['Cohort', selectedApplication.cohort_label || 'N/A'],
+                    ].map(([label, value]) => (
+                      <div key={label as string}>
+                        <Label className="text-xs text-gray-500">{label}</Label>
+                        <p className="font-medium text-sm">{value}</p>
+                      </div>
+                    ))}
                   </div>
 
-                  <div className="grid grid-cols-4 gap-3 pt-4 border-t">
-                    {getScoreBadge(selectedApplication.final_rank, 'Final Rank')}
+                  <div className="flex flex-wrap gap-2 pt-4 border-t">
+                    {getScoreBadge(selectedApplication.final_rank_score ?? selectedApplication.final_rank, 'Final Rank')}
                     {getScoreBadge(selectedApplication.application_score, 'Application')}
                     {getScoreBadge(selectedApplication.readiness_score, 'Readiness')}
                     {getScoreBadge(selectedApplication.commitment_score, 'Commitment')}
@@ -607,39 +890,33 @@ export default function InstructorApplicationsManager() {
                 </TabsContent>
 
                 <TabsContent value="motivation" className="space-y-4">
-                  <div>
-                    <Label>Why do you want to join this course?</Label>
-                    <p className="text-sm mt-2 whitespace-pre-wrap">{selectedApplication.motivation}</p>
-                  </div>
-                  <div>
-                    <Label>Learning Outcomes</Label>
-                    <p className="text-sm mt-2 whitespace-pre-wrap">{selectedApplication.learning_outcomes || 'Not provided'}</p>
-                  </div>
-                  <div>
-                    <Label>Career Impact</Label>
-                    <p className="text-sm mt-2 whitespace-pre-wrap">{selectedApplication.career_impact || 'Not provided'}</p>
-                  </div>
-                  <div>
-                    <Label>Referral Source</Label>
-                    <p className="text-sm mt-2">{selectedApplication.referral_source || 'Not provided'}</p>
-                  </div>
+                  {[
+                    ['Why do you want to join?', selectedApplication.motivation],
+                    ['Learning Outcomes', selectedApplication.learning_outcomes],
+                    ['Career Impact', selectedApplication.career_impact],
+                    ['Referral Source', selectedApplication.referral_source],
+                  ].map(([label, value]) => (
+                    <div key={label as string}>
+                      <Label className="text-xs text-gray-500 uppercase tracking-wide">{label}</Label>
+                      <p className="text-sm mt-1 whitespace-pre-wrap">{value || 'Not provided'}</p>
+                    </div>
+                  ))}
                 </TabsContent>
 
                 <TabsContent value="actions" className="space-y-4">
                   <div>
-                    <Label htmlFor="notes">Notes</Label>
+                    <Label htmlFor="notes">Internal Notes</Label>
                     <Textarea
                       id="notes"
                       value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
+                      onChange={e => setNotes(e.target.value)}
                       rows={4}
                       placeholder="Add internal notes about this application..."
                     />
                     <Button
                       onClick={() => handleUpdateNotes(selectedApplication.id)}
                       disabled={actionLoading}
-                      className="mt-2"
-                      size="sm"
+                      className="mt-2" size="sm"
                     >
                       Save Notes
                     </Button>
@@ -649,19 +926,17 @@ export default function InstructorApplicationsManager() {
                     <Button
                       onClick={() => handleRecalculateScores(selectedApplication.id)}
                       disabled={actionLoading}
-                      variant="outline"
-                      size="sm"
+                      variant="outline" size="sm"
                     >
                       <RefreshCw className="w-4 h-4 mr-2" />
                       Recalculate Scores
                     </Button>
                   </div>
 
-                  <Alert className="bg-yellow-50 border-yellow-200">
-                    <AlertCircle className="h-4 w-4 text-yellow-600" />
-                    <AlertDescription className="text-yellow-900">
-                      <strong>Note:</strong> Only administrators can approve, reject, or waitlist applications. 
-                      Please contact an admin to make application decisions.
+                  <Alert className="bg-amber-50 border-amber-200">
+                    <AlertCircle className="h-4 w-4 text-amber-600" />
+                    <AlertDescription className="text-amber-900">
+                      Only administrators can approve, reject, or waitlist applications.
                     </AlertDescription>
                   </Alert>
                 </TabsContent>

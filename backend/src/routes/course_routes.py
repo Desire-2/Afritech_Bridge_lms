@@ -1,11 +1,12 @@
 # Course Management API Routes for Afritec Bridge LMS
 
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role # For role checking
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, ApplicationWindow
 from ..utils.email_notifications import send_announcement_notification
 
 # Helper for role checking (decorator)
@@ -13,6 +14,18 @@ from functools import wraps
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def parse_iso_datetime(value, field_name):
+    """Parse ISO datetime strings, accepting Z suffix, returning None for blanks."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except Exception as exc:  # pylint: disable=broad-except
+        raise ValueError(f"Invalid datetime for {field_name}: {value}") from exc
 
 def get_user_id():
     """Helper function to get user ID as integer from JWT"""
@@ -38,6 +51,38 @@ def role_required(roles):
 
 course_bp = Blueprint("course_bp", __name__, url_prefix=
 "/api/v1/courses")
+
+
+def _sync_application_windows(course, windows_data):
+    """
+    Replace all ApplicationWindow rows for a course with the provided list.
+    Each entry: { cohort_label, opens_at, closes_at, cohort_start, cohort_end, status }
+    """
+    if windows_data is None:
+        return
+    if not isinstance(windows_data, list):
+        return
+
+    # Delete existing windows
+    ApplicationWindow.query.filter_by(course_id=course.id).delete()
+
+    for idx, win in enumerate(windows_data):
+        if not isinstance(win, dict):
+            continue
+        try:
+            new_win = ApplicationWindow(
+                course_id=course.id,
+                cohort_label=win.get("cohort_label") or win.get("label") or f"Cohort {idx + 1}",
+                opens_at=parse_iso_datetime(win.get("opens_at") or win.get("opensAt"), f"application_windows[{idx}].opens_at"),
+                closes_at=parse_iso_datetime(win.get("closes_at") or win.get("closesAt"), f"application_windows[{idx}].closes_at"),
+                cohort_start=parse_iso_datetime(win.get("cohort_start") or win.get("startDate") or win.get("start_date"), f"application_windows[{idx}].cohort_start"),
+                cohort_end=parse_iso_datetime(win.get("cohort_end") or win.get("endDate") or win.get("end_date"), f"application_windows[{idx}].cohort_end"),
+                status_override=win.get("status_override") or None,
+            )
+            db.session.add(new_win)
+        except ValueError as exc:
+            logger.warning(f"Skipping invalid application window {idx}: {exc}")
+            continue
 module_bp = Blueprint("module_bp", __name__, url_prefix="/api/v1/modules")
 lesson_bp = Blueprint("lesson_bp", __name__, url_prefix="/api/v1/lessons")
 enrollment_bp = Blueprint("enrollment_bp", __name__, url_prefix="/api/v1/enrollments")
@@ -102,6 +147,24 @@ def create_course():
             except (TypeError, ValueError):
                 return jsonify({"message": "Price must be a valid number"}), 400
         
+        # Application/cohort settings
+        try:
+            application_start_date = parse_iso_datetime(data.get("application_start_date"), "application_start_date")
+            application_end_date = parse_iso_datetime(data.get("application_end_date"), "application_end_date")
+            cohort_start_date = parse_iso_datetime(data.get("cohort_start_date"), "cohort_start_date")
+            cohort_end_date = parse_iso_datetime(data.get("cohort_end_date"), "cohort_end_date")
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+
+        if application_start_date and application_end_date and application_end_date < application_start_date:
+            return jsonify({"message": "application_end_date must be after application_start_date"}), 400
+
+        if cohort_start_date and cohort_end_date and cohort_end_date < cohort_start_date:
+            return jsonify({"message": "cohort_end_date must be after cohort_start_date"}), 400
+
+        if application_end_date and cohort_start_date and cohort_start_date < application_end_date:
+            logger.warning("Cohort starts before application window closes; adjusting allowed but logged")
+
         new_course = Course(
             title=data["title"],
             description=data["description"],
@@ -112,13 +175,24 @@ def create_course():
             is_published=data.get("is_published", False),
             enrollment_type=enrollment_type,
             price=price,
-            currency=currency
+            currency=currency,
+            application_start_date=application_start_date,
+            application_end_date=application_end_date,
+            cohort_start_date=cohort_start_date,
+            cohort_end_date=cohort_end_date,
+            cohort_label=data.get("cohort_label"),
+            application_timezone=data.get("application_timezone") or "UTC"
         )
         logger.info(f"[CREATE_COURSE] Course object created: {new_course.title}")
         
         db.session.add(new_course)
         logger.info("[CREATE_COURSE] Course added to session")
         
+        db.session.flush()  # Get new_course.id before adding windows
+
+        # Persist application_windows if provided
+        _sync_application_windows(new_course, data.get("application_windows"))
+
         db.session.commit()
         logger.info(f"[CREATE_COURSE] Course committed with ID: {new_course.id}")
         
@@ -210,13 +284,39 @@ def update_course(course_id):
         if "currency" in data:
             course.currency = data.get("currency") or course.currency
 
+        # Application/Cohort window settings
+        try:
+            if "application_start_date" in data:
+                course.application_start_date = parse_iso_datetime(data.get("application_start_date"), "application_start_date")
+            if "application_end_date" in data:
+                course.application_end_date = parse_iso_datetime(data.get("application_end_date"), "application_end_date")
+            if "cohort_start_date" in data:
+                course.cohort_start_date = parse_iso_datetime(data.get("cohort_start_date"), "cohort_start_date")
+            if "cohort_end_date" in data:
+                course.cohort_end_date = parse_iso_datetime(data.get("cohort_end_date"), "cohort_end_date")
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+
+        if "cohort_label" in data:
+            course.cohort_label = data.get("cohort_label") or None
+        if "application_timezone" in data and data.get("application_timezone"):
+            course.application_timezone = data.get("application_timezone")
+
+        if course.application_start_date and course.application_end_date and course.application_end_date < course.application_start_date:
+            return jsonify({"message": "application_end_date must be after application_start_date"}), 400
+
+        if course.cohort_start_date and course.cohort_end_date and course.cohort_end_date < course.cohort_start_date:
+            return jsonify({"message": "cohort_end_date must be after cohort_start_date"}), 400
+
+        if course.application_end_date and course.cohort_start_date and course.cohort_start_date < course.application_end_date:
+            logger.warning("Cohort starts before application window closes; persisted as requested")
+
         if course.enrollment_type == "paid":
             if course.price is None or course.price <= 0:
                 return jsonify({"message": "Paid courses must have a price greater than 0"}), 400
         
         # Module release settings
         if "start_date" in data:
-            from datetime import datetime
             if data["start_date"]:
                 course.start_date = datetime.fromisoformat(data["start_date"].replace('Z', '+00:00'))
             else:
@@ -237,6 +337,10 @@ def update_course(course_id):
                 course.instructor_id = data["instructor_id"]
             else:
                  return jsonify({"message": "Specified instructor_id not found"}), 400
+
+        # Persist application_windows if provided
+        if "application_windows" in data:
+            _sync_application_windows(course, data.get("application_windows"))
 
         db.session.commit()
         return jsonify(course.to_dict()), 200

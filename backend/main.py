@@ -16,7 +16,7 @@ import logging
 from src.models.user_models import db, User, Role
 from src.models.course_models import (
     Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement,
-    Assignment, AssignmentSubmission, Project, ProjectSubmission
+    Assignment, AssignmentSubmission, Project, ProjectSubmission, ApplicationWindow
 )
 from src.models.quiz_progress_models import QuizAttempt, UserAnswer # Import quiz progress models
 from src.models.student_models import LessonCompletion, UserProgress, ModuleProgress, Certificate # Import student tracking models

@@ -21,9 +21,15 @@ export interface EnrolledCourse {
   description: string;
   progress: number;
   enrollment_date: string;
+  enrollment_id?: number;
   current_lesson?: string;
   instructor_name: string;
   estimated_duration?: string;
+  // Cohort separation
+  cohort_label?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  application_window_id?: number | null;
 }
 
 export interface CourseProgress {

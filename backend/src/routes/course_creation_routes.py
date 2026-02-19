@@ -1,5 +1,6 @@
 # Enhanced Course Creation API Routes for Instructors
 
+from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +28,18 @@ def get_user_id():
     except (ValueError, TypeError) as e:
         print(f"ERROR in get_user_id: {e}")
         return None
+
+
+def parse_iso_datetime(value, field_name):
+    """Parse ISO datetime strings, allowing Z suffix, returning None on blanks."""
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except Exception as exc:  # pylint: disable=broad-except
+        raise ValueError(f"Invalid datetime for {field_name}: {value}") from exc
 
 def instructor_required(f):
     @wraps(f)
@@ -100,6 +113,19 @@ def create_course():
         if existing_course:
             return jsonify({"message": "Course with this title already exists"}), 400
         
+        try:
+            application_start_date = parse_iso_datetime(data.get('application_start_date'), 'application_start_date')
+            application_end_date = parse_iso_datetime(data.get('application_end_date'), 'application_end_date')
+            cohort_start_date = parse_iso_datetime(data.get('cohort_start_date'), 'cohort_start_date')
+            cohort_end_date = parse_iso_datetime(data.get('cohort_end_date'), 'cohort_end_date')
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+
+        if application_start_date and application_end_date and application_end_date < application_start_date:
+            return jsonify({"message": "application_end_date must be after application_start_date"}), 400
+        if cohort_start_date and cohort_end_date and cohort_end_date < cohort_start_date:
+            return jsonify({"message": "cohort_end_date must be after cohort_start_date"}), 400
+
         course = Course(
             title=data['title'],
             description=data['description'],
@@ -107,7 +133,13 @@ def create_course():
             target_audience=data.get('target_audience', ''),
             estimated_duration=data.get('estimated_duration', ''),
             instructor_id=current_user_id,  # Already converted to int by helper
-            is_published=data.get('is_published', False)
+            is_published=data.get('is_published', False),
+            application_start_date=application_start_date,
+            application_end_date=application_end_date,
+            cohort_start_date=cohort_start_date,
+            cohort_end_date=cohort_end_date,
+            cohort_label=data.get('cohort_label'),
+            application_timezone=data.get('application_timezone') or 'UTC'
         )
         
         db.session.add(course)
@@ -159,6 +191,28 @@ def update_course(course_id):
             course.estimated_duration = data['estimated_duration']
         if 'is_published' in data:
             course.is_published = data['is_published']
+
+        try:
+            if 'application_start_date' in data:
+                course.application_start_date = parse_iso_datetime(data.get('application_start_date'), 'application_start_date')
+            if 'application_end_date' in data:
+                course.application_end_date = parse_iso_datetime(data.get('application_end_date'), 'application_end_date')
+            if 'cohort_start_date' in data:
+                course.cohort_start_date = parse_iso_datetime(data.get('cohort_start_date'), 'cohort_start_date')
+            if 'cohort_end_date' in data:
+                course.cohort_end_date = parse_iso_datetime(data.get('cohort_end_date'), 'cohort_end_date')
+        except ValueError as exc:
+            return jsonify({"message": str(exc)}), 400
+
+        if 'cohort_label' in data:
+            course.cohort_label = data.get('cohort_label') or None
+        if 'application_timezone' in data and data.get('application_timezone'):
+            course.application_timezone = data.get('application_timezone')
+
+        if course.application_start_date and course.application_end_date and course.application_end_date < course.application_start_date:
+            return jsonify({"message": "application_end_date must be after application_start_date"}), 400
+        if course.cohort_start_date and course.cohort_end_date and course.cohort_end_date < course.cohort_start_date:
+            return jsonify({"message": "cohort_end_date must be after cohort_start_date"}), 400
         
         db.session.commit()
         

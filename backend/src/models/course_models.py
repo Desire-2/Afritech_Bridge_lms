@@ -1,6 +1,6 @@
 # Course Management Models for Afritec Bridge LMS
 
-from datetime import datetime
+from datetime import datetime, timezone
 # Assuming db is initialized in main.py or a central extensions file and imported here
 from .user_models import db, User # Assuming user_models.py is in the same directory and has db
 
@@ -21,6 +21,14 @@ class Course(db.Model):
     enrollment_type = db.Column(db.String(20), nullable=False, default='free')  # 'free', 'paid', 'scholarship'
     price = db.Column(db.Float, nullable=True)
     currency = db.Column(db.String(10), nullable=False, default='USD')
+
+    # Application & Cohort Settings
+    application_start_date = db.Column(db.DateTime, nullable=True)
+    application_end_date = db.Column(db.DateTime, nullable=True)
+    cohort_start_date = db.Column(db.DateTime, nullable=True)
+    cohort_end_date = db.Column(db.DateTime, nullable=True)
+    cohort_label = db.Column(db.String(120), nullable=True)
+    application_timezone = db.Column(db.String(64), nullable=False, default='UTC')
     
     # Module Release Settings
     start_date = db.Column(db.DateTime, nullable=True)  # Course start date for module release calculations
@@ -31,6 +39,13 @@ class Course(db.Model):
     instructor = db.relationship('User', backref=db.backref('courses_authored', lazy='dynamic'))
     modules = db.relationship('Module', backref='course', lazy='dynamic', cascade="all, delete-orphan")
     enrollments = db.relationship('Enrollment', backref='course', lazy='dynamic', cascade="all, delete-orphan")
+    application_windows = db.relationship(
+        'ApplicationWindow',
+        backref='course',
+        lazy='dynamic',
+        cascade="all, delete-orphan",
+        order_by='ApplicationWindow.opens_at'
+    )
 
     def __repr__(self):
         return f'<Course {self.title}>'
@@ -97,6 +112,85 @@ class Course(db.Model):
         
         return released_modules
 
+    def get_application_window_status(self, now=None):
+        """Return application window/cohort status with a structured payload."""
+        current_time = now or datetime.now(timezone.utc)
+
+        # Normalize stored datetimes to aware UTC for comparison
+        def _to_utc(dt):
+            if not dt:
+                return None
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        start = _to_utc(self.application_start_date)
+        end = _to_utc(self.application_end_date)
+        cohort_start = _to_utc(self.cohort_start_date)
+        cohort_end = _to_utc(self.cohort_end_date)
+
+        # Defaults
+        status = "open"
+        reason = None
+
+        if start and current_time < start:
+            status = "upcoming"
+            reason = "applications_not_open"
+        elif end and current_time > end:
+            status = "closed"
+            reason = "application_window_closed"
+        elif cohort_end and current_time > cohort_end:
+            status = "closed"
+            reason = "cohort_ended"
+        elif cohort_start and current_time < cohort_start and end and current_time > end:
+            status = "closed"
+            reason = "application_window_closed"
+
+        return {
+            "status": status,
+            "reason": reason,
+            "now": current_time.isoformat(),
+            "opens_at": start.isoformat() if start else None,
+            "closes_at": end.isoformat() if end else None,
+            "cohort_start": cohort_start.isoformat() if cohort_start else None,
+            "cohort_end": cohort_end.isoformat() if cohort_end else None,
+            "cohort_label": self.cohort_label,
+        }
+
+    def get_all_application_windows_list(self, now=None):
+        """Return all application windows as list of dicts with computed status."""
+        current_time = now or datetime.now(timezone.utc)
+
+        def _to_utc(dt):
+            if not dt:
+                return None
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        windows = list(self.application_windows.order_by(ApplicationWindow.opens_at).all())  # type: ignore[attr-defined]
+
+        if windows:
+            return [w.to_dict(now=current_time) for w in windows]
+
+        # Fallback: synthesize a single window from the legacy flat fields
+        if self.application_start_date or self.application_end_date or self.cohort_start_date or self.cohort_label:
+            return [self.get_application_window_status(now=current_time)]
+
+        return []
+
+    def get_primary_application_window(self, now=None):
+        """Return the most relevant (open > upcoming > first) window, or legacy fallback."""
+        current_time = now or datetime.now(timezone.utc)
+        windows = self.get_all_application_windows_list(now=current_time)
+
+        if not windows:
+            return self.get_application_window_status(now=current_time)
+
+        for win in windows:
+            if win.get("status") == "open":
+                return win
+        for win in windows:
+            if win.get("status") == "upcoming":
+                return win
+        return windows[0]
+
     def to_dict(self, include_modules=False, include_announcements=False, for_student=False):
         data = {
             'id': self.id,
@@ -113,6 +207,14 @@ class Course(db.Model):
             'enrollment_type': self.enrollment_type,
             'price': self.price,
             'currency': self.currency,
+            'application_start_date': self.application_start_date.isoformat() if self.application_start_date else None,
+            'application_end_date': self.application_end_date.isoformat() if self.application_end_date else None,
+            'cohort_start_date': self.cohort_start_date.isoformat() if self.cohort_start_date else None,
+            'cohort_end_date': self.cohort_end_date.isoformat() if self.cohort_end_date else None,
+            'cohort_label': self.cohort_label,
+            'application_timezone': self.application_timezone,
+            'application_window': self.get_primary_application_window(),
+            'application_windows': self.get_all_application_windows_list(),
             # Module release settings
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'module_release_count': self.module_release_count,
@@ -135,6 +237,83 @@ class Course(db.Model):
         if include_announcements:
             data['announcements'] = [ann.to_dict() for ann in self.announcements.order_by(Announcement.created_at.desc())]
         return data
+
+
+class ApplicationWindow(db.Model):
+    """
+    Represents a single application/cohort window for a course.
+    A course can have multiple windows (e.g., Jan cohort, Mar cohort).
+    """
+    __tablename__ = 'application_windows'
+
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
+    cohort_label = db.Column(db.String(120), nullable=True)
+    opens_at = db.Column(db.DateTime, nullable=True)
+    closes_at = db.Column(db.DateTime, nullable=True)
+    cohort_start = db.Column(db.DateTime, nullable=True)
+    cohort_end = db.Column(db.DateTime, nullable=True)
+    status_override = db.Column(db.String(20), nullable=True)  # manual override: 'open', 'closed', 'upcoming'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<ApplicationWindow {self.cohort_label} for course {self.course_id}>'
+
+    def compute_status(self, now=None):
+        """Compute the window status based on dates and optional override."""
+        if self.status_override:
+            return self.status_override
+
+        current_time = now or datetime.now(timezone.utc)
+
+        def _to_utc(dt):
+            if not dt:
+                return None
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        opens = _to_utc(self.opens_at)
+        closes = _to_utc(self.closes_at)
+        c_end = _to_utc(self.cohort_end)
+
+        if opens and current_time < opens:
+            return "upcoming"
+        if closes and current_time > closes:
+            return "closed"
+        if c_end and current_time > c_end:
+            return "closed"
+        return "open"
+
+    def to_dict(self, now=None):
+        current_time = now or datetime.now(timezone.utc)
+
+        def _iso(dt):
+            if not dt:
+                return None
+            return dt.isoformat() if not dt.tzinfo else dt.isoformat()
+
+        status = self.compute_status(now=current_time)
+        reason = None
+        if status == "upcoming":
+            reason = "applications_not_open"
+        elif status == "closed":
+            reason = "application_window_closed"
+
+        return {
+            "id": self.id,
+            "course_id": self.course_id,
+            "status": status,
+            "reason": reason,
+            "cohort_label": self.cohort_label,
+            "opens_at": _iso(self.opens_at),
+            "closes_at": _iso(self.closes_at),
+            "cohort_start": _iso(self.cohort_start),
+            "cohort_end": _iso(self.cohort_end),
+            "status_override": self.status_override,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 
 class Module(db.Model):
     __tablename__ = 'modules'
@@ -217,6 +396,17 @@ class Enrollment(db.Model):
     progress = db.Column(db.Float, default=0.0) # Percentage completion, 0.0 to 1.0
     completed_at = db.Column(db.DateTime, nullable=True)
     
+    # ── Cohort separation ──
+    application_window_id = db.Column(
+        db.Integer, db.ForeignKey('application_windows.id'), nullable=True
+    )
+    application_id = db.Column(
+        db.Integer, db.ForeignKey('course_applications.id'), nullable=True
+    )
+    cohort_label = db.Column(db.String(120), nullable=True)
+    cohort_start_date = db.Column(db.DateTime, nullable=True)
+    cohort_end_date = db.Column(db.DateTime, nullable=True)
+
     # Enrollment status and termination tracking
     status = db.Column(db.String(20), default='active')  # 'active', 'completed', 'terminated', 'suspended'
     terminated_at = db.Column(db.DateTime, nullable=True)
@@ -225,9 +415,14 @@ class Enrollment(db.Model):
 
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('enrollments', lazy='dynamic'))
     terminator = db.relationship('User', foreign_keys=[terminated_by])
+    application_window = db.relationship('ApplicationWindow', backref=db.backref('enrollments', lazy='dynamic'))
+    application = db.relationship('CourseApplication', foreign_keys=[application_id], backref=db.backref('enrollment', uselist=False))
     # Course relationship is already defined in Course model via backref
 
-    __table_args__ = (db.UniqueConstraint('student_id', 'course_id', name='_student_course_uc'),)
+    __table_args__ = (
+        # Allow same student in different cohorts of the same course
+        db.UniqueConstraint('student_id', 'course_id', 'application_window_id', name='_student_course_cohort_uc'),
+    )
 
     def __repr__(self):
         return f'<Enrollment User {self.student_id} in Course {self.course_id}>'
@@ -276,6 +471,10 @@ class Enrollment(db.Model):
                 'full_name': f"{self.student.first_name} {self.student.last_name}".strip() if self.student.first_name or self.student.last_name else self.student.username
             }
         
+        window_data = None
+        if self.application_window:
+            window_data = self.application_window.to_dict()
+
         return {
             'id': self.id,
             'student_id': self.student_id,
@@ -290,7 +489,14 @@ class Enrollment(db.Model):
             'terminated_by': self.terminated_by,
             'student_username': self.student.username if self.student else None,
             'student': student_data,
-            'course_title': self.course.title if self.course else None
+            'course_title': self.course.title if self.course else None,
+            # ── Cohort fields ──
+            'cohort_label': self.cohort_label,
+            'cohort_start_date': self.cohort_start_date.isoformat() if self.cohort_start_date else None,
+            'cohort_end_date': self.cohort_end_date.isoformat() if self.cohort_end_date else None,
+            'application_window_id': self.application_window_id,
+            'application_id': self.application_id,
+            'application_window': window_data,
         }
 
 class Quiz(db.Model):

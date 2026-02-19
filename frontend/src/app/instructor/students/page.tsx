@@ -22,6 +22,18 @@ interface StudentWithCourse extends User {
   status?: 'excellent' | 'good' | 'average' | 'struggling' | 'inactive';
   modules_completed?: number;
   total_modules?: number;
+  // Cohort separation
+  cohort_label?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  application_window_id?: number | null;
+}
+
+interface CohortInfo {
+  id: number | null;
+  cohort_label: string | null;
+  status: string;
+  student_count: number;
 }
 
 const StudentsPage = () => {
@@ -29,6 +41,8 @@ const StudentsPage = () => {
   const [students, setStudents] = useState<StudentWithCourse[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selectedCourse, setSelectedCourse] = useState<string>('all');
+  const [selectedCohort, setSelectedCohort] = useState<string>('all');
+  const [cohorts, setCohorts] = useState<CohortInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -96,9 +110,40 @@ const StudentsPage = () => {
       student.email.toLowerCase().includes(searchTerm.toLowerCase());
     
     const matchesCourse = selectedCourse === 'all' || student.course_title === selectedCourse;
+    const matchesCohort = selectedCohort === 'all' || (student.cohort_label || '') === selectedCohort;
     
-    return matchesSearch && matchesCourse;
+    return matchesSearch && matchesCourse && matchesCohort;
   }) : [];
+
+  // Load cohorts when course selection changes
+  useEffect(() => {
+    const loadCohorts = async () => {
+      if (selectedCourse === 'all') {
+        // Collect unique cohort labels from all students
+        const labels = new Set(students.map(s => s.cohort_label).filter(Boolean));
+        setCohorts(Array.from(labels).map(label => ({
+          id: null,
+          cohort_label: label!,
+          status: 'unknown',
+          student_count: students.filter(s => s.cohort_label === label).length,
+        })));
+        return;
+      }
+      const matchingCourse = courses.find(c => c.title === selectedCourse);
+      if (!matchingCourse) {
+        setCohorts([]);
+        return;
+      }
+      try {
+        const cohortData = await InstructorService.getCourseCohorts(matchingCourse.id);
+        setCohorts(Array.isArray(cohortData) ? cohortData : []);
+      } catch {
+        setCohorts([]);
+      }
+    };
+    loadCohorts();
+    setSelectedCohort('all');
+  }, [selectedCourse, courses, students]);
 
   const handleUnenrollClick = (student: StudentWithCourse) => {
     setShowConfirmDialog({ show: true, student });
@@ -210,7 +255,7 @@ const StudentsPage = () => {
         <TabsContent value="overview" className="space-y-6">
           {/* Student List - existing content */}
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div>
                 <label htmlFor="search" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                   <Search className="w-4 h-4 inline mr-1" />
@@ -243,6 +288,24 @@ const StudentsPage = () => {
                   ))}
                 </select>
               </div>
+              <div>
+                <label htmlFor="cohort-filter" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Filter by Cohort
+                </label>
+                <select
+                  id="cohort-filter"
+                  value={selectedCohort}
+                  onChange={(e) => setSelectedCohort(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                >
+                  <option value="all">All Cohorts</option>
+                  {cohorts.map((cohort, idx) => (
+                    <option key={cohort.id ?? `cohort-${idx}`} value={cohort.cohort_label || ''}>
+                      {cohort.cohort_label || 'No cohort'} ({cohort.student_count} students)
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -264,6 +327,9 @@ const StudentsPage = () => {
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         Course
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                        Cohort
                       </th>
                       <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                         Enrolled
@@ -311,6 +377,15 @@ const StudentsPage = () => {
                       <div className="text-sm text-slate-900 dark:text-white">
                         {student.course_title || 'Unknown Course'}
                       </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {student.cohort_label ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+                          {student.cohort_label}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-slate-500 dark:text-slate-400">

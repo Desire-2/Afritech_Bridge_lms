@@ -55,6 +55,8 @@ class CourseApplicationService extends BaseApiService {
     // Basic filters
     status?: string;
     course_id?: number;
+    cohort_label?: string;
+    application_window_id?: number | string;
     page?: number;
     per_page?: number;
     
@@ -166,9 +168,15 @@ class CourseApplicationService extends BaseApiService {
   /**
    * Get application statistics (Admin only)
    */
-  async getStatistics(course_id?: number): Promise<ApplicationStatistics> {
-    const params = course_id ? { course_id } : {};
-    return this.get(`${this.BASE_PATH}/statistics`, { params });
+  async getStatistics(params?: {
+    course_id?: number;
+    cohort_label?: string;
+    application_window_id?: number | string;
+  }): Promise<ApplicationStatistics> {
+    const cleanParams = params
+      ? Object.fromEntries(Object.entries(params).filter(([_, v]) => v !== undefined && v !== ''))
+      : {};
+    return this.get(`${this.BASE_PATH}/statistics`, { params: cleanParams });
   }
 
   /**
@@ -362,13 +370,20 @@ class CourseApplicationService extends BaseApiService {
   /**
    * Download applications as CSV (Admin only)
    */
-  async downloadExport(status?: string, course_id?: string): Promise<void> {
-    const params = new URLSearchParams();
-    if (status) params.append('status', status);
-    if (course_id) params.append('course_id', course_id);
+  async downloadExport(params?: {
+    status?: string;
+    course_id?: string;
+    cohort_label?: string;
+    application_window_id?: number | string;
+  }): Promise<void> {
+    const urlParams = new URLSearchParams();
+    if (params?.status) urlParams.append('status', params.status);
+    if (params?.course_id) urlParams.append('course_id', params.course_id);
+    if (params?.cohort_label) urlParams.append('cohort_label', params.cohort_label);
+    if (params?.application_window_id) urlParams.append('application_window_id', params.application_window_id.toString());
 
     const token = this.getToken();
-    const exportUrl = `${this.api.defaults.baseURL}${this.BASE_PATH}/export?${params.toString()}&token=${token}`;
+    const exportUrl = `${this.api.defaults.baseURL}${this.BASE_PATH}/export?${urlParams.toString()}&token=${token}`;
     
     // Open in new window to trigger download
     window.open(exportUrl, '_blank');
@@ -425,13 +440,18 @@ class CourseApplicationService extends BaseApiService {
   }
 
   /**
-   * Get courses for filtering dropdown (Admin/Instructor)
+   * Get courses for filtering dropdown with application windows (Admin/Instructor)
    */
   async getCoursesForFiltering(): Promise<{
     courses: Array<{
       id: number;
       title: string;
       applications_count: number;
+      application_windows?: Array<any>;
+      no_window_applications_count?: number;
+      cohort_label?: string;
+      cohort_start_date?: string;
+      cohort_end_date?: string;
     }>;
   }> {
     return this.get(`${this.BASE_PATH}/courses`);

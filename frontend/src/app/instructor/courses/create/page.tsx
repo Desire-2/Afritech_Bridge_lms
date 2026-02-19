@@ -20,7 +20,13 @@ const CreateCoursePage = () => {
     description: '',
     learning_objectives: '',
     target_audience: '',
-    estimated_duration: ''
+    estimated_duration: '',
+    application_start_date: null,
+    application_end_date: null,
+    cohort_start_date: null,
+    cohort_end_date: null,
+    cohort_label: '',
+    application_timezone: 'UTC'
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
@@ -52,7 +58,17 @@ const CreateCoursePage = () => {
     setError(null);
 
     try {
-      const course = await CourseService.createCourse(formData);
+      const payload: CreateCourseRequest = {
+        ...formData,
+        application_start_date: formData.application_start_date || null,
+        application_end_date: formData.application_end_date || null,
+        cohort_start_date: formData.cohort_start_date || null,
+        cohort_end_date: formData.cohort_end_date || null,
+        cohort_label: formData.cohort_label || null,
+        application_timezone: formData.application_timezone || 'UTC'
+      };
+
+      const course = await CourseService.createCourse(payload);
       router.push(`/instructor/courses/${course.id}`);
     } catch (err: any) {
       console.error('Create course error:', err);
@@ -186,6 +202,90 @@ const CreateCoursePage = () => {
                 className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
                 placeholder="e.g., 6 weeks, 40 hours"
               />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="application_start_date" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Application Opens
+                </label>
+                <input
+                  type="date"
+                  id="application_start_date"
+                  name="application_start_date"
+                  value={formData.application_start_date || ''}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label htmlFor="application_end_date" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Application Deadline
+                </label>
+                <input
+                  type="date"
+                  id="application_end_date"
+                  name="application_end_date"
+                  value={formData.application_end_date || ''}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label htmlFor="cohort_start_date" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Cohort Start
+                </label>
+                <input
+                  type="date"
+                  id="cohort_start_date"
+                  name="cohort_start_date"
+                  value={formData.cohort_start_date || ''}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label htmlFor="cohort_end_date" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Cohort End
+                </label>
+                <input
+                  type="date"
+                  id="cohort_end_date"
+                  name="cohort_end_date"
+                  value={formData.cohort_end_date || ''}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label htmlFor="cohort_label" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Cohort Label
+                </label>
+                <input
+                  type="text"
+                  id="cohort_label"
+                  name="cohort_label"
+                  value={formData.cohort_label || ''}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                  placeholder="e.g., January 2025 Cohort"
+                />
+              </div>
+              <div>
+                <label htmlFor="application_timezone" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Application Timezone
+                </label>
+                <input
+                  type="text"
+                  id="application_timezone"
+                  name="application_timezone"
+                  value={formData.application_timezone || ''}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                  placeholder="UTC"
+                />
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Used to determine application window timing.</p>
+              </div>
             </div>
           </div>
         </div>

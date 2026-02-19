@@ -130,11 +130,14 @@ export class InstructorService {
   }
 
   // Get students enrolled in instructor's courses
-  static async getMyStudents(courseId?: number): Promise<User[]> {
+  static async getMyStudents(courseId?: number, cohortId?: number, cohortLabel?: string): Promise<User[]> {
     try {
-      const url = courseId 
-        ? `${this.BASE_PATH}/students?course_id=${courseId}`
-        : `${this.BASE_PATH}/students`;
+      const params = new URLSearchParams();
+      if (courseId) params.set('course_id', String(courseId));
+      if (cohortId) params.set('cohort_id', String(cohortId));
+      if (cohortLabel) params.set('cohort_label', cohortLabel);
+      const qs = params.toString();
+      const url = `${this.BASE_PATH}/students${qs ? `?${qs}` : ''}`;
       const response = await apiClient.get(url);
       return response.data;
     } catch (error) {
@@ -143,9 +146,23 @@ export class InstructorService {
   }
 
   // Get course enrollments for instructor
-  static async getCourseEnrollments(courseId: number): Promise<Enrollment[]> {
+  static async getCourseEnrollments(courseId: number, cohortId?: number, cohortLabel?: string): Promise<Enrollment[]> {
     try {
-      const response = await apiClient.get(`${this.BASE_PATH}/courses/${courseId}/enrollments`);
+      const params = new URLSearchParams();
+      if (cohortId) params.set('cohort_id', String(cohortId));
+      if (cohortLabel) params.set('cohort_label', cohortLabel);
+      const qs = params.toString();
+      const response = await apiClient.get(`${this.BASE_PATH}/courses/${courseId}/enrollments${qs ? `?${qs}` : ''}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // Get cohorts for a specific course
+  static async getCourseCohorts(courseId: number): Promise<any[]> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/courses/${courseId}/cohorts`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

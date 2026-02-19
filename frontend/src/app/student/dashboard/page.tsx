@@ -333,6 +333,11 @@ const StudentDashboardOverviewPage = () => {
                                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                                     {course.instructor_name}
                                   </p>
+                                  {course.cohort_label && (
+                                    <span className="inline-flex items-center px-2 py-0.5 mt-1 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                      {course.cohort_label}
+                                    </span>
+                                  )}
                                 </div>
                                 <Badge variant="outline" className="ml-2">
                                   {Math.round(course.progress)}%
