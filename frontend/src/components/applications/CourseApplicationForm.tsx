@@ -22,17 +22,323 @@ interface CourseApplicationFormProps {
   onCancel?: () => void;
 }
 
-const EXCEL_TASKS = [
-  { value: 'basic_formulas', label: 'Basic Formulas (SUM, AVERAGE, COUNT)' },
-  { value: 'vlookup_hlookup', label: 'VLOOKUP / HLOOKUP' },
-  { value: 'pivot_tables', label: 'Pivot Tables' },
-  { value: 'charts_graphs', label: 'Charts and Graphs' },
-  { value: 'conditional_formatting', label: 'Conditional Formatting' },
-  { value: 'data_validation', label: 'Data Validation' },
-  { value: 'macros_vba', label: 'Macros / VBA' },
-  { value: 'power_query', label: 'Power Query' },
-  { value: 'dashboard_creation', label: 'Dashboard Creation' },
-];
+// ============== Course-specific skill configurations ==============
+interface CourseSkillConfig {
+  subjectName: string;
+  shortName: string;
+  sectionTitle: string;
+  sectionDesc: string;
+  hasUsedQuestion: string;
+  skillLevelLabel: string;
+  skillLevelPlaceholder: string;
+  skillLevels: { value: string; label: string }[];
+  tasksLabel: string;
+  tasks: { value: string; label: string }[];
+  motivationPlaceholder: string;
+  learningOutcomesPlaceholder: string;
+  careerImpactLabel: string;
+  careerImpactPlaceholder: string;
+  careerImpactHelperText: string;
+}
+
+function getCourseSkillConfig(courseTitle?: string): CourseSkillConfig {
+  const title = (courseTitle || '').toLowerCase();
+
+  // ---------- Excel / Spreadsheet courses ----------
+  if (title.includes('excel') || title.includes('spreadsheet')) {
+    return {
+      subjectName: 'Microsoft Excel',
+      shortName: 'Excel',
+      sectionTitle: 'Excel & Computer Skills',
+      sectionDesc: 'Current skill assessment',
+      hasUsedQuestion: 'Have you used Microsoft Excel before?',
+      skillLevelLabel: 'Your Excel Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current Excel skill level?',
+      skillLevels: [
+        { value: 'never_used', label: 'Never Used Excel' },
+        { value: 'beginner', label: 'Beginner (Basic navigation)' },
+        { value: 'intermediate', label: 'Intermediate (Formulas, charts)' },
+        { value: 'advanced', label: 'Advanced (Pivot tables, VLOOKUP)' },
+        { value: 'expert', label: 'Expert (Macros, Power Query)' },
+      ],
+      tasksLabel: 'Which Excel tasks have you done before?',
+      tasks: [
+        { value: 'basic_formulas', label: 'Basic Formulas (SUM, AVERAGE, COUNT)' },
+        { value: 'vlookup_hlookup', label: 'VLOOKUP / HLOOKUP' },
+        { value: 'pivot_tables', label: 'Pivot Tables' },
+        { value: 'charts_graphs', label: 'Charts and Graphs' },
+        { value: 'conditional_formatting', label: 'Conditional Formatting' },
+        { value: 'data_validation', label: 'Data Validation' },
+        { value: 'macros_vba', label: 'Macros / VBA' },
+        { value: 'power_query', label: 'Power Query' },
+        { value: 'dashboard_creation', label: 'Dashboard Creation' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in Excel Mastery... Share your story, your challenges, and what drives you to learn this skill.',
+      learningOutcomesPlaceholder: 'E.g., Get a promotion, start a data analytics business, pass Excel certification, build financial models...',
+      careerImpactLabel: 'How will Excel skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you analyze data better? Make reports? Automate tasks? Scale your business?',
+      careerImpactHelperText: 'Connect Excel to your professional growth',
+    };
+  }
+
+  // ---------- Python / Programming courses ----------
+  if (title.includes('python') || title.includes('programming') || title.includes('coding')) {
+    return {
+      subjectName: 'Python Programming',
+      shortName: 'Python',
+      sectionTitle: 'Programming Skills',
+      sectionDesc: 'Current programming experience',
+      hasUsedQuestion: 'Have you written code in any programming language before?',
+      skillLevelLabel: 'Your Programming Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current programming skills?',
+      skillLevels: [
+        { value: 'never_used', label: 'Never Written Code' },
+        { value: 'beginner', label: 'Beginner (Hello World, basic syntax)' },
+        { value: 'intermediate', label: 'Intermediate (Functions, loops, conditionals)' },
+        { value: 'advanced', label: 'Advanced (OOP, libraries, APIs)' },
+        { value: 'expert', label: 'Expert (Frameworks, deployment, testing)' },
+      ],
+      tasksLabel: 'Which programming tasks have you done before?',
+      tasks: [
+        { value: 'basic_syntax', label: 'Basic Syntax & Variables' },
+        { value: 'functions', label: 'Functions & Methods' },
+        { value: 'data_structures', label: 'Lists, Dictionaries & Data Structures' },
+        { value: 'file_io', label: 'File Reading / Writing' },
+        { value: 'oop', label: 'Object-Oriented Programming' },
+        { value: 'web_scraping', label: 'Web Scraping' },
+        { value: 'api_integration', label: 'API Integration' },
+        { value: 'database', label: 'Database Operations' },
+        { value: 'automation', label: 'Task Automation Scripts' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in learning Python... What problems do you want to solve? What projects do you dream of building?',
+      learningOutcomesPlaceholder: 'E.g., Build web applications, automate tasks, analyze data, transition into tech, create AI projects...',
+      careerImpactLabel: 'How will programming skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you automate work? Build products? Transition to a tech career? Start a business?',
+      careerImpactHelperText: 'Connect programming skills to your professional growth',
+    };
+  }
+
+  // ---------- Data Science / Analytics courses ----------
+  if (title.includes('data science') || title.includes('data analy') || title.includes('analytics') || title.includes('machine learning') || title.includes('ai ') || title.includes('artificial intelligence')) {
+    return {
+      subjectName: 'Data Science & Analytics',
+      shortName: 'Data Science',
+      sectionTitle: 'Data & Analytics Skills',
+      sectionDesc: 'Current technical experience',
+      hasUsedQuestion: 'Have you worked with data analysis tools before?',
+      skillLevelLabel: 'Your Data Analysis Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current data skills?',
+      skillLevels: [
+        { value: 'never_used', label: 'No Data Analysis Experience' },
+        { value: 'beginner', label: 'Beginner (Basic spreadsheets)' },
+        { value: 'intermediate', label: 'Intermediate (SQL, basic statistics)' },
+        { value: 'advanced', label: 'Advanced (Python/R, visualizations)' },
+        { value: 'expert', label: 'Expert (ML models, big data tools)' },
+      ],
+      tasksLabel: 'Which data-related tasks have you done before?',
+      tasks: [
+        { value: 'spreadsheet_analysis', label: 'Spreadsheet Analysis (Excel/Google Sheets)' },
+        { value: 'sql_queries', label: 'SQL Queries & Databases' },
+        { value: 'data_cleaning', label: 'Data Cleaning & Preparation' },
+        { value: 'data_visualization', label: 'Data Visualization (Charts, Dashboards)' },
+        { value: 'statistics', label: 'Statistical Analysis' },
+        { value: 'python_r', label: 'Python or R for Data Analysis' },
+        { value: 'machine_learning', label: 'Machine Learning Models' },
+        { value: 'bi_tools', label: 'BI Tools (Power BI, Tableau)' },
+        { value: 'reporting', label: 'Report Writing & Presentation' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in data science... What data problems fascinate you? What insights do you want to uncover?',
+      learningOutcomesPlaceholder: 'E.g., Become a data analyst, build ML models, make data-driven decisions, start a consulting business...',
+      careerImpactLabel: 'How will data skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you make better decisions? Find patterns in data? Build predictive models?',
+      careerImpactHelperText: 'Connect data skills to your professional growth',
+    };
+  }
+
+  // ---------- Web Development courses ----------
+  if (title.includes('web') || title.includes('frontend') || title.includes('front-end') || title.includes('backend') || title.includes('back-end') || title.includes('fullstack') || title.includes('full-stack') || title.includes('javascript') || title.includes('react') || title.includes('next')) {
+    return {
+      subjectName: 'Web Development',
+      shortName: 'Web Dev',
+      sectionTitle: 'Web Development Skills',
+      sectionDesc: 'Current development experience',
+      hasUsedQuestion: 'Have you built websites or web applications before?',
+      skillLevelLabel: 'Your Web Development Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current web development skills?',
+      skillLevels: [
+        { value: 'never_used', label: 'No Web Development Experience' },
+        { value: 'beginner', label: 'Beginner (Basic HTML/CSS)' },
+        { value: 'intermediate', label: 'Intermediate (JavaScript, responsive design)' },
+        { value: 'advanced', label: 'Advanced (Frameworks, APIs, databases)' },
+        { value: 'expert', label: 'Expert (Full-stack, deployment, DevOps)' },
+      ],
+      tasksLabel: 'Which web development tasks have you done before?',
+      tasks: [
+        { value: 'html_css', label: 'HTML & CSS Layouts' },
+        { value: 'javascript', label: 'JavaScript / TypeScript' },
+        { value: 'responsive_design', label: 'Responsive Design' },
+        { value: 'frontend_framework', label: 'Frontend Frameworks (React, Vue, Angular)' },
+        { value: 'backend_dev', label: 'Backend Development (Node, Python, PHP)' },
+        { value: 'database', label: 'Database Design (SQL, MongoDB)' },
+        { value: 'api_development', label: 'REST or GraphQL APIs' },
+        { value: 'deployment', label: 'Deployment & Hosting' },
+        { value: 'version_control', label: 'Git & Version Control' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in web development... What kind of websites or apps do you dream of building?',
+      learningOutcomesPlaceholder: 'E.g., Build portfolio sites, create web apps, freelance as a developer, get hired as a web developer...',
+      careerImpactLabel: 'How will web development skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you build your own products? Freelance? Get a developer job? Launch a startup?',
+      careerImpactHelperText: 'Connect web development to your professional growth',
+    };
+  }
+
+  // ---------- Design / UI/UX courses ----------
+  if (title.includes('design') || title.includes('ui') || title.includes('ux') || title.includes('graphic') || title.includes('figma')) {
+    return {
+      subjectName: 'Design',
+      shortName: 'Design',
+      sectionTitle: 'Design Skills',
+      sectionDesc: 'Current design experience',
+      hasUsedQuestion: 'Have you used design tools before?',
+      skillLevelLabel: 'Your Design Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current design skills?',
+      skillLevels: [
+        { value: 'never_used', label: 'No Design Experience' },
+        { value: 'beginner', label: 'Beginner (Basic tools usage)' },
+        { value: 'intermediate', label: 'Intermediate (Layouts, typography, color)' },
+        { value: 'advanced', label: 'Advanced (Prototyping, user research)' },
+        { value: 'expert', label: 'Expert (Design systems, complex interactions)' },
+      ],
+      tasksLabel: 'Which design tasks have you done before?',
+      tasks: [
+        { value: 'graphic_design', label: 'Graphic Design (Posters, Social Media)' },
+        { value: 'ui_design', label: 'UI Design (Mobile or Web)' },
+        { value: 'prototyping', label: 'Prototyping & Wireframing' },
+        { value: 'user_research', label: 'User Research & Testing' },
+        { value: 'figma_sketch', label: 'Figma, Sketch, or Adobe XD' },
+        { value: 'branding', label: 'Branding & Logo Design' },
+        { value: 'motion_design', label: 'Motion Design & Animation' },
+        { value: 'design_systems', label: 'Design Systems & Components' },
+        { value: 'print_design', label: 'Print Design & Layouts' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in design... What kind of products or experiences do you want to create?',
+      learningOutcomesPlaceholder: 'E.g., Design mobile apps, create brand identities, become a UX designer, build a design portfolio...',
+      careerImpactLabel: 'How will design skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you create better products? Start a design agency? Improve user experiences?',
+      careerImpactHelperText: 'Connect design skills to your professional growth',
+    };
+  }
+
+  // ---------- Digital Marketing courses ----------
+  if (title.includes('marketing') || title.includes('seo') || title.includes('social media') || title.includes('digital marketing')) {
+    return {
+      subjectName: 'Digital Marketing',
+      shortName: 'Marketing',
+      sectionTitle: 'Marketing Skills',
+      sectionDesc: 'Current marketing experience',
+      hasUsedQuestion: 'Have you worked with digital marketing tools or campaigns before?',
+      skillLevelLabel: 'Your Digital Marketing Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current marketing skills?',
+      skillLevels: [
+        { value: 'never_used', label: 'No Marketing Experience' },
+        { value: 'beginner', label: 'Beginner (Personal social media)' },
+        { value: 'intermediate', label: 'Intermediate (Managed business pages)' },
+        { value: 'advanced', label: 'Advanced (Paid ads, analytics, campaigns)' },
+        { value: 'expert', label: 'Expert (Strategy, automation, multi-channel)' },
+      ],
+      tasksLabel: 'Which marketing tasks have you done before?',
+      tasks: [
+        { value: 'social_media', label: 'Social Media Management' },
+        { value: 'content_creation', label: 'Content Creation (Blog, Video)' },
+        { value: 'email_marketing', label: 'Email Marketing Campaigns' },
+        { value: 'seo', label: 'Search Engine Optimization (SEO)' },
+        { value: 'paid_ads', label: 'Paid Advertising (Google, Facebook)' },
+        { value: 'analytics', label: 'Web Analytics & Reports' },
+        { value: 'copywriting', label: 'Copywriting & Messaging' },
+        { value: 'marketing_strategy', label: 'Marketing Strategy & Planning' },
+        { value: 'community_building', label: 'Community Building & Engagement' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in digital marketing... What brands or campaigns inspire you? What audience do you want to reach?',
+      learningOutcomesPlaceholder: 'E.g., Grow a brand online, run paid ad campaigns, become a marketing specialist, increase business revenue...',
+      careerImpactLabel: 'How will marketing skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you grow a brand? Attract customers? Start a marketing agency? Get hired?',
+      careerImpactHelperText: 'Connect marketing skills to your professional growth',
+    };
+  }
+
+  // ---------- Project Management courses ----------
+  if (title.includes('project management') || title.includes('agile') || title.includes('scrum') || title.includes('pmp')) {
+    return {
+      subjectName: 'Project Management',
+      shortName: 'Project Mgmt',
+      sectionTitle: 'Project Management Skills',
+      sectionDesc: 'Current management experience',
+      hasUsedQuestion: 'Have you managed projects or teams before?',
+      skillLevelLabel: 'Your Project Management Skill Level',
+      skillLevelPlaceholder: 'How would you rate your current project management skills?',
+      skillLevels: [
+        { value: 'never_used', label: 'No Project Management Experience' },
+        { value: 'beginner', label: 'Beginner (Managed personal tasks)' },
+        { value: 'intermediate', label: 'Intermediate (Led small projects)' },
+        { value: 'advanced', label: 'Advanced (Multi-team coordination)' },
+        { value: 'expert', label: 'Expert (Certified, large-scale projects)' },
+      ],
+      tasksLabel: 'Which project management activities have you done before?',
+      tasks: [
+        { value: 'task_planning', label: 'Task Planning & Scheduling' },
+        { value: 'team_coordination', label: 'Team Coordination' },
+        { value: 'budgeting', label: 'Budget Management' },
+        { value: 'risk_management', label: 'Risk Assessment & Mitigation' },
+        { value: 'agile_scrum', label: 'Agile / Scrum Methodology' },
+        { value: 'stakeholder_mgmt', label: 'Stakeholder Communication' },
+        { value: 'project_tools', label: 'PM Tools (Jira, Trello, MS Project)' },
+        { value: 'reporting', label: 'Progress Reporting & KPIs' },
+        { value: 'resource_allocation', label: 'Resource Allocation' },
+      ],
+      motivationPlaceholder: 'Tell us what sparked your interest in project management... What types of projects do you want to lead?',
+      learningOutcomesPlaceholder: 'E.g., Get PMP certified, lead cross-functional teams, improve delivery timelines, start a consulting practice...',
+      careerImpactLabel: 'How will project management skills help your career or business?',
+      careerImpactPlaceholder: 'Think about the real-world impact... Will it help you lead teams? Deliver projects on time? Get promoted? Start a PMO?',
+      careerImpactHelperText: 'Connect project management to your professional growth',
+    };
+  }
+
+  // ---------- Generic / Fallback for any other course ----------
+  const displayName = courseTitle || 'this subject';
+  return {
+    subjectName: displayName,
+    shortName: displayName.split(':')[0].split('–')[0].trim().substring(0, 30),
+    sectionTitle: 'Subject Skills Assessment',
+    sectionDesc: 'Current skill assessment',
+    hasUsedQuestion: `Do you have prior experience with ${displayName}?`,
+    skillLevelLabel: 'Your Current Skill Level',
+    skillLevelPlaceholder: `How would you rate your current skill level in ${displayName}?`,
+    skillLevels: [
+      { value: 'never_used', label: 'No Prior Experience' },
+      { value: 'beginner', label: 'Beginner (Familiar with basics)' },
+      { value: 'intermediate', label: 'Intermediate (Some hands-on experience)' },
+      { value: 'advanced', label: 'Advanced (Comfortable with complex tasks)' },
+      { value: 'expert', label: 'Expert (Professional-level proficiency)' },
+    ],
+    tasksLabel: 'Which related tasks or activities have you done before?',
+    tasks: [
+      { value: 'basic_concepts', label: 'Basic Concepts & Fundamentals' },
+      { value: 'hands_on_practice', label: 'Hands-on Practice & Exercises' },
+      { value: 'small_projects', label: 'Completed Small Projects' },
+      { value: 'online_courses', label: 'Taken Online Courses / Tutorials' },
+      { value: 'certification', label: 'Earned a Related Certification' },
+      { value: 'professional_use', label: 'Used Professionally at Work' },
+      { value: 'taught_others', label: 'Taught or Mentored Others' },
+      { value: 'self_study', label: 'Self-Study (Books, Videos)' },
+      { value: 'community_participation', label: 'Participated in Communities / Forums' },
+    ],
+    motivationPlaceholder: `Tell us what sparked your interest in ${displayName}... Share your story, your challenges, and what drives you to learn.`,
+    learningOutcomesPlaceholder: 'E.g., Gain certification, advance in career, start a business, build portfolio projects...',
+    careerImpactLabel: `How will mastering ${displayName} help your career or business?`,
+    careerImpactPlaceholder: 'Think about the real-world impact on your career, business, or personal goals...',
+    careerImpactHelperText: 'Connect this skill to your professional growth',
+  };
+}
 
 const TIME_SLOTS = [
   { value: 'morning', label: 'Morning (6AM - 12PM)' },
@@ -618,7 +924,7 @@ export default function CourseApplicationForm({
       case 2:
         return renderEducationBackground();
       case 3:
-        return renderExcelSkills();
+        return renderSkillAssessment();
       case 4:
         return renderLearningGoals();
       case 5:
@@ -942,12 +1248,14 @@ export default function CourseApplicationForm({
     </div>
   );
 
-  const renderExcelSkills = () => (
+  const skillConfig = getCourseSkillConfig(courseTitle || courseData?.title);
+
+  const renderSkillAssessment = () => (
     <div className="space-y-6">
       <div className="bg-emerald-50 border-l-4 border-emerald-600 p-6 rounded-r-xl">
         <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-4">
           <Monitor className="w-6 h-6 text-emerald-600" />
-          Have you used Microsoft Excel before?
+          {skillConfig.hasUsedQuestion}
         </Label>
         <div className="flex items-center space-x-6 mt-3">
           <label className="flex items-center space-x-3 cursor-pointer group">
@@ -976,21 +1284,19 @@ export default function CourseApplicationForm({
       <div>
         <Label htmlFor="excel_skill_level" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
           <TrendingUp className="w-5 h-5 text-emerald-600" />
-          Your Excel Skill Level
+          {skillConfig.skillLevelLabel}
         </Label>
         <Select
           value={formData.excel_skill_level}
           onValueChange={(value) => handleInputChange('excel_skill_level', value)}
         >
           <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-emerald-600 focus:ring-2 focus:ring-emerald-200 text-gray-900">
-            <SelectValue placeholder="How would you rate your current Excel skill level?" className="text-gray-900" />
+            <SelectValue placeholder={skillConfig.skillLevelPlaceholder} className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="never_used">Never Used Excel</SelectItem>
-            <SelectItem value="beginner">Beginner (Basic navigation)</SelectItem>
-            <SelectItem value="intermediate">Intermediate (Formulas, charts)</SelectItem>
-            <SelectItem value="advanced">Advanced (Pivot tables, VLOOKUP)</SelectItem>
-            <SelectItem value="expert">Expert (Macros, Power Query)</SelectItem>
+            {skillConfig.skillLevels.map((level) => (
+              <SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <p className="text-sm text-gray-600 mt-2 ml-1 flex items-center gap-2">
@@ -1003,11 +1309,11 @@ export default function CourseApplicationForm({
         <div className="bg-blue-50 border-2 border-blue-300 p-6 rounded-2xl">
           <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-3">
             <CheckCircle2 className="w-5 h-5 text-blue-600" />
-            Which Excel tasks have you done before?
+            {skillConfig.tasksLabel}
           </Label>
           <p className="text-sm text-gray-700 mb-4">Select all that apply</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {EXCEL_TASKS.map((task) => (
+            {skillConfig.tasks.map((task) => (
               <label 
                 key={task.value} 
                 className="flex items-start space-x-3 p-4 bg-white border-2 border-gray-200 rounded-xl hover:border-blue-400 hover:bg-blue-50 transition-all duration-200 cursor-pointer group"
@@ -1037,7 +1343,7 @@ export default function CourseApplicationForm({
           id="motivation"
           value={formData.motivation}
           onChange={(e) => handleInputChange('motivation', e.target.value)}
-          placeholder="Tell us what sparked your interest in Excel Mastery... Share your story, your challenges, and what drives you to learn this skill."
+          placeholder={skillConfig.motivationPlaceholder}
           rows={5}
           className={`text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 resize-none ${
             validationErrors.motivation 
@@ -1079,7 +1385,7 @@ export default function CourseApplicationForm({
           id="learning_outcomes"
           value={formData.learning_outcomes}
           onChange={(e) => handleInputChange('learning_outcomes', e.target.value)}
-          placeholder="E.g., Get a promotion, start a data analytics business, pass Excel certification, build financial models..."
+          placeholder={skillConfig.learningOutcomesPlaceholder}
           rows={4}
           className="text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-amber-500 focus-visible:ring-amber-200 transition-all duration-300 resize-none"
         />
@@ -1091,18 +1397,18 @@ export default function CourseApplicationForm({
       <div>
         <Label htmlFor="career_impact" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
           <TrendingUp className="w-5 h-5 text-blue-600" />
-          How will Excel skills help your career or business?
+          {skillConfig.careerImpactLabel}
         </Label>
         <Textarea
           id="career_impact"
           value={formData.career_impact}
           onChange={(e) => handleInputChange('career_impact', e.target.value)}
-          placeholder="Think about the real-world impact... Will it help you analyze data better? Make reports? Automate tasks? Scale your business?"
+          placeholder={skillConfig.careerImpactPlaceholder}
           rows={4}
           className="text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-blue-500 focus-visible:ring-blue-200 transition-all duration-300 resize-none"
         />
         <p className="text-sm text-gray-700 mt-2 ml-1">
-          Connect Excel to your professional growth
+          {skillConfig.careerImpactHelperText}
         </p>
       </div>
     </div>
@@ -1537,7 +1843,7 @@ export default function CourseApplicationForm({
   const sectionTitles = [
     { num: 1, title: 'Applicant Information', desc: 'Tell us about yourself', icon: User },
     { num: 2, title: 'Education & Background', desc: 'Your professional journey', icon: GraduationCap },
-    { num: 3, title: 'Excel & Computer Skills', desc: 'Current skill assessment', icon: Monitor },
+    { num: 3, title: skillConfig.sectionTitle, desc: skillConfig.sectionDesc, icon: Monitor },
     { num: 4, title: 'Learning Goals', desc: 'Your vision for the future', icon: Target },
     { num: 5, title: 'Access & Availability', desc: 'Logistics for learning', icon: Clock },
     { num: 6, title: 'Commitment & Agreement', desc: 'Final commitment', icon: Award },

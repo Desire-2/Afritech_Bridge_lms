@@ -27,7 +27,7 @@ def calculate_risk(application):
     elif application.internet_access_type == "mobile_data":
         risk += 5
     
-    # Excel/Digital Skills - 20 points
+    # Subject/Digital Skills - 20 points
     if application.excel_skill_level == "never_used":
         risk += 20
     elif application.excel_skill_level == "beginner":
@@ -65,7 +65,7 @@ def calculate_readiness_score(application):
     if application.internet_access_type == "stable_broadband":
         score += 5
     
-    # Excel Skills & Experience (30 points)
+    # Subject Skills & Experience (30 points)
     excel_skill_map = {
         "expert": 30,
         "advanced": 25,
@@ -75,7 +75,7 @@ def calculate_readiness_score(application):
     }
     score += excel_skill_map.get(application.excel_skill_level or "never_used", 0)
     
-    # Previous Excel Tasks (10 points bonus)
+    # Previous Subject Tasks (10 points bonus)
     if application.excel_tasks_done:
         try:
             tasks = json.loads(application.excel_tasks_done) if isinstance(application.excel_tasks_done, str) else application.excel_tasks_done
@@ -185,7 +185,7 @@ def calculate_application_score(application):
     if application.has_internet:
         score += 10
     
-    # Excel Skills (25 points)
+    # Subject Skills (25 points)
     excel_map = {
         "expert": 25,
         "advanced": 22,
