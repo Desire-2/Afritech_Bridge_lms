@@ -2451,169 +2451,203 @@ const LearningPage = () => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50"
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-0 sm:p-4"
             onClick={() => setShowModuleProgressModal(false)}
           >
             <motion.div
-              initial={{ scale: 0.9, y: 20 }}
+              initial={{ scale: 0.95, y: 40 }}
               animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 20 }}
-              className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md mx-4 shadow-2xl"
+              exit={{ scale: 0.95, y: 40 }}
+              className="bg-gray-900 border border-gray-700/80 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md shadow-2xl max-h-[90vh] sm:max-h-[88vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-yellow-500/20 rounded-lg">
-                    <AlertCircle className="h-6 w-6 text-yellow-500" />
+              {/* Drag handle (mobile only) */}
+              <div className="flex-shrink-0 flex justify-center pt-3 pb-1 sm:hidden">
+                <div className="w-10 h-1 rounded-full bg-gray-600" />
+              </div>
+
+              {/* Scrollable body */}
+              <div className="overflow-y-auto flex-1 px-4 sm:px-6 pb-4 sm:pb-6 pt-2 sm:pt-4">
+                {/* Header */}
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                    <div className="flex-shrink-0 p-2 bg-yellow-500/20 rounded-lg">
+                      <AlertCircle className="h-5 w-5 sm:h-6 sm:w-6 text-yellow-500" />
+                    </div>
+                    <h3 className="text-base sm:text-lg font-bold text-white truncate">Almost There!</h3>
                   </div>
-                  <h3 className="text-lg font-bold text-white">Almost There!</h3>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowModuleProgressModal(false)}
+                    className="flex-shrink-0 ml-2 text-gray-400 hover:text-white hover:bg-gray-800 h-8 w-8 p-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowModuleProgressModal(false)}
-                  className="text-gray-400 hover:text-white hover:bg-gray-800"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
 
-              {/* Module Info */}
-              <div className="mb-4">
-                <p className="text-gray-300 text-sm mb-2">
-                  You've completed all lessons in <span className="text-white font-medium">{moduleProgressInfo.moduleName}</span>!
-                </p>
-                <p className="text-gray-400 text-sm">
-                  To unlock <span className="text-blue-400 font-medium">{moduleProgressInfo.nextModuleName}</span>, you need to reach the passing score.
-                </p>
-              </div>
-
-              {/* Score Progress */}
-              <div className="bg-gray-800/50 rounded-xl p-4 mb-4">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-gray-400 text-sm">Current Module Score</span>
-                  <span className={`font-bold ${moduleProgressInfo.currentScore >= moduleProgressInfo.requiredScore ? 'text-green-400' : 'text-yellow-400'}`}>
-                    {moduleProgressInfo.currentScore.toFixed(1)}%
-                  </span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-3 mb-2">
-                  <div 
-                    className={`h-3 rounded-full transition-all duration-500 ${
-                      moduleProgressInfo.currentScore >= moduleProgressInfo.requiredScore 
-                        ? 'bg-green-500' 
-                        : moduleProgressInfo.currentScore >= 60 
-                          ? 'bg-yellow-500' 
-                          : 'bg-red-500'
-                    }`}
-                    style={{ width: `${Math.min(100, moduleProgressInfo.currentScore)}%` }}
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-gray-500">
-                  <span>0%</span>
-                  <span className="text-green-400">Required: {moduleProgressInfo.requiredScore}%</span>
-                  <span>100%</span>
-                </div>
-              </div>
-
-              {/* Score Breakdown - Dynamic weights */}
-              <div className="mb-4">
-                <h4 className="text-white font-medium text-sm mb-3 flex items-center gap-2">
-                  📊 Score Breakdown
-                  {moduleProgressInfo.assessmentInfo?.isReadingOnly && (
-                    <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Reading Only</span>
-                  )}
-                </h4>
-                <div className="space-y-2">
-                  {/* Reading & Engagement - Always shown */}
-                  {(moduleProgressInfo.weights?.courseContribution || 0) > 0 && (
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-400">📖 Reading & Engagement ({moduleProgressInfo.weights?.courseContribution || 10}%)</span>
-                      <span className={`font-medium ${moduleProgressInfo.breakdown.courseContribution >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {moduleProgressInfo.breakdown.courseContribution.toFixed(0)}%
-                      </span>
-                    </div>
-                  )}
-                  
-                  {/* Quiz Score - Only shown if available */}
-                  {(moduleProgressInfo.weights?.quizzes || 0) > 0 && (
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-400">📝 Quiz Score ({moduleProgressInfo.weights?.quizzes || 30}%)</span>
-                      <span className={`font-medium ${moduleProgressInfo.breakdown.quizzes >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {moduleProgressInfo.breakdown.quizzes.toFixed(0)}%
-                      </span>
-                    </div>
-                  )}
-                  
-                  {/* Assignments - Only shown if available */}
-                  {(moduleProgressInfo.weights?.assignments || 0) > 0 && (
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-400">📋 Assignments ({moduleProgressInfo.weights?.assignments || 40}%)</span>
-                      <span className={`font-medium ${moduleProgressInfo.breakdown.assignments >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {moduleProgressInfo.breakdown.assignments.toFixed(0)}%
-                      </span>
-                    </div>
-                  )}
-                  
-                  {/* Final Assessment - Only shown if available */}
-                  {(moduleProgressInfo.weights?.finalAssessment || 0) > 0 && (
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-400">🎯 Final Assessment ({moduleProgressInfo.weights?.finalAssessment || 20}%)</span>
-                      <span className={`font-medium ${moduleProgressInfo.breakdown.finalAssessment >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {moduleProgressInfo.breakdown.finalAssessment.toFixed(0)}%
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Missing Items */}
-              {moduleProgressInfo.missingItems.length > 0 && (
+                {/* Module Info */}
                 <div className="mb-4">
-                  <h4 className="text-white font-medium text-sm mb-2">🎯 Areas to Improve</h4>
-                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
-                    <ul className="space-y-1">
-                      {moduleProgressInfo.missingItems.map((item, index) => (
-                        <li key={index} className="text-yellow-300 text-sm">{item}</li>
-                      ))}
-                    </ul>
+                  <p className="text-gray-300 text-sm leading-relaxed mb-1.5">
+                    You've completed all lessons in{' '}
+                    <span className="text-white font-semibold break-words">{moduleProgressInfo.moduleName}</span>!
+                  </p>
+                  <p className="text-gray-400 text-sm leading-relaxed">
+                    To unlock{' '}
+                    <span className="text-blue-400 font-medium break-words">{moduleProgressInfo.nextModuleName}</span>
+                    , you need to reach the passing score.
+                  </p>
+                </div>
+
+                {/* Score Progress */}
+                <div className="bg-gray-800/50 rounded-xl p-3 sm:p-4 mb-4 border border-gray-700/50">
+                  <div className="flex justify-between items-center mb-2 gap-2">
+                    <span className="text-gray-400 text-xs sm:text-sm">Current Module Score</span>
+                    <span className={`font-bold text-sm sm:text-base tabular-nums flex-shrink-0 ${moduleProgressInfo.currentScore >= moduleProgressInfo.requiredScore ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {moduleProgressInfo.currentScore.toFixed(1)}%
+                    </span>
+                  </div>
+                  {/* Progress bar with required marker */}
+                  <div className="relative w-full mb-3">
+                    <div className="w-full bg-gray-700 rounded-full h-3">
+                      <div
+                        className={`h-3 rounded-full transition-all duration-500 ${
+                          moduleProgressInfo.currentScore >= moduleProgressInfo.requiredScore
+                            ? 'bg-green-500'
+                            : moduleProgressInfo.currentScore >= 60
+                              ? 'bg-yellow-500'
+                              : 'bg-red-500'
+                        }`}
+                        style={{ width: `${Math.min(100, moduleProgressInfo.currentScore)}%` }}
+                      />
+                    </div>
+                    {/* Required score tick */}
+                    <div
+                      className="absolute top-0 h-3 w-0.5 bg-green-400 rounded-full"
+                      style={{ left: `${moduleProgressInfo.requiredScore}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>0%</span>
+                    <span className="text-green-400 font-medium">Required: {moduleProgressInfo.requiredScore}%</span>
+                    <span>100%</span>
                   </div>
                 </div>
-              )}
 
+                {/* Score Breakdown - Dynamic weights */}
+                <div className="mb-4">
+                  <h4 className="text-white font-semibold text-sm mb-2.5 flex items-center gap-2 flex-wrap">
+                    <span>📊 Score Breakdown</span>
+                    {moduleProgressInfo.assessmentInfo?.isReadingOnly && (
+                      <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full">Reading Only</span>
+                    )}
+                  </h4>
+                  <div className="space-y-2.5 rounded-xl bg-gray-800/40 border border-gray-700/40 px-3 py-2.5">
+                    {/* Reading & Engagement - Always shown */}
+                    {(moduleProgressInfo.weights?.courseContribution || 0) > 0 && (
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                          <span className="flex-shrink-0 text-base leading-none">🖥️</span>
+                          <span className="truncate">Reading & Engagement</span>
+                          <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.courseContribution || 10}%)</span>
+                        </span>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.courseContribution >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {moduleProgressInfo.breakdown.courseContribution.toFixed(0)}%
+                        </span>
+                      </div>
+                    )}
 
-              {/* Tips */}
-              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
-                <h4 className="text-blue-400 font-medium text-sm mb-1">💡 Tips to Improve</h4>
-                <ul className="text-blue-300 text-xs space-y-1">
-                  <li>• Retake quizzes to improve your score</li>
-                  <li>• Complete all assignments with best effort</li>
-                  <li>• Read through lesson content thoroughly</li>
-                  <li>• Take the final assessment when ready</li>
-                </ul>
-              </div>
+                    {/* Quiz Score - Only shown if available */}
+                    {(moduleProgressInfo.weights?.quizzes || 0) > 0 && (
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                          <span className="flex-shrink-0 text-base leading-none">📝</span>
+                          <span className="truncate">Quiz Score</span>
+                          <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.quizzes || 30}%)</span>
+                        </span>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.quizzes >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {moduleProgressInfo.breakdown.quizzes.toFixed(0)}%
+                        </span>
+                      </div>
+                    )}
 
-              {/* Action Buttons */}
-              <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-800"
-                  onClick={() => setShowModuleProgressModal(false)}
-                >
-                  Close
-                </Button>
-                <Button
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
-                  onClick={() => {
-                    setShowModuleProgressModal(false);
-                    // Scroll to top to review content
-                    if (contentRef.current) {
-                      contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-                    }
-                  }}
-                >
-                  Review Content
-                </Button>
+                    {/* Assignments - Only shown if available */}
+                    {(moduleProgressInfo.weights?.assignments || 0) > 0 && (
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                          <span className="flex-shrink-0 text-base leading-none">📋</span>
+                          <span className="truncate">Assignments</span>
+                          <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.assignments || 40}%)</span>
+                        </span>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.assignments >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {moduleProgressInfo.breakdown.assignments.toFixed(0)}%
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Final Assessment - Only shown if available */}
+                    {(moduleProgressInfo.weights?.finalAssessment || 0) > 0 && (
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                          <span className="flex-shrink-0 text-base leading-none">🎯</span>
+                          <span className="truncate">Final Assessment</span>
+                          <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.finalAssessment || 20}%)</span>
+                        </span>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.finalAssessment >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {moduleProgressInfo.breakdown.finalAssessment.toFixed(0)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Missing Items */}
+                {moduleProgressInfo.missingItems.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="text-white font-semibold text-sm mb-2">🎯 Areas to Improve</h4>
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3">
+                      <ul className="space-y-1.5">
+                        {moduleProgressInfo.missingItems.map((item, index) => (
+                          <li key={index} className="text-yellow-300 text-xs sm:text-sm leading-snug">{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tips */}
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 mb-4">
+                  <h4 className="text-blue-400 font-semibold text-sm mb-2">💡 Tips to Improve</h4>
+                  <ul className="text-blue-300 text-xs sm:text-sm space-y-1.5">
+                    <li>• Retake quizzes to improve your score</li>
+                    <li>• Complete all assignments with best effort</li>
+                    <li>• Read through lesson content thoroughly</li>
+                    <li>• Take the final assessment when ready</li>
+                  </ul>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-col-reverse sm:flex-row gap-2.5 sm:gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-gray-600 text-gray-300 hover:bg-gray-800 h-10 sm:h-11 text-sm"
+                    onClick={() => setShowModuleProgressModal(false)}
+                  >
+                    Close
+                  </Button>
+                  <Button
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white h-10 sm:h-11 text-sm"
+                    onClick={() => {
+                      setShowModuleProgressModal(false);
+                      // Scroll to top to review content
+                      if (contentRef.current) {
+                        contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                      }
+                    }}
+                  >
+                    Review Content
+                  </Button>
+                </div>
               </div>
             </motion.div>
           </motion.div>
