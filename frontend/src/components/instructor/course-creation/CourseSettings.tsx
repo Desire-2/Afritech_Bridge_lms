@@ -96,6 +96,23 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [currency, setCurrency] = useState<string>('USD');
   const [savingPayment, setSavingPayment] = useState(false);
 
+  // Enhanced payment settings
+  const [paymentMode, setPaymentMode] = useState<'full' | 'partial'>('full');
+  const [partialPaymentAmount, setPartialPaymentAmount] = useState<number>(0);
+  const [partialPaymentPercentage, setPartialPaymentPercentage] = useState<number>(50);
+  const [partialType, setPartialType] = useState<'amount' | 'percentage'>('percentage');
+  const [paypalEnabled, setPaypalEnabled] = useState(true);
+  const [mobileMoneyEnabled, setMobileMoneyEnabled] = useState(true);
+  const [bankTransferEnabled, setBankTransferEnabled] = useState(false);
+  const [bankTransferDetails, setBankTransferDetails] = useState<string>('');
+  const [stripeEnabled, setStripeEnabled] = useState(false);
+  const [kpayEnabled, setKpayEnabled] = useState(true);
+  const [installmentEnabled, setInstallmentEnabled] = useState(false);
+  const [installmentCount, setInstallmentCount] = useState<number>(3);
+  const [installmentIntervalDays, setInstallmentIntervalDays] = useState<number>(30);
+  const [requirePaymentBeforeApplication, setRequirePaymentBeforeApplication] = useState(false);
+  const [paymentDeadlineDays, setPaymentDeadlineDays] = useState<number>(0);
+
   // Fetch module release status
   const fetchModuleReleaseStatus = async () => {
     if (!token) return;
@@ -138,6 +155,24 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     setPaymentEnabled(course.enrollment_type === 'paid');
     setCoursePrice(course.price ?? 0);
     setCurrency(course.currency || 'USD');
+    // Enhanced payment fields
+    setPaymentMode(course.payment_mode || 'full');
+    setPartialPaymentAmount(course.partial_payment_amount ?? 0);
+    setPartialPaymentPercentage(course.partial_payment_percentage ?? 50);
+    setPartialType(course.partial_payment_amount ? 'amount' : 'percentage');
+    setPaypalEnabled(course.paypal_enabled !== false);
+    setMobileMoneyEnabled(course.mobile_money_enabled !== false);
+    setBankTransferEnabled(course.bank_transfer_enabled === true);
+    setBankTransferDetails(course.bank_transfer_details || '');
+    // Stripe and K-Pay are stored both via payment_methods array and dedicated boolean columns
+    setStripeEnabled(Array.isArray(course.payment_methods) && course.payment_methods.includes('stripe'));
+    // K-Pay: prefer kpay_enabled field; fall back to checking payment_methods or defaulting to true
+    setKpayEnabled(course.kpay_enabled !== false);
+    setInstallmentEnabled(course.installment_enabled === true);
+    setInstallmentCount(course.installment_count ?? 3);
+    setInstallmentIntervalDays(course.installment_interval_days ?? 30);
+    setRequirePaymentBeforeApplication(course.require_payment_before_application === true);
+    setPaymentDeadlineDays(course.payment_deadline_days ?? 0);
     setApplicationStartDate(course.application_start_date ? course.application_start_date.split('T')[0] : '');
     setApplicationEndDate(course.application_end_date ? course.application_end_date.split('T')[0] : '');
     setCohortStartDate(course.cohort_start_date ? course.cohort_start_date.split('T')[0] : '');
@@ -151,11 +186,11 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       setAdditionalCohorts(
         windows.map((w, idx) => ({
           id: (w.id ?? `${course.id}-cohort-${idx}`).toString(),
-          label: w.cohort_label || w.label || w.name || `Cohort ${idx + 1}`,
-          opensAt: (w.opens_at || w.opensAt || '').split('T')[0] || '',
-          closesAt: (w.closes_at || w.closesAt || '').split('T')[0] || '',
-          startDate: (w.cohort_start || w.start_date || w.startDate || '').split('T')[0] || '',
-          endDate: (w.cohort_end || w.end_date || w.endDate || '').split('T')[0] || '',
+          label: w.cohort_label || `Cohort ${idx + 1}`,
+          opensAt: (w.opens_at || '').split('T')[0] || '',
+          closesAt: (w.closes_at || '').split('T')[0] || '',
+          startDate: (w.cohort_start || '').split('T')[0] || '',
+          endDate: (w.cohort_end || '').split('T')[0] || '',
           status: (w.status || 'open') as 'open' | 'upcoming' | 'closed',
         }))
       );
@@ -213,7 +248,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData?.message || 'Failed to save application window');
+        throw new Error((errorData as any)?.message || 'Failed to save application window');
       }
 
       const updatedCourse: Course = await response.json();
@@ -308,15 +343,42 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       return;
     }
 
+    if (paymentEnabled && !paypalEnabled && !mobileMoneyEnabled && !bankTransferEnabled && !stripeEnabled && !kpayEnabled) {
+      setError('Please enable at least one payment method');
+      return;
+    }
+
     setSavingPayment(true);
     setError(null);
     setSuccess(null);
 
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         enrollment_type: paymentEnabled ? 'paid' : 'free',
         price: paymentEnabled ? coursePrice : null,
-        currency: currency || 'USD'
+        currency: currency || 'USD',
+        // Enhanced payment fields
+        payment_mode: paymentEnabled ? paymentMode : 'full',
+        partial_payment_amount: paymentEnabled && paymentMode === 'partial' && partialType === 'amount' ? partialPaymentAmount : null,
+        partial_payment_percentage: paymentEnabled && paymentMode === 'partial' && partialType === 'percentage' ? partialPaymentPercentage : null,
+        paypal_enabled: paypalEnabled,
+        mobile_money_enabled: mobileMoneyEnabled,
+        bank_transfer_enabled: bankTransferEnabled,
+        kpay_enabled: kpayEnabled,
+        bank_transfer_details: bankTransferEnabled ? bankTransferDetails : null,
+        installment_enabled: installmentEnabled,
+        installment_count: installmentEnabled ? installmentCount : null,
+        installment_interval_days: installmentEnabled ? installmentIntervalDays : null,
+        require_payment_before_application: requirePaymentBeforeApplication,
+        payment_deadline_days: paymentDeadlineDays > 0 ? paymentDeadlineDays : null,
+        // Build methods array from toggles
+        payment_methods: [
+          ...(paypalEnabled ? ['paypal'] : []),
+          ...(mobileMoneyEnabled ? ['mobile_money'] : []),
+          ...(bankTransferEnabled ? ['bank_transfer'] : []),
+          ...(stripeEnabled ? ['stripe'] : []),
+          ...(kpayEnabled ? ['kpay'] : []),
+        ],
       };
 
       const response = await fetch(`${API_URL}/courses/${course.id}`, {
@@ -330,7 +392,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData?.message || 'Failed to save payment settings');
+        throw new Error((errorData as any)?.message || 'Failed to save payment settings');
       }
 
       const updatedCourse: Course = await response.json();
@@ -898,17 +960,19 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
             Course Payment Settings
           </CardTitle>
           <CardDescription className="text-slate-600 dark:text-slate-400">
-            Enable paid enrollment and set a course fee
+            Configure pricing, payment methods, and enrollment payment requirements
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+
+          {/* Enable Paid Course */}
           <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
             <div className="space-y-1">
               <Label htmlFor="enable-payment" className="text-base font-medium text-slate-900 dark:text-white">
-                Enable Paid Course
+                Enable Paid Enrollment
               </Label>
               <p className="text-sm text-slate-600 dark:text-slate-400">
-                Turn on payments to require mobile money payment before enrollment
+                Require students to pay before or after submitting their application
               </p>
             </div>
             <Switch
@@ -921,9 +985,11 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           {paymentEnabled && (
             <>
               <Separator />
+
+              {/* Price & Currency */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="course-price" className="text-slate-900 dark:text-white">
+                  <Label htmlFor="course-price" className="text-slate-900 dark:text-white font-semibold">
                     Course Price
                   </Label>
                   <Input
@@ -934,11 +1000,10 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                     onChange={(e) => setCoursePrice(parseFloat(e.target.value) || 0)}
                     className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
                   />
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Set the amount students will pay</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Full course tuition fee</p>
                 </div>
-
                 <div className="space-y-2">
-                  <Label htmlFor="course-currency" className="text-slate-900 dark:text-white">
+                  <Label htmlFor="course-currency" className="text-slate-900 dark:text-white font-semibold">
                     Currency
                   </Label>
                   <Select value={currency} onValueChange={setCurrency}>
@@ -946,18 +1011,285 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                       <SelectValue placeholder="Select currency" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="GHS">GHS</SelectItem>
-                      <SelectItem value="UGX">UGX</SelectItem>
-                      <SelectItem value="RWF">RWF</SelectItem>
-                      <SelectItem value="XOF">XOF</SelectItem>
-                      <SelectItem value="XAF">XAF</SelectItem>
-                      <SelectItem value="KES">KES</SelectItem>
-                      <SelectItem value="ZMW">ZMW</SelectItem>
-                      <SelectItem value="NGN">NGN</SelectItem>
-                      <SelectItem value="TZS">TZS</SelectItem>
+                      <SelectItem value="USD">USD – US Dollar</SelectItem>
+                      <SelectItem value="EUR">EUR – Euro</SelectItem>
+                      <SelectItem value="GBP">GBP – British Pound</SelectItem>
+                      <SelectItem value="GHS">GHS – Ghanaian Cedi</SelectItem>
+                      <SelectItem value="NGN">NGN – Nigerian Naira</SelectItem>
+                      <SelectItem value="KES">KES – Kenyan Shilling</SelectItem>
+                      <SelectItem value="UGX">UGX – Ugandan Shilling</SelectItem>
+                      <SelectItem value="RWF">RWF – Rwandan Franc</SelectItem>
+                      <SelectItem value="ZMW">ZMW – Zambian Kwacha</SelectItem>
+                      <SelectItem value="TZS">TZS – Tanzanian Shilling</SelectItem>
+                      <SelectItem value="XOF">XOF – West African CFA</SelectItem>
+                      <SelectItem value="XAF">XAF – Central African CFA</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Payment Methods */}
+              <div className="space-y-3">
+                <Label className="text-base font-semibold text-slate-900 dark:text-white">
+                  Accepted Payment Methods
+                </Label>
+                <p className="text-sm text-slate-500 dark:text-slate-400">Enable the payment methods students can use to pay for this course</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* PayPal */}
+                  <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${paypalEnabled ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
+                    onClick={() => setPaypalEnabled(!paypalEnabled)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${paypalEnabled ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <CreditCard className={`h-4 w-4 ${paypalEnabled ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-white text-sm">PayPal</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Credit/debit cards & PayPal balance</p>
+                        </div>
+                      </div>
+                      <Switch checked={paypalEnabled} onCheckedChange={setPaypalEnabled} onClick={(e) => e.stopPropagation()} />
+                    </div>
+                    {paypalEnabled && <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">Available worldwide – requires PAYPAL_CLIENT_ID in env</p>}
+                  </div>
+
+                  {/* Mobile Money */}
+                  <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${mobileMoneyEnabled ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
+                    onClick={() => setMobileMoneyEnabled(!mobileMoneyEnabled)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${mobileMoneyEnabled ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <CreditCard className={`h-4 w-4 ${mobileMoneyEnabled ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-white text-sm">MTN Mobile Money</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Mobile wallet payments (Africa)</p>
+                        </div>
+                      </div>
+                      <Switch checked={mobileMoneyEnabled} onCheckedChange={setMobileMoneyEnabled} onClick={(e) => e.stopPropagation()} />
+                    </div>
+                    {mobileMoneyEnabled && <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">Ghana, Nigeria, Uganda, Rwanda, Cameroon, and more</p>}
+                  </div>
+
+                  {/* Stripe / Card */}
+                  <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${stripeEnabled ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
+                    onClick={() => setStripeEnabled(!stripeEnabled)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${stripeEnabled ? 'bg-indigo-600' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <CreditCard className={`h-4 w-4 ${stripeEnabled ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-white text-sm">Stripe / Card</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Credit/debit cards via Stripe</p>
+                        </div>
+                      </div>
+                      <Switch checked={stripeEnabled} onCheckedChange={setStripeEnabled} onClick={(e) => e.stopPropagation()} />
+                    </div>
+                    {stripeEnabled && <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-2">Requires STRIPE_PUBLISHABLE_KEY in env</p>}
+                  </div>
+
+                  {/* K-Pay */}
+                  <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${kpayEnabled ? 'border-violet-500 bg-violet-50 dark:bg-violet-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
+                    onClick={() => setKpayEnabled(!kpayEnabled)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${kpayEnabled ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <CreditCard className={`h-4 w-4 ${kpayEnabled ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-white text-sm">K-Pay <span className="text-xs text-violet-600 font-bold ml-1">Main</span></p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">MTN / Airtel MoMo, Visa, Mastercard, SPENN</p>
+                        </div>
+                      </div>
+                      <Switch checked={kpayEnabled} onCheckedChange={setKpayEnabled} onClick={(e) => e.stopPropagation()} />
+                    </div>
+                    {kpayEnabled && <p className="text-xs text-violet-600 dark:text-violet-400 mt-2">Africa-focused gateway – requires KPAY_API_KEY in env</p>}
+                  </div>
+
+                  {/* Bank Transfer */}
+                  <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${bankTransferEnabled ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
+                    onClick={() => setBankTransferEnabled(!bankTransferEnabled)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${bankTransferEnabled ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <CreditCard className={`h-4 w-4 ${bankTransferEnabled ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-white text-sm">Bank Transfer</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Manual direct bank transfer</p>
+                        </div>
+                      </div>
+                      <Switch
+                        checked={bankTransferEnabled}
+                        onCheckedChange={(checked) => {
+                          setBankTransferEnabled(checked);
+                          // Auto-fill with default Bank of Kigali details the first time it's enabled
+                          if (checked && !bankTransferDetails) {
+                            setBankTransferDetails(
+                              "Bank Name: BANK OF KIGALI\nAccount Name: Afritech Bridge\nAccount Number: 100075243884\nReference: [Student Full Name + Course Name]"
+                            );
+                          }
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bank Transfer Details */}
+                {bankTransferEnabled && (
+                  <div className="space-y-2 mt-2">
+                    <Label htmlFor="bank-details" className="text-slate-900 dark:text-white font-semibold">
+                      Bank Account Details
+                    </Label>
+                    <textarea
+                      id="bank-details"
+                      rows={4}
+                      value={bankTransferDetails}
+                      onChange={(e) => setBankTransferDetails(e.target.value)}
+                      placeholder="Bank Name: BANK OF KIGALI&#10;Account Name: Afritech Bridge&#10;Account Number: 100075243884&#10;Reference: [Student Full Name + Course Name]"
+                      className="w-full rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 p-3 text-sm text-slate-900 dark:text-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-xs text-slate-500 dark:text-slate-400">These details will be shown to students who choose bank transfer</p>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Payment Mode */}
+              <div className="space-y-3">
+                <Label className="text-base font-semibold text-slate-900 dark:text-white">Payment Mode</Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div
+                    onClick={() => setPaymentMode('full')}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${paymentMode === 'full' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600'}`}>
+                    <p className="font-semibold text-slate-900 dark:text-white">Full Payment</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Students pay the full course fee upfront</p>
+                  </div>
+                  <div
+                    onClick={() => setPaymentMode('partial')}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${paymentMode === 'partial' ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20' : 'border-slate-200 dark:border-slate-600'}`}>
+                    <p className="font-semibold text-slate-900 dark:text-white">Partial Payment</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Students pay a portion upfront, rest later</p>
+                  </div>
+                </div>
+
+                {paymentMode === 'partial' && (
+                  <div className="space-y-3 p-4 bg-blue-50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" checked={partialType === 'percentage'} onChange={() => setPartialType('percentage')} className="accent-blue-600" />
+                        <span className="text-sm text-slate-700 dark:text-slate-300">Percentage</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" checked={partialType === 'amount'} onChange={() => setPartialType('amount')} className="accent-blue-600" />
+                        <span className="text-sm text-slate-700 dark:text-slate-300">Fixed Amount</span>
+                      </label>
+                    </div>
+                    {partialType === 'percentage' ? (
+                      <div className="space-y-1">
+                        <Label className="text-slate-900 dark:text-white">Upfront Percentage (%)</Label>
+                        <Input type="number" min={1} max={99} value={partialPaymentPercentage}
+                          onChange={(e) => setPartialPaymentPercentage(parseFloat(e.target.value) || 50)}
+                          className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600 max-w-xs" />
+                        <p className="text-xs text-slate-500">
+                          Students pay {partialPaymentPercentage}% ({currency} {((coursePrice * partialPaymentPercentage) / 100).toFixed(2)}) upfront,
+                          balance {currency} {(coursePrice - (coursePrice * partialPaymentPercentage) / 100).toFixed(2)} later
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <Label className="text-slate-900 dark:text-white">Upfront Amount ({currency})</Label>
+                        <Input type="number" min={1} max={coursePrice - 1} value={partialPaymentAmount}
+                          onChange={(e) => setPartialPaymentAmount(parseFloat(e.target.value) || 0)}
+                          className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600 max-w-xs" />
+                        <p className="text-xs text-slate-500">
+                          Students pay {currency} {partialPaymentAmount} upfront, balance {currency} {(coursePrice - partialPaymentAmount).toFixed(2)} later
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Installment Payments */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-base font-semibold text-slate-900 dark:text-white">Installment Payments</Label>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Allow students to pay in multiple installments</p>
+                  </div>
+                  <Switch checked={installmentEnabled} onCheckedChange={setInstallmentEnabled} />
+                </div>
+
+                {installmentEnabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-50 dark:bg-slate-700/30 rounded-lg border border-slate-200 dark:border-slate-600">
+                    <div className="space-y-2">
+                      <Label className="text-slate-900 dark:text-white">Number of Installments</Label>
+                      <Select value={String(installmentCount)} onValueChange={(v) => setInstallmentCount(Number(v))}>
+                        <SelectTrigger className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="2">2 installments</SelectItem>
+                          <SelectItem value="3">3 installments</SelectItem>
+                          <SelectItem value="4">4 installments</SelectItem>
+                          <SelectItem value="6">6 installments</SelectItem>
+                          <SelectItem value="12">12 installments (monthly)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-500">{currency} {(coursePrice / installmentCount).toFixed(2)} per installment</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-900 dark:text-white">Interval Between Payments (days)</Label>
+                      <Input type="number" min={7} value={installmentIntervalDays}
+                        onChange={(e) => setInstallmentIntervalDays(parseInt(e.target.value) || 30)}
+                        className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Payment Timing */}
+              <div className="space-y-3">
+                <Label className="text-base font-semibold text-slate-900 dark:text-white">Payment Timing</Label>
+
+                <div className="flex items-center justify-between p-4 bg-amber-50 dark:bg-amber-900/10 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <div className="space-y-1">
+                    <Label className="text-sm font-semibold text-slate-900 dark:text-white">
+                      Require Payment Before Application
+                    </Label>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Students must complete payment before they can submit their application form
+                    </p>
+                  </div>
+                  <Switch checked={requirePaymentBeforeApplication} onCheckedChange={setRequirePaymentBeforeApplication} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="payment-deadline" className="text-slate-900 dark:text-white">
+                    Payment Deadline (days before cohort start)
+                  </Label>
+                  <Input
+                    id="payment-deadline"
+                    type="number"
+                    min={0}
+                    value={paymentDeadlineDays}
+                    onChange={(e) => setPaymentDeadlineDays(parseInt(e.target.value) || 0)}
+                    placeholder="0 = no deadline"
+                    className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600 max-w-xs"
+                  />
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    0 means no deadline. Set e.g. 7 to require payment at least 7 days before cohort starts.
+                  </p>
                 </div>
               </div>
             </>

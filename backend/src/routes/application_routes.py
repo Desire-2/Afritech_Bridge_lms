@@ -163,10 +163,11 @@ def check_duplicate_application():
         return jsonify({"error": "course_id and email are required"}), 400
     
     try:
-        # Check for existing application
+        # Check for existing *submitted* (non-draft) application
         existing = CourseApplication.query.filter_by(
             course_id=int(course_id),
-            email=email.lower().strip()
+            email=email.lower().strip(),
+            is_draft=False,
         ).first()
         
         if existing:
@@ -241,18 +242,23 @@ def apply_for_course():
         }), 400
 
     # Check for duplicate applications (only check count to avoid loading invalid enum data)
+    # Exclude draft records and the student's own draft being finalised right now
+    incoming_draft_id = data.get("draft_id")
     try:
-        existing_count = CourseApplication.query.filter_by(
+        dup_query = CourseApplication.query.filter_by(
             course_id=data.get("course_id"),
-            email=data.get("email").lower()
-        ).count()
+            email=data.get("email").lower(),
+            is_draft=False,
+        )
+        existing_count = dup_query.count()
         
         if existing_count > 0:
             # Get the ID without loading the full object
             existing_id = db.session.execute(
                 db.select(CourseApplication.id, CourseApplication.status).filter_by(
                     course_id=data.get("course_id"),
-                    email=data.get("email").lower()
+                    email=data.get("email").lower(),
+                    is_draft=False,
                 )
             ).first()
             
@@ -304,7 +310,10 @@ def apply_for_course():
     payment_message = None
     payment_approval_url = None
 
-    # Payment processing has been disabled - handle externally if needed
+    # Capture payment info passed from the frontend (after initiate-payment was called)
+    submitted_payment_method = data.get("payment_method")      # 'bank_transfer' | 'mobile_money' | 'paypal' | 'stripe'
+    submitted_payment_reference = data.get("payment_reference")  # reference stored by frontend
+    submitted_payment_status = data.get("payment_status")        # 'processing' | 'approved' | 'pending'
 
     # Resolve the currently open ApplicationWindow for proper cohort linking
     open_window = None
@@ -331,6 +340,7 @@ def apply_for_course():
     # Create application with all fields
     application = CourseApplication(
         course_id=data.get("course_id"),
+        is_draft=False,
         
         # Section 1: Applicant Information
         full_name=data.get("full_name").strip(),
@@ -378,7 +388,44 @@ def apply_for_course():
         # Legacy compatibility fields
         online_learning_experience=data.get("online_learning_experience", False),
         available_for_live_sessions=data.get("preferred_learning_mode") in ["live_sessions", "hybrid"],
+        # Payment tracking
+        payment_method=submitted_payment_method,
+        payment_reference=submitted_payment_reference,
+        payment_status=(
+            'pending_bank_transfer' if submitted_payment_method == 'bank_transfer'
+            else ('completed' if submitted_payment_status == 'approved' else submitted_payment_status)
+        ) if submitted_payment_method else None,
+        amount_paid=(
+            course.partial_payment_amount if (submitted_payment_method and course and getattr(course, 'payment_mode', None) == 'partial' and course.partial_payment_amount)
+            else (round(course.price * course.partial_payment_percentage / 100, 2) if (submitted_payment_method and course and getattr(course, 'payment_mode', None) == 'partial' and getattr(course, 'partial_payment_percentage', None))
+            else (course.price if (submitted_payment_method and course and course.price) else None))
+        ),
+        payment_currency=course.currency if (submitted_payment_method and course) else None,
     )
+
+    # If the student saved a draft first, update that record instead of inserting a new one
+    draft_id = data.get("draft_id")
+    if draft_id:
+        draft = CourseApplication.query.filter_by(id=int(draft_id), is_draft=True).first()
+        if draft and draft.course_id == data.get("course_id"):
+            # Re-use the draft record – copy all fields from the new application object
+            new_app = application  # temporary object (not yet added to session)
+            application = draft
+            # Copy all relevant attributes from the temporary object
+            for attr in [
+                'full_name', 'email', 'phone', 'whatsapp_number', 'gender', 'age_range',
+                'country', 'city', 'education_level', 'current_status', 'field_of_study',
+                'has_used_excel', 'excel_skill_level', 'excel_tasks_done',
+                'motivation', 'learning_outcomes', 'career_impact',
+                'has_computer', 'has_internet', 'internet_access_type', 'preferred_learning_mode',
+                'available_time', 'committed_to_complete', 'agrees_to_assessments', 'referral_source',
+                'application_window_id', 'cohort_label', 'cohort_start_date', 'cohort_end_date',
+                'online_learning_experience', 'available_for_live_sessions',
+                'payment_method', 'payment_reference', 'payment_status',
+                'amount_paid', 'payment_currency',
+            ]:
+                setattr(application, attr, getattr(new_app, attr, None))
+            application.is_draft = False  # finalise the draft
     
     # Split full name for backward compatibility
     application.split_name()
@@ -395,7 +442,9 @@ def apply_for_course():
     evaluate_application(application)
     
     try:
-        db.session.add(application)
+        # Only add to session if it's a brand-new record (not a draft being finalised)
+        if not application.id:
+            db.session.add(application)
         db.session.commit()
         
         # Send confirmation email with professional template
@@ -445,7 +494,162 @@ def apply_for_course():
         }), 500
 
 
-# � Advanced Application Search with Analytics
+# ── Save application as draft (before payment) ──────────────────────────────
+@application_bp.route("/save-draft", methods=["POST"])
+def save_application_draft():
+    """
+    Save a course application as a draft so it persists in the DB while
+    the student goes through the payment flow.  Calling this endpoint a
+    second time with the same email + course_id will update the existing
+    draft rather than create a duplicate.
+
+    On success returns ``{ application_id, message }``.
+    """
+    data = request.get_json() or {}
+
+    # Minimal required fields so we can save a meaningful record
+    required = ["course_id", "full_name", "email", "phone", "motivation"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": "Missing required fields", "missing": missing}), 400
+
+    course = Course.query.get(data.get("course_id"))
+    if not course:
+        return jsonify({"error": "Course not found"}), 404
+    if not course.is_published:
+        return jsonify({"error": "Course is not published"}), 403
+
+    # Normalise enum fields (prevent empty-string enum errors)
+    def _clean(val):
+        return val if val and str(val).strip() else None
+
+    gender = _clean(data.get("gender"))
+    age_range = _clean(data.get("age_range"))
+    education_level = _clean(data.get("education_level"))
+    current_status = _clean(data.get("current_status"))
+    internet_access_type = _clean(data.get("internet_access_type"))
+    preferred_learning_mode = _clean(data.get("preferred_learning_mode"))
+
+    excel_skill_level = data.get("excel_skill_level", "never_used") or "never_used"
+    valid_excel_levels = ["never_used", "beginner", "intermediate", "advanced", "expert"]
+    if excel_skill_level not in valid_excel_levels:
+        excel_skill_level = "never_used"
+
+    # Resolve cohort / application window
+    open_window = None
+    open_window_id = None
+    resolved_cohort_label = getattr(course, 'cohort_label', None)
+    resolved_cohort_start = getattr(course, 'cohort_start_date', None)
+    resolved_cohort_end = getattr(course, 'cohort_end_date', None)
+    try:
+        windows = ApplicationWindow.query.filter_by(course_id=course.id).all()
+        for w in windows:
+            if w.compute_status() == 'open':
+                open_window = w
+                break
+        if not open_window and windows:
+            open_window = windows[0]
+        if open_window:
+            open_window_id = open_window.id
+            resolved_cohort_label = open_window.cohort_label or resolved_cohort_label
+            resolved_cohort_start = open_window.cohort_start or resolved_cohort_start
+            resolved_cohort_end = open_window.cohort_end or resolved_cohort_end
+    except Exception as e:
+        logger.warning(f"save-draft: Failed to resolve application window: {e}")
+
+    email_norm = data.get("email", "").lower().strip()
+
+    # --- Check for an existing draft for this student + course ---
+    existing_draft = None
+    try:
+        existing_draft = CourseApplication.query.filter_by(
+            course_id=data.get("course_id"),
+            email=email_norm,
+            is_draft=True,
+        ).first()
+    except Exception:
+        pass
+
+    try:
+        if existing_draft:
+            # Update the existing draft in-place
+            app = existing_draft
+        else:
+            # Guard: if a non-draft (submitted) application already exists, block
+            submitted_count = 0
+            try:
+                submitted_count = CourseApplication.query.filter_by(
+                    course_id=data.get("course_id"),
+                    email=email_norm,
+                    is_draft=False,
+                ).count()
+            except Exception:
+                pass
+            if submitted_count > 0:
+                return jsonify({
+                    "error": "You have already submitted an application for this course",
+                }), 409
+
+            app = CourseApplication(is_draft=True)
+            db.session.add(app)
+
+        # Populate / update fields common to both create and update
+        app.course_id = data.get("course_id")
+        app.full_name = data.get("full_name", "").strip()
+        app.email = email_norm
+        app.phone = data.get("phone", "").strip()
+        app.whatsapp_number = (data.get("whatsapp_number") or data.get("phone", "")).strip()
+        app.gender = gender
+        app.age_range = age_range
+        app.country = data.get("country")
+        app.city = data.get("city")
+        app.education_level = education_level
+        app.current_status = current_status
+        app.field_of_study = data.get("field_of_study")
+        app.has_used_excel = data.get("has_used_excel", False)
+        app.excel_skill_level = excel_skill_level
+        app.excel_tasks_done = parse_json_field(data.get("excel_tasks_done"))
+        app.motivation = data.get("motivation", "")
+        app.learning_outcomes = data.get("learning_outcomes")
+        app.career_impact = data.get("career_impact")
+        app.has_computer = data.get("has_computer", False)
+        app.has_internet = data.get("has_computer", False)
+        app.internet_access_type = internet_access_type
+        app.preferred_learning_mode = preferred_learning_mode
+        app.available_time = parse_json_field(data.get("available_time"))
+        app.committed_to_complete = data.get("committed_to_complete", False)
+        app.agrees_to_assessments = data.get("agrees_to_assessments", False)
+        app.referral_source = data.get("referral_source")
+        app.application_window_id = open_window_id
+        app.cohort_label = resolved_cohort_label
+        app.cohort_start_date = resolved_cohort_start
+        app.cohort_end_date = resolved_cohort_end
+        app.online_learning_experience = data.get("online_learning_experience", False)
+        app.available_for_live_sessions = data.get("preferred_learning_mode") in ["live_sessions", "hybrid"]
+        app.is_draft = True
+        app.status = "pending"  # Will be kept pending until fully submitted
+
+        # Legacy name split
+        app.split_name()
+
+        # Scores are computed so admins can preview even drafts
+        evaluate_application(app)
+
+        db.session.commit()
+
+        return jsonify({
+            "message": "Application draft saved successfully",
+            "application_id": app.id,
+            "is_draft": True,
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"save-draft error: {e}")
+        return jsonify({"error": "Failed to save application draft", "details": str(e)}), 500
+
+
+# ── Advanced Application Search with Analytics ───────────────────────────────
 @application_bp.route("/advanced-search", methods=["POST"])
 @jwt_required()
 def advanced_application_search():
@@ -659,16 +863,38 @@ def list_applications():
     min_score = request.args.get("min_score", type=float)
     max_score = request.args.get("max_score", type=float)
     score_type = request.args.get("score_type", "final_rank_score")  # which score field to filter
-    
+
+    # Payment filters
+    payment_method_filter = request.args.get("payment_method")    # e.g. 'paypal','bank_transfer','mobile_money','stripe'
+    payment_status_filter = request.args.get("payment_status")    # e.g. 'pending_bank_transfer','completed','confirmed'
+    instructor_id_filter  = request.args.get("instructor_id", type=int)   # restrict to instructor's courses
+
     query = CourseApplication.query
     
+    # By default, exclude draft applications (saved before payment) from admin views.
+    # Pass ?include_drafts=true to show them.
+    include_drafts = request.args.get("include_drafts", "false").lower() == "true"
+    if not include_drafts:
+        query = query.filter(CourseApplication.is_draft == False)
+
     # Apply basic filters
     if course_id:
         query = query.filter_by(course_id=course_id)
     
     if status:
         query = query.filter_by(status=status)
-    
+
+    if instructor_id_filter:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id_filter).all()
+        ]
+        if instructor_course_ids:
+            query = query.filter(CourseApplication.course_id.in_(instructor_course_ids))
+        else:
+            # Instructor has no courses; return empty result
+            query = query.filter(CourseApplication.id == -1)
+
     # Cohort filters — "none" means unassigned (no window)
     if application_window_id_raw and application_window_id_raw.lower() == 'none':
         query = query.filter(CourseApplication.application_window_id.is_(None))
@@ -830,7 +1056,14 @@ def list_applications():
         
         if max_score is not None:
             query = query.filter(score_column <= max_score)
-    
+
+    # Apply payment filters
+    if payment_method_filter:
+        query = query.filter_by(payment_method=payment_method_filter)
+
+    if payment_status_filter:
+        query = query.filter_by(payment_status=payment_status_filter)
+
     # Map frontend field names to backend column names
     sort_field_map = {
         'submission_date': 'created_at',
@@ -859,7 +1092,27 @@ def list_applications():
         applications_data = []
         for app in pagination.items:
             try:
-                applications_data.append(app.to_dict(include_sensitive=True))
+                record = app.to_dict(include_sensitive=True)
+                # Enrich with course payment details
+                course = app.course
+                if course:
+                    currency = course.currency or 'USD'
+                    if course.payment_mode == 'partial':
+                        if course.partial_payment_amount:
+                            amount_paid = course.partial_payment_amount
+                        elif course.partial_payment_percentage and course.price:
+                            amount_paid = round(course.price * course.partial_payment_percentage / 100, 2)
+                        else:
+                            amount_paid = course.price or 0.0
+                    else:
+                        amount_paid = course.price or 0.0
+                    record['course_title'] = course.title
+                    record['course_price'] = course.price
+                    record['course_currency'] = currency
+                    record['amount_paid'] = amount_paid
+                    record['course_payment_mode'] = course.payment_mode or 'full'
+                    record['course_enabled_methods'] = course._get_payment_methods()
+                applications_data.append(record)
             except (LookupError, AttributeError, ValueError) as e:
                 # Log the error and create a safe representation
                 logger.warning(f"Error converting application {app.id} to dict: {e}")
@@ -3326,3 +3579,753 @@ def test_search():
             "details": str(e),
             "search_term": search_term
         }), 500
+
+
+# ============================================================
+# PAYMENT ROUTES – initiate & verify payments
+# ============================================================
+
+
+@application_bp.route("/validate-momo-account", methods=["POST"])
+def validate_momo_account():
+    """
+    Validate whether a phone number is a registered MTN MoMo account holder,
+    and optionally retrieve the registered account name.
+
+    Body (JSON):
+      phone_number : str – MSISDN with or without leading '+'
+
+    Response (JSON):
+      {
+        "valid"    : bool,
+        "name"     : str | null,   – account holder name if available
+        "message"  : str
+      }
+    """
+    from ..services.payment_service import (
+        mtn_validate_account_holder,
+        mtn_get_basic_userinfo,
+    )
+
+    data = request.get_json(silent=True) or {}
+    phone = (data.get("phone_number") or data.get("phone") or "").strip()
+    if not phone:
+        return jsonify({"error": "phone_number is required"}), 400
+
+    validation = mtn_validate_account_holder(phone)
+
+    if not validation.get("active"):
+        # If the API errored out (network issue, sandbox not configured, etc.) return
+        # a graceful "unknown" state so the frontend does not block the payment
+        if validation.get("error"):
+            return jsonify({
+                "valid": None,
+                "name": None,
+                "message": "Unable to validate MoMo account at this time. You may still proceed.",
+            }), 200
+        return jsonify({
+            "valid": False,
+            "name": None,
+            "message": "This phone number is not registered with MTN Mobile Money.",
+        }), 200
+
+    # Active account – try to get the name
+    userinfo = mtn_get_basic_userinfo(phone)
+    name = userinfo.get("name") if not userinfo.get("error") else None
+
+    return jsonify({
+        "valid": True,
+        "name": name,
+        "message": f"Verified MoMo account{': ' + name if name else ''}.",
+    }), 200
+
+
+@application_bp.route("/initiate-payment", methods=["POST"])
+def initiate_payment():
+    """
+    Initiate a payment for a course application.
+
+    Body (JSON):
+      course_id      : int   – course to pay for
+      payment_method : str   – 'paypal' | 'mobile_money' | 'stripe' | 'bank_transfer' | 'kpay'
+      amount         : float – amount to charge
+      currency       : str   – ISO 4217 code, e.g. 'USD'
+
+      # For mobile_money:
+      phone_number   : str   – MSISDN e.g. '+256700000000'
+      payer_name     : str   – display name
+
+      # For paypal / stripe:
+      return_url     : str   – redirect after success
+      cancel_url     : str   – redirect after cancel
+      email          : str   – customer email (used as Stripe metadata)
+
+      # For kpay:
+      phone_number   : str   – customer phone (MSISDN, with country code)
+      payer_name     : str   – customer full name
+      email          : str   – customer email
+      kpay_pmethod   : str   – 'momo' | 'cc' | 'spenn' (default: 'momo')
+      return_url     : str   – redirect after payment completes
+    """
+    from ..services.payment_service import (
+        paypal_create_order,
+        stripe_create_checkout_session,
+        mtn_request_to_pay,
+        mtn_validate_account_holder,
+        mtn_get_basic_userinfo,
+        mtn_send_delivery_notification,
+        get_bank_transfer_info,
+        _use_madapi as _mtn_use_madapi,
+        kpay_initiate_payment,
+    )
+
+    data = request.get_json(silent=True) or {}
+
+    course_id = data.get("course_id")
+    payment_method = data.get("payment_method", "paypal")
+    amount = float(data.get("amount") or 0)
+    currency = (data.get("currency") or "USD").upper()
+
+    if not course_id:
+        return jsonify({"error": "course_id is required"}), 400
+    if not amount or amount <= 0:
+        return jsonify({"error": "Invalid payment amount"}), 400
+
+    course = Course.query.get(course_id)
+    if not course:
+        return jsonify({"error": "Course not found"}), 404
+
+    # Validate that the requested method is enabled for this course
+    enabled_methods = course._get_payment_methods() if course.enrollment_type == "paid" else []
+    # paypal / mobile_money / bank_transfer / stripe / kpay
+    if course.enrollment_type == "paid" and payment_method not in enabled_methods + ["paypal", "mobile_money", "bank_transfer", "stripe", "kpay"]:
+        return jsonify({"error": f"Payment method '{payment_method}' is not enabled for this course"}), 400
+
+    try:
+        if payment_method == "paypal":
+            return_url = data.get("return_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/success?course_id={course_id}"
+            cancel_url = data.get("cancel_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/cancel?course_id={course_id}"
+            result = paypal_create_order(
+                amount=amount,
+                currency=currency,
+                return_url=return_url,
+                cancel_url=cancel_url,
+                description=f"Enrollment: {course.title}",
+            )
+            return jsonify({
+                "payment_method": "paypal",
+                "order_id": result["order_id"],
+                "approval_url": result["approval_url"],
+                "status": "pending",
+                "message": "Redirect to PayPal to complete payment.",
+            }), 200
+
+        elif payment_method == "stripe":
+            return_url = data.get("return_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/success?course_id={course_id}"
+            cancel_url = data.get("cancel_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/cancel?course_id={course_id}"
+            # Stripe expects amount in smallest currency unit (cents for USD)
+            minor_amount = int(amount * 100)
+            result = stripe_create_checkout_session(
+                amount_cents=minor_amount,
+                currency=currency,
+                success_url=return_url + "&session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=cancel_url,
+                description=f"Enrollment: {course.title}",
+                metadata={"course_id": str(course_id), "email": data.get("email", "")},
+            )
+            return jsonify({
+                "payment_method": "stripe",
+                "session_id": result["session_id"],
+                "checkout_url": result["checkout_url"],
+                "status": "pending",
+                "message": "Redirect to Stripe Checkout to complete payment.",
+            }), 200
+
+        elif payment_method == "mobile_money":
+            phone = data.get("phone_number") or data.get("phone")
+            if not phone:
+                return jsonify({"error": "phone_number is required for mobile money payment"}), 400
+
+            # Pre-flight: validate that the phone number is a registered MoMo account
+            # This is non-fatal – if the API call fails we still proceed to avoid blocking payments
+            validation = mtn_validate_account_holder(phone)
+            if not validation.get("active") and validation.get("error") is None:
+                # API responded definitively: number is NOT a MoMo account
+                return jsonify({
+                    "error": "The phone number provided is not a registered MTN Mobile Money account. "
+                             "Please use an active MoMo number.",
+                    "code": "MOMO_ACCOUNT_NOT_FOUND",
+                }), 400
+
+            ref_id = str(uuid.uuid4())[:12].upper()  # short reference for display
+            result = mtn_request_to_pay(
+                amount=amount,
+                currency=currency,
+                phone_number=phone,
+                external_id=ref_id,
+                payer_message=f"Payment for {course.title}",
+                payee_note=f"Afritec Bridge LMS – {course.title}",
+            )
+
+            # Send a delivery notification to confirm the prompt reached the customer.
+            # IMPORTANT: only valid for MoMo Developer API flow—MADAPI has its own delivery
+            # mechanism and the reference ID is not known to momodeveloper.mtn.com.
+            if not _mtn_use_madapi:
+                try:
+                    mtn_send_delivery_notification(
+                        result["reference"],
+                        f"Payment of {int(amount)} {currency} for {course.title} requested.",
+                        is_momo_dev_reference=True,
+                    )
+                except Exception:
+                    pass  # Delivery notification failure must never block the payment flow
+
+            # Optionally enrich response with payer name from MoMo profile (best-effort)
+            payer_name_from_momo = None
+            try:
+                userinfo = mtn_get_basic_userinfo(phone)
+                payer_name_from_momo = userinfo.get("name")
+            except Exception:
+                pass
+
+            return jsonify({
+                "payment_method": "mobile_money",
+                "reference": result["reference"],
+                "status": "pending",
+                "payer_name": payer_name_from_momo,
+                "message": f"A payment prompt has been sent to {phone}. Please approve it on your phone.",
+            }), 200
+
+        elif payment_method == "bank_transfer":
+            info = get_bank_transfer_info(course)
+            # Generate a unique per-student reference (e.g. ATB-3-A1B2C3D4)
+            unique_ref = f"ATB-{course_id}-{uuid.uuid4().hex[:8].upper()}"
+            return jsonify({
+                "payment_method": "bank_transfer",
+                "status": "pending",
+                "message": info["message"],
+                "bank_details": info["bank_details"],
+                "reference": unique_ref,
+                "amount": amount,
+                "currency": currency,
+            }), 200
+
+        elif payment_method == "kpay":
+            phone = data.get("phone_number") or data.get("phone") or ""
+            payer_name = data.get("payer_name") or data.get("full_name") or "Student"
+            email = data.get("email") or ""
+            # pmethod controls which sub-method K-Pay uses: momo | cc | spenn
+            kpay_pmethod = data.get("kpay_pmethod") or "momo"
+
+            if not phone:
+                return jsonify({"error": "phone_number is required for K-Pay payment"}), 400
+
+            frontend_url = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+            backend_url = os.environ.get('BACKEND_URL', os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:5000'))
+            return_url = data.get("return_url") or f"{frontend_url}/payment/success?course_id={course_id}"
+            returl = f"{backend_url}/api/v1/applications/kpay-callback"
+
+            # Build a unique, short reference ID (K-Pay rejects duplicates)
+            kpay_refid = f"ATB-{uuid.uuid4().hex[:16].upper()}"
+            # K-Pay requires integer amounts; convert float to int (round up)
+            kpay_amount = int(amount) if amount == int(amount) else int(amount) + 1
+
+            result = kpay_initiate_payment(
+                amount=kpay_amount,
+                currency=currency,
+                email=email,
+                phone=phone,
+                cname=payer_name,
+                cnumber=f"CUST_{course_id}",
+                refid=kpay_refid,
+                pmethod=kpay_pmethod,
+                details=f"Enrollment: {course.title}",
+                returl=returl,
+                redirecturl=return_url,
+            )
+
+            return jsonify({
+                "payment_method": "kpay",
+                "checkout_url": result["checkout_url"],
+                "tid": result["tid"],
+                "reference": result["refid"],
+                "status": "pending",
+                "message": "Redirect to K-Pay to complete your payment.",
+            }), 200
+
+        else:
+            return jsonify({"error": f"Unsupported payment method: {payment_method}"}), 400
+
+    except ValueError as ve:
+        # Missing credentials / configuration error
+        logger.warning(f"Payment config error for method {payment_method}: {ve}")
+        return jsonify({
+            "error": "Payment gateway not configured on the server.",
+            "detail": str(ve),
+            "payment_method": payment_method,
+        }), 503
+    except Exception as e:
+        logger.error(f"Payment initiation error ({payment_method}): {e}", exc_info=True)
+        return jsonify({
+            "error": f"Payment initiation failed: {str(e)}",
+            "payment_method": payment_method,
+        }), 500
+
+
+@application_bp.route("/kpay-callback", methods=["POST"])
+def kpay_callback():
+    """
+    K-Pay webhook endpoint (returl).
+
+    K-Pay POSTs here when a transaction status changes.
+    We must respond with {"tid": ..., "refid": ..., "reply": "OK"} to acknowledge.
+
+    Payload from K-Pay:
+      tid               : K-Pay transaction ID
+      refid             : Our unique reference ID (e.g. ATB-<hex>)
+      momtransactionid  : MoMo network transaction ID (mobile money only)
+      payaccount        : Payer phone/card number (masked)
+      statusid          : '01' = success, '02' = failed, '03' = pending
+      statusdesc        : Human-readable status description
+    """
+    data = request.get_json(silent=True) or {}
+
+    tid = data.get("tid", "")
+    refid = data.get("refid", "")
+    statusid = str(data.get("statusid", "02"))
+    statusdesc = data.get("statusdesc", "")
+
+    logger.info(
+        f"K-Pay callback received: refid={refid} tid={tid} statusid={statusid} desc={statusdesc}"
+    )
+
+    # Always acknowledge immediately – K-Pay expects a fast response
+    return jsonify({"tid": tid, "refid": refid, "reply": "OK"}), 200
+
+
+@application_bp.route("/verify-payment", methods=["POST"])
+def verify_payment():
+    """
+    Verify / check the status of an initiated payment.
+
+    Body (JSON):
+      payment_method : str  – 'paypal' | 'mobile_money' | 'stripe' | 'bank_transfer'
+      reference      : str  – reference/order_id returned by initiate-payment
+    """
+    from ..services.payment_service import (
+        paypal_capture_order,
+        paypal_get_order,
+        stripe_retrieve_checkout_session,
+        mtn_check_payment_status,
+        kpay_check_status,
+    )
+
+    data = request.get_json(silent=True) or {}
+    payment_method = data.get("payment_method", "mobile_money")
+    # Accept any of these aliases the frontend may send
+    reference = (
+        data.get("reference")
+        or data.get("payment_reference")
+        or data.get("order_id")
+        or data.get("session_id")
+    )
+
+    if not reference:
+        return jsonify({"error": "reference is required"}), 400
+
+    try:
+        if payment_method == "paypal":
+            # Step 1 – check current order status
+            try:
+                order_data = paypal_get_order(reference)
+            except Exception as get_err:
+                logger.error(f"PayPal get_order failed for {reference}: {get_err}")
+                return jsonify({"status": "failed", "error": "Could not retrieve PayPal order status."}), 502
+
+            paypal_status = order_data.get("status", "UNKNOWN")
+
+            if paypal_status == "COMPLETED":
+                # Already captured – extract transaction details
+                capture = None
+                for unit in order_data.get("purchase_units", []):
+                    captures = unit.get("payments", {}).get("captures", [])
+                    if captures:
+                        capture = captures[0]
+                        break
+                return jsonify({
+                    "status": "completed",
+                    "order_id": reference,
+                    "transaction_id": capture["id"] if capture else None,
+                    "amount": float(capture["amount"]["value"]) if capture else None,
+                    "currency": capture["amount"]["currency_code"] if capture else None,
+                }), 200
+
+            elif paypal_status in ("APPROVED", "PAYER_ACTION_REQUIRED"):
+                # Payer has approved – now capture the funds
+                try:
+                    result = paypal_capture_order(reference)
+                    return jsonify({
+                        "status": result["status"],   # 'completed' or 'failed'
+                        "order_id": reference,
+                        "transaction_id": result.get("transaction_id"),
+                        "amount": result.get("amount"),
+                        "currency": result.get("currency"),
+                    }), 200
+                except Exception as cap_err:
+                    logger.error(f"PayPal capture failed for {reference}: {cap_err}")
+                    return jsonify({"status": "failed", "error": "Capture failed after approval.", "order_id": reference}), 200
+
+            elif paypal_status == "CREATED":
+                # Payer has not yet approved payment
+                return jsonify({"status": "pending", "order_id": reference, "message": "Waiting for payer approval."}), 200
+
+            elif paypal_status in ("VOIDED", "SAVED"):
+                return jsonify({"status": "failed", "order_id": reference, "paypal_status": paypal_status}), 200
+
+            else:
+                return jsonify({"status": "pending", "order_id": reference, "paypal_status": paypal_status}), 200
+
+        elif payment_method == "stripe":
+            result = stripe_retrieve_checkout_session(reference)
+            mapped = "completed" if result.get("payment_status") == "paid" else (
+                "pending" if result.get("status") == "open" else "failed"
+            )
+            return jsonify({
+                "status": mapped,
+                "session_id": reference,
+                "payment_status": result.get("payment_status"),
+                "amount": result.get("amount_total"),
+                "currency": result.get("currency"),
+            }), 200
+
+        elif payment_method == "mobile_money":
+            result = mtn_check_payment_status(reference)
+            return jsonify({
+                "status": result["status"],   # 'completed' | 'pending' | 'failed'
+                "reference": reference,
+                "amount": result.get("amount"),
+                "currency": result.get("currency"),
+                "reason": result.get("reason"),
+            }), 200
+
+        elif payment_method == "bank_transfer":
+            # Bank transfer is always manual; return pending until admin confirms
+            return jsonify({
+                "status": "pending",
+                "reference": reference,
+                "message": "Bank transfer is pending manual confirmation by the admin.",
+            }), 200
+
+        elif payment_method == "kpay":
+            result = kpay_check_status(reference)
+            return jsonify({
+                "status": result["status"],   # 'completed' | 'pending' | 'failed'
+                "reference": reference,
+                "tid": result.get("tid"),
+                "statusdesc": result.get("statusdesc"),
+                "momo_txn": result.get("momo_txn"),
+            }), 200
+
+        else:
+            return jsonify({"error": f"Unsupported payment method: {payment_method}"}), 400
+
+    except ValueError as ve:
+        logger.warning(f"Payment verify config error ({payment_method}): {ve}")
+        return jsonify({
+            "error": "Payment gateway not configured on the server.",
+            "detail": str(ve),
+        }), 503
+    except Exception as e:
+        logger.error(f"Payment verification error ({payment_method}, ref={reference}): {e}", exc_info=True)
+        return jsonify({
+            "error": f"Payment verification failed: {str(e)}",
+        }), 500
+
+
+@application_bp.route("/<int:application_id>/confirm-bank-transfer", methods=["POST"])
+@jwt_required()
+def confirm_bank_transfer(application_id):
+    """
+    Admin/Instructor endpoint to manually confirm a bank transfer payment.
+
+    Body (JSON):
+      notes : str  (optional) – admin confirmation note
+    """
+    from flask_jwt_extended import get_jwt_identity
+    current_user_id = get_jwt_identity()
+    from ..models.user_models import User
+    current_user = User.query.get(current_user_id)
+
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+
+    application = CourseApplication.query.get(application_id)
+    if not application:
+        return jsonify({"error": "Application not found"}), 404
+
+    if application.payment_method != "bank_transfer":
+        return jsonify({"error": "This application did not use bank transfer"}), 400
+
+    data = request.get_json(silent=True) or {}
+    notes = data.get("notes", "")
+
+    application.payment_status = "confirmed"
+    note_entry = f"[{datetime.utcnow().isoformat()}] Bank transfer confirmed by {current_user.email}"
+    if notes:
+        note_entry += f": {notes}"
+    application.admin_notes = (
+        f"{application.admin_notes}\n{note_entry}".strip()
+        if application.admin_notes
+        else note_entry
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Bank transfer confirmed successfully",
+        "application_id": application_id,
+        "payment_status": application.payment_status,
+        "payment_reference": application.payment_reference,
+    }), 200
+
+
+@application_bp.route("/pending-bank-transfers", methods=["GET"])
+@jwt_required()
+def list_pending_bank_transfers():
+    """
+    Returns all applications with payment_method='bank_transfer' and
+    payment_status='pending_bank_transfer'. Admin/instructor only.
+    """
+    from flask_jwt_extended import get_jwt_identity
+    current_user_id = get_jwt_identity()
+    from ..models.user_models import User
+    current_user = User.query.get(current_user_id)
+
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+
+    applications = CourseApplication.query.filter_by(
+        payment_method="bank_transfer",
+        payment_status="pending_bank_transfer",
+    ).order_by(CourseApplication.created_at.desc()).all()
+
+    return jsonify({
+        "count": len(applications),
+        "applications": [
+            {
+                **app.to_dict(include_sensitive=True),
+                "course_title": app.course.title if app.course else None,
+            }
+            for app in applications
+        ],
+    }), 200
+
+
+@application_bp.route("/payment-summary", methods=["GET"])
+@jwt_required()
+def get_payment_summary():
+    """
+    Returns aggregated payment statistics for admin/instructor dashboards.
+
+    Query params:
+    - course_id   (optional) – restrict to a single course
+    - instructor_id (optional) – restrict to courses owned by this instructor
+    """
+    from flask_jwt_extended import get_jwt_identity
+    from sqlalchemy import func as sql_func
+    current_user_id = get_jwt_identity()
+    from ..models.user_models import User
+    current_user = User.query.get(current_user_id)
+
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+
+    course_id = request.args.get("course_id", type=int)
+    instructor_id = request.args.get("instructor_id", type=int)
+
+    q = CourseApplication.query
+
+    if course_id:
+        q = q.filter_by(course_id=course_id)
+
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        q = q.filter(CourseApplication.course_id.in_(instructor_course_ids))
+
+    all_apps = q.all()
+
+    # ── helper: get amount_paid and currency for an application ──────────────
+    def _get_amount_and_currency(a):
+        course = a.course
+        if not course:
+            return 0.0, 'USD'
+        currency = course.currency or 'USD'
+        if course.payment_mode == 'partial':
+            if course.partial_payment_amount:
+                amount = course.partial_payment_amount
+            elif course.partial_payment_percentage and course.price:
+                amount = round(course.price * course.partial_payment_percentage / 100, 2)
+            else:
+                amount = course.price or 0.0
+        else:
+            amount = course.price or 0.0
+        return amount, currency
+
+    # ── aggregate stats ──────────────────────────────────────────────────────
+    total_with_payment   = sum(1 for a in all_apps if a.payment_method)
+    completed_count      = sum(1 for a in all_apps if a.payment_status in ('completed', 'confirmed'))
+    pending_bank_count   = sum(1 for a in all_apps if a.payment_status == 'pending_bank_transfer')
+    failed_count         = sum(1 for a in all_apps if a.payment_status == 'failed')
+
+    by_method: dict = {}
+    by_status: dict = {}
+    revenue_by_currency: dict = {}       # { "USD": 1250.0, "XAF": 50000 }
+    by_method_revenue: dict = {}         # { "paypal": { "count": 3, "revenue": {"USD": 300.0} } }
+    by_course: dict = {}                 # { course_id: { ... } }
+
+    for a in all_apps:
+        amount, currency = _get_amount_and_currency(a)
+        course = a.course
+
+        # ── by method / by status counts ──────────────────────────────────
+        if a.payment_method:
+            by_method[a.payment_method] = by_method.get(a.payment_method, 0) + 1
+        if a.payment_status:
+            by_status[a.payment_status] = by_status.get(a.payment_status, 0) + 1
+
+        # ── per-method revenue ────────────────────────────────────────────
+        if a.payment_method:
+            if a.payment_method not in by_method_revenue:
+                by_method_revenue[a.payment_method] = {'count': 0, 'revenue': {}}
+            by_method_revenue[a.payment_method]['count'] += 1
+            if a.payment_status in ('completed', 'confirmed'):
+                mr = by_method_revenue[a.payment_method]['revenue']
+                mr[currency] = round(mr.get(currency, 0) + amount, 2)
+
+        # ── overall revenue (completed/confirmed only) ────────────────────
+        if a.payment_method and a.payment_status in ('completed', 'confirmed'):
+            revenue_by_currency[currency] = round(
+                revenue_by_currency.get(currency, 0) + amount, 2
+            )
+
+        # ── per-course breakdown ──────────────────────────────────────────
+        if a.payment_method:
+            cid = a.course_id
+            if cid not in by_course:
+                enabled = course._get_payment_methods() if course else []
+                by_course[cid] = {
+                    'course_id': cid,
+                    'course_title': course.title if course else f'Course #{cid}',
+                    'price': course.price if course else None,
+                    'currency': currency,
+                    'payment_mode': (course.payment_mode or 'full') if course else 'full',
+                    'enabled_methods': enabled,
+                    'total': 0,
+                    'completed': 0,
+                    'pending_bank': 0,
+                    'failed': 0,
+                    'revenue': {},   # { currency: amount }
+                }
+            entry = by_course[cid]
+            entry['total'] += 1
+            if a.payment_status in ('completed', 'confirmed'):
+                entry['completed'] += 1
+                entry['revenue'][currency] = round(entry['revenue'].get(currency, 0) + amount, 2)
+            elif a.payment_status == 'pending_bank_transfer':
+                entry['pending_bank'] += 1
+            elif a.payment_status == 'failed':
+                entry['failed'] += 1
+
+    # ── recent payments (last 20 with a payment_method) ──────────────────────
+    recent_q = q.filter(CourseApplication.payment_method.isnot(None)) \
+                 .order_by(CourseApplication.created_at.desc()) \
+                 .limit(20)
+    recent = []
+    for app in recent_q.all():
+        amount, currency = _get_amount_and_currency(app)
+        record = {
+            **app.to_dict(include_sensitive=True),
+            'course_title': app.course.title if app.course else None,
+            'course_price': app.course.price if app.course else None,
+            'course_currency': currency,
+            'amount_paid': amount,
+            'course_payment_mode': (app.course.payment_mode or 'full') if app.course else 'full',
+            'course_enabled_methods': app.course._get_payment_methods() if app.course else [],
+        }
+        recent.append(record)
+
+    return jsonify({
+        'total_with_payment': total_with_payment,
+        'completed_count':    completed_count,
+        'pending_bank_count': pending_bank_count,
+        'failed_count':       failed_count,
+        'revenue_by_currency': revenue_by_currency,
+        'by_method':          by_method,
+        'by_method_revenue':  by_method_revenue,
+        'by_status':          by_status,
+        'by_course':          list(by_course.values()),
+        'recent_payments':    recent,
+    }), 200
+
+
+@application_bp.route("/<int:application_id>/update-payment-status", methods=["POST"])
+@jwt_required()
+def update_payment_status_endpoint(application_id):
+    """
+    Admin/Instructor: manually set payment_status on an application.
+    Allowed transitions: pending, pending_bank_transfer, completed, confirmed, failed, refunded
+
+    Body (JSON):
+      payment_status : str  – new status
+      notes          : str  – optional note appended to admin_notes
+    """
+    from flask_jwt_extended import get_jwt_identity
+    current_user_id = get_jwt_identity()
+    from ..models.user_models import User
+    current_user = User.query.get(current_user_id)
+
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+
+    application = CourseApplication.query.get(application_id)
+    if not application:
+        return jsonify({"error": "Application not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("payment_status", "").strip()
+    notes = data.get("notes", "").strip()
+
+    ALLOWED_STATUSES = {
+        "pending", "pending_bank_transfer", "completed", "confirmed", "failed", "refunded"
+    }
+    if new_status not in ALLOWED_STATUSES:
+        return jsonify({
+            "error": f"Invalid payment_status. Allowed: {sorted(ALLOWED_STATUSES)}"
+        }), 400
+
+    old_status = application.payment_status
+    application.payment_status = new_status
+
+    note_entry = (
+        f"[{datetime.utcnow().isoformat()}] Payment status changed "
+        f"{old_status} → {new_status} by {current_user.email}"
+    )
+    if notes:
+        note_entry += f": {notes}"
+    application.admin_notes = (
+        f"{application.admin_notes}\n{note_entry}".strip()
+        if application.admin_notes
+        else note_entry
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Payment status updated",
+        "application_id": application_id,
+        "old_status": old_status,
+        "payment_status": application.payment_status,
+    }), 200

@@ -49,6 +49,19 @@ class CourseApplicationService extends BaseApiService {
   }
 
   /**
+   * Save the application as a draft in the database before proceeding to payment.
+   * Calling this again with the same email + course_id updates the existing draft.
+   * Public endpoint — no auth required.
+   */
+  async saveDraft(data: ApplicationSubmitData): Promise<{
+    message: string;
+    application_id: number;
+    is_draft: boolean;
+  }> {
+    return this.post(`${this.BASE_PATH}/save-draft`, data);
+  }
+
+  /**
    * List applications with enhanced search and filters (Admin only)
    */
   async listApplications(params: {

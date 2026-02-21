@@ -32,7 +32,8 @@ import {
   Zap,
   Trophy,
   GraduationCap,
-  Loader2
+  Loader2,
+  CreditCard,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -56,6 +57,7 @@ import {
   getStatusBadgeStyles,
 } from '@/utils/cohort-utils';
 import type { ApplicationWindowData } from '@/types/api';
+import { CurrencySelector, ConvertedBadge } from '@/components/ui/CurrencyDisplay';
 
 interface CourseLesson {
   id: number;
@@ -107,6 +109,25 @@ interface Course {
   application_timezone?: string;
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   currency?: string | null;
+  payment_mode?: 'full' | 'partial' | 'installment';
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  payment_methods?: string[];
+  paypal_enabled?: boolean;
+  mobile_money_enabled?: boolean;
+  bank_transfer_enabled?: boolean;
+  bank_transfer_details?: string | null;
+  require_payment_before_application?: boolean;
+  payment_summary?: {
+    total_price: number | null;
+    currency: string;
+    payment_mode: string;
+    amount_due_now: number | null;
+    remaining_balance?: number;
+    partial_payment_percentage?: number;
+    enabled_methods: string[];
+    bank_transfer_details?: string;
+  } | null;
   application_window?: ApplicationWindowData;
   application_windows?: ApplicationWindowData[];
 }
@@ -165,7 +186,17 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           application_windows: detailedCourse.application_windows || [],
           enrollment_type: detailedCourse.enrollment_type,
           currency: detailedCourse.currency ?? prev.course.currency ?? null,
-          price: detailedCourse.price ?? prev.course.price
+          price: detailedCourse.price ?? prev.course.price,
+          payment_mode: detailedCourse.payment_mode,
+          partial_payment_amount: detailedCourse.partial_payment_amount,
+          partial_payment_percentage: detailedCourse.partial_payment_percentage,
+          payment_methods: detailedCourse.payment_methods,
+          paypal_enabled: detailedCourse.paypal_enabled,
+          mobile_money_enabled: detailedCourse.mobile_money_enabled,
+          bank_transfer_enabled: detailedCourse.bank_transfer_enabled,
+          bank_transfer_details: detailedCourse.bank_transfer_details,
+          require_payment_before_application: detailedCourse.require_payment_before_application,
+          payment_summary: detailedCourse.payment_summary ?? null,
         };
 
         return {
@@ -203,8 +234,8 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           
           // browseData is already the array of courses (not wrapped in a 'courses' property)
           const course = Array.isArray(browseData) 
-            ? browseData.find((c: Course) => c.id === courseId)
-            : browseData.courses?.find((c: Course) => c.id === courseId);
+            ? (browseData as any[]).find((c: any) => c.id === courseId)
+            : (browseData as any)?.courses?.find((c: any) => c.id === courseId);
           
           if (!course) {
             throw new Error('Course not found');
@@ -474,24 +505,40 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                   {/* Action Buttons */}
                   <div className="flex flex-wrap gap-4">
                     {!isEnrolled ? (
-                      <Button
-                        size="lg"
-                        onClick={handleEnroll}
-                        disabled={enrolling}
-                        className="bg-white text-blue-600 hover:bg-blue-50 font-semibold shadow-lg shadow-blue-900/30"
-                      >
-                        {enrolling ? (
-                          <>
-                            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                            Enrolling...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="h-5 w-5 mr-2" />
-                            Enroll Now - Free
-                          </>
-                        )}
-                      </Button>
+                      course.enrollment_type === 'paid' || course.enrollment_type === 'scholarship' ? (
+                        <Button
+                          size="lg"
+                          onClick={() => router.push(`/courses/${courseId}/apply`)}
+                          className={course.enrollment_type === 'scholarship'
+                            ? 'bg-amber-500 hover:bg-amber-600 text-white font-semibold shadow-lg shadow-amber-900/30'
+                            : 'bg-white text-blue-600 hover:bg-blue-50 font-semibold shadow-lg shadow-blue-900/30'}
+                        >
+                          {course.enrollment_type === 'scholarship' ? (
+                            <><GraduationCap className="h-5 w-5 mr-2" />Apply for Scholarship</>
+                          ) : (
+                            <><CreditCard className="h-5 w-5 mr-2" />Apply & Pay</>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="lg"
+                          onClick={handleEnroll}
+                          disabled={enrolling}
+                          className="bg-white text-blue-600 hover:bg-blue-50 font-semibold shadow-lg shadow-blue-900/30"
+                        >
+                          {enrolling ? (
+                            <>
+                              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                              Enrolling...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-5 w-5 mr-2" />
+                              Enroll Now - Free
+                            </>
+                          )}
+                        </Button>
+                      )
                     ) : (
                       <Button
                         size="lg"
@@ -883,55 +930,236 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
             {/* Right Sidebar */}
             <div className="space-y-6">
-              {/* Enrollment Card */}
-              <Card className="sticky top-6">
-                <CardContent className="p-6">
-                  <div className="text-center space-y-4">
-                    <div className="text-3xl font-bold text-green-600">
-                      {course.price ? `$${course.price}` : 'Free'}
+              {/* Tuition & Enrollment Card */}
+              <Card className="sticky top-6 overflow-hidden">
+                {/* Header bar by type */}
+                {course.enrollment_type === 'scholarship' ? (
+                  <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4">
+                    <div className="flex items-center gap-2 text-white">
+                      <GraduationCap className="h-5 w-5" />
+                      <span className="font-bold text-lg">Scholarship Program</span>
                     </div>
-                    
-                    {!isEnrolled ? (
-                      <Button
-                        size="lg"
-                        onClick={handleEnroll}
-                        disabled={enrolling}
-                        className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold"
-                      >
-                        {enrolling ? (
-                          <>
-                            <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                            Enrolling...
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="h-5 w-5 mr-2" />
-                            Enroll Now
-                          </>
-                        )}
-                      </Button>
-                    ) : (
-                      <div className="space-y-3">
-                        <Badge variant="outline" className="text-green-600 border-green-300 w-full py-2">
-                          <CheckCircle className="h-4 w-4 mr-2" />
-                          Enrolled
-                        </Badge>
+                    <p className="text-amber-100 text-xs mt-1">Merit-based enrollment · Application required</p>
+                  </div>
+                ) : course.enrollment_type === 'paid' ? (
+                  <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-4">
+                    <div className="flex items-center gap-2 text-white">
+                      <CreditCard className="h-5 w-5" />
+                      <span className="font-bold text-lg">
+                        {course.payment_mode === 'partial' ? 'Partial Scholarship' : 'Full Tuition'}
+                      </span>
+                    </div>
+                    <p className="text-blue-100 text-xs mt-1">
+                      {course.payment_mode === 'partial'
+                        ? 'Pay your share — scholarship covers the rest'
+                        : 'One-time full payment to enroll'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="bg-gradient-to-r from-emerald-500 to-green-500 px-6 py-4">
+                    <div className="flex items-center gap-2 text-white">
+                      <Sparkles className="h-5 w-5" />
+                      <span className="font-bold text-lg">Free Enrollment</span>
+                    </div>
+                    <p className="text-emerald-100 text-xs mt-1">No payment required · Open to all</p>
+                  </div>
+                )}
+
+                <CardContent className="p-6 space-y-5">
+                  {/* ── Scholarship: no price, just apply ── */}
+                  {course.enrollment_type === 'scholarship' && (
+                    <div className="space-y-4">
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                        <p className="text-sm font-semibold text-amber-900 flex items-center gap-2">
+                          <Award className="h-4 w-4 text-amber-600" />
+                          Scholarship-Based Enrollment
+                        </p>
+                        <p className="text-xs text-amber-700 leading-relaxed">
+                          This course is offered through a competitive scholarship process.
+                          Submit your application — our team will review and notify you of your scholarship status.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs">Merit-based</Badge>
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs">Application required</Badge>
+                          <Badge className="bg-amber-100 text-amber-800 border-amber-300 text-xs">Competitive selection</Badge>
+                        </div>
+                      </div>
+                      {!isEnrolled && (
                         <Button
                           size="lg"
-                          onClick={handleStartLearning}
-                          className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold"
+                          onClick={() => router.push(`/courses/${courseId}/apply`)}
+                          className="w-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-semibold"
                         >
-                          <Play className="h-5 w-5 mr-2" />
-                          {progress?.overall_progress > 0 ? 'Continue Learning' : 'Start Learning'}
+                          <GraduationCap className="h-5 w-5 mr-2" />
+                          Apply for Scholarship
                         </Button>
-                      </div>
-                    )}
-
-                    <div className="flex items-center space-x-2 text-sm text-gray-500">
-                      <Heart className="h-4 w-4" />
-                      <span>30-day money-back guarantee</span>
+                      )}
                     </div>
-                  </div>
+                  )}
+
+                  {/* ── Paid: full or partial tuition ── */}
+                  {course.enrollment_type === 'paid' && (
+                    <div className="space-y-4">
+                      {/* Price breakdown */}
+                      <div className="flex items-center justify-end">
+                        <CurrencySelector compact />
+                      </div>
+                      {course.payment_mode === 'partial' ? (
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
+                          <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Partial Scholarship</p>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-bold text-indigo-700">
+                              {course.payment_summary?.amount_due_now != null
+                                ? `${course.currency || 'USD'} ${course.payment_summary.amount_due_now.toLocaleString()}`
+                                : course.partial_payment_amount != null
+                                ? `${course.currency || 'USD'} ${course.partial_payment_amount.toLocaleString()}`
+                                : '—'}
+                            </span>
+                            <span className="text-sm text-indigo-500">your contribution</span>
+                          </div>
+                          <ConvertedBadge
+                            amount={course.payment_summary?.amount_due_now ?? course.partial_payment_amount ?? undefined}
+                            currency={course.currency || 'USD'}
+                            className="text-sm"
+                          />
+                          {course.payment_summary?.remaining_balance != null && course.payment_summary.remaining_balance > 0 && (
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                                <p className="text-gray-500">Total program cost</p>
+                                <p className="font-bold text-gray-800">{course.currency || 'USD'} {(course.price || 0).toLocaleString()}</p>
+                                <ConvertedBadge amount={course.price ?? undefined} currency={course.currency || 'USD'} className="text-xs" />
+                              </div>
+                              <div className="bg-emerald-50 rounded-lg p-2 border border-emerald-200">
+                                <p className="text-gray-500">Covered by scholarship</p>
+                                <p className="font-bold text-emerald-700">{course.currency || 'USD'} {course.payment_summary.remaining_balance.toLocaleString()}</p>
+                                <ConvertedBadge amount={course.payment_summary.remaining_balance} currency={course.currency || 'USD'} className="text-xs" />
+                              </div>
+                            </div>
+                          )}
+                          {course.partial_payment_percentage != null && (
+                            <p className="text-xs text-indigo-500">
+                              {course.partial_payment_percentage}% your contribution · scholarship covers the rest
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-1">
+                          <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Full Tuition</p>
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-3xl font-bold text-indigo-700">
+                              {course.price
+                                ? `${course.currency || 'USD'} ${course.price.toLocaleString()}`
+                                : 'Price on request'}
+                            </span>
+                          </div>
+                          <ConvertedBadge amount={course.price ?? undefined} currency={course.currency || 'USD'} className="text-sm" />
+                          <p className="text-xs text-indigo-400">One-time payment — lifetime access</p>
+                        </div>
+                      )}
+
+                      {/* Payment methods */}
+                      {(course.payment_methods && course.payment_methods.length > 0) && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Accepted Payments</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {course.payment_methods.includes('paypal') && (
+                              <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-xs">PayPal</Badge>
+                            )}
+                            {course.payment_methods.includes('stripe') && (
+                              <Badge className="bg-violet-50 text-violet-700 border-violet-200 text-xs">Card (Stripe)</Badge>
+                            )}
+                            {course.payment_methods.includes('mobile_money') && (
+                              <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 text-xs">Mobile Money</Badge>
+                            )}
+                            {course.payment_methods.includes('bank_transfer') && (
+                              <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">Bank Transfer</Badge>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {!isEnrolled ? (
+                        <Button
+                          size="lg"
+                          onClick={() => router.push(`/courses/${courseId}/apply`)}
+                          className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white font-semibold"
+                        >
+                          <CreditCard className="h-5 w-5 mr-2" />
+                          Apply &amp; Pay
+                        </Button>
+                      ) : (
+                        <div className="space-y-3">
+                          <Badge variant="outline" className="text-green-600 border-green-300 w-full py-2 justify-center">
+                            <CheckCircle className="h-4 w-4 mr-2" />
+                            Enrolled
+                          </Badge>
+                          <Button
+                            size="lg"
+                            onClick={handleStartLearning}
+                            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold"
+                          >
+                            <Play className="h-5 w-5 mr-2" />
+                            {progress?.overall_progress > 0 ? 'Continue Learning' : 'Start Learning'}
+                          </Button>
+                        </div>
+                      )}
+
+                      <div className="flex items-center space-x-2 text-xs text-gray-400 justify-center">
+                        <Shield className="h-3 w-3" />
+                        <span>Secure payment · 30-day refund policy</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Free: direct enroll ── */}
+                  {(!course.enrollment_type || course.enrollment_type === 'free') && (
+                    <div className="space-y-4">
+                      <div className="text-center">
+                        <span className="text-4xl font-bold text-emerald-600">Free</span>
+                        <p className="text-xs text-gray-400 mt-1">No credit card required</p>
+                      </div>
+                      {!isEnrolled ? (
+                        <Button
+                          size="lg"
+                          onClick={handleEnroll}
+                          disabled={enrolling}
+                          className="w-full bg-gradient-to-r from-emerald-500 to-green-500 hover:from-emerald-600 hover:to-green-600 text-white font-semibold"
+                        >
+                          {enrolling ? (
+                            <>
+                              <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                              Enrolling...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-5 w-5 mr-2" />
+                              Enroll Now — Free
+                            </>
+                          )}
+                        </Button>
+                      ) : (
+                        <div className="space-y-3">
+                          <Badge variant="outline" className="text-green-600 border-green-300 w-full py-2 justify-center">
+                            <CheckCircle className="h-4 w-4 mr-2" />
+                            Enrolled
+                          </Badge>
+                          <Button
+                            size="lg"
+                            onClick={handleStartLearning}
+                            className="w-full bg-green-500 hover:bg-green-600 text-white font-semibold"
+                          >
+                            <Play className="h-5 w-5 mr-2" />
+                            {progress?.overall_progress > 0 ? 'Continue Learning' : 'Start Learning'}
+                          </Button>
+                        </div>
+                      )}
+
+                      <div className="flex items-center space-x-2 text-xs text-gray-400 justify-center">
+                        <Heart className="h-3 w-3" />
+                        <span>30-day money-back guarantee</span>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 

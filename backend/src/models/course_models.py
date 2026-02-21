@@ -21,6 +21,22 @@ class Course(db.Model):
     enrollment_type = db.Column(db.String(20), nullable=False, default='free')  # 'free', 'paid', 'scholarship'
     price = db.Column(db.Float, nullable=True)
     currency = db.Column(db.String(10), nullable=False, default='USD')
+    
+    # Enhanced Payment Settings
+    payment_mode = db.Column(db.String(20), nullable=False, default='full')  # 'full' (full tuition) or 'partial' (partial payment)
+    partial_payment_amount = db.Column(db.Float, nullable=True)  # Fixed partial amount (if payment_mode is 'partial')
+    partial_payment_percentage = db.Column(db.Float, nullable=True)  # Percentage for partial (e.g. 50.0 for 50%)
+    payment_methods = db.Column(db.Text, nullable=True)  # JSON array of enabled methods: ["paypal","mobile_money","bank_transfer"]
+    payment_deadline_days = db.Column(db.Integer, nullable=True)  # Days before cohort start when payment must be done
+    require_payment_before_application = db.Column(db.Boolean, default=False, nullable=False)  # Must pay before submitting application
+    paypal_enabled = db.Column(db.Boolean, default=True, nullable=False)  # PayPal payment toggle
+    mobile_money_enabled = db.Column(db.Boolean, default=True, nullable=False)  # Mobile Money toggle
+    bank_transfer_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Bank transfer toggle
+    kpay_enabled = db.Column(db.Boolean, default=True, nullable=False)  # K-Pay gateway toggle (MTN/Airtel MoMo, Visa, SPENN)
+    bank_transfer_details = db.Column(db.Text, nullable=True)  # Bank account info for manual transfer
+    installment_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Allow installment payments
+    installment_count = db.Column(db.Integer, nullable=True)  # Number of installments (2, 3, 4, etc.)
+    installment_interval_days = db.Column(db.Integer, nullable=True)  # Days between installments
 
     # Application & Cohort Settings
     application_start_date = db.Column(db.DateTime, nullable=True)
@@ -49,6 +65,84 @@ class Course(db.Model):
 
     def __repr__(self):
         return f'<Course {self.title}>'
+
+    def _get_payment_methods(self):
+        """Return enabled payment methods as a list.
+
+        Priority:
+        1. Saved JSON (payment_methods column) — fully authoritative.
+           This is written by CourseSettings whenever the instructor saves,
+           so it reflects exactly which toggles are on.
+        2. Boolean flags fallback — used only when no JSON exists yet
+           (brand-new course or courses created before this feature).
+        """
+        import json
+
+        # --- authoritative path: JSON saved by instructor ---
+        if self.payment_methods:
+            try:
+                parsed = json.loads(self.payment_methods)
+                if isinstance(parsed, list) and parsed:
+                    return parsed   # respect exactly what the instructor chose
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # --- fallback: build from individual boolean columns ---
+        methods = []
+        kpay_on = getattr(self, 'kpay_enabled', True)
+        if kpay_on:
+            methods.append('kpay')
+        if self.paypal_enabled:
+            methods.append('paypal')
+        if self.mobile_money_enabled:
+            methods.append('mobile_money')
+        if self.bank_transfer_enabled:
+            methods.append('bank_transfer')
+
+        return methods if methods else ['kpay']
+
+    def get_payment_summary(self):
+        """Return a payment summary for the course (used in application forms)."""
+        needs_payment = (self.enrollment_type == 'paid') or bool(self.require_payment_before_application)
+        if not needs_payment:
+            return {'required': False}
+        
+        summary = {
+            'required': True,
+            'total_price': self.price,
+            'currency': self.currency or 'USD',
+            'payment_mode': self.payment_mode or 'full',
+            'require_payment_before_application': self.require_payment_before_application,
+            'enabled_methods': self._get_payment_methods(),
+            'installment_enabled': self.installment_enabled,
+        }
+        
+        if self.payment_mode == 'partial':
+            if self.partial_payment_amount:
+                summary['amount_due_now'] = self.partial_payment_amount
+            elif self.partial_payment_percentage and self.price:
+                summary['amount_due_now'] = round(self.price * self.partial_payment_percentage / 100, 2)
+            else:
+                summary['amount_due_now'] = self.price
+            summary['remaining_balance'] = round((self.price or 0) - summary['amount_due_now'], 2)
+            summary['partial_payment_percentage'] = self.partial_payment_percentage
+        else:
+            summary['amount_due_now'] = self.price
+            summary['remaining_balance'] = 0
+        
+        if self.installment_enabled and self.installment_count and self.installment_count > 1:
+            installment_amount = round((self.price or 0) / self.installment_count, 2)
+            summary['installment_count'] = self.installment_count
+            summary['installment_amount'] = installment_amount
+            summary['installment_interval_days'] = self.installment_interval_days or 30
+        
+        if self.bank_transfer_enabled and self.bank_transfer_details:
+            summary['bank_transfer_details'] = self.bank_transfer_details
+            
+        if self.payment_deadline_days:
+            summary['payment_deadline_days'] = self.payment_deadline_days
+        
+        return summary
 
     def get_released_module_count(self):
         """
@@ -207,6 +301,20 @@ class Course(db.Model):
             'enrollment_type': self.enrollment_type,
             'price': self.price,
             'currency': self.currency,
+            'payment_mode': self.payment_mode or 'full',
+            'partial_payment_amount': self.partial_payment_amount,
+            'partial_payment_percentage': self.partial_payment_percentage,
+            'payment_methods': self._get_payment_methods(),
+            'payment_deadline_days': self.payment_deadline_days,
+            'require_payment_before_application': self.require_payment_before_application,
+            'paypal_enabled': self.paypal_enabled,
+            'mobile_money_enabled': self.mobile_money_enabled,
+            'bank_transfer_enabled': self.bank_transfer_enabled,
+            'kpay_enabled': getattr(self, 'kpay_enabled', True),
+            'bank_transfer_details': self.bank_transfer_details,
+            'installment_enabled': self.installment_enabled,
+            'installment_count': self.installment_count,
+            'installment_interval_days': self.installment_interval_days,
             'application_start_date': self.application_start_date.isoformat() if self.application_start_date else None,
             'application_end_date': self.application_end_date.isoformat() if self.application_end_date else None,
             'cohort_start_date': self.cohort_start_date.isoformat() if self.cohort_start_date else None,
@@ -219,7 +327,9 @@ class Course(db.Model):
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'module_release_count': self.module_release_count,
             'module_release_interval': self.module_release_interval,
-            'module_release_interval_days': self.module_release_interval_days
+            'module_release_interval_days': self.module_release_interval_days,
+            # Computed payment summary for frontend convenience
+            'payment_summary': self.get_payment_summary() if (self.enrollment_type == 'paid' or self.require_payment_before_application) else None
         }
         
         if include_modules:

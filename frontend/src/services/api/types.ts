@@ -48,6 +48,24 @@ export interface CohortOption {
 }
 
 // ============== Course & Module ==============
+export interface PaymentSummary {
+  required: boolean;
+  total_price: number | null;
+  currency: string;
+  payment_mode: 'full' | 'partial' | 'installment';
+  amount_due_now: number | null;
+  remaining_balance?: number;
+  partial_payment_percentage?: number;
+  enabled_methods: string[];
+  bank_transfer_details?: string;
+  require_payment_before_application?: boolean;
+  installment_enabled?: boolean;
+  installment_count?: number;
+  installment_amount?: number;
+  installment_interval_days?: number;
+  payment_deadline_days?: number;
+}
+
 export interface Course {
   id: number;
   title: string;
@@ -55,15 +73,34 @@ export interface Course {
   instructor_id: number;
   instructor_name: string;
   thumbnail_url?: string;
-  difficulty: 'beginner' | 'intermediate' | 'advanced';
-  duration: string;
-  rating: number;
-  enrollment_count: number;
-  category: string;
-  tags: string[];
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+  level?: string;
+  duration?: string;
+  estimated_duration?: string;
+  rating?: number;
+  enrollment_count?: number;
+  category?: string;
+  tags?: string[];
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   price?: number | null;
   currency?: string;
+  // Payment configuration
+  payment_mode?: 'full' | 'partial' | 'installment';
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  payment_methods?: string[];
+  paypal_enabled?: boolean;
+  mobile_money_enabled?: boolean;
+  bank_transfer_enabled?: boolean;
+  stripe_enabled?: boolean;
+  bank_transfer_details?: string | null;
+  require_payment_before_application?: boolean;
+  installment_enabled?: boolean;
+  installment_count?: number | null;
+  installment_interval_days?: number | null;
+  payment_deadline_days?: number | null;
+  payment_summary?: PaymentSummary | null;
+  // Application windows
   application_start_date?: string | null;
   application_end_date?: string | null;
   cohort_start_date?: string | null;
@@ -72,9 +109,9 @@ export interface Course {
   application_timezone?: string;
   application_window?: ApplicationWindowData;
   application_windows?: ApplicationWindowData[];
-  is_published: boolean;
-  created_at: string;
-  updated_at: string;
+  is_published?: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface Module {
@@ -430,6 +467,9 @@ export interface CourseApplication {
   agrees_to_assessments: boolean;
   referral_source?: string;
   status: 'pending' | 'approved' | 'rejected' | 'waitlisted';
+  payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe';
+  payment_status?: 'pending' | 'pending_bank_transfer' | 'completed' | 'confirmed' | 'failed';
+  payment_reference?: string;
   admin_notes?: string;
   rejection_reason?: string;
   application_score?: number;
@@ -468,10 +508,12 @@ export interface ApplicationSubmitData {
   committed_to_complete: boolean;
   agrees_to_assessments: boolean;
   referral_source?: string;
-  payment_method?: 'mobile_money' | 'paypal';
+  payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe';
   payment_phone_number?: string;
   payment_payer_name?: string;
   paypal_email?: string;
+  payment_reference?: string;
+  payment_status?: string;
 }
 
 export interface ApplicationStatistics {

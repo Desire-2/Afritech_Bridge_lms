@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import applicationService from '@/services/api/application.service';
 import { ApplicationSubmitData } from '@/services/api/types';
 import { Course } from '@/services/api/types';
@@ -12,7 +13,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle, User, Mail, Phone, Globe, GraduationCap, Briefcase, Monitor, Target, Clock, Award, Sparkles, TrendingUp, Shield, Zap, CreditCard } from 'lucide-react';
+import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle, User, Mail, Phone, Globe, GraduationCap, Briefcase, Monitor, Target, Clock, Award, Sparkles, TrendingUp, Shield, Zap, CreditCard, Copy, Check, Building2 } from 'lucide-react';
+import { AutoSaveIndicator, DraftRestoreBanner } from '@/components/ui/form-components';
+import { CurrencySelector, ConvertedBadge } from '@/components/ui/CurrencyDisplay';
+import type { AutoSaveStatus } from '@/hooks/useAutoSave';
 
 interface CourseApplicationFormProps {
   courseId: number;
@@ -355,7 +359,18 @@ export default function CourseApplicationForm({
   onSuccess,
   onCancel,
 }: CourseApplicationFormProps) {
-  const [currentSection, setCurrentSection] = useState(1);
+  // Restore section from draft on first render (lazy initializer)
+  const [currentSection, setCurrentSection] = useState<number>(() => {
+    if (typeof window === 'undefined') return 1;
+    try {
+      const raw = localStorage.getItem(`afritec_draft_application_${courseId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.currentSection >= 1 && parsed?.currentSection <= 7) return parsed.currentSection;
+      }
+    } catch { /* ignore */ }
+    return 1;
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -366,13 +381,95 @@ export default function CourseApplicationForm({
   const [paymentStatus, setPaymentStatus] = useState<'pending' | 'processing' | 'approved' | 'failed'>('pending');
   const [paymentReference, setPaymentReference] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [stripeSessionId, setStripeSessionId] = useState<string | null>(null);
+  const [bankTransferDetails, setBankTransferDetails] = useState<string | null>(null);
+  // Informational message after bank transfer "I've Completed Payment"
+  const [bankTransferInfo, setBankTransferInfo] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // MTN MoMo: real-time phone number validation
+  const [momoValidation, setMomoValidation] = useState<{
+    loading: boolean;
+    valid: boolean | null;
+    name: string | null;
+    error: string | null;
+  }>({ loading: false, valid: null, name: null, error: null });
+
+  // MTN MoMo: auto-polling refs
+  const momoPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const momoPollingCountRef = useRef(0);
+
+  const searchParams = useSearchParams();
+
+  // Restore payment status when returning from PayPal / Stripe redirect
+  useEffect(() => {
+    const verifiedParam = searchParams?.get('payment_verified');
+    const verifiedKey = `payment_verified_for_course_${courseId}`;
+    const stored = typeof window !== 'undefined' ? localStorage.getItem(verifiedKey) : null;
+
+    if (verifiedParam === 'true' || stored === 'true') {
+      setPaymentStatus('approved');
+      // Restore saved draft ID so the submit handler can upsert the draft record
+      if (typeof window !== 'undefined') {
+        const storedDraftId = localStorage.getItem(`draft_id_for_course_${courseId}`);
+        if (storedDraftId) setSavedDraftId(Number(storedDraftId));
+      }
+      // Jump to the payment section so the student can review and submit
+      setCurrentSection(7);
+      // Consume the flag so refreshing the page doesn't keep it approved
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(verifiedKey);
+        localStorage.removeItem(`payment_reference_for_course_${courseId}`);
+        localStorage.removeItem(`payment_method_for_course_${courseId}`);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Set default payment method to the first enabled method when course data loads.
+  // Runs whenever courseData changes so it always reflects current course settings.
+  useEffect(() => {
+    const requiresPayment =
+      courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
+    if (!requiresPayment || !courseData) return;
+
+    // Use payment_summary.enabled_methods (authoritative server-side list) or
+    // fall back to the payment_methods array serialised in the course object.
+    const enabledMethods: string[] =
+      (courseData.payment_summary?.enabled_methods && courseData.payment_summary.enabled_methods.length > 0)
+        ? courseData.payment_summary.enabled_methods
+        : (courseData.payment_methods && courseData.payment_methods.length > 0
+            ? courseData.payment_methods
+            : ['kpay']);
+
+    // Reset to first available method if the currently selected one is not enabled
+    if (!enabledMethods.includes(formData.payment_method as string)) {
+      handleInputChange('payment_method', enabledMethods[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseData]);
   
   // Duplicate check states
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [existingApplication, setExistingApplication] = useState<any>(null);
   const [emailChecked, setEmailChecked] = useState(false);
 
-  const [formData, setFormData] = useState<ApplicationSubmitData>({
+  // ── Auto-save: key is scoped per course ──
+  const DRAFT_KEY = `afritec_draft_application_${courseId}`;
+
+  // Helper: read a stored draft synchronously (safe for SSR)
+  const readStoredDraft = (): { formData: Partial<ApplicationSubmitData>; currentSection: number; savedAt?: string } | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.formData) return parsed;
+    } catch { /* ignore */ }
+    return null;
+  };
+
+  const defaultFormData: ApplicationSubmitData = {
     course_id: courseId,
     full_name: '',
     email: '',
@@ -398,13 +495,107 @@ export default function CourseApplicationForm({
     committed_to_complete: false,
     agrees_to_assessments: false,
     referral_source: '',
-    payment_method: 'mobile_money',
+    payment_method: 'kpay',
     payment_phone_number: '',
     payment_payer_name: '',
     paypal_email: '',
+  };
+
+  // Lazy initializers: read from localStorage on very first render so
+  // the form is pre-filled before any effect runs (avoids race condition).
+  const [formData, setFormData] = useState<ApplicationSubmitData>(() => {
+    const draft = readStoredDraft();
+    if (!draft) return defaultFormData;
+    return { ...defaultFormData, ...draft.formData, course_id: courseId };
   });
 
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+
+  // Banner: shown when a draft was found and pre-loaded on mount
+  const [showDraftBanner, setShowDraftBanner] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { return Boolean(localStorage.getItem(DRAFT_KEY)); } catch { return false; }
+  });
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(() => {
+    const draft = readStoredDraft();
+    return draft?.savedAt ? new Date(draft.savedAt) : null;
+  });
+
+  const [autoSaveStatus, setAutoSaveStatus] = useState<AutoSaveStatus>('idle');
+  const [autoSaveLastSaved, setAutoSaveLastSaved] = useState<Date | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks if we're in the initial mount tick to skip saving the just-loaded draft
+  const initialMountRef = useRef(true);
+
+  // ── Payment-as-next-step flow ────────────────────────────────────────────
+  // True when this course requires payment (paid enrollment or require_payment_before_application)
+  const requiresPaymentStep =
+    courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application === true;
+  // Total form sections: 6 for free/scholarship, 7 for courses requiring payment
+  const totalSections = requiresPaymentStep ? 7 : 6;
+
+  // Persisted draft ID returned by /save-draft (needed to upsert on final submit)
+  const [savedDraftId, setSavedDraftId] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem(`draft_id_for_course_${courseId}`);
+      return raw ? Number(raw) : null;
+    } catch { return null; }
+  });
+  const [savingDraft, setSavingDraft] = useState(false);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (autoSaveIdleTimerRef.current) clearTimeout(autoSaveIdleTimerRef.current);
+    };
+  }, []);
+
+  // Mark initial mount as done after first render (skip saving the pre-loaded state)
+  useEffect(() => {
+    const t = setTimeout(() => { initialMountRef.current = false; }, 100);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Debounced save whenever formData or currentSection changes
+  useEffect(() => {
+    if (initialMountRef.current) return; // skip saving pre-loaded draft data
+    if (success) return; // don't save after a successful submit
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      try {
+        setAutoSaveStatus('saving');
+        const draft = { formData, currentSection, savedAt: new Date().toISOString() };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+        const now = new Date();
+        setAutoSaveLastSaved(now);
+        setAutoSaveStatus('saved');
+        if (autoSaveIdleTimerRef.current) clearTimeout(autoSaveIdleTimerRef.current);
+        autoSaveIdleTimerRef.current = setTimeout(() => setAutoSaveStatus('idle'), 3000);
+      } catch {
+        setAutoSaveStatus('error');
+      }
+    }, 1500);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData, currentSection]);
+
+  // "Restore" now just dismisses the banner — data is already in state
+  const handleRestoreDraft = () => {
+    setShowDraftBanner(false);
+  };
+
+  // "Start Over" clears the draft and resets the form to blank
+  const handleDiscardDraft = () => {
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+    setFormData(defaultFormData);
+    setCurrentSection(1);
+    setShowDraftBanner(false);
+  };
 
   // Check for duplicate application when email is entered
   const checkDuplicateApplication = async (email: string) => {
@@ -462,59 +653,89 @@ export default function CourseApplicationForm({
     const errors: Record<string, string> = {};
 
     if (section === 1) {
-      if (!formData.full_name.trim()) errors.full_name = 'Full name is required';
-      if (!formData.email.trim()) errors.email = 'Email is required';
-      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-        errors.email = 'Invalid email format';
+      // Full name: required, min 3 chars (nullable=False in DB)
+      if (!formData.full_name.trim()) {
+        errors.full_name = 'Full name is required';
+      } else if (formData.full_name.trim().length < 3) {
+        errors.full_name = 'Full name must be at least 3 characters';
       }
-      if (!formData.phone.trim()) errors.phone = 'Phone number is required';
-      if (!formData.gender) errors.gender = 'Gender is required';
-      if (!formData.age_range) errors.age_range = 'Age range is required';
+
+      // Email: required, valid format (nullable=False in DB)
+      if (!formData.email.trim()) {
+        errors.email = 'Email address is required';
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+        errors.email = 'Please enter a valid email address';
+      }
+
+      // Phone: required, must include country code (nullable=False in DB)
+      if (!formData.phone.trim()) {
+        errors.phone = 'Phone number is required';
+      } else if (!/^\+[1-9]\d{6,19}$/.test(formData.phone.replace(/[\s\-()]/g, ''))) {
+        errors.phone = 'Please include your country code (e.g. +234-801-234-5678)';
+      }
+
+      // Gender: nullable=True in DB but required for scoring
+      if (!formData.gender) errors.gender = 'Please select your gender';
+
+      // Age range: nullable=True in DB but required for scoring
+      if (!formData.age_range) errors.age_range = 'Please select your age range';
+
+      // Country: nullable=True in DB but required for location-based decisions
       if (!formData.country?.trim()) errors.country = 'Country is required';
     }
 
     if (section === 2) {
-      if (!formData.education_level) errors.education_level = 'Education level is required';
-      if (!formData.current_status) errors.current_status = 'Current status is required';
+      // nullable=True in DB but required for background scoring
+      if (!formData.education_level) errors.education_level = 'Please select your education level';
+      if (!formData.current_status) errors.current_status = 'Please select your current status';
     }
 
     if (section === 3) {
+      // Conditional: if they've used the skill before, they must rate their level
       if (formData.has_used_excel && !formData.excel_skill_level) {
-        errors.excel_skill_level = 'Please select your Excel skill level';
+        errors.excel_skill_level = 'Please select your skill level';
       }
     }
 
     if (section === 4) {
+      // Motivation: nullable=False in DB, min 50 chars
       if (!formData.motivation.trim()) {
         errors.motivation = 'Please tell us why you want to join this course';
       } else if (formData.motivation.trim().length < 50) {
-        errors.motivation = 'Please provide at least 50 characters (currently ' + formData.motivation.trim().length + ')';
+        errors.motivation = `Please write at least 50 characters (currently ${formData.motivation.trim().length})`;
       }
+      // Learning outcomes: nullable=True in DB but strongly encouraged
       if (!formData.learning_outcomes?.trim()) {
         errors.learning_outcomes = 'Please describe what you hope to achieve';
       }
     }
 
     if (section === 5) {
-      if (formData.has_computer === undefined) {
-        errors.has_computer = 'Please indicate if you have access to a computer';
-      }
+      // has_computer defaults to false — both true/false are valid answers, no validation needed
+      // internet_access_type: nullable=True but required for logistics planning
       if (!formData.internet_access_type) {
-        errors.internet_access_type = 'Please indicate your internet access';
+        errors.internet_access_type = 'Please indicate your type of internet access';
       }
+      // available_time: nullable=True but required to plan course delivery
       if (!formData.available_time || formData.available_time.length === 0) {
         errors.available_time = 'Please select at least one available time slot';
       }
     }
 
     if (section === 6) {
+      // Both commitment fields are required before proceeding to payment
       if (!formData.committed_to_complete) {
         errors.committed_to_complete = 'You must commit to completing the course';
       }
       if (!formData.agrees_to_assessments) {
         errors.agrees_to_assessments = 'You must agree to participate in assessments';
       }
-      if (courseData?.enrollment_type === 'paid') {
+    }
+
+    if (section === 7) {
+      // Payment section validation — only reached for paid/require_payment courses
+      const needsPayment = courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
+      if (needsPayment) {
         if (formData.payment_method === 'mobile_money' && !formData.payment_phone_number?.trim()) {
           errors.payment_phone_number = 'Mobile money number is required for payment';
         }
@@ -525,80 +746,192 @@ export default function CourseApplicationForm({
     return Object.keys(errors).length === 0;
   };
 
+  // MTN MoMo: validate phone number is an active MoMo account holder
+  const validateMomoPhone = async (phone: string) => {
+    const cleaned = phone?.trim();
+    if (!cleaned || cleaned.length < 8) return;
+    setMomoValidation({ loading: true, valid: null, name: null, error: null });
+    try {
+      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/validate-momo-account`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone_number: cleaned }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        setMomoValidation({ loading: false, valid: false, name: null, error: data.error || 'Validation failed' });
+        return;
+      }
+      setMomoValidation({
+        loading: false,
+        valid: data.valid,
+        name: data.name || null,
+        error: null,
+      });
+      // Auto-fill payer name from MoMo account if field is empty
+      if (data.name && !formData.payment_payer_name?.trim()) {
+        handleInputChange('payment_payer_name', data.name);
+      }
+    } catch {
+      setMomoValidation({ loading: false, valid: null, name: null, error: 'Could not reach MoMo validation service' });
+    }
+  };
+
+  // MTN MoMo: auto-poll payment status every 5 s while processing (up to 2 min / 24 polls)
+  useEffect(() => {
+    if (paymentStatus === 'processing' && formData.payment_method === 'mobile_money' && paymentReference) {
+      momoPollingCountRef.current = 0;
+      const poll = async () => {
+        if (momoPollingCountRef.current >= 24) {
+          if (momoPollingRef.current) clearInterval(momoPollingRef.current);
+          return;
+        }
+        momoPollingCountRef.current += 1;
+        try {
+          const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/verify-payment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ payment_method: 'mobile_money', reference: paymentReference }),
+          });
+          const data = await resp.json();
+          if (data.status === 'completed' || data.status === 'successful') {
+            setPaymentStatus('approved');
+            if (momoPollingRef.current) clearInterval(momoPollingRef.current);
+          } else if (data.status === 'failed') {
+            setPaymentStatus('failed');
+            if (momoPollingRef.current) clearInterval(momoPollingRef.current);
+          }
+        } catch { /* ignore transient polling errors */ }
+      };
+      momoPollingRef.current = setInterval(poll, 5000);
+      return () => {
+        if (momoPollingRef.current) clearInterval(momoPollingRef.current);
+      };
+    } else {
+      if (momoPollingRef.current) {
+        clearInterval(momoPollingRef.current);
+        momoPollingRef.current = null;
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentStatus, formData.payment_method, paymentReference]);
+
   // Handle payment initiation
   const handlePayNow = async () => {
-    // Validate payment fields first
-    if (!validateSection(6)) return;
-    
-    if (courseData?.enrollment_type !== 'paid') return;
+    // Validate payment fields first (section 7 covers MoMo phone number etc.)
+    if (!validateSection(7)) return;
+
+    const needsPayment = courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
+    if (!needsPayment) return;
 
     setPaymentLoading(true);
     setError(null);
 
+    // ── Determine the correct amount to charge based on payment mode ──
+    const paymentMode = courseData?.payment_mode || 'full';
+    const fullPrice = courseData?.price ?? 0;
+    // payment_summary is the backend-authoritative breakdown for ALL payment modes
+    const ps = courseData?.payment_summary;
+    let amountDue: number;
+    if (ps?.amount_due_now != null) {
+      // Best case: backend-computed amount (works for full, partial, installment)
+      amountDue = ps.amount_due_now;
+    } else if (paymentMode === 'partial') {
+      // Fallback for partial when payment_summary is unavailable
+      if (courseData?.partial_payment_amount != null) {
+        amountDue = courseData.partial_payment_amount;
+      } else if (courseData?.partial_payment_percentage != null && fullPrice > 0) {
+        amountDue = Math.round(fullPrice * courseData.partial_payment_percentage / 100 * 100) / 100;
+      } else {
+        amountDue = fullPrice;
+      }
+    } else {
+      amountDue = fullPrice;
+    }
+
+    const currency = courseData?.currency || 'USD';
+    const method = formData.payment_method as string;
+
     try {
-      if (formData.payment_method === 'mobile_money') {
-        // For mobile money, call the payment API
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/initiate-payment`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            course_id: courseId,
-            amount: courseData.price,
-            currency: courseData.currency || 'USD',
-            phone_number: formData.payment_phone_number || formData.phone,
-            payer_name: formData.payment_payer_name || formData.full_name,
-            email: formData.email,
-          }),
-        });
+      // Build base payload
+      const basePayload: Record<string, unknown> = {
+        course_id: courseId,
+        amount: amountDue,
+        currency,
+        payment_method: method,
+        email: formData.email,
+        payment_mode: paymentMode,
+      };
 
-        const data = await response.json();
+      if (method === 'mobile_money') {
+        basePayload.phone_number = formData.payment_phone_number || formData.phone;
+        basePayload.payer_name = formData.payment_payer_name || formData.full_name;
+      } else if (method === 'paypal' || method === 'stripe') {
+        basePayload.return_url = `${window.location.origin}/payment/success?course_id=${courseId}`;
+        basePayload.cancel_url = `${window.location.origin}/payment/cancel?course_id=${courseId}`;
+      } else if (method === 'kpay') {
+        basePayload.phone_number = formData.payment_phone_number || formData.phone || '';
+        basePayload.payer_name = formData.payment_payer_name || formData.full_name || '';
+        basePayload.return_url = `${window.location.origin}/payment/success?course_id=${courseId}`;
+        // kpay_pmethod: default to momo; could be extended to let user choose cc/spenn
+        basePayload.kpay_pmethod = 'momo';
+      }
 
-        if (!response.ok) {
-          throw new Error(data.error || 'Payment initiation failed');
-        }
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/initiate-payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(basePayload),
+      });
 
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Payment initiation failed');
+      }
+
+      if (method === 'mobile_money') {
         setPaymentReference(data.reference);
         setPaymentStatus('processing');
-        
-        // For mobile money, we show processing status and let user confirm after they approve on their phone
-        setError(null);
-      } else if (formData.payment_method === 'paypal') {
-        // For PayPal, redirect to PayPal
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/initiate-payment`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            course_id: courseId,
-            amount: courseData.price,
-            currency: courseData.currency || 'USD',
-            payment_method: 'paypal',
-            email: formData.email,
-            return_url: `${window.location.origin}/payment/success?course_id=${courseId}`,
-            cancel_url: `${window.location.origin}/payment/cancel?course_id=${courseId}`,
-          }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || 'PayPal payment initiation failed');
+        // If backend returned a payer name from MoMo profile, auto-fill the name field
+        if (data.payer_name && !formData.payment_payer_name?.trim()) {
+          handleInputChange('payment_payer_name', data.payer_name);
         }
-
-        if (data.approval_url) {
-          // Store form data in localStorage for when user returns
-          localStorage.setItem('pending_application_form', JSON.stringify({
-            formData,
-            courseId,
-            courseTitle,
-          }));
-          // Redirect to PayPal
-          window.location.href = data.approval_url;
+      } else if (method === 'paypal') {
+        const approvalUrl = data.approval_url;
+        if (approvalUrl) {
+          localStorage.setItem('pending_application_form', JSON.stringify({ formData, courseId, courseTitle }));
+          localStorage.setItem('paypal_order_id', data.order_id);
+          window.location.href = approvalUrl;
           return;
         }
+        throw new Error('PayPal did not return an approval URL');
+      } else if (method === 'stripe') {
+        const checkoutUrl = data.checkout_url;
+        if (checkoutUrl) {
+          localStorage.setItem('pending_application_form', JSON.stringify({ formData, courseId, courseTitle }));
+          localStorage.setItem('stripe_session_id', data.session_id);
+          window.location.href = checkoutUrl;
+          return;
+        }
+        throw new Error('Stripe did not return a checkout URL');
+      } else if (method === 'kpay') {
+        const checkoutUrl = data.checkout_url;
+        if (checkoutUrl) {
+          localStorage.setItem('pending_application_form', JSON.stringify({ formData, courseId, courseTitle }));
+          localStorage.setItem('kpay_reference', data.reference || '');
+          localStorage.setItem('kpay_tid', data.tid || '');
+          window.location.href = checkoutUrl;
+          return;
+        }
+        throw new Error('K-Pay did not return a checkout URL');
+      } else if (method === 'bank_transfer') {
+        // Bank transfer: use backend-confirmed reference, combine with course bank details
+        setBankTransferDetails(
+          data.bank_details || courseData?.bank_transfer_details || null
+        );
+        setPaymentReference(data.reference);
+        setPaymentStatus('processing');
+        setBankTransferInfo(null);
       }
     } catch (err: any) {
       setError(err.message || 'Payment initiation failed');
@@ -608,9 +941,23 @@ export default function CourseApplicationForm({
     }
   };
 
-  // Handle payment confirmation (for mobile money after user approves on phone)
+  // Handle payment confirmation (for mobile money after user approves on phone, or bank transfer)
   const handleConfirmPayment = async () => {
     if (!paymentReference) return;
+
+    const method = formData.payment_method as string;
+
+    // Bank transfer cannot be verified via API – inform user and allow submission
+    if (method === 'bank_transfer') {
+      setBankTransferInfo(
+        `Your payment reference is: ${paymentReference}. ` +
+        'Our team will verify your bank transfer and confirm your enrollment. ' +
+        'You can now submit your application — we will contact you once payment is confirmed.'
+      );
+      setError(null);
+      setPaymentStatus('approved');
+      return;
+    }
 
     setPaymentLoading(true);
     setError(null);
@@ -618,10 +965,9 @@ export default function CourseApplicationForm({
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/verify-payment`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          payment_method: method,
           reference: paymentReference,
         }),
       });
@@ -647,15 +993,51 @@ export default function CourseApplicationForm({
     }
   };
 
+  // Save application to DB and advance to the payment step (section 7)
+  const handleSaveAndProceedToPayment = async () => {
+    // Validate section 6 (commitment & referral) first
+    if (!validateSection(6)) {
+      setTimeout(() => {
+        document.getElementById('section-error-banner')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
+      return;
+    }
+
+    setSavingDraft(true);
+    setError(null);
+
+    try {
+      const result = await applicationService.saveDraft({ ...formData });
+      setSavedDraftId(result.application_id);
+      // Persist so PayPal/Stripe redirects can recover the draft ID
+      try { localStorage.setItem(`draft_id_for_course_${courseId}`, String(result.application_id)); } catch { /* ignore */ }
+      // Advance to the payment step
+      setCurrentSection(7);
+      document.getElementById('application-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err: any) {
+      const msg = err.response?.data?.error || err.message || 'Failed to save application. Please try again.';
+      setError(msg);
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
   const handleNext = () => {
     // Don't allow proceeding if email already exists
     if (currentSection === 1 && existingApplication) {
       return;
     }
-    
+
     if (validateSection(currentSection)) {
-      setCurrentSection((prev) => Math.min(prev + 1, 6));
+      setCurrentSection((prev) => Math.min(prev + 1, totalSections));
       setError(null); // Clear any errors when moving to next section
+      // Scroll to top of form on section advance
+      document.getElementById('application-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      // Scroll to error summary banner so user sees what's missing
+      setTimeout(() => {
+        document.getElementById('section-error-banner')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 50);
     }
   };
 
@@ -673,12 +1055,14 @@ export default function CourseApplicationForm({
     }
     
     // For paid courses, ensure payment is approved first
-    if (courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved') {
+    const requiresPayment = courseData?.enrollment_type === 'paid';
+    const requireBeforeApp = courseData?.require_payment_before_application;
+    if ((requiresPayment || requireBeforeApp) && paymentStatus !== 'approved') {
       setError('Please complete payment before submitting your application.');
       return;
     }
     
-    if (!validateSection(6)) return;
+    if (!validateSection(requiresPaymentStep ? 7 : 6)) return;
 
     setLoading(true);
     setError(null);
@@ -698,17 +1082,27 @@ export default function CourseApplicationForm({
           : undefined,
       };
 
-      // Add payment reference if payment was completed
-      if (courseData?.enrollment_type === 'paid' && paymentReference) {
+      // Always pass payment tracking fields to the backend so it can store them
+      const needsPaymentTracking = courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
+      if (needsPaymentTracking && paymentReference) {
         (payload as any).payment_reference = paymentReference;
-        (payload as any).payment_status = 'completed';
+        (payload as any).payment_status = paymentStatus === 'approved' ? 'approved' : paymentStatus;
+      }
+      // Include payment method for bank transfer even when require_payment_before_application
+      if (needsPaymentTracking) {
+        (payload as any).payment_method = formData.payment_method;
       }
 
-      if (courseData?.enrollment_type !== 'paid') {
+      if (!needsPaymentTracking) {
         delete payload.payment_method;
         delete payload.payment_phone_number;
         delete payload.payment_payer_name;
         delete payload.paypal_email;
+      }
+
+      // If the application was pre-saved as a draft, pass draft_id so the backend upserts it
+      if (savedDraftId) {
+        (payload as any).draft_id = savedDraftId;
       }
 
       const response = await applicationService.submitApplication(payload);
@@ -718,7 +1112,9 @@ export default function CourseApplicationForm({
         setSuccess(true);
         setApplicationId(response.application_id);
         setScores(response.scores);
-        
+        // Clear draft on successful submission
+        try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+        try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
         if (onSuccess) {
           onSuccess(response.application_id);
         }
@@ -931,6 +1327,8 @@ export default function CourseApplicationForm({
         return renderAccessAvailability();
       case 6:
         return renderCommitment();
+      case 7:
+        return renderPaymentStep();
       default:
         return null;
     }
@@ -996,6 +1394,16 @@ export default function CourseApplicationForm({
           id="full_name"
           value={formData.full_name}
           onChange={(e) => handleInputChange('full_name', e.target.value)}
+          onBlur={() => {
+            const val = formData.full_name.trim();
+            if (!val) {
+              setValidationErrors((prev) => ({ ...prev, full_name: 'Full name is required' }));
+            } else if (val.length < 3) {
+              setValidationErrors((prev) => ({ ...prev, full_name: 'Full name must be at least 3 characters' }));
+            } else {
+              setValidationErrors((prev) => { const n = { ...prev }; delete n.full_name; return n; });
+            }
+          }}
           placeholder="Enter your full legal name"
           className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
             validationErrors.full_name 
@@ -1057,6 +1465,16 @@ export default function CourseApplicationForm({
           id="phone"
           value={formData.phone}
           onChange={(e) => handleInputChange('phone', e.target.value)}
+          onBlur={() => {
+            const val = formData.phone.trim();
+            if (!val) {
+              setValidationErrors((prev) => ({ ...prev, phone: 'Phone number is required' }));
+            } else if (!/^\+[1-9]\d{6,19}$/.test(val.replace(/[\s\-()]/g, ''))) {
+              setValidationErrors((prev) => ({ ...prev, phone: 'Please include your country code (e.g. +234-801-234-5678)' }));
+            } else {
+              setValidationErrors((prev) => { const n = { ...prev }; delete n.phone; return n; });
+            }
+          }}
           placeholder="+234-801-234-5678"
           className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
             validationErrors.phone 
@@ -1099,13 +1517,17 @@ export default function CourseApplicationForm({
         <div>
           <Label htmlFor="gender" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
             <User className="w-5 h-5 text-purple-600" />
-            Gender
+            Gender <span className="text-red-600">*</span>
           </Label>
           <Select
             value={formData.gender}
             onValueChange={(value) => handleInputChange('gender', value)}
           >
-            <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-purple-600 focus:ring-2 focus:ring-purple-200 text-gray-900">
+            <SelectTrigger id="gender" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
+              validationErrors.gender
+                ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
+                : 'border-gray-300 focus:border-purple-600 focus:ring-purple-200'
+            }`}>
               <SelectValue placeholder="Please select your gender" className="text-gray-900" />
             </SelectTrigger>
             <SelectContent>
@@ -1115,19 +1537,29 @@ export default function CourseApplicationForm({
               <SelectItem value="prefer_not_to_say">Prefer not to say</SelectItem>
             </SelectContent>
           </Select>
+          {validationErrors.gender && (
+            <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              {validationErrors.gender}
+            </p>
+          )}
         </div>
 
         {/* Age Range Select */}
         <div>
           <Label htmlFor="age_range" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
             <Clock className="w-5 h-5 text-blue-600" />
-            Age Range
+            Age Range <span className="text-red-600">*</span>
           </Label>
           <Select
             value={formData.age_range}
             onValueChange={(value) => handleInputChange('age_range', value)}
           >
-            <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-blue-600 focus:ring-2 focus:ring-blue-200 text-gray-900">
+            <SelectTrigger id="age_range" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
+              validationErrors.age_range
+                ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
+                : 'border-gray-300 focus:border-blue-600 focus:ring-blue-200'
+            }`}>
               <SelectValue placeholder="Your age group" className="text-gray-900" />
             </SelectTrigger>
             <SelectContent>
@@ -1139,6 +1571,12 @@ export default function CourseApplicationForm({
               <SelectItem value="55_plus">55+</SelectItem>
             </SelectContent>
           </Select>
+          {validationErrors.age_range && (
+            <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              {validationErrors.age_range}
+            </p>
+          )}
           <p className="text-sm text-gray-600 mt-2 ml-1">
             This helps us tailor content to different learning styles.
           </p>
@@ -1150,18 +1588,28 @@ export default function CourseApplicationForm({
         <div>
           <Label htmlFor="country" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
             <Globe className="w-5 h-5 text-emerald-600" />
-            Country
+            Country <span className="text-red-600">*</span>
           </Label>
           <Input
             id="country"
             value={formData.country}
             onChange={(e) => handleInputChange('country', e.target.value)}
             placeholder="Which country are you applying from?"
-            className="py-6 text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-emerald-500 focus-visible:ring-emerald-200 transition-all duration-300"
+            className={`py-6 text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 ${
+              validationErrors.country
+                ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200'
+                : 'bg-white focus-visible:border-emerald-500 focus-visible:ring-emerald-200'
+            }`}
           />
           <p className="text-sm text-gray-700 mt-2 ml-1">
             We prioritize applicants from African countries.
           </p>
+          {validationErrors.country && (
+            <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4" />
+              {validationErrors.country}
+            </p>
+          )}
         </div>
 
         <div>
@@ -1186,13 +1634,17 @@ export default function CourseApplicationForm({
       <div>
         <Label htmlFor="education_level" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
           <GraduationCap className="w-5 h-5 text-indigo-600" />
-          Highest Level of Education
+          Highest Level of Education <span className="text-red-600">*</span>
         </Label>
         <Select
           value={formData.education_level}
           onValueChange={(value) => handleInputChange('education_level', value)}
         >
-          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 text-gray-900">
+          <SelectTrigger id="education_level" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
+            validationErrors.education_level
+              ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
+              : 'border-gray-300 focus:border-indigo-600 focus:ring-indigo-200'
+          }`}>
             <SelectValue placeholder="What is your highest academic qualification?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
@@ -1204,18 +1656,28 @@ export default function CourseApplicationForm({
             <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
+        {validationErrors.education_level && (
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.education_level}
+          </p>
+        )}
       </div>
 
       <div>
         <Label htmlFor="current_status" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
           <Briefcase className="w-5 h-5 text-blue-600" />
-          Current Status
+          Current Status <span className="text-red-600">*</span>
         </Label>
         <Select
           value={formData.current_status}
           onValueChange={(value) => handleInputChange('current_status', value)}
         >
-          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-blue-600 focus:ring-2 focus:ring-blue-200 text-gray-900">
+          <SelectTrigger id="current_status" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
+            validationErrors.current_status
+              ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
+              : 'border-gray-300 focus:border-blue-600 focus:ring-blue-200'
+          }`}>
             <SelectValue placeholder="What is your current professional status?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
@@ -1227,6 +1689,12 @@ export default function CourseApplicationForm({
             <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
+        {validationErrors.current_status && (
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.current_status}
+          </p>
+        )}
       </div>
 
       <div>
@@ -1290,7 +1758,11 @@ export default function CourseApplicationForm({
           value={formData.excel_skill_level}
           onValueChange={(value) => handleInputChange('excel_skill_level', value)}
         >
-          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-emerald-600 focus:ring-2 focus:ring-emerald-200 text-gray-900">
+          <SelectTrigger id="excel_skill_level" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
+            validationErrors.excel_skill_level
+              ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
+              : 'border-gray-300 focus:border-emerald-600 focus:ring-emerald-200'
+          }`}>
             <SelectValue placeholder={skillConfig.skillLevelPlaceholder} className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
@@ -1303,6 +1775,12 @@ export default function CourseApplicationForm({
           <Sparkles className="w-4 h-4 text-amber-500" />
           Be honest! This helps us place you in the right group.
         </p>
+        {validationErrors.excel_skill_level && (
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.excel_skill_level}
+          </p>
+        )}
       </div>
 
       {formData.has_used_excel && (
@@ -1343,6 +1821,16 @@ export default function CourseApplicationForm({
           id="motivation"
           value={formData.motivation}
           onChange={(e) => handleInputChange('motivation', e.target.value)}
+          onBlur={() => {
+            const val = formData.motivation.trim();
+            if (!val) {
+              setValidationErrors((prev) => ({ ...prev, motivation: 'Please tell us why you want to join this course' }));
+            } else if (val.length < 50) {
+              setValidationErrors((prev) => ({ ...prev, motivation: `Please write at least 50 characters (currently ${val.length})` }));
+            } else {
+              setValidationErrors((prev) => { const n = { ...prev }; delete n.motivation; return n; });
+            }
+          }}
           placeholder={skillConfig.motivationPlaceholder}
           rows={5}
           className={`text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 resize-none ${
@@ -1379,7 +1867,7 @@ export default function CourseApplicationForm({
       <div>
         <Label htmlFor="learning_outcomes" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
           <Award className="w-5 h-5 text-amber-600" />
-          What do you want to achieve after completing this course?
+          What do you want to achieve after completing this course? <span className="text-red-600">*</span>
         </Label>
         <Textarea
           id="learning_outcomes"
@@ -1387,11 +1875,21 @@ export default function CourseApplicationForm({
           onChange={(e) => handleInputChange('learning_outcomes', e.target.value)}
           placeholder={skillConfig.learningOutcomesPlaceholder}
           rows={4}
-          className="text-base text-gray-900 placeholder:text-gray-500 bg-white rounded-xl focus-visible:border-amber-500 focus-visible:ring-amber-200 transition-all duration-300 resize-none"
+          className={`text-base text-gray-900 placeholder:text-gray-500 rounded-xl transition-all duration-300 resize-none ${
+            validationErrors.learning_outcomes
+              ? 'border-red-500 bg-red-50/50 focus-visible:border-red-600 focus-visible:ring-red-200'
+              : 'bg-white focus-visible:border-amber-500 focus-visible:ring-amber-200'
+          }`}
         />
         <p className="text-sm text-gray-700 mt-2 ml-1">
           Your specific learning outcomes and goals
         </p>
+        {validationErrors.learning_outcomes && (
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.learning_outcomes}
+          </p>
+        )}
       </div>
 
       <div>
@@ -1452,13 +1950,17 @@ export default function CourseApplicationForm({
       <div>
         <Label htmlFor="internet_access_type" className="text-base font-bold text-gray-900 flex items-center gap-2 mb-2">
           <Globe className="w-5 h-5 text-cyan-600" />
-          Internet Access Type
+          Internet Access Type <span className="text-red-600">*</span>
         </Label>
         <Select
           value={formData.internet_access_type}
           onValueChange={(value) => handleInputChange('internet_access_type', value)}
         >
-          <SelectTrigger className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-cyan-600 focus:ring-2 focus:ring-cyan-200 text-gray-900">
+          <SelectTrigger id="internet_access_type" className={`py-6 text-base border-2 rounded-xl focus:ring-2 text-gray-900 ${
+            validationErrors.internet_access_type
+              ? 'border-red-500 bg-red-50/50 focus:border-red-600 focus:ring-red-200'
+              : 'border-gray-300 focus:border-cyan-600 focus:ring-cyan-200'
+          }`}>
             <SelectValue placeholder="How do you primarily access the internet?" className="text-gray-900" />
           </SelectTrigger>
           <SelectContent>
@@ -1472,6 +1974,12 @@ export default function CourseApplicationForm({
         <p className="text-sm text-gray-600 mt-2 ml-1">
           This helps us plan for data usage and connectivity challenges.
         </p>
+        {validationErrors.internet_access_type && (
+          <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.internet_access_type}
+          </p>
+        )}
       </div>
 
       <div>
@@ -1494,10 +2002,12 @@ export default function CourseApplicationForm({
         </Select>
       </div>
 
-      <div className="bg-blue-50 border-2 border-blue-300 p-6 rounded-2xl">
+      <div id="available_time" className={`bg-blue-50 border-2 rounded-2xl p-6 ${
+        validationErrors.available_time ? 'border-red-400 bg-red-50/30' : 'border-blue-300'
+      }`}>
         <Label className="text-base font-bold text-gray-900 flex items-center gap-2 mb-3">
           <Clock className="w-6 h-6 text-blue-600" />
-          Available Time for Learning
+          Available Time for Learning <span className="text-red-600">*</span>
         </Label>
         <p className="text-sm text-gray-700 mb-4">
           When are you most available to dedicate time to the course? (Select all that work for you)
@@ -1517,6 +2027,12 @@ export default function CourseApplicationForm({
             </label>
           ))}
         </div>
+        {validationErrors.available_time && (
+          <p className="text-sm text-red-600 mt-3 font-semibold flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            {validationErrors.available_time}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -1618,177 +2134,49 @@ export default function CourseApplicationForm({
         </p>
       </div>
 
-      {courseData?.enrollment_type === 'paid' && (
-        <div className="bg-indigo-50 border-2 border-indigo-300 p-6 rounded-2xl shadow-sm">
+      {/* Payment Next Step Preview — only shown for paid / require_payment courses */}
+      {requiresPaymentStep && (
+        <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border-2 border-indigo-300 p-6 rounded-2xl shadow-sm">
           <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-indigo-600 rounded-lg">
+            <div className="p-2.5 bg-indigo-600 rounded-xl">
               <CreditCard className="w-5 h-5 text-white" />
             </div>
             <div>
-              <p className="text-lg font-bold text-gray-900">Payment Details</p>
-              <p className="text-sm text-gray-700">
-                Course fee: {courseData.currency || 'USD'} {courseData.price}
+              <p className="text-base font-bold text-gray-900">Next Step: Complete Payment</p>
+              <p className="text-sm text-gray-600 mt-0.5">
+                {courseData?.require_payment_before_application
+                  ? 'Payment must be completed before your application is submitted.'
+                  : 'Payment will be collected on the next screen after you save this form.'}
               </p>
             </div>
           </div>
-
-          {/* Payment Method Selection */}
-          <div className="mb-6">
-            <Label className="text-base font-bold text-gray-900 mb-3 block">
-              Select Payment Method
-            </Label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* MTN Mobile Money Option */}
-              <div
-                onClick={() => handleInputChange('payment_method', 'mobile_money')}
-                className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 ${
-                  formData.payment_method === 'mobile_money'
-                    ? 'border-indigo-600 bg-indigo-100 shadow-md'
-                    : 'border-gray-300 bg-white hover:border-indigo-400'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${formData.payment_method === 'mobile_money' ? 'bg-indigo-600' : 'bg-gray-200'}`}>
-                    <Phone className={`w-5 h-5 ${formData.payment_method === 'mobile_money' ? 'text-white' : 'text-gray-600'}`} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900">MTN Mobile Money</p>
-                    <p className="text-xs text-gray-600">Pay with your mobile wallet</p>
-                  </div>
+          {(() => {
+            const cur = courseData?.currency || 'USD';
+            const ps = courseData?.payment_summary;
+            const full = courseData?.price ?? 0;
+            const pm = courseData?.payment_mode || 'full';
+            const due = ps?.amount_due_now != null
+              ? ps.amount_due_now
+              : pm === 'partial'
+                ? (courseData?.partial_payment_amount ?? (courseData?.partial_payment_percentage != null && full > 0
+                    ? Math.round(full * courseData.partial_payment_percentage / 100 * 100) / 100 : full))
+                : full;
+            if (due <= 0) return null;
+            return (
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="inline-flex items-center gap-2 bg-white border-2 border-indigo-300 text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold shadow-sm">
+                  <CreditCard className="w-4 h-4" />
+                  Amount due: {cur} {due.toLocaleString()}
+                  {pm === 'partial' && <span className="text-xs font-normal text-indigo-500">(your contribution)</span>}
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Available in: Ghana, Nigeria, Cameroon, Rwanda, Uganda, Côte d&apos;Ivoire, Benin, Zambia, South Africa, and more
-                </p>
-              </div>
-
-              {/* PayPal Option */}
-              <div
-                onClick={() => handleInputChange('payment_method', 'paypal')}
-                className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 ${
-                  formData.payment_method === 'paypal'
-                    ? 'border-blue-600 bg-blue-100 shadow-md'
-                    : 'border-gray-300 bg-white hover:border-blue-400'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${formData.payment_method === 'paypal' ? 'bg-blue-600' : 'bg-gray-200'}`}>
-                    <CreditCard className={`w-5 h-5 ${formData.payment_method === 'paypal' ? 'text-white' : 'text-gray-600'}`} />
-                  </div>
-                  <div>
-                    <p className="font-bold text-gray-900">PayPal</p>
-                    <p className="text-xs text-gray-600">Pay with PayPal or card</p>
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Available worldwide - Pay securely with PayPal, credit or debit card
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Mobile Money Fields */}
-          {formData.payment_method === 'mobile_money' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
-              <div className="space-y-2">
-                <Label htmlFor="payment_payer_name" className="text-base font-bold text-gray-900">
-                  Payer Name (optional)
-                </Label>
-                <Input
-                  id="payment_payer_name"
-                  value={formData.payment_payer_name}
-                  onChange={(e) => handleInputChange('payment_payer_name', e.target.value)}
-                  placeholder="Enter name for payment"
-                  className="py-6 text-base border-2 border-gray-300 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="payment_phone_number" className="text-base font-bold text-gray-900">
-                  Mobile Money Number
-                </Label>
-                <Input
-                  id="payment_phone_number"
-                  value={formData.payment_phone_number}
-                  onChange={(e) => handleInputChange('payment_phone_number', e.target.value)}
-                  placeholder="e.g. +256700000000"
-                  className={`py-6 text-base border-2 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 ${
-                    validationErrors.payment_phone_number ? 'border-red-400' : 'border-gray-300'
-                  }`}
-                />
-                {validationErrors.payment_phone_number && (
-                  <p className="text-sm text-red-600 mt-1 font-semibold flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4" />
-                    {validationErrors.payment_phone_number}
-                  </p>
-                )}
-                <p className="text-xs text-gray-600">We will send a payment prompt to this number.</p>
-              </div>
-            </div>
-          )}
-
-          {/* PayPal Info */}
-          {formData.payment_method === 'paypal' && (
-            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl animate-in fade-in duration-300">
-              <div className="flex items-start gap-3">
-                <div className="p-2 bg-blue-600 rounded-lg">
-                  <CreditCard className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <p className="font-bold text-gray-900">PayPal Payment</p>
-                  <p className="text-sm text-gray-700 mt-1">
-                    Click &quot;Pay Now&quot; below to be redirected to PayPal to complete your payment securely.
-                  </p>
-                  <p className="text-sm text-gray-600 mt-2">
-                    Confirmation email will be sent to: <span className="font-semibold">{formData.email}</span>
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Payment Status Indicator */}
-          {paymentStatus !== 'pending' && (
-            <div className={`mt-4 p-4 rounded-xl border-2 animate-in fade-in duration-300 ${
-              paymentStatus === 'approved' 
-                ? 'bg-emerald-50 border-emerald-500' 
-                : paymentStatus === 'processing'
-                ? 'bg-amber-50 border-amber-500'
-                : 'bg-red-50 border-red-500'
-            }`}>
-              <div className="flex items-center gap-3">
-                {paymentStatus === 'approved' && (
-                  <>
-                    <CheckCircle2 className="w-6 h-6 text-emerald-600" />
-                    <div>
-                      <p className="font-bold text-emerald-700">Payment Approved!</p>
-                      <p className="text-sm text-emerald-600">You can now submit your application.</p>
-                    </div>
-                  </>
-                )}
-                {paymentStatus === 'processing' && (
-                  <>
-                    <Loader2 className="w-6 h-6 text-amber-600 animate-spin" />
-                    <div>
-                      <p className="font-bold text-amber-700">Payment Processing</p>
-                      <p className="text-sm text-amber-600">
-                        {formData.payment_method === 'mobile_money' 
-                          ? 'Please approve the payment on your phone, then click "I\'ve Completed Payment".'
-                          : 'Waiting for PayPal confirmation...'}
-                      </p>
-                    </div>
-                  </>
-                )}
-                {paymentStatus === 'failed' && (
-                  <>
-                    <AlertCircle className="w-6 h-6 text-red-600" />
-                    <div>
-                      <p className="font-bold text-red-700">Payment Failed</p>
-                      <p className="text-sm text-red-600">Please try again or choose a different payment method.</p>
-                    </div>
-                  </>
+                {(courseData?.payment_methods || []).length > 0 && (
+                  <span className="text-xs text-gray-500">
+                    Accepted: {(courseData?.payment_methods || []).join(', ')}
+                  </span>
                 )}
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -1840,7 +2228,447 @@ export default function CourseApplicationForm({
     </div>
   );
 
-  const sectionTitles = [
+  // ─── renderPaymentStep ────────────────────────────────────────────────────
+  const renderPaymentStep = () => {
+    const paymentMode = courseData?.payment_mode || 'full';
+    const currency = courseData?.currency || 'USD';
+    const fullPrice = courseData?.price ?? 0;
+    const ps = courseData?.payment_summary;
+    const amountDue: number = ps?.amount_due_now != null
+      ? ps.amount_due_now
+      : paymentMode === 'partial'
+        ? (courseData?.partial_payment_amount
+            ?? (courseData?.partial_payment_percentage != null && fullPrice > 0
+              ? Math.round(fullPrice * courseData.partial_payment_percentage / 100 * 100) / 100
+              : fullPrice))
+        : fullPrice;
+    const remainingBalance: number | null = ps?.remaining_balance != null
+      ? ps.remaining_balance
+      : (paymentMode === 'partial' && fullPrice > 0 && amountDue > 0
+        ? Math.round((fullPrice - amountDue) * 100) / 100
+        : null);
+
+    const enabledMethods: string[] =
+      (courseData?.payment_summary?.enabled_methods && courseData.payment_summary.enabled_methods.length > 0)
+        ? courseData.payment_summary.enabled_methods
+        : (courseData?.payment_methods && courseData.payment_methods.length > 0
+            ? courseData.payment_methods
+            : ['kpay']);
+    const methodLabels: Record<string, { label: string; sub: string; color: string }> = {
+      kpay: { label: 'K-Pay', sub: 'MTN / Airtel MoMo, Visa, Mastercard, SPENN', color: 'violet' },
+      paypal: { label: 'PayPal', sub: 'Credit/debit card or PayPal balance', color: 'blue' },
+      mobile_money: { label: 'MTN Mobile Money', sub: 'Mobile wallet (Africa)', color: 'amber' },
+      stripe: { label: 'Card (Stripe)', sub: 'Visa, Mastercard, Amex via Stripe', color: 'indigo' },
+      bank_transfer: { label: 'Bank Transfer', sub: 'Manual wire transfer', color: 'emerald' },
+    };
+
+    return (
+      <div className="space-y-8">
+        {/* Step header */}
+        <div className="text-center">
+          <div className="inline-flex items-center gap-3 bg-indigo-600 text-white px-6 py-3 rounded-2xl shadow-lg mb-4">
+            <CreditCard className="w-6 h-6" />
+            <span className="text-lg font-bold">Complete Your Payment</span>
+          </div>
+          <p className="text-gray-600 max-w-lg mx-auto">
+            {courseData?.require_payment_before_application
+              ? 'Payment is required before your application is reviewed.'
+              : 'Complete payment to finalise your application.'}
+          </p>
+        </div>
+
+        {/* Amount breakdown */}
+        <div className={`bg-indigo-50 border-2 border-indigo-300 p-6 rounded-2xl shadow-sm`}>
+          <div className="flex items-center gap-3 mb-5">
+            <div className={`p-2 rounded-lg ${paymentMode === 'partial' ? 'bg-purple-600' : 'bg-indigo-600'}`}>
+              <CreditCard className="w-5 h-5 text-white" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-3 flex-wrap">
+                <p className="text-lg font-bold text-gray-900">
+                  {paymentMode === 'partial' ? 'Partial Scholarship — Your Contribution' : 'Full Tuition — Payment Required'}
+                </p>
+                <CurrencySelector compact />
+              </div>
+              {courseData?.require_payment_before_application && (
+                <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold border border-amber-300">
+                  Must complete payment before applying
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className={`grid gap-3 mb-5 ${paymentMode === 'partial' ? 'grid-cols-3' : 'grid-cols-1'}`}>
+            <div className={`rounded-xl p-3 border ${paymentMode === 'partial' ? 'bg-purple-50 border-purple-200' : 'bg-indigo-50 border-indigo-200'}`}>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                {paymentMode === 'partial' ? 'Your Contribution' : 'Tuition Fee'}
+              </p>
+              <p className="text-2xl font-bold text-indigo-700">
+                {amountDue > 0 ? `${currency} ${amountDue.toLocaleString()}` : 'TBD'}
+              </p>
+              {amountDue > 0 && (
+                <ConvertedBadge amount={amountDue} currency={currency} className="text-sm block mt-0.5" />
+              )}
+              {paymentMode === 'partial' && courseData?.partial_payment_percentage != null && (
+                <p className="text-xs text-purple-500 mt-0.5">{courseData.partial_payment_percentage}% your contribution — rest covered by scholarship</p>
+              )}
+            </div>
+            {paymentMode === 'partial' && (
+              <>
+                <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Covered by Scholarship</p>
+                  <p className="text-2xl font-bold text-emerald-700">
+                    {remainingBalance != null && remainingBalance > 0 ? `${currency} ${remainingBalance.toLocaleString()}` : '—'}
+                  </p>
+                  {remainingBalance != null && remainingBalance > 0 && (
+                    <ConvertedBadge amount={remainingBalance} currency={currency} className="text-sm block" />
+                  )}
+                </div>
+                <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Total Program Cost</p>
+                  <p className="text-2xl font-bold text-gray-600">
+                    {fullPrice > 0 ? `${currency} ${fullPrice.toLocaleString()}` : '—'}
+                  </p>
+                  {fullPrice > 0 && (
+                    <ConvertedBadge amount={fullPrice} currency={currency} className="text-sm block" />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Payment method selection */}
+          <div className="mb-6">
+            <Label className="text-base font-bold text-gray-900 mb-3 block">Select Payment Method</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {enabledMethods.map((method) => {
+                const meta = methodLabels[method] || { label: method, sub: '', color: 'gray' };
+                const selected = formData.payment_method === method;
+                return (
+                  <div
+                    key={method}
+                    onClick={() => handleInputChange('payment_method', method)}
+                    className={`cursor-pointer p-4 rounded-xl border-2 transition-all duration-200 ${
+                      selected
+                        ? `border-${meta.color}-600 bg-${meta.color}-100 shadow-md`
+                        : 'border-gray-300 bg-white hover:border-gray-400'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${selected ? `bg-${meta.color}-600` : 'bg-gray-200'}`}>
+                        <CreditCard className={`w-5 h-5 ${selected ? 'text-white' : 'text-gray-600'}`} />
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900">{meta.label}</p>
+                        <p className="text-xs text-gray-600">{meta.sub}</p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Mobile Money */}
+          {formData.payment_method === 'mobile_money' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-in fade-in duration-300">
+              <div className="space-y-2">
+                <Label htmlFor="pp_payer_name" className="text-base font-bold text-gray-900">
+                  Payer Name <span className="text-gray-500 font-normal">(optional)</span>
+                </Label>
+                <Input
+                  id="pp_payer_name"
+                  value={formData.payment_payer_name}
+                  onChange={(e) => handleInputChange('payment_payer_name', e.target.value)}
+                  placeholder="Enter name for payment"
+                  className={`py-6 text-base border-2 rounded-xl focus:border-indigo-600 focus:ring-2 focus:ring-indigo-200 ${
+                    momoValidation.name && formData.payment_payer_name === momoValidation.name
+                      ? 'border-emerald-400'
+                      : 'border-gray-300'
+                  }`}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pp_phone" className="text-base font-bold text-gray-900">
+                  Mobile Money Number <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="pp_phone"
+                  value={formData.payment_phone_number}
+                  onChange={(e) => {
+                    handleInputChange('payment_phone_number', e.target.value);
+                    setMomoValidation({ loading: false, valid: null, name: null, error: null });
+                  }}
+                  onBlur={(e) => validateMomoPhone(e.target.value)}
+                  placeholder="e.g. +250700000000"
+                  className={`py-6 text-base border-2 rounded-xl focus:ring-2 focus:ring-indigo-200 transition-colors ${
+                    validationErrors.payment_phone_number
+                      ? 'border-red-400 focus:border-red-500'
+                      : momoValidation.valid === true
+                      ? 'border-emerald-500 focus:border-emerald-600'
+                      : momoValidation.valid === false
+                      ? 'border-red-400 focus:border-red-500'
+                      : 'border-gray-300 focus:border-indigo-600'
+                  }`}
+                />
+                {validationErrors.payment_phone_number && (
+                  <p className="text-sm text-red-600 font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />{validationErrors.payment_phone_number}
+                  </p>
+                )}
+                {!validationErrors.payment_phone_number && formData.payment_phone_number && (
+                  <div className="mt-1">
+                    {momoValidation.loading && (
+                      <p className="text-xs text-amber-600 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" /> Validating MoMo account…
+                      </p>
+                    )}
+                    {!momoValidation.loading && momoValidation.valid === true && (
+                      <p className="text-xs text-emerald-700 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        {momoValidation.name ? `Verified: ${momoValidation.name}` : 'Active MoMo account verified'}
+                      </p>
+                    )}
+                    {!momoValidation.loading && momoValidation.valid === false && (
+                      <p className="text-xs text-red-600 font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        {momoValidation.error || 'Not a registered MoMo account. Please check the number.'}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <p className="text-xs text-gray-600">We will send a payment prompt to this number.</p>
+              </div>
+            </div>
+          )}
+
+          {/* K-Pay */}
+          {formData.payment_method === 'kpay' && (
+            <div className="space-y-4 animate-in fade-in duration-300">
+              <div className="bg-violet-50 border border-violet-200 p-4 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-violet-600 rounded-lg"><CreditCard className="w-5 h-5 text-white" /></div>
+                  <div>
+                    <p className="font-bold text-gray-900">K-Pay Checkout</p>
+                    <p className="text-sm text-gray-700 mt-1">
+                      Click <strong>Pay Now</strong> to be redirected to the secure K-Pay checkout. Supports MTN Mobile Money, Airtel Money, Visa, Mastercard, and SPENN wallet.
+                    </p>
+                    <p className="text-sm text-gray-600 mt-2">Confirmation will be sent to: <span className="font-semibold">{formData.email}</span></p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="kpay_payer_name" className="text-base font-bold text-gray-900">
+                    Full Name <span className="text-gray-500 font-normal">(optional)</span>
+                  </Label>
+                  <Input
+                    id="kpay_payer_name"
+                    value={formData.payment_payer_name}
+                    onChange={(e) => handleInputChange('payment_payer_name', e.target.value)}
+                    placeholder="Your full name"
+                    className="py-6 text-base border-2 rounded-xl border-gray-300 focus:border-violet-600 focus:ring-2 focus:ring-violet-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="kpay_phone" className="text-base font-bold text-gray-900">
+                    Phone Number <span className="text-gray-500 font-normal">(for MoMo)</span>
+                  </Label>
+                  <Input
+                    id="kpay_phone"
+                    value={formData.payment_phone_number}
+                    onChange={(e) => handleInputChange('payment_phone_number', e.target.value)}
+                    placeholder="e.g. +250700000000"
+                    className="py-6 text-base border-2 rounded-xl border-gray-300 focus:border-violet-600 focus:ring-2 focus:ring-violet-200"
+                  />
+                  <p className="text-xs text-gray-500">Required for MTN/Airtel MoMo. Leave empty if paying by card or SPENN.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PayPal */}
+          {formData.payment_method === 'paypal' && (            <div className="bg-blue-50 border border-blue-200 p-4 rounded-xl animate-in fade-in duration-300">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-blue-600 rounded-lg"><CreditCard className="w-5 h-5 text-white" /></div>
+                <div>
+                  <p className="font-bold text-gray-900">PayPal Checkout</p>
+                  <p className="text-sm text-gray-700 mt-1">
+                    Click <strong>Pay Now</strong> to be redirected to PayPal. After completing payment, you will be returned here automatically.
+                  </p>
+                  <p className="text-sm text-gray-600 mt-2">Confirmation email will be sent to: <span className="font-semibold">{formData.email}</span></p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Stripe */}
+          {formData.payment_method === 'stripe' && (
+            <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl animate-in fade-in duration-300">
+              <div className="flex items-start gap-3">
+                <div className="p-2 bg-indigo-600 rounded-lg"><CreditCard className="w-5 h-5 text-white" /></div>
+                <div>
+                  <p className="font-bold text-gray-900">Secure Card Payment (Stripe)</p>
+                  <p className="text-sm text-gray-700 mt-1">
+                    Click <strong>Pay Now</strong> to open Stripe Checkout. Supports Visa, Mastercard, Amex, and more.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Bank Transfer */}
+          {formData.payment_method === 'bank_transfer' && (() => {
+            const bankDetailsText = bankTransferDetails || courseData?.bank_transfer_details || null;
+            const copyToClipboard = (text: string, field: string) => {
+              navigator.clipboard.writeText(text).then(() => {
+                setCopiedField(field);
+                setTimeout(() => setCopiedField(null), 2000);
+              });
+            };
+            return (
+              <div className="border border-emerald-200 rounded-xl overflow-hidden animate-in fade-in duration-300">
+                <div className="bg-emerald-600 px-4 py-3 flex items-center gap-3">
+                  <div className="p-1.5 bg-white/20 rounded-lg"><Building2 className="w-4 h-4 text-white" /></div>
+                  <div>
+                    <p className="font-bold text-white text-sm">Bank Transfer Payment</p>
+                    <p className="text-emerald-100 text-xs">Direct deposit to bank account</p>
+                  </div>
+                </div>
+                <div className="bg-emerald-50 p-4 space-y-4">
+                  {bankDetailsText ? (
+                    <>
+                      <div className="bg-white rounded-lg border border-emerald-200 divide-y divide-emerald-100 overflow-hidden">
+                        {bankDetailsText.split('\n').filter((l: string) => l.trim()).map((line: string, i: number) => {
+                          const colonIdx = line.indexOf(':');
+                          if (colonIdx > -1) {
+                            const key = line.slice(0, colonIdx).trim();
+                            const value = line.slice(colonIdx + 1).trim();
+                            const isAccountNum = /account\s*number/i.test(key);
+                            return (
+                              <div key={i} className={`flex items-center justify-between px-3 py-2.5 ${isAccountNum ? 'bg-emerald-50' : ''}`}>
+                                <div>
+                                  <p className="text-xs text-gray-400 uppercase tracking-wide">{key}</p>
+                                  <p className={`${isAccountNum ? 'font-mono text-base font-bold text-emerald-700 tracking-wider' : 'text-sm font-semibold text-gray-900'}`}>{value}</p>
+                                </div>
+                                {isAccountNum && (
+                                  <button type="button" onClick={() => copyToClipboard(value, 'account')}
+                                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded-md transition-colors font-medium">
+                                    {copiedField === 'account' ? <><Check className="w-3 h-3" />Copied!</> : <><Copy className="w-3 h-3" />Copy</>}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          }
+                          return <p key={i} className="text-sm text-gray-600 px-3 py-2">{line}</p>;
+                        })}
+                      </div>
+                      {paymentReference ? (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                          <p className="text-xs text-amber-700 font-semibold uppercase tracking-wide mb-1.5">Your Payment Reference</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <code className="text-sm font-bold text-amber-800 break-all">{paymentReference}</code>
+                            <button type="button" onClick={() => copyToClipboard(paymentReference, 'ref')}
+                              className="flex-shrink-0 flex items-center gap-1 text-xs px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-md transition-colors font-medium">
+                              {copiedField === 'ref' ? <><Check className="w-3 h-3" />Copied!</> : <><Copy className="w-3 h-3" />Copy</>}
+                            </button>
+                          </div>
+                          <p className="text-xs text-amber-600 mt-1.5">Use this as the narration/reference when making your transfer.</p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-gray-500 bg-gray-50 rounded-lg p-2.5 border border-gray-200">
+                          Click <strong>Pay Now</strong> to generate your unique payment reference before transferring.
+                        </p>
+                      )}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">How to complete payment:</p>
+                        {['Copy the account number above','Log in to your bank app or visit a branch','Make a transfer for the exact course fee','Use your unique reference as the payment narration','Screenshot your receipt, then click "I’ve Completed Payment"'].map((step, i) => (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                            <p className="text-xs text-gray-600">{step}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-4">
+                      <CreditCard className="w-8 h-8 text-emerald-400 mx-auto mb-2" />
+                      <p className="text-sm text-gray-700">Click <strong>Pay Now</strong> to reveal bank account details and receive your unique payment reference.</p>
+                    </div>
+                  )}
+                  {bankTransferInfo && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-800">{bankTransferInfo}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Payment status indicator */}
+          {paymentStatus !== 'pending' && (
+            <div className={`mt-4 p-4 rounded-xl border-2 animate-in fade-in duration-300 ${
+              paymentStatus === 'approved' ? 'bg-emerald-50 border-emerald-500'
+              : paymentStatus === 'processing' ? 'bg-amber-50 border-amber-500'
+              : 'bg-red-50 border-red-500'
+            }`}>
+              <div className="flex items-center gap-3">
+                {paymentStatus === 'approved' && (
+                  <>
+                    <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+                    <div>
+                      <p className="font-bold text-emerald-700">Payment Approved!</p>
+                      <p className="text-sm text-emerald-600">You can now submit your application.</p>
+                    </div>
+                  </>
+                )}
+                {paymentStatus === 'processing' && (
+                  <>
+                    <Loader2 className="w-6 h-6 text-amber-600 animate-spin flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="font-bold text-amber-700">
+                        {formData.payment_method === 'mobile_money' ? 'Waiting for your approval…' : 'Payment Processing'}
+                      </p>
+                      <p className="text-sm text-amber-600 mt-0.5">
+                        {formData.payment_method === 'mobile_money'
+                          ? 'A payment prompt has been sent to your phone. Open your MTN MoMo app or dial *182# and approve the request. This page will update automatically.'
+                          : formData.payment_method === 'bank_transfer'
+                          ? 'Please complete the bank transfer, then click "I\'ve Completed Payment" to proceed.'
+                          : 'Waiting for payment confirmation…'}
+                      </p>
+                      {formData.payment_method === 'mobile_money' && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <div className="flex gap-0.5">
+                            {[0, 1, 2].map((i) => (
+                              <span key={i} className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-bounce"
+                                style={{ animationDelay: `${i * 0.15}s` }} />
+                            ))}
+                          </div>
+                          <span className="text-xs text-amber-500">Checking automatically every 5 seconds…</span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+                {paymentStatus === 'failed' && (
+                  <>
+                    <AlertCircle className="w-6 h-6 text-red-600" />
+                    <div>
+                      <p className="font-bold text-red-700">Payment Failed</p>
+                      <p className="text-sm text-red-600">Please try again or choose a different payment method.</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const sectionTitlesBase = [
     { num: 1, title: 'Applicant Information', desc: 'Tell us about yourself', icon: User },
     { num: 2, title: 'Education & Background', desc: 'Your professional journey', icon: GraduationCap },
     { num: 3, title: skillConfig.sectionTitle, desc: skillConfig.sectionDesc, icon: Monitor },
@@ -1848,12 +2676,15 @@ export default function CourseApplicationForm({
     { num: 5, title: 'Access & Availability', desc: 'Logistics for learning', icon: Clock },
     { num: 6, title: 'Commitment & Agreement', desc: 'Final commitment', icon: Award },
   ];
+  const sectionTitles = requiresPaymentStep
+    ? [...sectionTitlesBase, { num: 7, title: 'Payment', desc: 'Complete your payment', icon: CreditCard }]
+    : sectionTitlesBase;
 
   // Calculate progress percentage
-  const progressPercentage = (currentSection / 6) * 100;
+  const progressPercentage = (currentSection / totalSections) * 100;
   
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4">
+    <div className="max-w-5xl mx-auto py-8 px-4" id="application-form-top">
       <Card className="shadow-xl border border-gray-200 bg-white overflow-hidden">
         <CardHeader className="border-b border-gray-200 bg-gray-50 pb-8">
           {/* Progress Bar with Animation */}
@@ -1861,7 +2692,7 @@ export default function CourseApplicationForm({
             <div className="flex justify-between items-center mb-3">
               <span className="text-base font-bold text-gray-900 flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-emerald-600" />
-                Section {currentSection} of 6
+                Section {currentSection} of {totalSections}
               </span>
               <span className="text-sm font-semibold text-emerald-700 bg-emerald-100 px-4 py-1.5 rounded-full">
                 {Math.round(progressPercentage)}% Complete
@@ -1878,7 +2709,7 @@ export default function CourseApplicationForm({
           </div>
 
           {/* Modern Section Indicators */}
-          <div className="grid grid-cols-6 gap-3 mb-8">
+          <div className={`grid gap-3 mb-8 ${totalSections === 7 ? 'grid-cols-7' : 'grid-cols-6'}`}>
             {sectionTitles.map((section) => {
               const IconComponent = section.icon;
               return (
@@ -1953,6 +2784,18 @@ export default function CourseApplicationForm({
         </CardHeader>
 
 <CardContent className="pt-8 pb-8 px-8">
+          {/* Draft Restore Banner */}
+          {showDraftBanner && (
+            <DraftRestoreBanner
+              onRestore={handleRestoreDraft}
+              onDiscard={handleDiscardDraft}
+              className="mb-6"
+              message={`✅ Your previous progress was restored${draftSavedAt ? ` (saved ${draftSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ''}. You are on section ${currentSection} of ${totalSections}.`}
+              restoreLabel="Keep Progress"
+              discardLabel="Start Over"
+            />
+          )}
+
           {/* Global Error Message */}
           {error && (
             <Alert className="mb-8 border-red-300 bg-gradient-to-r from-red-50 to-rose-50 shadow-lg">
@@ -1965,10 +2808,72 @@ export default function CourseApplicationForm({
         )}
 
         <form onSubmit={handleSubmit}>
+          {/* Section Validation Error Summary Banner */}
+          {Object.keys(validationErrors).length > 0 && (() => {
+            const fieldLabels: Record<string, string> = {
+              full_name: 'Full Name',
+              email: 'Email Address',
+              phone: 'Phone Number',
+              gender: 'Gender',
+              age_range: 'Age Range',
+              country: 'Country',
+              education_level: 'Education Level',
+              current_status: 'Current Status',
+              excel_skill_level: 'Skill Level',
+              motivation: 'Why do you want to join?',
+              learning_outcomes: 'Learning Outcomes',
+              internet_access_type: 'Internet Access Type',
+              available_time: 'Available Time Slots',
+              committed_to_complete: 'Course Commitment',
+              agrees_to_assessments: 'Assessment Agreement',
+              payment_phone_number: 'Mobile Money Number',
+            };
+            const errorFields = Object.keys(validationErrors);
+            return (
+              <div
+                id="section-error-banner"
+                className="mb-8 p-5 bg-red-50 border-2 border-red-400 rounded-2xl shadow-sm"
+                role="alert"
+                aria-live="polite"
+              >
+                <div className="flex items-start gap-3 mb-3">
+                  <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-base font-bold text-red-900">
+                      Please fix {errorFields.length} field{errorFields.length > 1 ? 's' : ''} before continuing
+                    </p>
+                    <p className="text-sm text-red-700 mt-0.5">Click a field name to jump to it</p>
+                  </div>
+                </div>
+                <ul className="flex flex-wrap gap-2 ml-9">
+                  {errorFields.map((field) => (
+                    <li key={field}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const el = document.getElementById(field);
+                          if (el) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            el.focus();
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 text-sm font-semibold rounded-xl border border-red-300 transition-colors duration-200"
+                      >
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        {fieldLabels[field] || field}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
+
           {renderSection()}
 
           {/* Navigation Buttons */}
           <div className="flex flex-col sm:flex-row justify-between gap-4 mt-12 pt-8 border-t-2 border-gray-200">
+            <AutoSaveIndicator status={autoSaveStatus} lastSaved={autoSaveLastSaved} className="hidden sm:flex self-center" />
             <Button
               type="button"
               variant="outline"
@@ -1980,55 +2885,85 @@ export default function CourseApplicationForm({
               {currentSection === 1 ? 'Cancel' : 'Previous'}
             </Button>
 
-            {currentSection < 6 ? (
-              <Button 
-                type="button" 
+            {currentSection < totalSections - (requiresPaymentStep ? 1 : 0) ? (
+              /* Sections 1–5 for paid (1–5 for free): plain Next */
+              <Button
+                type="button"
                 onClick={handleNext}
                 className="px-10 py-6 text-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md hover:shadow-lg transition-all duration-300 rounded-xl"
               >
                 Next Section
                 <ChevronRight className="w-5 h-5 ml-2" />
               </Button>
+            ) : currentSection === 6 && requiresPaymentStep ? (
+              /* Section 6 of 7 (paid only): Save draft & proceed to payment */
+              <Button
+                type="button"
+                onClick={handleSaveAndProceedToPayment}
+                disabled={savingDraft || !!existingApplication}
+                className="px-10 py-6 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-md hover:shadow-lg transition-all duration-300 rounded-xl disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {savingDraft ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Saving Application…
+                  </>
+                ) : (
+                  <>
+                    <CreditCard className="w-5 h-5 mr-2" />
+                    Save &amp; Proceed to Payment
+                    <ChevronRight className="w-5 h-5 ml-2" />
+                  </>
+                )}
+              </Button>
             ) : (
+              /* Last section (section 6 for free, section 7 for paid): Pay + Submit */
               <div className="flex flex-col sm:flex-row gap-4">
-                {/* Pay Now Button - Only shown for paid courses when payment not yet approved */}
-                {courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved' && (
+                {/* Pay Now / Confirm buttons — only on final section for paid courses */}
+                {requiresPaymentStep && paymentStatus !== 'approved' && (
                   <>
                     {paymentStatus === 'processing' ? (
-                      <Button 
+                      <Button
                         type="button"
                         onClick={handleConfirmPayment}
                         disabled={paymentLoading}
                         className="px-10 py-7 text-lg bg-amber-500 hover:bg-amber-600 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
                       >
                         {paymentLoading ? (
-                          <>
-                            <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                            Verifying Payment...
-                          </>
+                          <><Loader2 className="w-6 h-6 mr-3 animate-spin" />Verifying Payment…</>
+                        ) : formData.payment_method === 'mobile_money' ? (
+                          <><CheckCircle2 className="w-6 h-6 mr-3" />Check Payment Status</>
                         ) : (
-                          <>
-                            <CheckCircle2 className="w-6 h-6 mr-3" />
-                            I&apos;ve Completed Payment
-                          </>
+                          <><CheckCircle2 className="w-6 h-6 mr-3" />I&apos;ve Completed Payment</>
                         )}
                       </Button>
                     ) : (
-                      <Button 
+                      <Button
                         type="button"
                         onClick={handlePayNow}
-                        disabled={paymentLoading || existingApplication}
+                        disabled={paymentLoading || !!existingApplication}
                         className="px-10 py-7 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
                       >
                         {paymentLoading ? (
-                          <>
-                            <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                            Initiating Payment...
-                          </>
+                          <><Loader2 className="w-6 h-6 mr-3 animate-spin" />Initiating Payment…</>
                         ) : (
                           <>
                             <CreditCard className="w-6 h-6 mr-3" />
-                            Pay Now ({courseData?.currency || 'USD'} {courseData?.price})
+                            {(() => {
+                              const pm = courseData?.payment_mode || 'full';
+                              const cur = courseData?.currency || 'USD';
+                              const full = courseData?.price ?? 0;
+                              const psum = courseData?.payment_summary;
+                              const due = psum?.amount_due_now != null
+                                ? psum.amount_due_now
+                                : pm === 'partial'
+                                  ? (courseData?.partial_payment_amount
+                                      ?? (courseData?.partial_payment_percentage != null && full > 0
+                                        ? Math.round(full * courseData.partial_payment_percentage / 100 * 100) / 100
+                                        : full))
+                                  : full;
+                              return `Pay ${pm === 'partial' ? 'My Contribution' : 'Now'} (${cur} ${due > 0 ? due.toLocaleString() : '—'})`;
+                            })()}
                           </>
                         )}
                       </Button>
@@ -2036,46 +2971,36 @@ export default function CourseApplicationForm({
                   </>
                 )}
 
-                {/* Payment Status Indicator */}
-                {courseData?.enrollment_type === 'paid' && paymentStatus === 'approved' && (
+                {/* Payment approved badge */}
+                {requiresPaymentStep && paymentStatus === 'approved' && (
                   <div className="flex items-center gap-2 px-6 py-4 bg-emerald-100 border-2 border-emerald-500 rounded-2xl">
                     <CheckCircle2 className="w-6 h-6 text-emerald-600" />
                     <span className="font-bold text-emerald-700">Payment Approved!</span>
                   </div>
                 )}
 
-                {/* Submit Application Button */}
-                <Button 
-                  type="submit" 
+                {/* Submit Application */}
+                <Button
+                  type="submit"
                   disabled={
-                    loading || 
-                    existingApplication || 
-                    (courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved')
+                    loading ||
+                    !!existingApplication ||
+                    (requiresPaymentStep && paymentStatus !== 'approved')
                   }
                   className={`px-12 py-7 text-xl font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl disabled:opacity-50 disabled:cursor-not-allowed ${
-                    courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved'
+                    requiresPaymentStep && paymentStatus !== 'approved'
                       ? 'bg-gray-400 cursor-not-allowed'
                       : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                   }`}
                 >
                   {loading ? (
-                    <>
-                      <Loader2 className="w-6 h-6 mr-3 animate-spin" />
-                      Submitting Application...
-                    </>
+                    <><Loader2 className="w-6 h-6 mr-3 animate-spin" />Submitting Application…</>
                   ) : existingApplication ? (
                     'Already Applied'
-                  ) : courseData?.enrollment_type === 'paid' && paymentStatus !== 'approved' ? (
-                    <>
-                      <AlertCircle className="w-6 h-6 mr-3" />
-                      Pay First to Submit
-                    </>
+                  ) : requiresPaymentStep && paymentStatus !== 'approved' ? (
+                    <><AlertCircle className="w-6 h-6 mr-3" />Pay First to Submit</>
                   ) : (
-                    <>
-                      <Sparkles className="w-6 h-6 mr-3" />
-                      Submit Application
-                      <CheckCircle2 className="w-6 h-6 ml-3" />
-                    </>
+                    <><Sparkles className="w-6 h-6 mr-3" />Submit Application<CheckCircle2 className="w-6 h-6 ml-3" /></>
                   )}
                 </Button>
               </div>

@@ -132,6 +132,17 @@ export interface Course {
   instructor_id?: number;
   currency?: string;
   scholarship_available?: boolean;
+  // Enhanced payment fields
+  payment_mode?: 'full' | 'partial';
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  payment_summary?: {
+    required?: boolean;
+    amount_due_now?: number | null;
+    remaining_balance?: number | null;
+    total_price?: number | null;
+    currency?: string;
+  } | null;
   max_scholarship_spots?: number;
   current_scholarship_spots?: number;
   prerequisites?: any[];

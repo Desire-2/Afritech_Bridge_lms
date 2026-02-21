@@ -64,12 +64,40 @@ const CourseCard: React.FC<CourseCardProps> = ({ course, viewMode, onEnrollClick
   const [isFavorited, setIsFavorited] = useState(false);
   
   const getPriceDisplay = () => {
+    const currency = course.currency || 'USD';
     if (course.enrollment_type === 'free') {
-      return <Badge className="bg-green-100 text-green-800 border-green-200">Free</Badge>;
+      return <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200">✨ Free</Badge>;
     } else if (course.enrollment_type === 'scholarship') {
-      return <Badge className="bg-blue-100 text-blue-800 border-blue-200">Scholarship Available</Badge>;
+      return <Badge className="bg-amber-100 text-amber-800 border-amber-200">🎓 Scholarship</Badge>;
+    } else if (course.enrollment_type === 'paid' && course.payment_mode === 'partial') {
+      // Partial scholarship: applicant pays their portion, rest is covered
+      const ps = course.payment_summary;
+      const amountDue = ps?.amount_due_now ?? course.partial_payment_amount
+        ?? (course.partial_payment_percentage != null && course.price
+          ? Math.round(course.price * course.partial_payment_percentage / 100 * 100) / 100
+          : course.price);
+      return (
+        <div className="flex flex-col gap-1">
+          <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200">🎓 Partial Scholarship</Badge>
+          {amountDue != null && (
+            <span className="text-xs text-indigo-600 font-medium">
+              Your contribution: {currency} {Number(amountDue).toLocaleString()}
+            </span>
+          )}
+        </div>
+      );
     } else {
-      return <Badge className="bg-purple-100 text-purple-800 border-purple-200">${course.price}</Badge>;
+      const fullPrice = course.payment_summary?.amount_due_now ?? course.price;
+      return (
+        <div className="flex flex-col gap-1">
+          <Badge className="bg-blue-100 text-blue-800 border-blue-200">💳 Full Tuition</Badge>
+          {fullPrice != null && (
+            <span className="text-xs text-blue-600 font-medium">
+              {currency} {Number(fullPrice).toLocaleString()}
+            </span>
+          )}
+        </div>
+      );
     }
   };
 
@@ -101,8 +129,20 @@ const CourseCard: React.FC<CourseCardProps> = ({ course, viewMode, onEnrollClick
           }}
           disabled={enrollingCourseId === course.id}
         >
-          {enrollingCourseId === course.id ? 'Enrolling...' : 
-           (course.enrollment_type === 'free' ? 'Enroll Now' : 'Enroll for $' + course.price)}
+          {enrollingCourseId === course.id ? 'Enrolling...' :
+           course.enrollment_type === 'free' ? 'Enroll Free' :
+           course.enrollment_type === 'scholarship' ? 'Apply for Scholarship' :
+           course.payment_mode === 'partial' ? (() => {
+             const ps = course.payment_summary;
+             const cur = course.currency || 'USD';
+             const due = ps?.amount_due_now ?? course.partial_payment_amount ?? course.price;
+             return due != null ? `Apply & Pay ${cur} ${Number(due).toLocaleString()}` : 'Apply & Pay';
+           })() :
+           (() => {
+             const cur = course.currency || 'USD';
+             const p = course.payment_summary?.amount_due_now ?? course.price;
+             return p != null ? `Enroll for ${cur} ${Number(p).toLocaleString()}` : 'Enroll Now';
+           })()}
         </Button>
       );
     }

@@ -12,6 +12,7 @@ from ..utils.email_notifications import send_announcement_notification
 # Helper for role checking (decorator)
 from functools import wraps
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +177,22 @@ def create_course():
             enrollment_type=enrollment_type,
             price=price,
             currency=currency,
+            # Enhanced payment settings
+            payment_mode=data.get("payment_mode", "full"),
+            partial_payment_amount=data.get("partial_payment_amount"),
+            partial_payment_percentage=data.get("partial_payment_percentage"),
+            payment_methods=json.dumps(data["payment_methods"]) if data.get("payment_methods") else None,
+            payment_deadline_days=data.get("payment_deadline_days"),
+            require_payment_before_application=data.get("require_payment_before_application", False),
+            paypal_enabled=data.get("paypal_enabled", True),
+            mobile_money_enabled=data.get("mobile_money_enabled", True),
+            bank_transfer_enabled=data.get("bank_transfer_enabled", False),
+            kpay_enabled=data.get("kpay_enabled", True),
+            bank_transfer_details=data.get("bank_transfer_details"),
+            installment_enabled=data.get("installment_enabled", False),
+            installment_count=data.get("installment_count"),
+            installment_interval_days=data.get("installment_interval_days"),
+            # Application/cohort settings
             application_start_date=application_start_date,
             application_end_date=application_end_date,
             cohort_start_date=cohort_start_date,
@@ -283,6 +300,62 @@ def update_course(course_id):
 
         if "currency" in data:
             course.currency = data.get("currency") or course.currency
+
+        # Enhanced payment settings
+        if "payment_mode" in data:
+            pm = data.get("payment_mode")
+            if pm not in ["full", "partial", None]:
+                return jsonify({"message": "Invalid payment_mode. Use 'full' or 'partial'."}), 400
+            course.payment_mode = pm or "full"
+
+        if "partial_payment_amount" in data:
+            val = data.get("partial_payment_amount")
+            course.partial_payment_amount = float(val) if val is not None else None
+
+        if "partial_payment_percentage" in data:
+            val = data.get("partial_payment_percentage")
+            if val is not None:
+                val = float(val)
+                if val < 0 or val > 100:
+                    return jsonify({"message": "partial_payment_percentage must be between 0 and 100"}), 400
+            course.partial_payment_percentage = val
+
+        if "payment_methods" in data:
+            methods = data.get("payment_methods")
+            course.payment_methods = json.dumps(methods) if methods and isinstance(methods, list) else None
+
+        if "payment_deadline_days" in data:
+            val = data.get("payment_deadline_days")
+            course.payment_deadline_days = int(val) if val is not None else None
+
+        if "require_payment_before_application" in data:
+            course.require_payment_before_application = bool(data.get("require_payment_before_application"))
+
+        if "paypal_enabled" in data:
+            course.paypal_enabled = bool(data.get("paypal_enabled"))
+
+        if "mobile_money_enabled" in data:
+            course.mobile_money_enabled = bool(data.get("mobile_money_enabled"))
+
+        if "bank_transfer_enabled" in data:
+            course.bank_transfer_enabled = bool(data.get("bank_transfer_enabled"))
+
+        if "kpay_enabled" in data:
+            course.kpay_enabled = bool(data.get("kpay_enabled"))
+
+        if "bank_transfer_details" in data:
+            course.bank_transfer_details = data.get("bank_transfer_details")
+
+        if "installment_enabled" in data:
+            course.installment_enabled = bool(data.get("installment_enabled"))
+
+        if "installment_count" in data:
+            val = data.get("installment_count")
+            course.installment_count = int(val) if val is not None else None
+
+        if "installment_interval_days" in data:
+            val = data.get("installment_interval_days")
+            course.installment_interval_days = int(val) if val is not None else None
 
         # Application/Cohort window settings
         try:

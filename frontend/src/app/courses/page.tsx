@@ -4,81 +4,239 @@ import Link from 'next/link';
 import { Course } from '@/types/api';
 import { CourseApiService } from '@/services/api';
 
-// Public Course Card Component
-const PublicCourseCard: React.FC<{ course: Course }> = ({ course }) => (
-  <div className="bg-white dark:bg-gray-800 shadow-lg overflow-hidden rounded-xl hover:shadow-2xl transition-all duration-300 border border-gray-200 dark:border-gray-700 h-full flex flex-col">
-    {/* Course Header with Gradient */}
-    <div className="bg-gradient-to-br from-sky-500 via-blue-500 to-indigo-600 p-6 relative overflow-hidden">
-      <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-      <div className="absolute bottom-0 left-0 w-24 h-24 bg-white/10 rounded-full -ml-12 -mb-12"></div>
-      <div className="relative z-10">
-        <div className="flex items-center justify-between mb-3">
-          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-white/20 backdrop-blur-sm text-white border border-white/30">
-            📚 Course
-          </span>
-          {course.level && (
-            <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-white/20 backdrop-blur-sm text-white">
-              {course.level}
-            </span>
+// ── Payment tier helpers ──────────────────────────────────────────────────────
+
+function getPaymentTier(course: Course): 'free' | 'scholarship' | 'partial_scholarship' | 'full_tuition' {
+  if (course.enrollment_type === 'free') return 'free';
+  if (course.enrollment_type === 'scholarship') return 'scholarship';
+  if (course.enrollment_type === 'paid' && course.payment_mode === 'partial') return 'partial_scholarship';
+  return 'full_tuition';
+}
+
+function getAmountDue(course: Course): number {
+  const ps = course.payment_summary;
+  if (ps?.amount_due_now != null) return ps.amount_due_now;
+  if (course.partial_payment_amount != null) return course.partial_payment_amount;
+  if (course.partial_payment_percentage != null && course.price)
+    return Math.round(course.price * course.partial_payment_percentage / 100 * 100) / 100;
+  return course.price ?? 0;
+}
+
+function getScholarshipCover(course: Course): number | null {
+  const ps = course.payment_summary;
+  if (ps?.remaining_balance != null) return ps.remaining_balance;
+  const due = getAmountDue(course);
+  if (course.price && due > 0) return Math.round((course.price - due) * 100) / 100;
+  return null;
+}
+
+// ── Tier badge ────────────────────────────────────────────────────────────────
+
+const TierBadge: React.FC<{ tier: ReturnType<typeof getPaymentTier> }> = ({ tier }) => {
+  const map = {
+    free:                { label: '✨ Free',               cls: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
+    scholarship:         { label: '🎓 Scholarship',        cls: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
+    partial_scholarship: { label: '🎓 Partial Scholarship', cls: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' },
+    full_tuition:        { label: '💳 Full Tuition',       cls: 'bg-blue-500/20 text-blue-300 border-blue-500/40' },
+  };
+  const { label, cls } = map[tier];
+  return (
+    <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${cls}`}>
+      {label}
+    </span>
+  );
+};
+
+// ── Payment info block shown inside the card ──────────────────────────────────
+
+const PaymentInfoBlock: React.FC<{ course: Course }> = ({ course }) => {
+  const tier = getPaymentTier(course);
+  const currency = course.currency || 'USD';
+
+  if (tier === 'free') {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+        <span className="text-emerald-400 font-bold text-base">Free Enrollment</span>
+        <span className="text-emerald-500/70 text-xs">· No payment required</span>
+      </div>
+    );
+  }
+
+  if (tier === 'scholarship') {
+    return (
+      <div className="px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-amber-400 font-bold text-base">Fully Covered</span>
+          <span className="text-amber-500/70 text-xs">· Competitive selection</span>
+        </div>
+        <p className="text-gray-400 text-xs leading-relaxed">
+          Apply and our team will review your application. No payment required if selected.
+        </p>
+      </div>
+    );
+  }
+
+  if (tier === 'partial_scholarship') {
+    const amountDue = getAmountDue(course);
+    const scholarshipCover = getScholarshipCover(course);
+    return (
+      <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl overflow-hidden">
+        <div className="px-3 pt-2 pb-1">
+          <p className="text-xs font-semibold text-indigo-400 uppercase tracking-wide mb-2">Partial Scholarship</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-white/5 rounded-lg p-2">
+              <p className="text-xs text-gray-400 mb-0.5">Your Contribution</p>
+              <p className="text-base font-bold text-indigo-300">
+                {amountDue > 0 ? `${currency} ${amountDue.toLocaleString()}` : 'TBD'}
+              </p>
+              {course.partial_payment_percentage != null && (
+                <p className="text-xs text-indigo-500 mt-0.5">{course.partial_payment_percentage}% of total</p>
+              )}
+            </div>
+            <div className="bg-emerald-500/10 rounded-lg p-2 border border-emerald-500/20">
+              <p className="text-xs text-gray-400 mb-0.5">Covered by Scholarship</p>
+              <p className="text-base font-bold text-emerald-400">
+                {scholarshipCover != null && scholarshipCover > 0
+                  ? `${currency} ${scholarshipCover.toLocaleString()}`
+                  : '—'}
+              </p>
+              <p className="text-xs text-emerald-600 mt-0.5">Scholarship covers</p>
+            </div>
+          </div>
+          {course.price != null && (
+            <p className="text-xs text-gray-500 mt-2 pb-1">
+              Total program cost: <span className="text-gray-400 font-medium">{currency} {course.price.toLocaleString()}</span>
+            </p>
           )}
         </div>
-        <h3 className="text-xl font-bold text-white mb-2 line-clamp-2">
-          {course.title}
-        </h3>
       </div>
+    );
+  }
+
+  // full_tuition
+  const fullPrice = course.payment_summary?.amount_due_now ?? course.price;
+  return (
+    <div className="flex items-center justify-between px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+      <div>
+        <p className="text-xs font-semibold text-blue-400 uppercase tracking-wide">Full Tuition</p>
+        <p className="text-base font-bold text-blue-300">
+          {fullPrice != null && fullPrice > 0
+            ? `${currency} ${fullPrice.toLocaleString()}`
+            : 'Price on request'}
+        </p>
+        <p className="text-xs text-gray-500 mt-0.5">One-time payment · Lifetime access</p>
+      </div>
+      <div className="text-2xl opacity-40">💳</div>
     </div>
-    
-    {/* Course Content */}
-    <div className="px-6 py-5 flex-grow">
-      <p className="text-gray-600 dark:text-gray-300 text-sm mb-4 line-clamp-3">
-        {course.description || 'No description available'}
-      </p>
-      
-      {/* Course Meta Info */}
-      <div className="space-y-2 mb-4">
-        {course.instructor_name && (
-          <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
-            <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-            </svg>
-            <span className="font-medium">Instructor:</span>
-            <span className="ml-1">{course.instructor_name}</span>
+  );
+};
+
+// ── Apply button label ────────────────────────────────────────────────────────
+
+function getApplyLabel(course: Course): string {
+  const tier = getPaymentTier(course);
+  const currency = course.currency || 'USD';
+  if (tier === 'free') return 'Enroll Free';
+  if (tier === 'scholarship') return 'Apply for Scholarship';
+  if (tier === 'partial_scholarship') {
+    const due = getAmountDue(course);
+    return due > 0 ? `Apply & Pay ${currency} ${due.toLocaleString()}` : 'Apply & Pay';
+  }
+  const full = course.payment_summary?.amount_due_now ?? course.price;
+  return full != null && full > 0 ? `Apply & Pay ${currency} ${full.toLocaleString()}` : 'Apply Now';
+}
+
+// ── Public Course Card ────────────────────────────────────────────────────────
+
+const PublicCourseCard: React.FC<{ course: Course }> = ({ course }) => {
+  const tier = getPaymentTier(course);
+
+  const headerGradient =
+    tier === 'free'                ? 'from-emerald-600 via-teal-600 to-cyan-700'
+    : tier === 'scholarship'       ? 'from-amber-600 via-orange-600 to-amber-700'
+    : tier === 'partial_scholarship' ? 'from-indigo-600 via-purple-600 to-indigo-700'
+    :                                  'from-sky-600 via-blue-600 to-indigo-700';
+
+  return (
+    <div className="bg-gray-900/60 backdrop-blur-sm border border-gray-700/60 shadow-xl overflow-hidden rounded-2xl hover:shadow-2xl hover:border-gray-600 transition-all duration-300 h-full flex flex-col group">
+      {/* Header */}
+      <div className={`bg-gradient-to-br ${headerGradient} p-5 relative overflow-hidden`}>
+        <div className="absolute top-0 right-0 w-28 h-28 bg-white/5 rounded-full -mr-14 -mt-14" />
+        <div className="absolute bottom-0 left-0 w-20 h-20 bg-white/5 rounded-full -ml-10 -mb-10" />
+        <div className="relative z-10">
+          <div className="flex items-start justify-between gap-2 mb-3">
+            <TierBadge tier={tier} />
+            {course.level && (
+              <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-white/20 text-white shrink-0">
+                {course.level}
+              </span>
+            )}
           </div>
-        )}
-        {course.estimated_duration && (
-          <div className="flex items-center text-sm text-gray-600 dark:text-gray-400">
-            <svg className="w-4 h-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <h3 className="text-lg font-bold text-white line-clamp-2 leading-snug group-hover:text-white/90 transition-colors">
+            {course.title}
+          </h3>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="px-5 py-4 flex-grow flex flex-col gap-4">
+        <p className="text-gray-400 text-sm line-clamp-3 leading-relaxed">
+          {course.description || 'No description available'}
+        </p>
+
+        {/* Meta */}
+        <div className="space-y-1.5 text-sm text-gray-400">
+          {course.instructor_name && (
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              </svg>
+              <span className="truncate">{course.instructor_name}</span>
+            </div>
+          )}
+          {course.estimated_duration && (
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-gray-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{course.estimated_duration}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Payment info block */}
+        <PaymentInfoBlock course={course} />
+      </div>
+
+      {/* Actions */}
+      <div className="px-5 pb-5 mt-auto">
+        <div className="flex gap-2">
+          <Link
+            href={`/courses/${course.id}`}
+            className="flex-none px-3 py-2.5 border border-gray-600 hover:border-gray-400 text-gray-400 hover:text-white font-medium rounded-xl transition-all duration-200 text-sm text-center whitespace-nowrap"
+          >
+            Details
+          </Link>
+          <Link
+            href={`/courses/${course.id}/apply`}
+            className={`flex-1 px-4 py-2.5 font-semibold rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl text-center text-sm flex items-center justify-center gap-1.5 ${
+              tier === 'free'
+                ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white'
+                : tier === 'scholarship'
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white'
+                : 'bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white'
+            }`}
+          >
+            <span>{getApplyLabel(course)}</span>
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
             </svg>
-            <span className="font-medium">Duration:</span>
-            <span className="ml-1">{course.estimated_duration}</span>
-          </div>
-        )}
+          </Link>
+        </div>
       </div>
     </div>
-    
-    {/* Action Buttons */}
-    <div className="px-6 pb-6 mt-auto">
-      <div className="flex gap-3">
-        <Link 
-          href={`/courses/${course.id}`}
-          className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 hover:border-sky-500 dark:hover:border-sky-500 text-gray-700 dark:text-gray-300 hover:text-sky-600 dark:hover:text-sky-400 font-medium rounded-lg transition-all duration-200 text-center text-sm"
-        >
-          View Details
-        </Link>
-        <Link 
-          href={`/courses/${course.id}/apply`}
-          className="flex-1 px-4 py-2.5 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white font-semibold rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 text-center text-sm flex items-center justify-center gap-2"
-        >
-          <span>Apply Now</span>
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-          </svg>
-        </Link>
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 const PublicCoursesPage: React.FC = () => {
   const [courses, setCourses] = useState<Course[]>([]);

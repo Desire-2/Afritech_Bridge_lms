@@ -305,6 +305,29 @@ export default function AdminApplicationsManager() {
     setDetailModalOpen(true);
   };
 
+  const handleConfirmBankTransfer = async (applicationId: number) => {
+    if (!confirm('Confirm that you have received the bank transfer for this application?')) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/applications/${applicationId}/confirm-bank-transfer`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ notes: 'Confirmed via admin panel' }),
+        }
+      );
+      if (!res.ok) throw new Error('Failed to confirm bank transfer');
+      await loadApplications();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to confirm bank transfer');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleApprove = async (applicationId: number) => {
     setActionLoading(true);
     setActionError(null);
@@ -1532,6 +1555,18 @@ export default function AdminApplicationsManager() {
                       
                       {application.status === 'pending' && (
                         <>
+                          {/* Bank Transfer confirm button */}
+                          {application.payment_method === 'bank_transfer' && application.payment_status === 'pending_bank_transfer' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-emerald-500 text-emerald-700 hover:bg-emerald-50"
+                              onClick={() => handleConfirmBankTransfer(application.id)}
+                              disabled={actionLoading}
+                            >
+                              ✓ Confirm Bank Transfer
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="default"

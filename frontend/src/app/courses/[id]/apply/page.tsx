@@ -12,7 +12,8 @@ import {
   formatDate,
   formatDateTime,
 } from '@/utils/cohort-utils';
-import { Loader2, AlertCircle, CheckCircle2, BookOpen, Clock, User, ArrowLeft, ChevronDown } from 'lucide-react';
+import { Loader2, AlertCircle, CheckCircle2, BookOpen, Clock, User, ArrowLeft, CreditCard, GraduationCap, Shield } from 'lucide-react';
+import { CurrencySelector, ConvertedBadge } from '@/components/ui/CurrencyDisplay';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -285,7 +286,201 @@ export default function CourseApplicationPage() {
           </CardContent>
         </Card>
 
-        {/* Application Form */}
+        {/* ── Payment Information Card ─────────────────────────── */}
+        {course.enrollment_type !== 'free' && (
+          <Card className={`mb-8 overflow-hidden shadow-lg ${
+            course.enrollment_type === 'scholarship'
+              ? 'border-amber-200'
+              : 'border-indigo-200'
+          }`}>
+            <CardHeader className={`py-4 px-6 ${
+              course.enrollment_type === 'scholarship'
+                ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
+                : course.payment_mode === 'partial'
+                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white'
+                : 'bg-gradient-to-r from-indigo-600 to-blue-600 text-white'
+            }`}>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                {course.enrollment_type === 'scholarship' ? (
+                  <GraduationCap className="w-5 h-5" />
+                ) : (
+                  <CreditCard className="w-5 h-5" />
+                )}
+                {course.enrollment_type === 'scholarship'
+                  ? 'Scholarship Enrollment'
+                  : course.payment_mode === 'partial'
+                  ? 'Partial Scholarship'
+                  : 'Full Tuition — Payment Details'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 px-6 pb-6">
+              {course.enrollment_type === 'scholarship' ? (
+                /* ── Scholarship ── */
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4">
+                    <GraduationCap className="w-6 h-6 text-amber-600 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-amber-900">Merit-Based Scholarship</p>
+                      <p className="text-sm text-amber-700 leading-relaxed">
+                        This course is offered through a competitive scholarship program. Complete and submit
+                        your application — our admissions team will review your submission and notify you
+                        of your scholarship status by email within 2–3 business days.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                    <div className="bg-gray-50 rounded-xl p-3 border">
+                      <p className="text-gray-500 text-xs mb-1">Tuition Cost</p>
+                      <p className="font-bold text-emerald-700 text-lg">Fully Covered</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-xl p-3 border">
+                      <p className="text-gray-500 text-xs mb-1">Selection</p>
+                      <p className="font-bold text-gray-900">Competitive</p>
+                    </div>
+                    <div className="bg-gray-50 rounded-xl p-3 border">
+                      <p className="text-gray-500 text-xs mb-1">Response Time</p>
+                      <p className="font-bold text-gray-900">2–3 business days</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ── Paid course (full or partial) ── */
+                <div className="space-y-5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-500">Course fees</p>
+                    <CurrencySelector compact />
+                  </div>
+                  {/* Price breakdown */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {course.payment_mode === 'partial' ? (
+                      <>
+                        <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-200 sm:col-span-1">
+                          <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide mb-1">Your Contribution</p>
+                          <p className="text-2xl font-bold text-indigo-700">
+                            {(() => {
+                              const ps = course.payment_summary;
+                              const amt = ps?.amount_due_now ?? course.partial_payment_amount;
+                              return amt != null
+                                ? `${course.currency || 'USD'} ${Number(amt).toLocaleString()}`
+                                : 'TBD';
+                            })()}
+                          </p>
+                          <ConvertedBadge
+                            amount={course.payment_summary?.amount_due_now ?? course.partial_payment_amount ?? undefined}
+                            currency={course.currency || 'USD'}
+                            className="text-sm block mt-0.5"
+                          />
+                          {course.partial_payment_percentage && (
+                            <p className="text-xs text-indigo-400 mt-0.5">{course.partial_payment_percentage}% your contribution — rest covered by scholarship</p>
+                          )}
+                        </div>
+                        <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200 sm:col-span-1">
+                          <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Covered by Scholarship</p>
+                          <p className="text-2xl font-bold text-emerald-700">
+                            {(() => {
+                              const ps = course.payment_summary;
+                              const rem = ps?.remaining_balance;
+                              if (rem != null) return `${course.currency || 'USD'} ${Number(rem).toLocaleString()}`;
+                              if (course.price && course.partial_payment_amount) {
+                                return `${course.currency || 'USD'} ${(course.price - course.partial_payment_amount).toLocaleString()}`;
+                              }
+                              return '—';
+                            })()}
+                          </p>
+                          <ConvertedBadge
+                            amount={(course.payment_summary?.remaining_balance ?? (course.price && course.partial_payment_amount ? course.price - course.partial_payment_amount : undefined)) ?? undefined}
+                            currency={course.currency || 'USD'}
+                            className="text-sm block"
+                          />
+                          <p className="text-xs text-emerald-500 mt-0.5">Scholarship covers this amount</p>
+                        </div>
+                        <div className="bg-gray-50 rounded-xl p-4 border sm:col-span-1">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Total Program Cost</p>
+                          <p className="text-2xl font-bold text-gray-700">
+                            {course.price ? `${course.currency || 'USD'} ${course.price.toLocaleString()}` : '—'}
+                          </p>
+                          <ConvertedBadge amount={course.price ?? undefined} currency={course.currency || 'USD'} className="text-sm block" />
+                          <p className="text-xs text-gray-400 mt-0.5">You only pay your contribution</p>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="bg-indigo-50 rounded-xl p-4 border border-indigo-200 sm:col-span-2">
+                          <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide mb-1">Full Tuition</p>
+                          <p className="text-3xl font-bold text-indigo-700">
+                            {course.price
+                              ? `${course.currency || 'USD'} ${course.price.toLocaleString()}`
+                              : 'Price on request'}
+                          </p>
+                          <ConvertedBadge amount={course.price ?? undefined} currency={course.currency || 'USD'} className="text-sm block mt-0.5" />
+                          <p className="text-xs text-indigo-400 mt-1">One-time payment · Lifetime course access</p>
+                        </div>
+                        <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200 sm:col-span-1">
+                          <p className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-1">Includes</p>
+                          <ul className="text-xs text-emerald-700 space-y-1">
+                            <li>✓ All modules &amp; lessons</li>
+                            <li>✓ Assessments</li>
+                            <li>✓ Certificate</li>
+                            <li>✓ Lifetime access</li>
+                          </ul>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Payment methods */}
+                  {course.payment_methods && course.payment_methods.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Accepted Payment Methods</p>
+                      <div className="flex flex-wrap gap-2">
+                        {course.payment_methods.includes('kpay') && (
+                          <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
+                            <div className="w-2 h-2 rounded-full bg-violet-500" />
+                            <span className="text-sm font-medium text-violet-700">K-Pay</span>
+                            <span className="text-xs text-violet-400">· MoMo, Visa, SPENN</span>
+                          </div>
+                        )}
+                        {course.payment_methods.includes('paypal') && (
+                          <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                            <div className="w-2 h-2 rounded-full bg-blue-500" />
+                            <span className="text-sm font-medium text-blue-700">PayPal</span>
+                            <span className="text-xs text-blue-400">· Credit/Debit card</span>
+                          </div>
+                        )}
+                        {course.payment_methods.includes('stripe') && (
+                          <div className="flex items-center gap-2 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
+                            <div className="w-2 h-2 rounded-full bg-violet-500" />
+                            <span className="text-sm font-medium text-violet-700">Card (Stripe)</span>
+                            <span className="text-xs text-violet-400">· Visa, MC, Amex</span>
+                          </div>
+                        )}
+                        {course.payment_methods.includes('mobile_money') && (
+                          <div className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                            <div className="w-2 h-2 rounded-full bg-yellow-500" />
+                            <span className="text-sm font-medium text-yellow-700">Mobile Money</span>
+                            <span className="text-xs text-yellow-500">· MTN, Airtel</span>
+                          </div>
+                        )}
+                        {course.payment_methods.includes('bank_transfer') && (
+                          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                            <span className="text-sm font-medium text-emerald-700">Bank Transfer</span>
+                            <span className="text-xs text-emerald-400">· Wire / SWIFT</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 text-xs text-gray-400 border-t pt-4">
+                    <Shield className="w-3 h-3 shrink-0" />
+                    <span>Payment is processed securely. A 30-day refund policy applies for full-payment enrollments.</span>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
         {selectedWindow?.status === 'closed' || selectedWindow?.status === 'upcoming' ? (
           <Card className="border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40">
             <CardContent className="py-8">

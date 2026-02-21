@@ -99,6 +99,13 @@ class CourseApplication(db.Model):
     readiness_score = db.Column(db.Integer, default=0)  # New: Overall readiness
     commitment_score = db.Column(db.Integer, default=0)  # New: Commitment level
 
+    # ========== Payment Tracking ==========
+    payment_method = db.Column(db.String(30), nullable=True)   # 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe'
+    payment_status = db.Column(db.String(30), nullable=True)   # 'pending' | 'completed' | 'failed' | 'pending_bank_transfer' | 'confirmed'
+    payment_reference = db.Column(db.String(150), nullable=True)  # Gateway order_id / transfer reference
+    amount_paid = db.Column(db.Float, nullable=True)            # Actual amount charged (from course price/partial)
+    payment_currency = db.Column(db.String(10), nullable=True)  # e.g. 'USD', 'XAF', 'GHS'
+
     # ========== Workflow ==========
     status = db.Column(
         db.Enum("pending", "approved", "rejected", "waitlisted", name="application_status"),
@@ -111,6 +118,11 @@ class CourseApplication(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     reviewed_at = db.Column(db.DateTime, nullable=True)
+
+    # ========== Draft Flag ==========
+    # When True, the application was saved by the student but not yet fully submitted.
+    # Used for the "Save & Proceed to Payment" flow — drafts are hidden from admin review.
+    is_draft = db.Column(db.Boolean, default=False, nullable=False, server_default='0')
 
     # Cohort snapshot
     application_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)
@@ -163,6 +175,12 @@ class CourseApplication(db.Model):
             "commitment_score": self.commitment_score,
             "is_high_risk": self.is_high_risk,
             "status": self.status,
+            "is_draft": self.is_draft,
+            "payment_method": self.payment_method,
+            "payment_status": self.payment_status,
+            "payment_reference": self.payment_reference,
+            "amount_paid": self.amount_paid,
+            "payment_currency": self.payment_currency,
             "application_window_id": self.application_window_id,
             "cohort_label": self.cohort_label,
             "cohort_start_date": self.cohort_start_date.isoformat() if self.cohort_start_date else None,

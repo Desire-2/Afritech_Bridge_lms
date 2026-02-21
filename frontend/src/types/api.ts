@@ -98,6 +98,33 @@ export interface Course {
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   price?: number | null;
   currency?: string;
+  // Enhanced Payment Settings
+  payment_mode?: 'full' | 'partial';
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  payment_methods?: string[];
+  payment_deadline_days?: number | null;
+  require_payment_before_application?: boolean;
+  paypal_enabled?: boolean;
+  mobile_money_enabled?: boolean;
+  bank_transfer_enabled?: boolean;
+  kpay_enabled?: boolean;
+  bank_transfer_details?: string | null;
+  installment_enabled?: boolean;
+  installment_count?: number | null;
+  installment_interval_days?: number | null;
+  payment_summary?: {
+    required: boolean;
+    total_price?: number;
+    currency?: string;
+    payment_mode?: string;
+    require_payment_before_application?: boolean;
+    enabled_methods?: string[];
+    installment_enabled?: boolean;
+    amount_due_now?: number;
+    remaining_balance?: number;
+    bank_details?: string;
+  } | null;
   application_start_date?: string | null;
   application_end_date?: string | null;
   cohort_start_date?: string | null;
