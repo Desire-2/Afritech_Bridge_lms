@@ -53,8 +53,54 @@ class LessonGenerator:
         ]
     }
     
+    # Generic/meaningless titles to detect and replace
+    GENERIC_TITLES = {
+        "course lesson", "lesson title", "untitled", "new lesson",
+        "lesson", "title", "module lesson", "sample lesson",
+        "lesson content", "course content", "specific lesson title",
+    }
+
     def __init__(self, provider_manager=None):
         self.provider = provider_manager or ai_provider_manager
+
+    def _generate_meaningful_title(self, module_title: str, course_title: str = "",
+                                     existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                     lesson_number: int = 0) -> str:
+        """Generate a meaningful lesson title from context when AI fails to provide one."""
+        num = lesson_number or (len(existing_lessons) + 1 if existing_lessons else 1)
+        
+        # Create varied titles based on lesson position in the module
+        title_patterns = [
+            f"Foundations of {module_title}",
+            f"Core Principles in {module_title}",
+            f"Applied Concepts: {module_title}",
+            f"Advanced Topics in {module_title}",
+            f"Practical Applications of {module_title}",
+            f"{module_title}: Analysis and Practice",
+            f"Deep Dive into {module_title}",
+            f"{module_title}: Case Studies and Examples",
+        ]
+        # Pick a pattern based on lesson number (cycling through options)
+        idx = (num - 1) % len(title_patterns)
+        return title_patterns[idx]
+
+    def _is_generic_title(self, title: str) -> bool:
+        """Check if a title is generic/meaningless and should be replaced."""
+        if not title or not title.strip():
+            return True
+        cleaned = title.strip().lower()
+        # Remove leading "Lesson N:" prefix before checking
+        import re
+        cleaned = re.sub(r'^lesson\s*\d*\s*:?\s*', '', cleaned).strip()
+        return cleaned in self.GENERIC_TITLES or len(cleaned) < 3
+
+    def _ensure_meaningful_title(self, title: str, module_title: str, course_title: str = "",
+                                   existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                   lesson_number: int = 0) -> str:
+        """Validate a title and replace it if generic/meaningless."""
+        if self._is_generic_title(title):
+            return self._generate_meaningful_title(module_title, course_title, existing_lessons, lesson_number)
+        return title.strip()
     
     def _build_course_context_text(self, course_context: Optional[List[Dict[str, Any]]] = None,
                                      current_module_title: str = "") -> str:
@@ -129,7 +175,7 @@ Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
 Module Objectives: {module_objectives}{existing_lessons_text}{course_context_text}
-{'Lesson Title: ' + lesson_title if lesson_title else 'Generate a lesson title'}
+{'Lesson Title: ' + lesson_title if lesson_title else 'You MUST generate a SPECIFIC, DESCRIPTIVE lesson title that clearly reflects the topic being taught. Do NOT use generic titles like "Course Lesson", "Lesson Title", or "Module Lesson".'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
 ===== DUPLICATE AVOIDANCE CHECKLIST =====
@@ -203,7 +249,7 @@ IMPORTANT: Return ONLY valid JSON. Escape all special characters properly.
 
 Format as JSON:
 {{
-  "title": "Lesson Title",
+  "title": "Descriptive Topic-Specific Title Here",
   "description": "3-4 sentence description covering scope and value of this lesson",
   "learning_objectives": "• Specific measurable objective 1\\n• Specific measurable objective 2\\n• Specific measurable objective 3\\n• Specific measurable objective 4",
   "duration_minutes": 60,
@@ -218,6 +264,12 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "lesson content")
             if parsed:
+                # Validate and fix generic titles
+                if self._is_generic_title(parsed.get('title', '')):
+                    parsed['title'] = self._generate_meaningful_title(
+                        module_title, course_title, existing_lessons
+                    )
+                    logger.info(f"Replaced generic AI title with: {parsed['title']}")
                 logger.info(f"Lesson content generated successfully using {provider}")
                 return parsed
             else:
@@ -243,6 +295,12 @@ Format as JSON:
             if result:
                 parsed = json_parser.parse_json_response(result, "lesson content")
                 if parsed:
+                    # Validate and fix generic titles from alternative provider
+                    if self._is_generic_title(parsed.get('title', '')):
+                        parsed['title'] = self._generate_meaningful_title(
+                            module_title, course_title, existing_lessons
+                        )
+                        logger.info(f"Replaced generic alt-provider title with: {parsed['title']}")
                     logger.info(f"Alternative provider ({provider}) successfully generated lesson content")
                     return parsed
         except Exception as e:
@@ -253,9 +311,12 @@ Format as JSON:
         
         # Final fallback - return structured template
         logger.warning("All AI providers failed, using fallback template")
+        fallback_title = self._ensure_meaningful_title(
+            lesson_title, module_title, course_title, existing_lessons
+        )
         fallback_content = self._generate_fallback_lesson_content(
-            course_title, module_title, lesson_title or "Course Lesson", 
-            lesson_description or "This lesson covers important concepts."
+            course_title, module_title, fallback_title, 
+            lesson_description or f"This lesson covers key concepts in {module_title}."
         )
         return fallback_content
     
@@ -318,7 +379,7 @@ Create {num_lessons} COMPREHENSIVE lessons (each with 2500-3500 words of content
 
 For EACH lesson, you MUST provide:
 
-1. **Title**: Clear, specific, descriptive title
+1. **Title**: Clear, specific, descriptive title that reflects the ACTUAL TOPIC being taught. Do NOT use generic titles like \"Course Lesson\", \"Lesson Title\", \"Module Lesson\", or \"Untitled\". Each title must be unique and descriptive.
 
 2. **Description**: 3-4 sentences explaining scope and value
 
@@ -389,6 +450,15 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "multiple lessons")
             if parsed:
+                # Validate and fix generic titles in each lesson
+                lessons = parsed.get('lessons', [])
+                for idx, lesson in enumerate(lessons):
+                    lesson_num = lesson.get('order', idx + start_lesson_num)
+                    if self._is_generic_title(lesson.get('title', '')):
+                        lesson['title'] = self._generate_meaningful_title(
+                            module_title, course_title, existing_lessons, lesson_num
+                        )
+                        logger.info(f"Replaced generic batch lesson title #{lesson_num} with: {lesson['title']}")
                 return parsed
         
         return {"lessons": []}
@@ -887,7 +957,7 @@ Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
 Module Objectives: {module_objectives}{existing_text}{course_ctx}
-{'Lesson Title: ' + lesson_title if lesson_title else 'Choose an appropriate lesson title'}
+{'Lesson Title: ' + lesson_title if lesson_title else 'You MUST choose a SPECIFIC, DESCRIPTIVE lesson title that clearly indicates the topic (NOT generic like "Course Lesson", "Lesson Title", or "Module Lesson"). The title should reflect the actual subject matter being taught.'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
 Create a comprehensive lesson outline. This is ONLY the structure — content will be generated separately for each section.
@@ -963,6 +1033,12 @@ REQUIREMENTS:
         if result:
             parsed = json_parser.parse_json_response(result, "lesson outline")
             if parsed:
+                # Validate and fix generic titles in outline
+                if self._is_generic_title(parsed.get('title', '')):
+                    parsed['title'] = self._generate_meaningful_title(
+                        module_title, course_title, existing_lessons
+                    )
+                    logger.info(f"Replaced generic outline title with: {parsed['title']}")
                 logger.info(f"Deep outline generated: {parsed.get('title', 'untitled')} with {len(parsed.get('sections', []))} sections")
                 return parsed
         return None

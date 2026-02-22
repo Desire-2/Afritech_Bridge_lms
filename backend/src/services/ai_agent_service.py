@@ -1439,8 +1439,19 @@ class AIAgentService:
         else:
             objectives_text = str(objectives)
         
+        # Ensure we have a meaningful title — never use empty or generic fallback
+        final_title = outline.get('title', '') or lesson_title
+        if not final_title or final_title.strip().lower() in (
+            'course lesson', 'lesson title', 'untitled', 'new lesson', 'lesson',
+            'title', 'module lesson', 'sample lesson', 'specific lesson title'
+        ):
+            final_title = self.lesson_gen._generate_meaningful_title(
+                module_title, course_title, existing_lessons
+            )
+            logger.info(f"Replaced generic/empty deep stepwise title with: {final_title}")
+        
         result_data = {
-            "title": outline.get('title', lesson_title),
+            "title": final_title,
             "description": outline.get('description', lesson_description),
             "learning_objectives": objectives_text,
             "duration_minutes": outline.get('duration_minutes', 60),
@@ -1742,6 +1753,15 @@ Keep each callout under 50 words. Return ONLY the callout boxes, not the full co
             
             if result and isinstance(result, dict):
                 result['order'] = lesson_num
+                
+                # Validate title — replace generic titles with meaningful ones
+                result_title = result.get('title', '')
+                if self.lesson_gen._is_generic_title(result_title):
+                    result['title'] = self.lesson_gen._generate_meaningful_title(
+                        module_title, course_title, accumulated_context, lesson_num
+                    )
+                    logger.info(f"Replaced generic batch title with: {result['title']}")
+                
                 all_lessons.append(result)
                 
                 # Build a content summary from the generated content for future context
