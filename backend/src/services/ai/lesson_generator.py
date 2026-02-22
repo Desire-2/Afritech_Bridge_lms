@@ -132,6 +132,14 @@ Module Objectives: {module_objectives}{existing_lessons_text}{course_context_tex
 {'Lesson Title: ' + lesson_title if lesson_title else 'Generate a lesson title'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
+===== DUPLICATE AVOIDANCE CHECKLIST =====
+Before generating, you MUST:
+1. Review ALL existing lesson titles, descriptions, and topics covered (listed above)
+2. Review the FULL COURSE STRUCTURE (if provided) including other modules' lessons
+3. Ensure this lesson's content does NOT repeat topics already taught
+4. If a topic was introduced elsewhere, go DEEPER into a specific aspect or cover a new angle
+5. Cross-reference section headers — avoid reusing the same heading topics
+
 ===== CRITICAL REQUIREMENTS =====
 
 You MUST create EXTENSIVE, DETAILED lesson content (minimum 3000-4000 words total). This is NOT a summary or outline - it is a FULL LESSON that a student will read and study from.
@@ -280,8 +288,10 @@ Format as JSON:
                     existing_lessons_text += f"\n   Description: {lesson['description']}"
                 if lesson.get('duration_minutes'):
                     existing_lessons_text += f"\n   Duration: {lesson['duration_minutes']} minutes"
+                if lesson.get('content_summary'):
+                    existing_lessons_text += f"\n   Topics covered: {lesson['content_summary'][:200]}"
             start_lesson_num = len(existing_lessons) + 1
-            existing_lessons_text += f"\n\n[Note: Generate {num_lessons} NEW lessons (starting from Lesson {start_lesson_num}) that build upon these existing lessons and fill any gaps]"
+            existing_lessons_text += f"\n\n[IMPORTANT: Generate {num_lessons} NEW lessons (starting from Lesson {start_lesson_num}) that build upon these existing lessons. DO NOT repeat any topics already covered.]"
         
         # Cross-module context
         course_context_text = self._build_course_context_text(course_context, module_title)
@@ -292,6 +302,15 @@ Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
 Module Objectives: {module_objectives}{existing_lessons_text}{course_context_text}
+
+===== DUPLICATE AVOIDANCE CHECKLIST =====
+Before generating each lesson, you MUST:
+1. Review ALL existing lesson titles, descriptions, and topics covered above
+2. Review the FULL COURSE STRUCTURE (if provided) to see what other modules/lessons cover
+3. Ensure each new lesson's title is DISTINCT from all existing titles
+4. Ensure each new lesson's content covers topics NOT already handled
+5. If a topic is partially covered, go DEEPER into a specific sub-topic — never rehash
+6. Each lesson within this batch must also be unique from each other
 
 ===== CRITICAL REQUIREMENTS =====
 

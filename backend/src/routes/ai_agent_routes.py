@@ -478,6 +478,9 @@ def generate_multiple_modules():
         
         logger.info(f"Generating {num_modules} modules for course: {course.title} with {len(existing_modules)} existing modules")
         
+        # Gather full course context including lesson-level details for deduplication
+        course_context = _gather_course_context(course_id)
+        
         background = data.get('background', False)
         
         # Background mode: stepwise generation with delays
@@ -491,6 +494,7 @@ def generate_multiple_modules():
                     'course_objectives': course.learning_objectives or '',
                     'num_modules': num_modules,
                     'existing_modules': existing_modules_context,
+                    'course_context': course_context,
                 },
                 total_steps=num_modules,
                 user_id=current_user_id,
@@ -506,7 +510,8 @@ def generate_multiple_modules():
             course_description=course.description or '',
             course_objectives=course.learning_objectives or '',
             num_modules=num_modules,
-            existing_modules=existing_modules_context
+            existing_modules=existing_modules_context,
+            course_context=course_context
         )
         
         # Convert AIResponse to API response format
@@ -564,6 +569,9 @@ def generate_module_content():
         
         logger.info(f"Generating module content for course: {course.title} with {len(existing_modules)} existing modules")
         
+        # Gather full course context including lesson-level details for deduplication
+        course_context = _gather_course_context(course_id)
+        
         background = data.get('background', False)
         
         if background:
@@ -579,6 +587,7 @@ def generate_module_content():
                         'course_objectives': course.learning_objectives or '',
                         'module_title': module_title,
                         'existing_modules': existing_modules_context,
+                        'course_context': course_context,
                     }
                 },
                 total_steps=1,
@@ -595,7 +604,8 @@ def generate_module_content():
             course_description=course.description or '',
             course_objectives=course.learning_objectives or '',
             module_title=module_title,
-            existing_modules=existing_modules_context
+            existing_modules=existing_modules_context,
+            course_context=course_context
         )
         
         # Convert AIResponse to API response format

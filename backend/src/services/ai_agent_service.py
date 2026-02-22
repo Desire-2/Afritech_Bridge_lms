@@ -457,7 +457,8 @@ class AIAgentService:
 
     def generate_multiple_modules(self, course_title: str, course_description: str,
                                   course_objectives: str, num_modules: int = 5,
-                                  existing_modules: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+                                  existing_modules: Optional[List[Dict[str, Any]]] = None,
+                                  course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
         """Generate multiple module outlines with enhanced handling.
         Quality threshold is skipped for module outlines."""
         cache_key = f"modules_{course_title}_{num_modules}_{len(existing_modules or [])}"
@@ -465,13 +466,14 @@ class AIAgentService:
         return self._execute_with_retry_and_cache(
             cache_key,
             self.course_gen.generate_multiple_modules,
-            course_title, course_description, course_objectives, num_modules, existing_modules,
+            course_title, course_description, course_objectives, num_modules, existing_modules, course_context,
             skip_quality_check=True
         )
 
     def generate_module_content(self, course_title: str, course_description: str,
                                course_objectives: str, module_title: str = "",
-                               existing_modules: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+                               existing_modules: Optional[List[Dict[str, Any]]] = None,
+                               course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
         """Generate module details with enhanced handling.
         Quality threshold is skipped for module content."""
         cache_key = f"module_{course_title}_{module_title}_{len(existing_modules or [])}"
@@ -479,7 +481,7 @@ class AIAgentService:
         return self._execute_with_retry_and_cache(
             cache_key,
             self.course_gen.generate_module_content,
-            course_title, course_description, course_objectives, module_title, existing_modules,
+            course_title, course_description, course_objectives, module_title, existing_modules, course_context,
             skip_quality_check=True
         )
     
@@ -1157,10 +1159,12 @@ class AIAgentService:
                                             course_description: str = '',
                                             course_objectives: str = '',
                                             num_modules: int = 5,
-                                            existing_modules: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                                            existing_modules: Optional[List[Dict[str, Any]]] = None,
+                                            course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Step-by-step module generation for background execution.
         Generates each module individually with delays between them.
+        Maintains accumulated context (including suggested lessons) to prevent duplication.
         """
         from .ai.task_manager import task_manager
         
@@ -1187,7 +1191,8 @@ class AIAgentService:
                     course_description=course_description,
                     course_objectives=course_objectives,
                     module_title="",
-                    existing_modules=accumulated_context
+                    existing_modules=accumulated_context,
+                    course_context=course_context
                 )
             except Exception as e:
                 logger.error(f"Module step {i + 1} failed: {e}")
@@ -1196,18 +1201,21 @@ class AIAgentService:
             if result and isinstance(result, dict):
                 result['order'] = module_num
                 all_modules.append(result)
+                # Include suggested_lessons in accumulated context so next module
+                # can see what lesson topics have already been proposed
                 accumulated_context.append({
                     'title': result.get('title', f'Module {module_num}'),
                     'description': result.get('description', ''),
                     'learning_objectives': result.get('learning_objectives', ''),
-                    'order': module_num
+                    'order': module_num,
+                    'suggested_lessons': result.get('suggested_lessons', []),
                 })
                 if task_id:
                     task_manager.complete_step(
                         task_id, i + 1, num_modules,
                         f"✓ Module {i + 1}: {result.get('title', f'Module {module_num}')}"
                     )
-                logger.info(f"Step {i + 1}/{num_modules}: Generated '{result.get('title', 'unknown')}'")
+                logger.info(f"Step {i + 1}/{num_modules}: Generated '{result.get('title', 'unknown')}' with {len(result.get('suggested_lessons', []))} suggested lessons")
             else:
                 if task_id:
                     task_manager.complete_step(
