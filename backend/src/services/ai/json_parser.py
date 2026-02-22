@@ -70,10 +70,20 @@ class JSONResponseParser:
                 logger.info(f"Unwrapped single-element JSON array for {context}")
                 return parsed[0]
             elif len(parsed) > 1 and all(isinstance(item, dict) for item in parsed):
-                # Multiple objects — likely "lessons" array without wrapper
-                # Wrap in the expected format
-                logger.info(f"Wrapped JSON array ({len(parsed)} items) in dict for {context}")
-                return {"lessons": parsed}
+                # Multiple objects — determine if these are sections or lessons
+                # by checking whether items have section-like keys
+                first_item = parsed[0]
+                is_sections = any(k in first_item for k in ('heading', 'key_topics', 'target_words', 'id'))
+                is_lessons = any(k in first_item for k in ('content_data', 'content_type', 'learning_objectives'))
+                
+                if is_sections and not is_lessons:
+                    # These are outline sections — wrap as sections
+                    logger.info(f"Wrapped JSON array ({len(parsed)} items) as sections for {context}")
+                    return {"sections": parsed}
+                else:
+                    # Default: wrap as lessons
+                    logger.info(f"Wrapped JSON array ({len(parsed)} items) as lessons for {context}")
+                    return {"lessons": parsed}
             elif len(parsed) > 0 and isinstance(parsed[0], dict):
                 return parsed[0]
         logger.warning(f"Parsed {context} is not a dict (type: {type(parsed).__name__}), returning None")

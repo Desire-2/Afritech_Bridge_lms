@@ -1300,6 +1300,15 @@ class AIAgentService:
             ).to_dict()
         
         sections = outline.get('sections', [])
+        
+        # Guard: if outline has no sections, generate defaults so we don't return empty
+        if not sections:
+            logger.warning("Outline has 0 sections — generating defaults")
+            sections = self.lesson_gen._generate_default_sections(
+                outline.get('title', lesson_title or module_title), module_title
+            )
+            outline['sections'] = sections
+        
         total_steps = 1 + len(sections) + 1  # outline + each section + enhancement
         
         if task_id:

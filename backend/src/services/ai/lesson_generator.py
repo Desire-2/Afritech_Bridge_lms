@@ -102,6 +102,58 @@ class LessonGenerator:
             return self._generate_meaningful_title(module_title, course_title, existing_lessons, lesson_number)
         return title.strip()
     
+    def _generate_default_sections(self, lesson_title: str, module_title: str) -> List[Dict[str, Any]]:
+        """Generate default outline sections when AI fails to provide them.
+        
+        These provide a reasonable structure for the deep stepwise generator
+        to fill in with actual AI-generated content per section.
+        """
+        topic = lesson_title or module_title
+        return [
+            {
+                'id': 'introduction',
+                'heading': 'Introduction',
+                'description': f'Introduction to {topic} — context, relevance, and learning objectives',
+                'target_words': 500,
+                'key_topics': ['overview', 'learning objectives', 'relevance'],
+            },
+            {
+                'id': 'section_1',
+                'heading': f'Core Concepts of {topic}',
+                'description': f'Fundamental principles, definitions, and theoretical framework for {topic}',
+                'target_words': 700,
+                'key_topics': ['definitions', 'principles', 'framework'],
+            },
+            {
+                'id': 'section_2',
+                'heading': f'Key Techniques and Methods',
+                'description': f'Step-by-step techniques, methodologies, and best practices in {topic}',
+                'target_words': 700,
+                'key_topics': ['techniques', 'methods', 'best practices'],
+            },
+            {
+                'id': 'section_3',
+                'heading': f'Practical Applications',
+                'description': f'Real-world applications and implementation of {topic}',
+                'target_words': 600,
+                'key_topics': ['applications', 'implementation', 'examples'],
+            },
+            {
+                'id': 'worked_examples',
+                'heading': 'Worked Examples and Case Studies',
+                'description': f'Detailed worked examples with step-by-step solutions for {topic}',
+                'target_words': 800,
+                'key_topics': ['examples', 'case studies', 'solutions'],
+            },
+            {
+                'id': 'summary',
+                'heading': 'Key Takeaways and Discussion Questions',
+                'description': 'Summary of key points and thought-provoking questions',
+                'target_words': 400,
+                'key_topics': ['takeaways', 'discussion', 'review'],
+            },
+        ]
+
     def _build_course_context_text(self, course_context: Optional[List[Dict[str, Any]]] = None,
                                      current_module_title: str = "") -> str:
         """Build a text block describing the full course structure for cross-module awareness."""
@@ -1043,6 +1095,19 @@ CRITICAL: Return ONLY valid JSON. No markdown, no explanatory text, no code bloc
                         module_title, course_title, existing_lessons
                     )
                     logger.info(f"Replaced generic outline title with: {parsed['title']}")
+                
+                # Validate outline has sections — critical for deep stepwise to work
+                sections = parsed.get('sections', [])
+                if not sections or not isinstance(sections, list) or len(sections) < 2:
+                    logger.warning(f"Outline has {len(sections) if isinstance(sections, list) else 0} sections (need ≥2). Generating default sections...")
+                    # Invalidate this bad cached response
+                    self.provider.invalidate_cache_for_prompt(prompt)
+                    # Generate default sections based on title and module
+                    parsed['sections'] = self._generate_default_sections(
+                        parsed.get('title', module_title), module_title
+                    )
+                    logger.info(f"Generated {len(parsed['sections'])} default sections for outline")
+                
                 logger.info(f"Deep outline generated: {parsed.get('title', 'untitled')} with {len(parsed.get('sections', []))} sections")
                 return parsed
             else:
