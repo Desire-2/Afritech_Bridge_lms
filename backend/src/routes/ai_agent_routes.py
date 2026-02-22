@@ -45,6 +45,45 @@ def instructor_required(f):
 
 ai_agent_bp = Blueprint("ai_agent_bp", __name__, url_prefix="/api/v1/ai-agent")
 
+
+def _gather_course_context(course_id: int, exclude_module_id: int = None) -> list:
+    """
+    Gather full course structure with all modules and their lessons for cross-reference.
+    Returns a list of dicts suitable for passing to generators as course_context.
+    This prevents content duplication across modules and lessons.
+    """
+    modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+    context = []
+    for mod in modules:
+        mod_data = {
+            'title': mod.title,
+            'description': (mod.description or '')[:300],
+            'learning_objectives': (mod.learning_objectives or '')[:300],
+            'order': mod.order,
+            'lessons': [],
+        }
+        lessons = Lesson.query.filter_by(module_id=mod.id).order_by(Lesson.order).all()
+        for les in lessons:
+            # Extract a brief content summary from lesson content
+            content_summary = ''
+            if les.content_data:
+                import re
+                headers = re.findall(r'^##\s+(.+)$', les.content_data, re.MULTILINE)
+                if headers:
+                    content_summary = "; ".join(headers[:6])
+                else:
+                    content_summary = les.content_data[:200].replace('\n', ' ')
+            
+            mod_data['lessons'].append({
+                'title': les.title,
+                'description': (les.description or '')[:150],
+                'order': les.order,
+                'duration_minutes': les.duration_minutes or 0,
+                'content_summary': content_summary,
+            })
+        context.append(mod_data)
+    return context
+
 # =====================
 # ENHANCED HEALTH & STATUS
 # =====================
@@ -623,15 +662,18 @@ def generate_multiple_lessons():
             'duration_minutes': lesson.duration_minutes or 0
         } for lesson in existing_lessons]
         
-        logger.info(f"Generating {num_lessons} lessons for module: {module.title} (existing lessons: {len(existing_lessons)})")
+        # Gather full course context for cross-module awareness
+        course_context = _gather_course_context(course_id)
+        
+        logger.info(f"Generating {num_lessons} lessons for module: {module.title} (existing lessons: {len(existing_lessons)}, course modules: {len(course_context)})")
         
         background = data.get('background', False)
         
-        # Background mode: stepwise generation — one lesson at a time with delays
+        # Background mode: deep stepwise generation with cross-module context
         if background:
             task_id = task_manager.submit_task(
                 task_type='generate-multiple-lessons',
-                task_func=ai_agent_service.generate_multiple_lessons_stepwise,
+                task_func=ai_agent_service.generate_multiple_lessons_deep_stepwise,
                 kwargs={
                     'course_title': course.title,
                     'module_title': module.title,
@@ -639,6 +681,7 @@ def generate_multiple_lessons():
                     'module_objectives': module.learning_objectives or '',
                     'num_lessons': num_lessons,
                     'existing_lessons': existing_lessons_data,
+                    'course_context': course_context,
                 },
                 total_steps=num_lessons,
                 user_id=current_user_id,
@@ -646,7 +689,7 @@ def generate_multiple_lessons():
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
-                "message": f"Generating {num_lessons} lessons step by step in background"
+                "message": f"Generating {num_lessons} lessons step by step with cross-module context"
             }), 202
         
         result = ai_agent_service.generate_multiple_lessons(
@@ -655,7 +698,8 @@ def generate_multiple_lessons():
             module_description=module.description or '',
             module_objectives=module.learning_objectives or '',
             num_lessons=num_lessons,
-            existing_lessons=existing_lessons_data
+            existing_lessons=existing_lessons_data,
+            course_context=course_context,
         )
         
         # Convert AIResponse to dict for JSON serialization
@@ -719,31 +763,33 @@ def generate_lesson_content():
         
         logger.info(f"Generating lesson content for module: {module.title} (existing lessons: {len(existing_lessons)})")
         
+        # Gather cross-module course context for deduplication
+        course_context = _gather_course_context(course_id)
+        
         background = data.get('background', False)
         
         if background:
+            # Use deep stepwise generation for higher quality
             task_id = task_manager.submit_task(
                 task_type='generate-lesson-content',
-                task_func=ai_agent_service.run_single_step_background,
+                task_func=ai_agent_service.generate_lesson_content_deep_stepwise,
                 kwargs={
-                    'method_name': 'generate_lesson_content',
-                    'method_kwargs': {
-                        'course_title': course.title,
-                        'module_title': module.title,
-                        'module_description': module.description or '',
-                        'module_objectives': module.learning_objectives or '',
-                        'lesson_title': lesson_title,
-                        'lesson_description': lesson_description,
-                        'existing_lessons': existing_lessons_data,
-                    }
+                    'course_title': course.title,
+                    'module_title': module.title,
+                    'module_description': module.description or '',
+                    'module_objectives': module.learning_objectives or '',
+                    'lesson_title': lesson_title,
+                    'lesson_description': lesson_description,
+                    'existing_lessons': existing_lessons_data,
+                    'course_context': course_context,
                 },
-                total_steps=1,
+                total_steps=5,
                 user_id=current_user_id,
             )
             return jsonify({
                 "success": True, "background": True,
                 "task_id": task_id, "status": "pending",
-                "message": "Lesson content generation started in background"
+                "message": "Deep lesson content generation started in background (outline → sections → enhance)"
             }), 202
         
         ai_response = ai_agent_service.generate_lesson_content(
@@ -753,7 +799,8 @@ def generate_lesson_content():
             module_objectives=module.learning_objectives or '',
             lesson_title=lesson_title,
             lesson_description=lesson_description,
-            existing_lessons=existing_lessons_data
+            existing_lessons=existing_lessons_data,
+            course_context=course_context,
         )
         
         # Convert AIResponse to API response format
@@ -839,7 +886,36 @@ def generate_comprehensive_lesson():
         
         logger.info(f"Generating COMPREHENSIVE lesson: {lesson_title} for module: {module.title} (difficulty: {difficulty_level}, existing lessons: {len(existing_lessons)})")
         
-        # Use the enhanced generation method with validation
+        # Gather cross-module course context for deduplication
+        course_context = _gather_course_context(course_id)
+        
+        background = data.get('background', False)
+        
+        if background:
+            # Use deep stepwise for comprehensive generation
+            task_id = task_manager.submit_task(
+                task_type='generate-comprehensive-lesson',
+                task_func=ai_agent_service.generate_lesson_content_deep_stepwise,
+                kwargs={
+                    'course_title': course.title,
+                    'module_title': module.title,
+                    'module_description': module.description or '',
+                    'module_objectives': module.learning_objectives or '',
+                    'lesson_title': lesson_title,
+                    'lesson_description': lesson_description,
+                    'existing_lessons': existing_lessons_data,
+                    'course_context': course_context,
+                },
+                total_steps=6,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Comprehensive lesson generation started in background (deep stepwise)"
+            }), 202
+        
+        # Sync mode: use the enhanced generation method with validation
         result = ai_agent_service.generate_comprehensive_lesson_with_validation(
             course_title=course.title,
             module_title=module.title,
@@ -1426,10 +1502,16 @@ def enhance_content():
     {
         "content_type": "lesson",
         "current_content": "...",
-        "enhancement_type": "improve" | "expand" | "simplify" | "add_examples"
+        "enhancement_type": "improve" | "expand" | "simplify" | "add_examples",
+        "course_id": 1 (optional - for cross-module context),
+        "course_title": "Python Programming" (optional),
+        "module_title": "Module 1" (optional),
+        "lesson_title": "Lesson 1" (optional),
+        "background": true (optional - for background processing)
     }
     """
     try:
+        current_user_id = get_jwt_identity()
         data = request.get_json()
         
         if not data or not data.get('content_type') or not data.get('current_content'):
@@ -1438,8 +1520,45 @@ def enhance_content():
         content_type = data['content_type']
         current_content = data['current_content']
         enhancement_type = data.get('enhancement_type', 'improve')
+        course_id = data.get('course_id')
+        course_title = data.get('course_title', '')
+        module_title = data.get('module_title', '')
+        lesson_title = data.get('lesson_title', '')
+        background = data.get('background', False)
         
-        logger.info(f"Enhancing {content_type} content with {enhancement_type}")
+        # Gather course context if course_id provided
+        course_context = None
+        if course_id:
+            course_context = _gather_course_context(course_id)
+            # Also get course title from DB if not provided
+            if not course_title:
+                course = Course.query.get(course_id)
+                if course:
+                    course_title = course.title
+        
+        logger.info(f"Enhancing {content_type} content with {enhancement_type} (background={background})")
+        
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='enhance-content',
+                task_func=ai_agent_service.enhance_lesson_content_stepwise,
+                kwargs={
+                    'content_type': content_type,
+                    'current_content': current_content,
+                    'enhancement_type': enhancement_type,
+                    'course_title': course_title,
+                    'module_title': module_title,
+                    'lesson_title': lesson_title,
+                    'course_context': course_context,
+                },
+                total_steps=3,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Content enhancement started in background (analyze → enhance → cross-reference)"
+            }), 202
         
         result = ai_agent_service.enhance_content(
             content_type=content_type,
@@ -1559,10 +1678,13 @@ def enhance_section_content():
             "lesson_title": "Variables in Python",
             "section_position": "introduction",
             "previous_section": "..."
-        }
+        },
+        "course_id": 1 (optional - for cross-module context),
+        "background": true (optional)
     }
     """
     try:
+        current_user_id = get_jwt_identity()
         data = request.get_json()
         
         if not data or not data.get('section_type'):
@@ -1571,8 +1693,45 @@ def enhance_section_content():
         section_type = data['section_type']
         section_content = data.get('section_content', '')
         context = data.get('context', {})
+        course_id = data.get('course_id')
+        background = data.get('background', False)
         
-        logger.info(f"Enhancing {section_type} section content")
+        logger.info(f"Enhancing {section_type} section content (background={background})")
+        
+        if background:
+            # Gather course context for cross-module awareness
+            course_context = None
+            course_title = context.get('course_title', '')
+            module_title = context.get('module_title', '')
+            lesson_title = context.get('lesson_title', '')
+            
+            if course_id:
+                course_context = _gather_course_context(course_id)
+                if not course_title:
+                    course = Course.query.get(course_id)
+                    if course:
+                        course_title = course.title
+            
+            task_id = task_manager.submit_task(
+                task_type='enhance-section-content',
+                task_func=ai_agent_service.enhance_lesson_content_stepwise,
+                kwargs={
+                    'content_type': section_type,
+                    'current_content': section_content,
+                    'enhancement_type': 'expand',
+                    'course_title': course_title,
+                    'module_title': module_title,
+                    'lesson_title': lesson_title,
+                    'course_context': course_context,
+                },
+                total_steps=3,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Section enhancement started in background"
+            }), 202
         
         result = ai_agent_service.enhance_section_content(
             section_type=section_type,

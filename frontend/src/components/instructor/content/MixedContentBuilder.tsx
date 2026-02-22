@@ -398,7 +398,9 @@ export default function MixedContentBuilder({
 
 
 
-  // Enhance individual section with AI
+  // Enhance individual section with AI (background stepwise)
+  const [enhanceProgress, setEnhanceProgress] = useState<string>('');
+  
   const enhanceSection = async (sectionId: string) => {
     const section = sections.find(s => s.id === sectionId);
     if (!section) return;
@@ -414,20 +416,31 @@ export default function MixedContentBuilder({
     }
 
     setEnhancingSection(sectionId);
+    setEnhanceProgress('Starting enhancement...');
     try {
       const sectionIndex = sections.findIndex(s => s.id === sectionId);
       const previousSection = sectionIndex > 0 ? sections[sectionIndex - 1].content : '';
 
-      const response = await aiAgentService.enhanceSectionContent({
-        section_type: section.type,
-        section_content: section.content,
-        context: {
-          lesson_title: lessonTitle || 'Lesson',
-          section_position: sectionIndex === 0 ? 'beginning' : 
-                           sectionIndex === sections.length - 1 ? 'end' : 'middle',
-          previous_section: previousSection
+      const response = await aiAgentService.enhanceSectionContent(
+        {
+          section_type: section.type,
+          section_content: section.content,
+          context: {
+            lesson_title: lessonTitle || 'Lesson',
+            course_title: courseTitle || '',
+            module_title: moduleTitle || '',
+            section_position: sectionIndex === 0 ? 'beginning' : 
+                             sectionIndex === sections.length - 1 ? 'end' : 'middle',
+            previous_section: previousSection
+          },
+          course_id: courseId,
+        },
+        (progress) => {
+          // Update progress text from background task
+          const stepLabel = progress.current_step_description || `Step ${progress.current_step} of ${progress.total_steps}`;
+          setEnhanceProgress(stepLabel);
         }
-      });
+      );
 
       if (response.success && response.data?.enhanced_content) {
         updateSection(sectionId, { content: response.data.enhanced_content });
@@ -440,6 +453,7 @@ export default function MixedContentBuilder({
       alert(`Failed to enhance section: ${error.message || 'Unknown error'}`);
     } finally {
       setEnhancingSection(null);
+      setEnhanceProgress('');
     }
   };
 
@@ -921,7 +935,7 @@ export default function MixedContentBuilder({
                                   {enhancingSection === section.id ? (
                                     <>
                                       <Loader2 className="w-3 h-3 animate-spin" />
-                                      <span className="hidden sm:inline">Enhancing...</span>
+                                      <span className="hidden sm:inline">{enhanceProgress || 'Enhancing...'}</span>
                                     </>
                                   ) : (
                                     <>

@@ -488,21 +488,23 @@ class AIAgentService:
     def generate_lesson_content(self, course_title: str, module_title: str,
                                module_description: str, module_objectives: str,
                                lesson_title: str = "", lesson_description: str = "",
-                               existing_lessons: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
-        """Generate detailed lesson content with enhanced handling"""
+                               existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                               course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+        """Generate detailed lesson content with enhanced handling and cross-module context"""
         cache_key = f"lesson_{course_title}_{module_title}_{lesson_title}_{len(existing_lessons or [])}"
         
         return self._execute_with_retry_and_cache(
             cache_key,
             self.lesson_gen.generate_lesson_content,
             course_title, module_title, module_description, module_objectives,
-            lesson_title, lesson_description, existing_lessons
+            lesson_title, lesson_description, existing_lessons, course_context
         )
     
     def generate_multiple_lessons(self, course_title: str, module_title: str,
                                   module_description: str, module_objectives: str,
                                   num_lessons: int = 5,
-                                  existing_lessons: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+                                  existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                  course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
         """Generate multiple lesson outlines with enhanced handling.
         Quality threshold is skipped for lesson outlines."""
         cache_key = f"lessons_{course_title}_{module_title}_{num_lessons}_{len(existing_lessons or [])}"
@@ -511,7 +513,7 @@ class AIAgentService:
             cache_key,
             self.lesson_gen.generate_multiple_lessons,
             course_title, module_title, module_description, module_objectives,
-            num_lessons, existing_lessons,
+            num_lessons, existing_lessons, course_context,
             skip_quality_check=True
         )
     
@@ -1231,6 +1233,555 @@ class AIAgentService:
             status=status,
             data={"modules": all_modules},
             message=f"Generated {len(all_modules)} of {num_modules} modules step by step",
+            provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+            generation_time=time.time() - start_time,
+        ).to_dict()
+
+    # =====================================================================
+    # DEEP STEPWISE LESSON GENERATION
+    # Generates a single lesson in multiple steps for maximum quality:
+    #   Step 1: Generate detailed outline
+    #   Steps 2-N: Generate each section individually
+    #   Final step: Quality enhancement pass
+    # Each step is a separate AI call with delays to avoid rate limits.
+    # =====================================================================
+
+    def generate_lesson_content_deep_stepwise(self, task_id: str = None,
+                                               course_title: str = '',
+                                               module_title: str = '',
+                                               module_description: str = '',
+                                               module_objectives: str = '',
+                                               lesson_title: str = '',
+                                               lesson_description: str = '',
+                                               existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                               course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Deep multi-step lesson generation for highest quality content.
+        
+        Steps:
+          1. Generate lesson outline (sections + structure)
+          2-N. Generate each section individually with full context
+          N+1. Quality enhancement pass (transitions, depth, cross-refs)
+        """
+        from .ai.task_manager import task_manager
+        
+        start_time = time.time()
+        
+        # ----- Step 1: Generate outline -----
+        if task_id:
+            task_manager.update_progress(task_id, 1, 3, "Step 1: Designing lesson outline and structure...")
+        
+        outline = self.lesson_gen.generate_lesson_deep_outline(
+            course_title=course_title,
+            module_title=module_title,
+            module_description=module_description,
+            module_objectives=module_objectives,
+            lesson_title=lesson_title,
+            lesson_description=lesson_description,
+            existing_lessons=existing_lessons,
+            course_context=course_context,
+        )
+        
+        if not outline:
+            if task_id:
+                task_manager.complete_step(task_id, 1, 1, "✗ Failed to generate outline")
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                message="Failed to generate lesson outline",
+                generation_time=time.time() - start_time,
+            ).to_dict()
+        
+        sections = outline.get('sections', [])
+        total_steps = 1 + len(sections) + 1  # outline + each section + enhancement
+        
+        if task_id:
+            task_manager.complete_step(task_id, 1, total_steps,
+                f"✓ Outline ready: {outline.get('title', lesson_title)} ({len(sections)} sections)")
+        
+        logger.info(f"Deep outline: {outline.get('title')} — {len(sections)} sections planned")
+        
+        # ----- Steps 2-N: Generate each section -----
+        all_sections_content = []
+        accumulated_content = ""
+        
+        for idx, section in enumerate(sections):
+            step_num = idx + 2
+            
+            if task_id and task_manager.is_cancelled(task_id):
+                logger.info(f"Task cancelled at section {idx + 1}")
+                break
+            
+            if task_id:
+                task_manager.update_progress(
+                    task_id, step_num, total_steps,
+                    f"Step {step_num}: Writing \"{section.get('heading', f'Section {idx+1}')}\"..."
+                )
+            
+            # Delay between AI calls
+            if idx > 0:
+                delay = task_manager.step_delay
+                for _ in range(delay):
+                    if task_id and task_manager.is_cancelled(task_id):
+                        break
+                    time.sleep(1)
+            
+            try:
+                section_content = self.lesson_gen.generate_lesson_deep_section(
+                    course_title=course_title,
+                    module_title=module_title,
+                    lesson_title=outline.get('title', lesson_title),
+                    lesson_description=outline.get('description', lesson_description),
+                    section=section,
+                    previous_sections_content=accumulated_content,
+                    course_context=course_context,
+                )
+            except Exception as e:
+                logger.error(f"Section generation failed for '{section.get('heading')}': {e}")
+                section_content = None
+            
+            if section_content:
+                all_sections_content.append(section_content)
+                accumulated_content += f"\n\n{section_content}"
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, step_num, total_steps,
+                        f"✓ Section {idx + 1}/{len(sections)}: {section.get('heading', '')}"
+                    )
+                logger.info(f"Section {idx + 1}/{len(sections)} generated: {section.get('heading')}")
+            else:
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, step_num, total_steps,
+                        f"✗ Section {idx + 1}/{len(sections)}: failed (continuing)"
+                    )
+                logger.warning(f"Section {idx + 1}/{len(sections)} failed: {section.get('heading')}")
+        
+        if not all_sections_content:
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                message="All section generations failed",
+                generation_time=time.time() - start_time,
+            ).to_dict()
+        
+        # ----- Final step: Quality enhancement -----
+        final_step = total_steps
+        
+        if task_id:
+            if task_manager.is_cancelled(task_id):
+                logger.info("Task cancelled before enhancement step")
+            else:
+                task_manager.update_progress(
+                    task_id, final_step, total_steps,
+                    "Final step: Quality enhancement — improving transitions and depth..."
+                )
+        
+        # Delay before final step
+        delay = task_manager.step_delay
+        for _ in range(delay):
+            if task_id and task_manager.is_cancelled(task_id):
+                break
+            time.sleep(1)
+        
+        full_content = "\n\n".join(all_sections_content)
+        
+        # Enhancement pass
+        enhancements = None
+        if not (task_id and task_manager.is_cancelled(task_id)):
+            try:
+                enhancements = self.lesson_gen.generate_lesson_deep_enhance(
+                    lesson_title=outline.get('title', lesson_title),
+                    full_content=full_content,
+                    learning_objectives=outline.get('learning_objectives', []),
+                    course_context=course_context,
+                    module_title=module_title,
+                )
+            except Exception as e:
+                logger.warning(f"Enhancement pass failed (non-critical): {e}")
+        
+        # Apply enhancements to the full content
+        if enhancements:
+            additions = []
+            for transition in enhancements.get('transition_additions', []):
+                if transition.get('content'):
+                    additions.append(transition['content'])
+            for depth in enhancements.get('depth_additions', []):
+                if depth.get('additional_content'):
+                    additions.append(depth['additional_content'])
+            if enhancements.get('cross_references'):
+                additions.append(f"\n\n## Connections to Other Course Material\n\n{enhancements['cross_references']}")
+            if enhancements.get('additional_examples'):
+                additions.append(f"\n\n## Additional Real-World Examples\n\n{enhancements['additional_examples']}")
+            if enhancements.get('reference_summary'):
+                additions.append(f"\n\n## Quick Reference\n\n{enhancements['reference_summary']}")
+            
+            if additions:
+                full_content += "\n\n" + "\n\n".join(additions)
+                logger.info(f"Applied {len(additions)} enhancement additions")
+        
+        if task_id:
+            task_manager.complete_step(
+                task_id, final_step, total_steps,
+                "✓ Quality enhancement complete"
+            )
+        
+        # Build final result
+        objectives = outline.get('learning_objectives', [])
+        if isinstance(objectives, list):
+            objectives_text = "\n".join(f"• {obj}" for obj in objectives)
+        else:
+            objectives_text = str(objectives)
+        
+        result_data = {
+            "title": outline.get('title', lesson_title),
+            "description": outline.get('description', lesson_description),
+            "learning_objectives": objectives_text,
+            "duration_minutes": outline.get('duration_minutes', 60),
+            "content_type": "text",
+            "content_data": full_content,
+            "generation_method": "deep_stepwise",
+            "sections_generated": len(all_sections_content),
+            "sections_planned": len(sections),
+            "enhanced": enhancements is not None,
+        }
+        
+        status = ResponseStatus.SUCCESS if len(all_sections_content) == len(sections) else ResponseStatus.PARTIAL_SUCCESS
+        
+        return AIResponse(
+            status=status,
+            data=result_data,
+            message=f"Deep lesson generated: {len(all_sections_content)}/{len(sections)} sections, "
+                    f"{'with' if enhancements else 'without'} enhancement pass",
+            provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+            generation_time=time.time() - start_time,
+        ).to_dict()
+
+    # =====================================================================
+    # DEEP STEPWISE CONTENT ENHANCEMENT
+    # Enhances existing lesson content in multiple steps:
+    #   Step 1: Analyze content + identify gaps vs course structure
+    #   Step 2: Expand weak sections with more detail
+    #   Step 3: Add unique examples and cross-references
+    # =====================================================================
+
+    def enhance_lesson_content_stepwise(self, task_id: str = None,
+                                         content_type: str = 'lesson',
+                                         current_content: str = '',
+                                         enhancement_type: str = 'improve',
+                                         course_title: str = '',
+                                         module_title: str = '',
+                                         lesson_title: str = '',
+                                         course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Multi-step content enhancement with cross-reference awareness.
+        
+        Steps:
+          1. Analyze: identify gaps, duplications, and weak sections
+          2. Enhance: expand and improve the content
+          3. Cross-reference: add connections to other course material
+        """
+        from .ai.task_manager import task_manager
+        
+        start_time = time.time()
+        total_steps = 3
+        
+        # Build course context text for prompts
+        course_ctx = ""
+        if course_context:
+            course_ctx = "\n\n===== FULL COURSE STRUCTURE (for cross-reference) ====="
+            for mod in course_context:
+                is_current = mod.get('title', '') == module_title
+                marker = " ← CURRENT MODULE" if is_current else ""
+                course_ctx += f"\n\nModule {mod.get('order', '?')}: {mod.get('title', 'Untitled')}{marker}"
+                for les in mod.get('lessons', []):
+                    course_ctx += f"\n  - Lesson: {les.get('title', 'Untitled')}"
+                    if les.get('content_summary'):
+                        course_ctx += f" — Topics: {les['content_summary'][:150]}"
+        
+        # ----- Step 1: Analysis -----
+        if task_id:
+            task_manager.update_progress(task_id, 1, total_steps,
+                "Step 1: Analyzing content quality and identifying gaps...")
+        
+        analysis_prompt = f"""You are a senior academic content analyst. Analyze this {content_type} content and identify specific improvements.
+
+Content Type: {content_type}
+Enhancement Goal: {enhancement_type}
+Course: {course_title}
+Module: {module_title}
+Lesson: {lesson_title}
+{course_ctx}
+
+===== CURRENT CONTENT =====
+{current_content[:5000]}
+===== END CONTENT =====
+
+Analyze and return ONLY valid JSON:
+{{
+  "quality_score": 75,
+  "word_count": 2500,
+  "weak_sections": ["section heading 1 — reason it's weak", "section heading 2 — reason"],
+  "missing_topics": ["topic that should be covered but isn't"],
+  "duplications_with_other_lessons": ["topic X overlaps with Module Y Lesson Z"],
+  "improvement_priorities": [
+    "Priority 1: What to fix first",
+    "Priority 2: Second priority",
+    "Priority 3: Third priority"
+  ],
+  "sections_to_expand": ["section heading that needs 200+ more words"],
+  "examples_needed": ["topic that needs a practical example"]
+}}"""
+
+        try:
+            analysis_result, _ = self.provider.make_ai_request(analysis_prompt, temperature=0.4, max_tokens=2048)
+            analysis = json_parser.parse_json_response(analysis_result, "content analysis") if analysis_result else None
+        except Exception as e:
+            logger.warning(f"Analysis step failed: {e}")
+            analysis = None
+        
+        if task_id:
+            issues_found = len(analysis.get('improvement_priorities', [])) if analysis else 0
+            task_manager.complete_step(task_id, 1, total_steps,
+                f"✓ Analysis complete: {issues_found} improvement areas identified")
+        
+        # Delay
+        delay = task_manager.step_delay
+        for _ in range(delay):
+            if task_id and task_manager.is_cancelled(task_id):
+                break
+            time.sleep(1)
+        
+        # ----- Step 2: Enhance content -----
+        if task_id and task_manager.is_cancelled(task_id):
+            return AIResponse(
+                status=ResponseStatus.CANCELLED if hasattr(ResponseStatus, 'CANCELLED') else ResponseStatus.ERROR,
+                message="Enhancement cancelled",
+                generation_time=time.time() - start_time,
+            ).to_dict()
+        
+        if task_id:
+            task_manager.update_progress(task_id, 2, total_steps,
+                "Step 2: Enhancing content with more detail and examples...")
+        
+        enhancements = {
+            "improve": "Improve clarity, depth, structure, and professional quality. Make it professor-level.",
+            "expand": "Significantly expand with more detail, examples, data, case studies. Double the depth.",
+            "simplify": "Simplify language while adding more practical examples. Keep technical accuracy.",
+            "add_examples": "Add 3-5 detailed real-world examples with specific companies, data, and step-by-step solutions."
+        }
+        enhancement_instruction = enhancements.get(enhancement_type, enhancements["improve"])
+        
+        analysis_context = ""
+        if analysis:
+            analysis_context = f"""
+
+Based on the analysis, these are the priority improvements:
+{chr(10).join(f'- {p}' for p in analysis.get('improvement_priorities', []))}
+
+Sections to expand: {', '.join(analysis.get('sections_to_expand', ['general']))}
+Missing topics: {', '.join(analysis.get('missing_topics', ['none identified']))}
+Examples needed: {', '.join(analysis.get('examples_needed', ['general examples']))}
+
+IMPORTANT: These topics overlap with other lessons — DO NOT expand on them:
+{chr(10).join(f'- {d}' for d in analysis.get('duplications_with_other_lessons', ['none detected']))}"""
+        
+        enhance_prompt = f"""You are an expert professor and academic editor. {enhancement_instruction}
+
+Course: {course_title}
+Module: {module_title}
+Lesson: {lesson_title}
+{course_ctx}{analysis_context}
+
+===== CURRENT CONTENT =====
+{current_content[:6000]}
+===== END CONTENT =====
+
+REQUIREMENTS:
+1. Return the COMPLETE enhanced content (not just the changes)
+2. Maintain the same overall structure and markdown formatting
+3. Add at least 30% more substantive content (specific data, examples, explanations)
+4. Do NOT add content that duplicates other lessons in the course
+5. Reference connections to other modules where natural
+6. Use proper markdown: ## headers, **bold**, `code`, lists, tables, blockquotes
+7. Write as a professor teaching — be thorough and detailed
+
+Return ONLY the enhanced markdown content (no JSON wrapper, no explanation)."""
+        
+        try:
+            enhanced_content, provider = self.provider.make_ai_request(enhance_prompt, temperature=0.7, max_tokens=8192)
+        except Exception as e:
+            logger.error(f"Enhancement step failed: {e}")
+            enhanced_content = None
+        
+        if not enhanced_content or len(enhanced_content.strip()) < len(current_content) * 0.5:
+            # Enhancement failed or returned less content — use original
+            enhanced_content = current_content
+            enhancement_applied = False
+        else:
+            enhanced_content = enhanced_content.strip()
+            enhancement_applied = True
+        
+        if task_id:
+            task_manager.complete_step(task_id, 2, total_steps,
+                f"✓ Content {'enhanced' if enhancement_applied else 'unchanged (enhancement had limited effect)'}")
+        
+        # Delay
+        for _ in range(delay):
+            if task_id and task_manager.is_cancelled(task_id):
+                break
+            time.sleep(1)
+        
+        # ----- Step 3: Cross-reference additions -----
+        if task_id and task_manager.is_cancelled(task_id):
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                data={"enhanced_content": enhanced_content},
+                message="Enhancement cancelled after step 2",
+                generation_time=time.time() - start_time,
+            ).to_dict()
+        
+        if task_id:
+            task_manager.update_progress(task_id, 3, total_steps,
+                "Step 3: Adding cross-references and final polish...")
+        
+        if course_context and len(course_context) > 1:
+            cross_ref_prompt = f"""Add brief cross-reference notes to this lesson content. 
+Add 2-3 short callout boxes (using markdown blockquotes > ) that reference related content in other modules.
+
+Course Structure:
+{course_ctx}
+
+Current Lesson: {lesson_title} in Module: {module_title}
+
+Return ONLY 2-3 callout boxes in markdown format like:
+> **📌 Connection**: This topic relates to [specific topic] covered in [Module X: Lesson Y]. Together, they provide...
+
+Keep each callout under 50 words. Return ONLY the callout boxes, not the full content."""
+            
+            try:
+                cross_refs, _ = self.provider.make_ai_request(cross_ref_prompt, temperature=0.5, max_tokens=1024)
+                if cross_refs and cross_refs.strip():
+                    enhanced_content += f"\n\n---\n\n## Related Course Material\n\n{cross_refs.strip()}"
+            except Exception as e:
+                logger.warning(f"Cross-reference step failed (non-critical): {e}")
+        
+        if task_id:
+            task_manager.complete_step(task_id, 3, total_steps, "✓ Cross-references and polish complete")
+        
+        return AIResponse(
+            status=ResponseStatus.SUCCESS if enhancement_applied else ResponseStatus.PARTIAL_SUCCESS,
+            data={
+                "enhanced_content": enhanced_content,
+                "analysis": analysis,
+                "enhancement_applied": enhancement_applied,
+            },
+            message=f"Content enhanced in 3 steps ({enhancement_type})",
+            provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+            generation_time=time.time() - start_time,
+        ).to_dict()
+
+    # =====================================================================
+    # DEEP STEPWISE MULTIPLE LESSONS GENERATION  
+    # Improved version that passes cross-module context and content summaries
+    # =====================================================================
+
+    def generate_multiple_lessons_deep_stepwise(self, task_id: str = None,
+                                                 course_title: str = '',
+                                                 module_title: str = '',
+                                                 module_description: str = '',
+                                                 module_objectives: str = '',
+                                                 num_lessons: int = 5,
+                                                 existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                                 course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Enhanced step-by-step lesson generation with cross-module context.
+        
+        Each lesson is generated individually. After each lesson, its content summary
+        is added to the context for the next lesson, preventing duplication.
+        """
+        from .ai.task_manager import task_manager
+        
+        all_lessons = []
+        accumulated_context = list(existing_lessons or [])
+        start_time = time.time()
+        
+        for i in range(num_lessons):
+            if task_id and task_manager.is_cancelled(task_id):
+                logger.info(f"Task {task_id[:8]}... cancelled at step {i + 1}")
+                break
+            
+            lesson_num = len(accumulated_context) + 1
+            
+            if task_id:
+                task_manager.update_progress(
+                    task_id, i + 1, num_lessons,
+                    f"Generating lesson {i + 1} of {num_lessons} (with cross-module context)..."
+                )
+            
+            try:
+                result = self.lesson_gen.generate_lesson_content(
+                    course_title=course_title,
+                    module_title=module_title,
+                    module_description=module_description,
+                    module_objectives=module_objectives,
+                    lesson_title="",
+                    lesson_description="",
+                    existing_lessons=accumulated_context,
+                    course_context=course_context,
+                )
+            except Exception as e:
+                logger.error(f"Lesson step {i + 1} failed: {e}")
+                result = None
+            
+            if result and isinstance(result, dict):
+                result['order'] = lesson_num
+                all_lessons.append(result)
+                
+                # Build a content summary from the generated content for future context
+                content_data = result.get('content_data', '')
+                # Extract key topics from headers
+                import re
+                headers = re.findall(r'^##\s+(.+)$', content_data, re.MULTILINE)
+                content_summary = "; ".join(headers[:6]) if headers else content_data[:200]
+                
+                accumulated_context.append({
+                    'title': result.get('title', f'Lesson {lesson_num}'),
+                    'description': result.get('description', ''),
+                    'order': lesson_num,
+                    'duration_minutes': result.get('duration_minutes', 45),
+                    'content_summary': content_summary,
+                })
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, i + 1, num_lessons,
+                        f"✓ Lesson {i + 1}: {result.get('title', f'Lesson {lesson_num}')}"
+                    )
+                logger.info(f"Step {i + 1}/{num_lessons}: Generated '{result.get('title', 'unknown')}'")
+            else:
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, i + 1, num_lessons,
+                        f"✗ Lesson {i + 1}: generation failed (continuing)"
+                    )
+                logger.warning(f"Step {i + 1}/{num_lessons}: Failed to generate lesson")
+            
+            # Delay between steps
+            if i < num_lessons - 1:
+                if task_id and task_manager.is_cancelled(task_id):
+                    break
+                delay = task_manager.step_delay
+                logger.info(f"Waiting {delay}s before next lesson (rate limit prevention)")
+                for _ in range(delay):
+                    if task_id and task_manager.is_cancelled(task_id):
+                        break
+                    time.sleep(1)
+        
+        status = ResponseStatus.SUCCESS if len(all_lessons) == num_lessons else (
+            ResponseStatus.PARTIAL_SUCCESS if all_lessons else ResponseStatus.ERROR
+        )
+        return AIResponse(
+            status=status,
+            data={"lessons": all_lessons},
+            message=f"Generated {len(all_lessons)} of {num_lessons} lessons with cross-module context",
             provider_used=getattr(self.provider, 'current_provider', 'unknown'),
             generation_time=time.time() - start_time,
         ).to_dict()

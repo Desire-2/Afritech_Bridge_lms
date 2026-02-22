@@ -82,6 +82,10 @@ export interface EnhanceContentRequest {
   content_type: string;
   current_content: string;
   enhancement_type?: 'improve' | 'expand' | 'simplify' | 'add_examples';
+  course_id?: number;
+  course_title?: string;
+  module_title?: string;
+  lesson_title?: string;
 }
 
 export interface QuizFromContentRequest {
@@ -495,20 +499,13 @@ class AIAgentService {
   }
 
   /**
-   * Enhance existing content using AI (synchronous — typically fast)
+   * Enhance existing content using AI (background — stepwise: analyze → enhance → cross-reference)
    */
-  async enhanceContent(request: EnhanceContentRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/enhance-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error enhancing content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to enhance content',
-        error: error.message
-      };
-    }
+  async enhanceContent(
+    request: EnhanceContentRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/enhance-content', request, onProgress);
   }
 
   /**
@@ -587,28 +584,24 @@ class AIAgentService {
   }
 
   /**
-   * Enhance a specific section of mixed content (synchronous)
+   * Enhance a specific section of mixed content (background — stepwise)
    */
-  async enhanceSectionContent(request: {
-    section_type: string;
-    section_content: string;
-    context?: {
-      lesson_title?: string;
-      section_position?: string;
-      previous_section?: string;
-    };
-  }): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/enhance-section-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error enhancing section content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to enhance section content',
-        error: error.message
+  async enhanceSectionContent(
+    request: {
+      section_type: string;
+      section_content: string;
+      context?: {
+        lesson_title?: string;
+        section_position?: string;
+        previous_section?: string;
+        course_title?: string;
+        module_title?: string;
       };
-    }
+      course_id?: number;
+    },
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/enhance-section-content', request, onProgress);
   }
 }
 

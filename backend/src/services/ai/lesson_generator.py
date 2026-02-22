@@ -56,10 +56,37 @@ class LessonGenerator:
     def __init__(self, provider_manager=None):
         self.provider = provider_manager or ai_provider_manager
     
+    def _build_course_context_text(self, course_context: Optional[List[Dict[str, Any]]] = None,
+                                     current_module_title: str = "") -> str:
+        """Build a text block describing the full course structure for cross-module awareness."""
+        if not course_context:
+            return ""
+        
+        text = "\n\n===== FULL COURSE STRUCTURE (for cross-reference — DO NOT duplicate content) ====="
+        for mod in course_context:
+            is_current = mod.get('title', '') == current_module_title
+            marker = " ← CURRENT MODULE" if is_current else ""
+            text += f"\n\nModule {mod.get('order', '?')}: {mod.get('title', 'Untitled')}{marker}"
+            if mod.get('description'):
+                text += f"\n  Description: {mod['description'][:200]}"
+            if mod.get('learning_objectives'):
+                text += f"\n  Objectives: {mod['learning_objectives'][:200]}"
+            lessons = mod.get('lessons', [])
+            if lessons:
+                for les in lessons:
+                    text += f"\n  - Lesson {les.get('order', '?')}: {les.get('title', 'Untitled')}"
+                    if les.get('description'):
+                        text += f" — {les['description'][:120]}"
+                    if les.get('content_summary'):
+                        text += f"\n    Topics covered: {les['content_summary'][:200]}"
+        text += "\n\n[CRITICAL: Reference this structure. Do NOT repeat topics already covered in other modules/lessons. Focus on NEW, UNIQUE content that adds value and builds on what came before.]"
+        return text
+
     def generate_lesson_content(self, course_title: str, module_title: str,
                                module_description: str, module_objectives: str,
                                lesson_title: str = "", lesson_description: str = "",
-                               existing_lessons: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                               existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                               course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Generate detailed lesson content with markdown formatting
         
@@ -71,6 +98,7 @@ class LessonGenerator:
             lesson_title: Lesson title (optional)
             lesson_description: Brief lesson description (optional)
             existing_lessons: List of existing lessons in the module for context
+            course_context: Full course structure with all modules/lessons for cross-reference
             
         Returns:
             Dict with lesson title, description, objectives, and markdown content
@@ -84,18 +112,23 @@ class LessonGenerator:
                     existing_lessons_text += f"\n   Description: {lesson['description']}"
                 if lesson.get('duration_minutes'):
                     existing_lessons_text += f"\n   Duration: {lesson['duration_minutes']} minutes"
+                if lesson.get('content_summary'):
+                    existing_lessons_text += f"\n   Topics covered: {lesson['content_summary'][:200]}"
             existing_lessons_text += f"\n\n[IMPORTANT: Analyze the existing {len(existing_lessons)} lesson(s) above. Generate the NEXT lesson (Lesson {len(existing_lessons) + 1}) that:"
             existing_lessons_text += "\n- Builds upon previous lessons naturally"
             existing_lessons_text += "\n- Covers NEW content not already taught"
             existing_lessons_text += "\n- Fills gaps in the learning progression"
             existing_lessons_text += "\n- Maintains logical flow and difficulty progression]"
         
+        # Cross-module context
+        course_context_text = self._build_course_context_text(course_context, module_title)
+        
         prompt = f"""You are an expert professor and curriculum designer creating COMPREHENSIVE, UNIVERSITY-LEVEL lesson content.
 
 Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
-Module Objectives: {module_objectives}{existing_lessons_text}
+Module Objectives: {module_objectives}{existing_lessons_text}{course_context_text}
 {'Lesson Title: ' + lesson_title if lesson_title else 'Generate a lesson title'}
 {'Lesson Focus: ' + lesson_description if lesson_description else ''}
 
@@ -221,7 +254,8 @@ Format as JSON:
     def generate_multiple_lessons(self, course_title: str, module_title: str,
                                   module_description: str, module_objectives: str,
                                   num_lessons: int = 5,
-                                  existing_lessons: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                                  existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                  course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
         Generate multiple lesson outlines at once for a module
         
@@ -249,12 +283,15 @@ Format as JSON:
             start_lesson_num = len(existing_lessons) + 1
             existing_lessons_text += f"\n\n[Note: Generate {num_lessons} NEW lessons (starting from Lesson {start_lesson_num}) that build upon these existing lessons and fill any gaps]"
         
+        # Cross-module context
+        course_context_text = self._build_course_context_text(course_context, module_title)
+        
         prompt = f"""You are an expert professor and curriculum designer creating COMPREHENSIVE, UNIVERSITY-LEVEL lesson content for a learning management system.
 
 Course: {course_title}
 Module: {module_title}
 Module Description: {module_description}
-Module Objectives: {module_objectives}{existing_lessons_text}
+Module Objectives: {module_objectives}{existing_lessons_text}{course_context_text}
 
 ===== CRITICAL REQUIREMENTS =====
 
@@ -801,6 +838,210 @@ To further develop your expertise in {lesson_title}:
 This lesson has provided you with a comprehensive foundation in {lesson_title}. In our next lesson, we will explore advanced applications and emerging trends in this important area.
 """
         }
+
+    # =====================================================================
+    # DEEP MULTI-STEP LESSON GENERATION
+    # Generates each section separately for higher quality and detail.
+    # Each step references previous steps + full course context.
+    # =====================================================================
+
+    def generate_lesson_deep_outline(self, course_title: str, module_title: str,
+                                      module_description: str, module_objectives: str,
+                                      lesson_title: str = "", lesson_description: str = "",
+                                      existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                      course_context: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+        """Step 1: Generate a detailed lesson outline with sections, topics, and structure."""
+        existing_text = ""
+        if existing_lessons:
+            existing_text = "\n\nExisting Lessons in this Module:\n"
+            for les in existing_lessons:
+                existing_text += f"  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
+                if les.get('content_summary'):
+                    existing_text += f" — Topics: {les['content_summary'][:150]}"
+                existing_text += "\n"
+
+        course_ctx = self._build_course_context_text(course_context, module_title)
+
+        prompt = f"""You are an expert professor designing a DETAILED lesson outline.
+
+Course: {course_title}
+Module: {module_title}
+Module Description: {module_description}
+Module Objectives: {module_objectives}{existing_text}{course_ctx}
+{'Lesson Title: ' + lesson_title if lesson_title else 'Choose an appropriate lesson title'}
+{'Lesson Focus: ' + lesson_description if lesson_description else ''}
+
+Create a comprehensive lesson outline. This is ONLY the structure — content will be generated separately for each section.
+
+Return ONLY valid JSON:
+{{
+  "title": "Specific lesson title",
+  "description": "3-4 sentence description of what this lesson covers and its value",
+  "learning_objectives": ["Objective 1 with action verb", "Objective 2", "Objective 3", "Objective 4", "Objective 5"],
+  "duration_minutes": 60,
+  "sections": [
+    {{
+      "id": "introduction",
+      "heading": "Introduction",
+      "description": "What this section covers and its purpose",
+      "target_words": 500,
+      "key_topics": ["topic1", "topic2"]
+    }},
+    {{
+      "id": "section_1",
+      "heading": "Core Concepts: [Specific Topic]",
+      "description": "Detailed description of section content",
+      "target_words": 700,
+      "key_topics": ["topic1", "topic2", "topic3"]
+    }},
+    {{
+      "id": "section_2",
+      "heading": "Advanced Analysis: [Specific Topic]",
+      "description": "Detailed description",
+      "target_words": 700,
+      "key_topics": ["topic1", "topic2"]
+    }},
+    {{
+      "id": "section_3",
+      "heading": "Practical Applications: [Specific Topic]",
+      "description": "Real-world applications and implementation",
+      "target_words": 600,
+      "key_topics": ["topic1", "topic2"]
+    }},
+    {{
+      "id": "worked_examples",
+      "heading": "Worked Examples and Case Studies",
+      "description": "3 detailed worked examples with step-by-step solutions",
+      "target_words": 800,
+      "key_topics": ["example1", "example2", "case_study"]
+    }},
+    {{
+      "id": "exercises",
+      "heading": "Practice Exercises",
+      "description": "Hands-on exercises with solutions",
+      "target_words": 500,
+      "key_topics": ["exercise1", "exercise2"]
+    }},
+    {{
+      "id": "summary",
+      "heading": "Key Takeaways and Discussion Questions",
+      "description": "Summary and reflection",
+      "target_words": 400,
+      "key_topics": ["takeaway1", "takeaway2"]
+    }}
+  ],
+  "unique_value": "Explain what makes THIS lesson unique vs other lessons in the course — what NEW knowledge/skills it adds"
+}}
+
+REQUIREMENTS:
+- Plan 5-7 main sections plus intro and summary
+- Each section must have SPECIFIC, unique topics (not generic)
+- Ensure NO overlap with existing lessons listed above
+- Each section should build on the previous one
+- Include practical applications and real-world examples in the plan"""
+
+        result, provider = self.provider.make_ai_request(prompt, temperature=0.6, max_tokens=4096)
+        if result:
+            parsed = json_parser.parse_json_response(result, "lesson outline")
+            if parsed:
+                logger.info(f"Deep outline generated: {parsed.get('title', 'untitled')} with {len(parsed.get('sections', []))} sections")
+                return parsed
+        return None
+
+    def generate_lesson_deep_section(self, course_title: str, module_title: str,
+                                      lesson_title: str, lesson_description: str,
+                                      section: Dict[str, Any],
+                                      previous_sections_content: str = "",
+                                      course_context: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+        """Step 2+: Generate a single section of a lesson with full context."""
+        course_ctx = self._build_course_context_text(course_context, module_title)
+        
+        prev_ctx = ""
+        if previous_sections_content:
+            # Truncate to avoid overly long context
+            truncated = previous_sections_content[:3000]
+            prev_ctx = f"\n\n--- CONTENT ALREADY WRITTEN IN THIS LESSON (for continuity) ---\n{truncated}\n--- END OF PREVIOUS CONTENT ---"
+
+        prompt = f"""You are an expert professor writing a SINGLE SECTION of a comprehensive lesson.
+
+Course: {course_title}
+Module: {module_title}
+Lesson: {lesson_title}
+Lesson Description: {lesson_description}{course_ctx}{prev_ctx}
+
+===== SECTION TO WRITE =====
+Heading: {section.get('heading', 'Section')}
+Purpose: {section.get('description', 'Generate educational content')}
+Target Length: {section.get('target_words', 600)} words
+Key Topics to Cover: {', '.join(section.get('key_topics', []))}
+
+===== REQUIREMENTS =====
+1. Write EXACTLY this one section — start with ## {section.get('heading', 'Section')}
+2. Write at least {section.get('target_words', 600)} words of SUBSTANTIVE content
+3. Include SPECIFIC examples, data, numbers, formulas where applicable
+4. Reference real-world applications with specific companies or scenarios
+5. Use professional terminology with clear explanations
+6. Use proper markdown: ## headers, ### sub-headers, **bold**, `code`, lists, tables, blockquotes
+7. DO NOT repeat content from previous sections (shown above)
+8. DO NOT repeat content from other lessons in the course (shown in course structure)
+9. Build naturally on what came before — reference previous sections where relevant
+10. Write as a professor teaching, not summarizing
+
+Return ONLY the markdown content for this section (no JSON wrapper, no extra explanation)."""
+
+        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        return result.strip() if result else None
+
+    def generate_lesson_deep_enhance(self, lesson_title: str, full_content: str,
+                                      learning_objectives: List[str],
+                                      course_context: Optional[List[Dict[str, Any]]] = None,
+                                      module_title: str = "") -> Optional[str]:
+        """Final step: Quality enhancement pass — fix gaps, improve transitions, add depth."""
+        course_ctx = self._build_course_context_text(course_context, module_title)
+
+        # Only pass first 6000 chars to avoid token limits
+        content_excerpt = full_content[:6000]
+        objectives_text = "\n".join(f"- {obj}" for obj in learning_objectives) if learning_objectives else "Not specified"
+
+        prompt = f"""You are a senior academic editor performing a FINAL QUALITY ENHANCEMENT pass on a lesson.
+
+Lesson: {lesson_title}
+Learning Objectives:
+{objectives_text}
+{course_ctx}
+
+===== CURRENT CONTENT (may be truncated) =====
+{content_excerpt}
+===== END CONTENT =====
+
+===== YOUR TASK =====
+Review the content above and provide SPECIFIC ENHANCEMENTS ONLY where needed:
+
+1. **Transitions**: Write 2-3 improved transition paragraphs between sections (specify which sections)
+2. **Missing Depth**: Identify 2-3 sections that need more detail — provide the additional content
+3. **Cross-References**: Add 2-3 references to how this lesson connects to other modules/lessons in the course
+4. **Practical Value**: Add 1-2 additional real-world examples or case studies that are DIFFERENT from existing ones
+5. **Key Formulas/Frameworks**: If applicable, summarize key frameworks in a reference table
+
+Return ONLY a JSON object:
+{{
+  "transition_additions": [
+    {{"after_section": "section heading", "content": "transition paragraph in markdown"}}
+  ],
+  "depth_additions": [
+    {{"section": "section heading", "additional_content": "extra content to append in markdown"}}
+  ],
+  "cross_references": "A brief paragraph referencing connections to other course content",
+  "additional_examples": "1-2 new real-world examples in markdown",
+  "reference_summary": "Optional: summary table or framework reference in markdown"
+}}"""
+
+        result, provider = self.provider.make_ai_request(prompt, temperature=0.6, max_tokens=4096)
+        if result:
+            parsed = json_parser.parse_json_response(result, "enhancement pass")
+            if parsed:
+                return parsed
+        return None
 
 
 # Singleton instance
