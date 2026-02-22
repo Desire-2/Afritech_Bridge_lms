@@ -10,6 +10,7 @@ import { aiAgentService } from '@/services/ai-agent.service';
 import { AIContentButton } from './AIContentButton';
 import { AIMixedContentButton } from './AIMixedContentButton';
 import MixedContentBuilder from '@/components/instructor/content/MixedContentBuilder';
+import { toast } from 'sonner';
 
 interface ModuleManagementProps {
   course: Course;
@@ -132,14 +133,14 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      alert('Please select an image file');
+      toast.warning('Please select an image file');
       return;
     }
 
     // Validate file size (max 5MB)
     const maxSize = 5 * 1024 * 1024; // 5MB
     if (file.size > maxSize) {
-      alert('Image size must be less than 5MB');
+      toast.warning('Image size must be less than 5MB');
       return;
     }
 
@@ -183,14 +184,14 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       };
 
       reader.onerror = () => {
-        alert('Failed to read image file');
+        toast.error('Failed to read image file');
         setUploadingImage(false);
       };
 
       reader.readAsDataURL(file);
     } catch (error) {
       console.error('Error uploading image:', error);
-      alert('Failed to upload image');
+      toast.error('Failed to upload image');
       setUploadingImage(false);
     }
   };
@@ -628,7 +629,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       resetModuleForm();
     } catch (error) {
       console.error('Error creating module:', error);
-      alert('Failed to create module');
+      toast.error('Failed to create module');
     }
   };
 
@@ -642,7 +643,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       resetModuleForm();
     } catch (error) {
       console.error('Error updating module:', error);
-      alert('Failed to update module');
+      toast.error('Failed to update module');
     }
   };
 
@@ -656,19 +657,16 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       setModules(modules.filter(m => m.id !== moduleId));
     } catch (error) {
       console.error('Error deleting module:', error);
-      alert('Failed to delete module');
+      toast.error('Failed to delete module');
     }
   };
 
   const handleCreateLesson = async (moduleId: number) => {
     try {
-      console.log('Creating lesson for module:', moduleId);
-      console.log('Current modules:', modules);
-      
       // Verify the module exists in our local state
       const moduleExists = modules.find(m => m.id === moduleId);
       if (!moduleExists) {
-        alert(`Module with ID ${moduleId} not found. Please refresh the page and try again.`);
+        toast.error(`Module with ID ${moduleId} not found. Please refresh the page and try again.`);
         return;
       }
       
@@ -688,7 +686,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error: any) {
       console.error('Error creating lesson:', error);
       const errorMessage = error.response?.data?.message || error.message || 'Failed to create lesson';
-      alert(errorMessage);
+      toast.error(errorMessage);
     }
   };
 
@@ -714,7 +712,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       resetLessonForm();
     } catch (error) {
       console.error('Error updating lesson:', error);
-      alert('Failed to update lesson');
+      toast.error('Failed to update lesson');
     }
   };
 
@@ -732,7 +730,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       ));
     } catch (error) {
       console.error('Error deleting lesson:', error);
-      alert('Failed to delete lesson');
+      toast.error('Failed to delete lesson');
     }
   };
 
@@ -750,7 +748,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       ));
     } catch (error) {
       console.error('Error publishing/unpublishing module:', error);
-      alert('Failed to update module publication status');
+      toast.error('Failed to update module publication status');
     }
   };
 
@@ -775,7 +773,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       ));
     } catch (error) {
       console.error('Error publishing/unpublishing lesson:', error);
-      alert('Failed to update lesson publication status');
+      toast.error('Failed to update lesson publication status');
     }
   };
 
@@ -835,7 +833,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         console.error('Error reordering modules:', error);
         // Revert on error
         setModules(modules);
-        alert('Failed to reorder modules');
+        toast.error('Failed to reorder modules');
       }
     } else if (type.startsWith('lesson-')) {
       const moduleId = parseInt(type.split('-')[1]);
@@ -863,7 +861,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         console.error('Error reordering lessons:', error);
         // Revert on error
         setModules(modules);
-        alert('Failed to reorder lessons');
+        toast.error('Failed to reorder lessons');
       }
     }
   };
@@ -900,10 +898,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         const updatedCourse = await CourseCreationService.getCourseWithModules(course.id);
         onCourseUpdate(updatedCourse);
         setModules(updatedCourse.modules as EnhancedModule[] || []);
-        alert(`Successfully created ${data.modules.length} modules with lessons!`);
+        toast.success(`Successfully created ${data.modules.length} modules with lessons!`);
       } catch (error) {
         console.error('Error creating modules:', error);
-        alert('Failed to create some modules. Please try again.');
+        toast.error('Failed to create some modules. Please try again.');
       }
     } else {
       // Single module generated - just fill the form
@@ -919,22 +917,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
   // AI handlers for lesson
   const handleLessonAIGenerate = async (data: any) => {
-    console.log('AI Generate Response:', data);
-    console.log('showLessonAI:', showLessonAI);
-    console.log('modules:', modules);
-    
     // Check if we got multiple lessons (batch mode)
     if (data.lessons && Array.isArray(data.lessons)) {
-      console.log(`Batch mode: Creating ${data.lessons.length} lessons`);
-      
       // Batch mode: create all lessons
       const currentModule = modules.find(m => m.id === showLessonAI.moduleId);
-      console.log('currentModule found:', currentModule);
-      console.log('currentModule.id:', currentModule?.id);
       
       if (!currentModule) {
-        console.error('Current module not found');
-        alert('❌ Error: Module not found');
+        toast.error('Module not found');
         return;
       }
 
@@ -943,22 +932,17 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       try {
         let successCount = 0;
         for (const lessonData of data.lessons) {
-          console.log(`Creating lesson: ${lessonData.title}`);
-          console.log(`Using module ID: ${currentModule.id} (type: ${typeof currentModule.id})`);
-          
           const lessonPayload = {
             title: lessonData.title,
             description: lessonData.description || '',
             content_type: lessonData.content_type || 'text',
-            content_data: lessonData.content_data || '',
+            content_data: lessonData.content_data || `# ${lessonData.title}\n\nContent to be developed...`,
             learning_objectives: lessonData.learning_objectives || '',
             duration_minutes: lessonData.duration_minutes || 30,
             order: lessonData.order || 1
           };
 
-          console.log('Calling createLesson with courseId:', course.id, 'moduleId:', currentModule.id, 'payload:', lessonPayload);
           const createdLesson = await CourseCreationService.createLesson(course.id, currentModule.id, lessonPayload);
-          console.log('Created lesson:', createdLesson);
           successCount++;
           
           // Update local state
@@ -973,18 +957,15 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
           }));
         }
 
-        console.log(`Successfully created ${successCount} lessons`);
-        alert(`✅ Successfully created ${successCount} lessons!`);
+        toast.success(`Successfully created ${successCount} lessons!`);
         setShowLessonAI({ moduleId: null, batchMode: false });
       } catch (error) {
         console.error('Error creating lessons:', error);
-        alert('❌ Failed to create some lessons. Please check console for details.');
+        toast.error('Failed to create some lessons. Please try again.');
       } finally {
         setIsCreatingLessons(false);
       }
     } else {
-      console.log('Single lesson mode: Updating form');
-      
       // Single lesson mode: update form
       setLessonForm(prev => ({
         ...prev,
@@ -1001,7 +982,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   // Handler for mixed content AI generation
   const handleMixedContentAIGenerate = async () => {
     if (!lessonForm.title) {
-      alert('⚠️ Please enter a lesson title first');
+      toast.warning('Please enter a lesson title first');
       return;
     }
 
@@ -1013,12 +994,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       const currentModule = modules.find(m => m.id === currentModuleId);
       
       if (!currentModule) {
-        alert('❌ Module not found');
+        toast.error('Module not found');
         return;
       }
 
-      console.log('Generating mixed content with AI for:', lessonForm.title);
-      
       const response = await aiAgentService.generateMixedContent({
         course_id: course.id,
         module_id: currentModule.id,
@@ -1026,11 +1005,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         lesson_description: lessonForm.description
       });
 
-      if (response.success && response.data?.sections) {
-        console.log('AI generated mixed content:', response.data);
-        console.log('Sections count:', response.data.sections.length);
-        console.log('First section:', response.data.sections[0]);
-        
+      if ((response.success || response.status === 'partial_success') && response.data?.sections) {
         // Convert sections to the format MixedContentBuilder expects
         const formattedSections = response.data.sections.map((section: any, index: number) => {
           const baseSection: any = {
@@ -1070,20 +1045,19 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         
         // Convert to JSON string for MixedContentBuilder
         const sectionsJSON = JSON.stringify(formattedSections);
-        console.log('Formatted sections JSON:', sectionsJSON);
         
         setLessonForm(prev => ({
           ...prev,
           content_data: sectionsJSON
         }));
         
-        alert('✅ Mixed content generated successfully!');
+        toast.success('Mixed content generated successfully!');
       } else {
-        alert('❌ Failed to generate content: ' + (response.message || 'Unknown error'));
+        toast.error('Failed to generate content: ' + (response.message || 'Unknown error'));
       }
     } catch (error) {
       console.error('Error generating mixed content:', error);
-      alert('❌ Failed to generate content. Please try again.');
+      toast.error('Failed to generate content. Please try again.');
     } finally {
       setIsGeneratingMixedContent(false);
     }
@@ -1093,7 +1067,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const handleContentAIGenerate = async () => {
     // Both Add and Edit modes use lessonForm state
     if (!lessonForm.title) {
-      alert('⚠️ Please enter a lesson title first');
+      toast.warning('Please enter a lesson title first');
       return;
     }
 
@@ -1106,14 +1080,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       const currentModule = modules.find(m => m.id === currentModuleId);
       
       if (!currentModule) {
-        alert('❌ Module not found');
+        toast.error('Module not found');
         return;
       }
 
-      console.log('Generating content with AI for:', lessonForm.title);
-      console.log('Mode:', editingLesson ? 'Edit' : 'Add');
-      console.log('Module:', currentModule.title);
-      
       const response = await aiAgentService.generateLessonContent({
         course_id: course.id,
         module_id: currentModule.id,
@@ -1121,9 +1091,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         lesson_description: lessonForm.description
       });
 
-      if (response.success && response.data) {
-        console.log('AI generated content:', response.data);
-        
+      if ((response.success || response.status === 'partial_success') && response.data) {
         // Update lessonForm state (used by both Add and Edit forms)
         setLessonForm(prev => ({
           ...prev,
@@ -1133,13 +1101,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
           duration_minutes: response.data.duration_minutes || prev.duration_minutes
         }));
         
-        alert('✅ Content generated successfully!');
+        toast.success('Content generated successfully!');
       } else {
-        alert('❌ Failed to generate content: ' + (response.message || 'Unknown error'));
+        toast.error('Failed to generate content: ' + (response.message || 'Unknown error'));
       }
     } catch (error) {
       console.error('Error generating content:', error);
-      alert('❌ Failed to generate content. Please try again.');
+      toast.error('Failed to generate content. Please try again.');
     } finally {
       setIsGeneratingContent(false);
     }

@@ -1,5 +1,6 @@
 # Enhanced Course Creation API Routes for Instructors
 
+import logging
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -17,6 +18,8 @@ from ..models.course_models import (
 from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 
+logger = logging.getLogger(__name__)
+
 # Helper for role checking
 from functools import wraps
 
@@ -26,7 +29,7 @@ def get_user_id():
         user_id = get_jwt_identity()
         return int(user_id) if user_id is not None else None
     except (ValueError, TypeError) as e:
-        print(f"ERROR in get_user_id: {e}")
+        logger.error(f"in get_user_id: {e}")
         return None
 
 
@@ -49,15 +52,15 @@ def instructor_required(f):
         user = User.query.get(current_user_id)
         
         # Debug logging
-        print(f"DEBUG - User ID: {current_user_id}")
-        print(f"DEBUG - User: {user}")
+        logger.debug(f"- User ID: {current_user_id}")
+        logger.debug(f"- User: {user}")
         if user:
-            print(f"DEBUG - User role: {user.role}")
+            logger.debug(f"- User role: {user.role}")
             if user.role:
-                print(f"DEBUG - Role name: {user.role.name}")
+                logger.debug(f"- Role name: {user.role.name}")
         
         if not user or not user.role or user.role.name not in ['instructor', 'admin']:
-            print(f"DEBUG - Access denied for user {current_user_id}")
+            logger.debug(f"- Access denied for user {current_user_id}")
             return jsonify({"message": "Instructor access required"}), 403
         return f(*args, **kwargs)
     return decorated_function
@@ -70,19 +73,19 @@ def course_ownership_required(f):
         course_id = kwargs.get('course_id') or request.json.get('course_id')
         
         # Debug logging
-        print(f"DEBUG OWNERSHIP - User ID: {current_user_id} (type: {type(current_user_id)})")
-        print(f"DEBUG OWNERSHIP - Course ID: {course_id}")
-        print(f"DEBUG OWNERSHIP - kwargs: {kwargs}")
+        logger.debug(f"OWNERSHIP - User ID: {current_user_id} (type: {type(current_user_id)})")
+        logger.debug(f"OWNERSHIP - Course ID: {course_id}")
+        logger.debug(f"OWNERSHIP - kwargs: {kwargs}")
         
         if course_id:
             course = Course.query.get(course_id)
-            print(f"DEBUG OWNERSHIP - Course found: {course}")
+            logger.debug(f"OWNERSHIP - Course found: {course}")
             if course:
-                print(f"DEBUG OWNERSHIP - Course instructor_id: {course.instructor_id} (type: {type(course.instructor_id)})")
-                print(f"DEBUG OWNERSHIP - Match: {course.instructor_id == current_user_id}")
+                logger.debug(f"OWNERSHIP - Course instructor_id: {course.instructor_id} (type: {type(course.instructor_id)})")
+                logger.debug(f"OWNERSHIP - Match: {course.instructor_id == current_user_id}")
             
             if not course or course.instructor_id != current_user_id:
-                print(f"DEBUG OWNERSHIP - Access denied!")
+                logger.debug(f"OWNERSHIP - Access denied!")
                 return jsonify({"message": "Access denied to this course"}), 403
         
         return f(*args, **kwargs)
@@ -148,7 +151,7 @@ def create_course():
         try:
             course_dict = course.to_dict()
         except Exception as e:
-            print(f"ERROR in course.to_dict() after creation: {str(e)}")
+            logger.error(f"in course.to_dict() after creation: {str(e)}")
             import traceback
             traceback.print_exc()
             # Return basic course info without to_dict
@@ -230,35 +233,35 @@ def update_course(course_id):
 def get_course_details(course_id):
     """Get detailed course information with modules and lessons"""
     try:
-        print(f"DEBUG ENDPOINT - Getting course details for course_id: {course_id}")
+        logger.debug(f"ENDPOINT - Getting course details for course_id: {course_id}")
         course = Course.query.get_or_404(course_id)
-        print(f"DEBUG ENDPOINT - Course found: {course}")
+        logger.debug(f"ENDPOINT - Course found: {course}")
         
-        print(f"DEBUG ENDPOINT - Converting course to dict...")
+        logger.debug(f"ENDPOINT - Converting course to dict...")
         try:
             course_data = course.to_dict(include_modules=True)
-            print(f"DEBUG ENDPOINT - Course data converted successfully")
+            logger.debug(f"ENDPOINT - Course data converted successfully")
         except Exception as e:
-            print(f"ERROR in course.to_dict(): {str(e)}")
+            logger.error(f"in course.to_dict(): {str(e)}")
             import traceback
             traceback.print_exc()
             return jsonify({"message": "Error converting course data", "error": str(e)}), 500
         
         # Include assignments, quizzes, and projects
-        print(f"DEBUG ENDPOINT - Getting assignments...")
+        logger.debug(f"ENDPOINT - Getting assignments...")
         try:
             assignments = Assignment.query.filter_by(course_id=course_id).all()
-            print(f"DEBUG ENDPOINT - Getting quizzes...")
+            logger.debug(f"ENDPOINT - Getting quizzes...")
             quizzes = Quiz.query.filter_by(course_id=course_id).all()
-            print(f"DEBUG ENDPOINT - Getting projects...")
+            logger.debug(f"ENDPOINT - Getting projects...")
             projects = Project.query.filter_by(course_id=course_id).all()
         except Exception as e:
-            print(f"ERROR getting assessments: {str(e)}")
+            logger.error(f"getting assessments: {str(e)}")
             import traceback
             traceback.print_exc()
             return jsonify({"message": "Error getting assessments", "error": str(e)}), 500
         
-        print(f"DEBUG ENDPOINT - Building final response...")
+        logger.debug(f"ENDPOINT - Building final response...")
         try:
             course_data.update({
                 'assignments': [assignment.to_dict() for assignment in assignments],
@@ -266,12 +269,12 @@ def get_course_details(course_id):
                 'projects': [project.to_dict(include_modules=True) for project in projects]
             })
         except Exception as e:
-            print(f"ERROR building response: {str(e)}")
+            logger.error(f"building response: {str(e)}")
             import traceback
             traceback.print_exc()
             return jsonify({"message": "Error building response", "error": str(e)}), 500
         
-        print(f"DEBUG ENDPOINT - Returning response...")
+        logger.debug(f"ENDPOINT - Returning response...")
         return jsonify(course_data), 200
         
     except Exception as e:
@@ -393,34 +396,34 @@ def delete_module(course_id, module_id):
 def create_lesson(course_id, module_id):
     """Create a new lesson in a module"""
     try:
-        print(f"DEBUG LESSON - Creating lesson for course_id: {course_id}, module_id: {module_id}")
+        logger.debug(f"LESSON - Creating lesson for course_id: {course_id}, module_id: {module_id}")
         
         # Verify module belongs to course
         module = Module.query.filter_by(id=module_id, course_id=course_id).first()
         if not module:
-            print(f"ERROR LESSON - Module not found: module_id={module_id}, course_id={course_id}")
+            logger.error(f"LESSON - Module not found: module_id={module_id}, course_id={course_id}")
             return jsonify({
                 "message": f"Module with ID {module_id} not found in course {course_id}. Please create a module first before adding lessons.",
                 "error": "MODULE_NOT_FOUND"
             }), 404
-        print(f"DEBUG LESSON - Module found: {module}")
+        logger.debug(f"LESSON - Module found: {module}")
         
         data = request.get_json()
-        print(f"DEBUG LESSON - Request data: {data}")
+        logger.debug(f"LESSON - Request data: {data}")
         
         # Validate required fields
         required_fields = ['title', 'content_type', 'content_data']
         for field in required_fields:
             if not data.get(field):
-                print(f"DEBUG LESSON - Missing field: {field}")
+                logger.debug(f"LESSON - Missing field: {field}")
                 return jsonify({"message": f"{field} is required"}), 400
         
         # Get the next order number
         last_lesson = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order.desc()).first()
         next_order = (last_lesson.order + 1) if last_lesson else 1
-        print(f"DEBUG LESSON - Next order: {next_order}")
+        logger.debug(f"LESSON - Next order: {next_order}")
         
-        print(f"DEBUG LESSON - Creating lesson object...")
+        logger.debug(f"LESSON - Creating lesson object...")
         lesson = Lesson(
             title=data['title'],
             content_type=data['content_type'],
@@ -433,11 +436,11 @@ def create_lesson(course_id, module_id):
             is_published=data.get('is_published', False)
         )
         
-        print(f"DEBUG LESSON - Adding to session...")
+        logger.debug(f"LESSON - Adding to session...")
         db.session.add(lesson)
-        print(f"DEBUG LESSON - Committing...")
+        logger.debug(f"LESSON - Committing...")
         db.session.commit()
-        print(f"DEBUG LESSON - Success!")
+        logger.debug(f"LESSON - Success!")
         
         return jsonify({
             "message": "Lesson created successfully",
@@ -445,10 +448,10 @@ def create_lesson(course_id, module_id):
         }), 201
         
     except Exception as e:
-        print(f"ERROR LESSON - Exception occurred: {e}")
-        print(f"ERROR LESSON - Exception type: {type(e)}")
+        logger.error(f"LESSON - Exception occurred: {e}")
+        logger.error(f"LESSON - Exception type: {type(e)}")
         import traceback
-        print(f"ERROR LESSON - Traceback: {traceback.format_exc()}")
+        logger.error(f"LESSON - Traceback: {traceback.format_exc()}")
         db.session.rollback()
         return jsonify({"message": "Failed to create lesson", "error": str(e)}), 500
 
@@ -524,7 +527,7 @@ def reorder_lessons(course_id, module_id):
 def delete_lesson(course_id, module_id, lesson_id):
     """Delete a lesson and all associated data"""
     try:
-        print(f"DEBUG DELETION - Starting deletion for lesson {lesson_id}")
+        logger.debug(f"DELETION - Starting deletion for lesson {lesson_id}")
         
         # Verify lesson belongs to module and course
         lesson = Lesson.query.join(Module).filter(
@@ -533,76 +536,76 @@ def delete_lesson(course_id, module_id, lesson_id):
             Module.course_id == course_id
         ).first_or_404()
         
-        print(f"DEBUG DELETION - Lesson found: {lesson.title}")
+        logger.debug(f"DELETION - Lesson found: {lesson.title}")
         
         # Delete all related data first to avoid foreign key constraint errors
         
         # 1. Delete lesson completions (includes video progress data)
-        print(f"DEBUG DELETION - Deleting lesson completions...")
+        logger.debug(f"DELETION - Deleting lesson completions...")
         deleted_completions = LessonCompletion.query.filter_by(lesson_id=lesson_id).delete()
-        print(f"DEBUG DELETION - Deleted {deleted_completions} lesson completions")
+        logger.debug(f"DELETION - Deleted {deleted_completions} lesson completions")
         
         # 2. Delete student notes for this lesson
-        print(f"DEBUG DELETION - Deleting student notes...")
+        logger.debug(f"DELETION - Deleting student notes...")
         deleted_notes = StudentNote.query.filter_by(lesson_id=lesson_id).delete()
-        print(f"DEBUG DELETION - Deleted {deleted_notes} student notes")
+        logger.debug(f"DELETION - Deleted {deleted_notes} student notes")
         
         # 3. Update user progress - remove references to this lesson
-        print(f"DEBUG DELETION - Updating user progress...")
+        logger.debug(f"DELETION - Updating user progress...")
         updated_progress = UserProgress.query.filter_by(current_lesson_id=lesson_id).update({"current_lesson_id": None})
-        print(f"DEBUG DELETION - Updated {updated_progress} user progress records")
+        logger.debug(f"DELETION - Updated {updated_progress} user progress records")
         
         # 4. Delete any quizzes linked to this lesson (and their submissions)
-        print(f"DEBUG DELETION - Deleting quizzes...")
+        logger.debug(f"DELETION - Deleting quizzes...")
         quizzes = Quiz.query.filter_by(lesson_id=lesson_id).all()
-        print(f"DEBUG DELETION - Found {len(quizzes)} quizzes to delete")
+        logger.debug(f"DELETION - Found {len(quizzes)} quizzes to delete")
         for quiz in quizzes:
             # Delete quiz attempts and their user answers first
             quiz_attempts = QuizAttempt.query.filter_by(quiz_id=quiz.id).all()
-            print(f"DEBUG DELETION - Found {len(quiz_attempts)} quiz attempts for quiz {quiz.id}")
+            logger.debug(f"DELETION - Found {len(quiz_attempts)} quiz attempts for quiz {quiz.id}")
             for attempt in quiz_attempts:
                 # Delete user answers for this attempt
                 deleted_answers = UserAnswer.query.filter_by(quiz_attempt_id=attempt.id).delete()
-                print(f"DEBUG DELETION - Deleted {deleted_answers} user answers for attempt {attempt.id}")
+                logger.debug(f"DELETION - Deleted {deleted_answers} user answers for attempt {attempt.id}")
                 # Delete the attempt
                 db.session.delete(attempt)
             
             # Delete quiz submissions 
             deleted_submissions = Submission.query.filter_by(quiz_id=quiz.id).delete()
-            print(f"DEBUG DELETION - Deleted {deleted_submissions} quiz submissions for quiz {quiz.id}")
+            logger.debug(f"DELETION - Deleted {deleted_submissions} quiz submissions for quiz {quiz.id}")
             
             # Delete answers for all questions in this quiz first
             questions = Question.query.filter_by(quiz_id=quiz.id).all()
             for question in questions:
                 deleted_answers = Answer.query.filter_by(question_id=question.id).delete()
-                print(f"DEBUG DELETION - Deleted {deleted_answers} answers for question {question.id}")
+                logger.debug(f"DELETION - Deleted {deleted_answers} answers for question {question.id}")
             
             # Now delete quiz questions 
             deleted_questions = Question.query.filter_by(quiz_id=quiz.id).delete()
-            print(f"DEBUG DELETION - Deleted {deleted_questions} questions for quiz {quiz.id}")
+            logger.debug(f"DELETION - Deleted {deleted_questions} questions for quiz {quiz.id}")
             # Delete the quiz itself
             db.session.delete(quiz)
         
         # 5. Delete any assignments linked to this lesson
-        print(f"DEBUG DELETION - Deleting assignments...")
+        logger.debug(f"DELETION - Deleting assignments...")
         assignments = Assignment.query.filter_by(lesson_id=lesson_id).all()
-        print(f"DEBUG DELETION - Found {len(assignments)} assignments to delete")
+        logger.debug(f"DELETION - Found {len(assignments)} assignments to delete")
         for assignment in assignments:
             # Delete assignment submissions first
             deleted_assignment_subs = AssignmentSubmission.query.filter_by(assignment_id=assignment.id).delete()
-            print(f"DEBUG DELETION - Deleted {deleted_assignment_subs} assignment submissions for assignment {assignment.id}")
+            logger.debug(f"DELETION - Deleted {deleted_assignment_subs} assignment submissions for assignment {assignment.id}")
             db.session.delete(assignment)
         
         # Finally, delete the lesson itself
-        print(f"DEBUG DELETION - Deleting lesson...")
+        logger.debug(f"DELETION - Deleting lesson...")
         db.session.delete(lesson)
         db.session.commit()
-        print(f"DEBUG DELETION - Lesson deleted successfully")
+        logger.debug(f"DELETION - Lesson deleted successfully")
         
         return jsonify({"message": "Lesson deleted successfully"}), 200
         
     except Exception as e:
-        print(f"DEBUG DELETION ERROR - Exception occurred: {str(e)}")
+        logger.debug(f"DELETION ERROR - Exception occurred: {str(e)}")
         import traceback
         traceback.print_exc()
         db.session.rollback()

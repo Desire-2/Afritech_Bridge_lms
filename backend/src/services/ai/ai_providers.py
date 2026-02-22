@@ -5,6 +5,7 @@ Handles OpenRouter and Gemini API connections, rate limiting, caching, and provi
 
 import os
 import json
+import re
 import time
 import hashlib
 import logging
@@ -13,8 +14,6 @@ from typing import Dict, List, Optional, Any, Tuple
 from collections import deque
 from datetime import datetime
 import requests
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +30,7 @@ class AIProviderManager:
     """Manages AI provider connections, rate limiting, and request handling"""
     
     # OpenRouter model configurations with fallback chain
+    # Updated Feb 2026 - verified available on openrouter.ai/models
     MODEL_CONFIGS = {
         'primary': {
             'name': 'meta-llama/llama-3.3-70b-instruct:free',
@@ -38,20 +38,15 @@ class AIProviderManager:
             'cost_per_1k_tokens': 0.0,
         },
         'secondary': {
-            'name': 'google/gemini-2.0-flash-exp:free',
-            'max_tokens': 8192,
+            'name': 'deepseek/deepseek-r1-0528:free',
+            'max_tokens': 8000,
             'cost_per_1k_tokens': 0.0,
         },
         'fast': {
-            'name': 'meta-llama/llama-3.2-3b-instruct:free',
+            'name': 'nvidia/nemotron-3-nano-30b-a3b:free',
             'max_tokens': 8000,
             'cost_per_1k_tokens': 0.0,
         },
-        'free': {
-            'name': 'meta-llama/llama-3.3-70b-instruct:free',
-            'max_tokens': 8000,
-            'cost_per_1k_tokens': 0.0,
-        }
     }
     
     def __init__(self):
@@ -60,9 +55,9 @@ class AIProviderManager:
         self.openrouter_base_url = "https://openrouter.ai/api/v1/chat/completions"
         self.site_url = os.environ.get('SITE_URL', 'https://afritecbridge.com')
         self.site_name = os.environ.get('SITE_NAME', 'Afritec Bridge LMS')
-        self.openrouter_timeout = int(os.environ.get('OPENROUTER_TIMEOUT_SECONDS', '25'))
-        self.gemini_timeout = int(os.environ.get('GEMINI_TIMEOUT_SECONDS', '25'))
-        self.gemini_max_output_tokens = int(os.environ.get('GEMINI_MAX_OUTPUT_TOKENS', '4096'))
+        self.openrouter_timeout = int(os.environ.get('OPENROUTER_TIMEOUT_SECONDS', '60'))
+        self.gemini_timeout = int(os.environ.get('GEMINI_TIMEOUT_SECONDS', '120'))
+        self.gemini_max_output_tokens = int(os.environ.get('GEMINI_MAX_OUTPUT_TOKENS', '8192'))
         
         # Gemini configuration (fallback)
         self.gemini_api_key = os.environ.get('GEMINI_API_KEY')
@@ -81,6 +76,9 @@ class AIProviderManager:
         self.min_request_interval = 0.3
         self.last_request_time = {'openrouter': 0, 'gemini': 0}
         
+        # Rate limit cooldown (set when 429 is received)
+        self._rate_limit_cooldown_until = {'openrouter': 0, 'gemini': 0}
+        
         # Token/prompt optimization
         self.max_prompt_length = 100000
         
@@ -88,17 +86,10 @@ class AIProviderManager:
         self.response_cache = {}
         self.cache_ttl = 3600
         
-        # Initialize HTTP session with retry logic
+        # Initialize HTTP session — no custom Retry adapter
+        # urllib3's default Retry with max_retries=0 can swallow response objects
+        # on 429s, making e.response None. Use plain Session instead.
         self.session = requests.Session()
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[500, 502, 503, 504],
-            allowed_methods=["POST"]
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
         
         self._initialize_providers()
     
@@ -161,10 +152,18 @@ class AIProviderManager:
     # ===== Rate Limiting =====
     
     def _wait_for_rate_limit(self, provider: str = 'openrouter'):
-        """Implement provider-specific rate limiting"""
+        """Implement provider-specific rate limiting with cooldown awareness"""
         current_time = time.time()
         max_rpm = self.openrouter_max_rpm if provider == 'openrouter' else self.gemini_max_rpm
         timestamps = self.request_timestamps[provider]
+        
+        # Check rate-limit cooldown (set when 429 is received from the provider)
+        cooldown_until = self._rate_limit_cooldown_until.get(provider, 0)
+        cooldown_remaining = cooldown_until - current_time
+        if cooldown_remaining > 0:
+            logger.info(f"Rate limit cooldown active for {provider}: waiting {cooldown_remaining:.1f}s")
+            time.sleep(cooldown_remaining)
+            current_time = time.time()
         
         time_since_last = current_time - self.last_request_time[provider]
         if time_since_last < self.min_request_interval:
@@ -333,32 +332,73 @@ class AIProviderManager:
                     
             except requests.exceptions.HTTPError as e:
                 error_msg = str(e)
-                status_code = e.response.status_code if e.response else None
+                # Extract status code: prefer response object, fall back to parsing error string
+                status_code = None
+                if e.response is not None:
+                    status_code = e.response.status_code
+                elif '429' in error_msg:
+                    status_code = 429
+                elif '401' in error_msg:
+                    status_code = 401
+                elif '402' in error_msg:
+                    status_code = 402  
+                elif '403' in error_msg:
+                    status_code = 403
+                else:
+                    # Try to extract any 4xx/5xx from error string
+                    _match = re.search(r'\b(4\d{2}|5\d{2})\b', error_msg)
+                    if _match:
+                        status_code = int(_match.group(1))
 
                 if status_code in [401, 402, 403]:
                     logger.error(f"OpenRouter auth/billing error (status {status_code}): {error_msg}")
                     self._mark_provider_failure('openrouter')
                     return None
                 
-                if status_code == 429:
-                    logger.warning(f"OpenRouter rate limit hit (attempt {attempt + 1}): {error_msg}")
+                elif status_code == 429:
+                    # Rate limit — exponential backoff: 5s, 10s, 20s (capped at 60s)
+                    backoff_time = min(60, (2 ** attempt) * 5)
+                    
+                    # Check for Retry-After header from the provider
+                    retry_after = None
+                    if e.response is not None:
+                        retry_after = e.response.headers.get('Retry-After') or e.response.headers.get('x-ratelimit-reset')
+                    if retry_after:
+                        try:
+                            backoff_time = max(backoff_time, int(float(retry_after)) + 1)
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    logger.warning(f"OpenRouter rate limit 429 (attempt {attempt + 1}/{retry_count + 1}). Backing off {backoff_time}s...")
+                    
+                    # Set cooldown so _wait_for_rate_limit also respects it
+                    self._rate_limit_cooldown_until['openrouter'] = time.time() + backoff_time
+                    
                     if attempt < retry_count:
-                        backoff_time = (attempt + 1) * 5
-                        logger.info(f"Backing off for {backoff_time}s before retry...")
                         time.sleep(backoff_time)
                         continue
                     else:
+                        # All retries exhausted — try a different model tier
+                        logger.warning(f"OpenRouter rate limit persists after {retry_count + 1} attempts on '{model_tier}' tier")
                         if model_tier == 'primary':
                             logger.info("Trying secondary model tier...")
                             return self._make_openrouter_request(prompt, 'secondary', 1, temperature, max_tokens)
                         elif model_tier == 'secondary':
                             logger.info("Trying fast model tier...")
                             return self._make_openrouter_request(prompt, 'fast', 1, temperature, max_tokens)
-                        elif model_tier == 'fast':
-                            logger.info("Trying free model tier...")
-                            return self._make_openrouter_request(prompt, 'free', 1, temperature, max_tokens)
+                        # Don't chain further — let make_ai_request fall back to Gemini
+                        self._mark_provider_failure('openrouter')
+                        return None
                 
-                logger.error(f"OpenRouter HTTP error (attempt {attempt + 1}): {error_msg}")
+                else:
+                    # Other HTTP errors (500, 502, etc.)
+                    logger.error(f"OpenRouter HTTP error {status_code} (attempt {attempt + 1}/{retry_count + 1}): {error_msg}")
+                    if attempt < retry_count:
+                        time.sleep(2)
+                        continue
+                    
+            except requests.exceptions.Timeout as e:
+                logger.warning(f"OpenRouter request timed out after {self.openrouter_timeout}s (attempt {attempt + 1}/{retry_count + 1}): {e}")
                 if attempt < retry_count:
                     time.sleep(2)
                     continue
@@ -387,6 +427,8 @@ class AIProviderManager:
         optimized_prompt = self._optimize_prompt(prompt, 30000)
         
         for attempt in range(retry_count + 1):
+            executor = None
+            future = None
             try:
                 self._wait_for_rate_limit('gemini')
                 
@@ -399,32 +441,50 @@ class AIProviderManager:
                     'max_output_tokens': self.gemini_max_output_tokens,
                 }
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
-                        self.gemini_model.generate_content,
-                        optimized_prompt,
-                        generation_config=generation_config
-                    )
-                    response = future.result(timeout=self.gemini_timeout)
+                # Use ThreadPoolExecutor WITHOUT 'with' to avoid blocking shutdown on timeout
+                executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                start_time = time.time()
+                future = executor.submit(
+                    self.gemini_model.generate_content,
+                    optimized_prompt,
+                    generation_config=generation_config
+                )
                 
-                logger.info(f"Gemini API request successful")
+                try:
+                    response = future.result(timeout=self.gemini_timeout)
+                except concurrent.futures.TimeoutError:
+                    elapsed = time.time() - start_time
+                    logger.error(f"Gemini request timed out after {elapsed:.1f}s (limit: {self.gemini_timeout}s, attempt {attempt + 1}/{retry_count + 1})")
+                    future.cancel()
+                    if attempt < retry_count:
+                        time.sleep(2)
+                        continue
+                    break
+                
+                if not response or not hasattr(response, 'text') or not response.text:
+                    logger.error(f"Gemini returned empty response (attempt {attempt + 1}/{retry_count + 1})")
+                    if attempt < retry_count:
+                        time.sleep(2)
+                        continue
+                    break
+                
+                logger.info(f"Gemini API request successful (attempt {attempt + 1}/{retry_count + 1})")
                 self._mark_provider_success('gemini')
                 self._cache_response(cache_key, response.text)
                 return response.text
                 
-            except concurrent.futures.TimeoutError:
-                logger.error(f"Gemini request timed out after {self.gemini_timeout}s")
-                if attempt < retry_count:
-                    continue
             except Exception as e:
                 error_msg = str(e)
                 
                 if '429' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower():
                     logger.error(f"Gemini quota/rate limit error on attempt {attempt + 1}: {error_msg}")
                     
+                    # Set cooldown for Gemini rate limiting
+                    backoff_time = (attempt + 1) * 10
+                    self._rate_limit_cooldown_until['gemini'] = time.time() + backoff_time
+                    
                     if 'retry in' in error_msg.lower():
                         try:
-                            import re
                             match = re.search(r'retry in (\d+\.?\d*)s', error_msg)
                             if match:
                                 retry_delay = float(match.group(1)) + 2
@@ -436,15 +496,18 @@ class AIProviderManager:
                             pass
                     
                     if attempt < retry_count:
-                        backoff_time = (attempt + 1) * 10
                         logger.info(f"Backing off for {backoff_time}s before retry...")
                         time.sleep(backoff_time)
                         continue
                 
-                logger.error(f"Error calling Gemini API: {e}")
+                logger.error(f"Error calling Gemini API (attempt {attempt + 1}/{retry_count + 1}): {e}")
                 if attempt < retry_count:
                     time.sleep(2)
                     continue
+            finally:
+                # Non-blocking cleanup — don't wait for running thread
+                if executor:
+                    executor.shutdown(wait=False)
                     
         self._mark_provider_failure('gemini')
         return None
@@ -467,8 +530,9 @@ class AIProviderManager:
             if result:
                 return result, 'openrouter'
             
+            # Fallback to Gemini with fewer retries to avoid long waits
             logger.warning("OpenRouter failed, falling back to Gemini")
-            result = self._make_gemini_request(prompt, 2, temperature)
+            result = self._make_gemini_request(prompt, 1, temperature)
             if result:
                 return result, 'gemini'
         else:
@@ -476,8 +540,9 @@ class AIProviderManager:
             if result:
                 return result, 'gemini'
             
+            # Fallback to OpenRouter with fewer retries
             logger.warning("Gemini failed, falling back to OpenRouter")
-            result = self._make_openrouter_request(prompt, model_tier, 2, temperature, max_tokens)
+            result = self._make_openrouter_request(prompt, model_tier, 1, temperature, max_tokens)
             if result:
                 return result, 'openrouter'
         

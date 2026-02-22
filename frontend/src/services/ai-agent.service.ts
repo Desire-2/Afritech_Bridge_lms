@@ -113,11 +113,11 @@ export interface AIResponse<T = any> {
   error?: string;
   metadata?: {
     timestamp: string;
-    duration_ms: number;
-    cache_hit: boolean;
-    provider_used: string;
-    session_id: string;
-    quality_score?: number;
+    generation_time: number | null;
+    cached: boolean;
+    provider_used: string | null;
+    session_id?: string;
+    content_quality_score?: number | null;
   };
   status?: 'success' | 'partial_success' | 'error';
 }
@@ -129,6 +129,41 @@ export interface GenerationProgress {
   stage: string;
   estimated_remaining: number;
   can_cancel: boolean;
+}
+
+// Background task interfaces
+export interface BackgroundTaskResponse {
+  success: boolean;
+  background: boolean;
+  task_id: string;
+  status: string;
+  message: string;
+}
+
+export interface TaskStatus {
+  task_id: string;
+  task_type: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  progress: number;
+  current_step: number;
+  total_steps: number;
+  current_step_description: string;
+  steps: {
+    step_number: number;
+    total_steps: number;
+    description: string;
+    status: string;
+    started_at: string | null;
+    completed_at: string | null;
+  }[];
+  error: string | null;
+}
+
+export interface TaskProgressCallback {
+  (status: TaskStatus): void;
 }
 
 // Quality assessment interface
@@ -211,184 +246,256 @@ class AIAgentService {
       console.error('Cancel generation failed:', error);
     }
   }
+
+  // =====================================================
+  // BACKGROUND TASK MANAGEMENT
+  // =====================================================
+
   /**
-   * Generate course outline using AI
+   * Submit a request to run in background mode.
+   * Sends { ...requestData, background: true } and returns the task_id.
    */
-  async generateCourseOutline(request: CourseOutlineRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-course-outline', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating course outline:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate course outline',
-        error: error.message
+  private async submitBackground(endpoint: string, requestData: any): Promise<BackgroundTaskResponse> {
+    const response = await aiApiClient.post(endpoint, {
+      ...requestData,
+      background: true,
+    });
+    return response.data;
+  }
+
+  /**
+   * Poll task status until completion, failure, or cancellation.
+   * Calls onProgress on each poll so the UI can update step-by-step.
+   * Returns the final AIResponse result.
+   */
+  async pollUntilComplete(
+    taskId: string,
+    onProgress?: TaskProgressCallback,
+    pollIntervalMs: number = 3000,
+  ): Promise<AIResponse> {
+    return new Promise((resolve, reject) => {
+      const poll = async () => {
+        try {
+          const resp = await aiApiClient.get(`/ai-agent/task/${taskId}/status`);
+          const status: TaskStatus = resp.data?.data;
+
+          if (!status) {
+            reject(new Error('Task not found'));
+            return;
+          }
+
+          // Report progress
+          if (onProgress) {
+            onProgress(status);
+          }
+
+          if (status.status === 'completed') {
+            // Fetch the full result
+            try {
+              const resultResp = await aiApiClient.get(`/ai-agent/task/${taskId}/result`);
+              resolve(resultResp.data);
+            } catch {
+              resolve({ success: true, message: 'Task completed but result unavailable' });
+            }
+            return;
+          }
+
+          if (status.status === 'failed') {
+            resolve({
+              success: false,
+              status: 'error',
+              message: status.error || 'Task failed',
+            });
+            return;
+          }
+
+          if (status.status === 'cancelled') {
+            resolve({
+              success: false,
+              status: 'error',
+              message: 'Task was cancelled',
+            });
+            return;
+          }
+
+          // Still running — poll again
+          setTimeout(poll, pollIntervalMs);
+        } catch (error: any) {
+          // Network error during poll — retry a couple times
+          console.error('Poll error:', error);
+          setTimeout(poll, pollIntervalMs * 2);
+        }
       };
+
+      poll();
+    });
+  }
+
+  /**
+   * Cancel a background task
+   */
+  async cancelTask(taskId: string): Promise<void> {
+    try {
+      await aiApiClient.post(`/ai-agent/task/${taskId}/cancel`);
+    } catch (error) {
+      console.error('Cancel task failed:', error);
     }
   }
 
   /**
-   * Generate module content using AI
+   * Get all active tasks for the current user
    */
-  async generateModuleContent(request: ModuleContentRequest): Promise<AIResponse> {
+  async getActiveTasks(): Promise<TaskStatus[]> {
     try {
-      const response = await aiApiClient.post('/ai-agent/generate-module-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating module content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate module content',
-        error: error.message
-      };
+      const response = await aiApiClient.get('/ai-agent/task/active');
+      return response.data?.data || [];
+    } catch {
+      return [];
     }
   }
 
   /**
-   * Generate multiple modules at once using AI
+   * Run a generation request in background mode with polling.
+   * This is the core method — all generation methods delegate to it.
+   * 
+   * 1. POSTs to the endpoint with background: true → gets task_id
+   * 2. Polls /task/{id}/status every 3s
+   * 3. Calls onProgress with step-by-step updates
+   * 4. Returns the final AIResponse when done
    */
-  async generateMultipleModules(request: MultipleModulesRequest): Promise<AIResponse> {
+  private async runInBackground(
+    endpoint: string,
+    requestData: any,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse & { task_id?: string }> {
     try {
-      const response = await aiApiClient.post('/ai-agent/generate-multiple-modules', request);
-      return response.data;
+      // Step 1: Submit as background task
+      const taskResponse = await this.submitBackground(endpoint, requestData);
+
+      if (!taskResponse.task_id) {
+        // Server didn't return a task_id — fall through (shouldn't happen)
+        throw new Error('No task_id returned from server');
+      }
+
+      // Step 2: Poll until complete
+      const result = await this.pollUntilComplete(
+        taskResponse.task_id,
+        onProgress,
+      );
+
+      return { ...result, task_id: taskResponse.task_id };
     } catch (error: any) {
-      console.error('Error generating multiple modules:', error);
+      console.error(`Background generation failed for ${endpoint}:`, error);
       return {
         success: false,
-        message: error.response?.data?.message || 'Failed to generate multiple modules',
-        error: error.message
+        message: error.response?.data?.message || error.message || 'Background generation failed',
+        error: error.message,
       };
     }
   }
 
+  // =====================================================
+  // GENERATION METHODS (all use background mode)
+  // =====================================================
+
   /**
-   * Generate multiple lessons at once using AI
+   * Generate course outline using AI (background)
    */
-  async generateMultipleLessons(request: MultipleLessonsRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-multiple-lessons', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating multiple lessons:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate multiple lessons',
-        error: error.message
-      };
-    }
+  async generateCourseOutline(
+    request: CourseOutlineRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-course-outline', request, onProgress);
   }
 
   /**
-   * Generate lesson content with enhanced quality tracking
+   * Generate module content using AI (background)
+   */
+  async generateModuleContent(
+    request: ModuleContentRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-module-content', request, onProgress);
+  }
+
+  /**
+   * Generate multiple modules at once using AI (background, step-by-step)
+   */
+  async generateMultipleModules(
+    request: MultipleModulesRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-multiple-modules', request, onProgress);
+  }
+
+  /**
+   * Generate multiple lessons at once using AI (background, step-by-step)
+   */
+  async generateMultipleLessons(
+    request: MultipleLessonsRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-multiple-lessons', request, onProgress);
+  }
+
+  /**
+   * Generate lesson content (background)
    */
   async generateLessonContent(
-    request: LessonContentRequest, 
-    onProgress?: (progress: GenerationProgress) => void
+    request: LessonContentRequest,
+    onProgress?: TaskProgressCallback,
   ): Promise<AIResponse> {
-    try {
-      // Start the generation
-      const response = await aiApiClient.post('/ai-agent/generate-lesson-content', {
-        ...request,
-        track_progress: !!onProgress
-      });
-      
-      // If progress tracking requested and session_id provided
-      if (onProgress && response.data.metadata?.session_id) {
-        this.trackProgress(response.data.metadata.session_id, onProgress);
-      }
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating lesson content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate lesson content',
-        error: error.message
-      };
-    }
+    return this.runInBackground('/ai-agent/generate-lesson-content', request, onProgress);
   }
-  
   /**
-   * Generate module content with enhanced features
+   * Generate module content with enhanced features (background)
    */
   async generateModuleContentEnhanced(
     request: ModuleContentRequest,
     options?: {
       trackProgress?: boolean;
       qualityThreshold?: number;
-    }
+    },
+    onProgress?: TaskProgressCallback,
   ): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-module-content', {
-        ...request,
-        ...options
-      });
-      
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating enhanced module content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate module content',
-        error: error.message
-      };
-    }
+    return this.runInBackground('/ai-agent/generate-module-content', {
+      ...request,
+      ...options,
+    }, onProgress);
   }
 
   /**
-   * Generate quiz questions using AI
+   * Generate quiz questions using AI (background)
    */
-  async generateQuizQuestions(request: QuizQuestionsRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-quiz-questions', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating quiz questions:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate quiz questions',
-        error: error.message
-      };
-    }
+  async generateQuizQuestions(
+    request: QuizQuestionsRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-quiz-questions', request, onProgress);
   }
 
   /**
-   * Generate assignment using AI
+   * Generate assignment using AI (background)
    */
-  async generateAssignment(request: AssignmentRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-assignment', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating assignment:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate assignment',
-        error: error.message
-      };
-    }
+  async generateAssignment(
+    request: AssignmentRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-assignment', request, onProgress);
   }
 
   /**
-   * Generate final project using AI
+   * Generate final project using AI (background)
    */
-  async generateFinalProject(request: FinalProjectRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-final-project', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating final project:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate final project',
-        error: error.message
-      };
-    }
+  async generateFinalProject(
+    request: FinalProjectRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-final-project', request, onProgress);
   }
 
   /**
-   * Enhance existing content using AI
+   * Enhance existing content using AI (synchronous — typically fast)
    */
   async enhanceContent(request: EnhanceContentRequest): Promise<AIResponse> {
     try {
@@ -405,24 +512,7 @@ class AIAgentService {
   }
 
   /**
-   * Check AI agent service health
-   */
-  async checkHealth(): Promise<{ status: string; api_configured: boolean; message: string }> {
-    try {
-      const response = await apiClient.get('/ai-agent/health');
-      return response.data;
-    } catch (error: any) {
-      console.error('Error checking AI agent health:', error);
-      return {
-        status: 'error',
-        api_configured: false,
-        message: 'Could not reach AI agent service'
-      };
-    }
-  }
-
-  /**
-   * Generate quiz from actual lesson/module content
+   * Generate quiz from actual lesson/module content (synchronous — typically fast)
    */
   async generateQuizFromContent(request: QuizFromContentRequest): Promise<AIResponse> {
     try {
@@ -439,7 +529,7 @@ class AIAgentService {
   }
 
   /**
-   * Generate assignment from actual lesson/module content
+   * Generate assignment from actual lesson/module content (synchronous)
    */
   async generateAssignmentFromContent(request: AssignmentFromContentRequest): Promise<AIResponse> {
     try {
@@ -456,7 +546,7 @@ class AIAgentService {
   }
 
   /**
-   * Generate project from actual module content
+   * Generate project from actual module content (synchronous)
    */
   async generateProjectFromContent(request: ProjectFromContentRequest): Promise<AIResponse> {
     try {
@@ -473,7 +563,7 @@ class AIAgentService {
   }
 
   /**
-   * Generate mixed content lesson with template support
+   * Generate mixed content lesson with template support (synchronous)
    */
   async generateMixedContent(request: {
     course_id: number;
@@ -497,7 +587,7 @@ class AIAgentService {
   }
 
   /**
-   * Enhance a specific section of mixed content
+   * Enhance a specific section of mixed content (synchronous)
    */
   async enhanceSectionContent(request: {
     section_type: string;

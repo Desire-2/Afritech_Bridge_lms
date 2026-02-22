@@ -22,6 +22,8 @@ from enum import Enum
 from dataclasses import dataclass, asdict
 
 # Import from modular components
+logger = logging.getLogger(__name__)
+
 from .ai import (
     ai_provider_manager,
     course_generator,
@@ -44,8 +46,6 @@ except ImportError as e:
     enhanced_content_validator = None
     ContentType = None
     ENHANCED_VALIDATOR_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 
 class ResponseStatus(Enum):
@@ -253,8 +253,16 @@ class AIAgentService:
     # ===== Enhanced Generation Methods =====
     
     def _execute_with_retry_and_cache(self, cache_key: str, generation_func: Callable, 
-                                    *args, **kwargs) -> AIResponse:
-        """Execute generation with retry logic, caching, and quality validation"""
+                                    *args, skip_quality_check: bool = False, **kwargs) -> AIResponse:
+        """Execute generation with retry logic, caching, and optional quality validation
+        
+        Args:
+            cache_key: Key for caching results
+            generation_func: The function to call for generation
+            *args: Positional args passed to generation_func
+            skip_quality_check: If True, skip quality threshold validation and always return SUCCESS
+            **kwargs: Keyword args passed to generation_func
+        """
         start_time = time.time()
         
         # Check cache first
@@ -275,10 +283,10 @@ class AIAgentService:
                 result = generation_func(*args, **kwargs)
                 
                 if result and isinstance(result, dict):
-                    # Validate content quality
+                    # Assess quality (for logging) but skip threshold enforcement if requested
                     quality_score = self._assess_content_quality(result)
                     
-                    if quality_score >= self.quality_threshold:
+                    if skip_quality_check or quality_score >= self.quality_threshold:
                         # Cache successful result
                         self.smart_cache.set(result, cache_key=cache_key)
                         
@@ -371,10 +379,18 @@ class AIAgentService:
                 # Determine content type based on content structure
                 if content.get('suggested_modules'):
                     content_type = ContentType.COURSE_OUTLINE
+                elif content.get('modules') and isinstance(content.get('modules'), list):
+                    # Handle {"modules": [...]} structure from generate_multiple_modules
+                    content_type = ContentType.COURSE_OUTLINE
                 elif content.get('suggested_lessons'):
+                    content_type = ContentType.MODULE_CONTENT
+                elif content.get('lessons') and isinstance(content.get('lessons'), list):
+                    # Handle {"lessons": [...]} structure from generate_multiple_lessons
                     content_type = ContentType.MODULE_CONTENT
                 elif content.get('content') and len(str(content.get('content', ''))) > 100:
                     content_type = ContentType.LESSON_CONTENT
+                elif content.get('questions') and isinstance(content.get('questions'), list):
+                    content_type = ContentType.QUIZ_QUESTIONS
                 else:
                     content_type = ContentType.MIXED_CONTENT
                 
@@ -383,7 +399,7 @@ class AIAgentService:
                     content, content_type
                 )
                 
-                logger.info(f"Enhanced quality assessment: {validation_result.overall_score:.2f} (valid: {validation_result.is_valid})")
+                logger.debug(f"Enhanced quality assessment: {validation_result.overall_score:.2f} (valid: {validation_result.is_valid}, type: {content_type.value})")
                 return validation_result.overall_score
             else:
                 # Fallback to basic quality assessment
@@ -406,9 +422,13 @@ class AIAgentService:
         if content.get('learning_objectives'):
             score += 0.1
         
-        # Content depth checks
-        if isinstance(content.get('suggested_modules'), list) and len(content['suggested_modules']) > 0:
+        # Content depth checks — handle both direct arrays and nested structures
+        if isinstance(content.get('modules'), list) and len(content['modules']) > 0:
+            score += 0.2  # Multiple modules is a strong signal of completeness
+        elif isinstance(content.get('suggested_modules'), list) and len(content['suggested_modules']) > 0:
             score += 0.15
+        elif isinstance(content.get('lessons'), list) and len(content['lessons']) > 0:
+            score += 0.2  # Multiple lessons is a strong signal
         elif isinstance(content.get('suggested_lessons'), list) and len(content['suggested_lessons']) > 0:
             score += 0.15
         elif content.get('content') and len(str(content.get('content', ''))) > 200:
@@ -420,7 +440,8 @@ class AIAgentService:
     def generate_course_outline(self, topic: str, target_audience: str = "", 
                                learning_objectives: str = "") -> AIResponse:
         """
-        Generate a complete course outline with enhanced error handling and caching
+        Generate a complete course outline with enhanced error handling and caching.
+        Quality threshold is skipped for outlines — always returns SUCCESS if content is generated.
         
         Returns:
             AIResponse with standardized format
@@ -430,31 +451,36 @@ class AIAgentService:
         return self._execute_with_retry_and_cache(
             cache_key,
             self.course_gen.generate_course_outline,
-            topic, target_audience, learning_objectives
+            topic, target_audience, learning_objectives,
+            skip_quality_check=True
         )
 
     def generate_multiple_modules(self, course_title: str, course_description: str,
                                   course_objectives: str, num_modules: int = 5,
                                   existing_modules: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
-        """Generate multiple module outlines with enhanced handling"""
+        """Generate multiple module outlines with enhanced handling.
+        Quality threshold is skipped for module outlines."""
         cache_key = f"modules_{course_title}_{num_modules}_{len(existing_modules or [])}"
         
         return self._execute_with_retry_and_cache(
             cache_key,
             self.course_gen.generate_multiple_modules,
-            course_title, course_description, course_objectives, num_modules, existing_modules
+            course_title, course_description, course_objectives, num_modules, existing_modules,
+            skip_quality_check=True
         )
 
     def generate_module_content(self, course_title: str, course_description: str,
                                course_objectives: str, module_title: str = "",
                                existing_modules: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
-        """Generate module details with enhanced handling"""
+        """Generate module details with enhanced handling.
+        Quality threshold is skipped for module content."""
         cache_key = f"module_{course_title}_{module_title}_{len(existing_modules or [])}"
         
         return self._execute_with_retry_and_cache(
             cache_key,
             self.course_gen.generate_module_content,
-            course_title, course_description, course_objectives, module_title, existing_modules
+            course_title, course_description, course_objectives, module_title, existing_modules,
+            skip_quality_check=True
         )
     
     # ===== Enhanced Lesson Generation =====
@@ -477,14 +503,16 @@ class AIAgentService:
                                   module_description: str, module_objectives: str,
                                   num_lessons: int = 5,
                                   existing_lessons: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
-        """Generate multiple lesson outlines with enhanced handling"""
+        """Generate multiple lesson outlines with enhanced handling.
+        Quality threshold is skipped for lesson outlines."""
         cache_key = f"lessons_{course_title}_{module_title}_{num_lessons}_{len(existing_lessons or [])}"
         
         return self._execute_with_retry_and_cache(
             cache_key,
             self.lesson_gen.generate_multiple_lessons,
             course_title, module_title, module_description, module_objectives,
-            num_lessons, existing_lessons
+            num_lessons, existing_lessons,
+            skip_quality_check=True
         )
     
     def generate_mixed_content(self, course_title: str, module_title: str,
@@ -705,6 +733,286 @@ class AIAgentService:
                 error_details={"error": str(e)}
             )
     
+    # ===== Comprehensive Lesson with Validation =====
+    
+    def generate_comprehensive_lesson_with_validation(self, course_title: str, module_title: str,
+                                                      module_description: str, module_objectives: str,
+                                                      lesson_title: str, lesson_description: str = "",
+                                                      difficulty_level: str = "intermediate",
+                                                      existing_lessons: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+        """
+        Generate comprehensive lesson with validation, wrapping result in AIResponse.
+        Delegates to comprehensive_lesson_generator.generate_comprehensive_lesson_with_validation().
+        """
+        start_time = time.time()
+        cache_key = f"comprehensive_validated_{course_title}_{module_title}_{lesson_title}_{difficulty_level}"
+        
+        # Check cache first
+        cached_result = self.smart_cache.get(cache_key=cache_key)
+        if cached_result:
+            return AIResponse(
+                status=ResponseStatus.SUCCESS,
+                data=cached_result,
+                message="Comprehensive lesson retrieved from cache",
+                cached=True,
+                generation_time=0.0
+            )
+        
+        try:
+            result = self.comprehensive_gen.generate_comprehensive_lesson_with_validation(
+                course_title, module_title, module_description, module_objectives,
+                lesson_title, lesson_description, difficulty_level, existing_lessons
+            )
+            
+            if result and isinstance(result, dict):
+                quality_score = self._assess_content_quality(result)
+                self.smart_cache.set(result, cache_key=cache_key)
+                
+                return AIResponse(
+                    status=ResponseStatus.SUCCESS,
+                    data=result,
+                    message="Comprehensive lesson generated successfully with validation",
+                    provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+                    generation_time=time.time() - start_time,
+                    content_quality_score=quality_score
+                )
+            else:
+                raise ValueError("Comprehensive lesson generation returned empty result")
+        except Exception as e:
+            logger.error(f"Comprehensive lesson generation failed: {e}")
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                message=f"Comprehensive lesson generation failed: {str(e)}",
+                error_details={"error": str(e)},
+                generation_time=time.time() - start_time
+            )
+    
+    # ===== Final Project Generation =====
+    
+    def generate_final_project(self, course_title: str, course_description: str,
+                              course_objectives: str, modules_summary: str) -> AIResponse:
+        """Generate final/capstone project with enhanced handling"""
+        cache_key = f"final_project_{course_title}"
+        
+        return self._execute_with_retry_and_cache(
+            cache_key,
+            self.assessment_gen.generate_final_project,
+            course_title, course_description, course_objectives, modules_summary
+        )
+    
+    # ===== Task-Based Lesson Generation =====
+    
+    def generate_lesson_with_tasks(self, course_title: str, module_title: str,
+                                   module_description: str, module_objectives: str,
+                                   lesson_title: str, lesson_description: str = "",
+                                   difficulty_level: str = "intermediate",
+                                   existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                   depth_level: str = "comprehensive",
+                                   parallel: bool = True) -> AIResponse:
+        """Generate lesson using task-based approach, wrapping result in AIResponse."""
+        start_time = time.time()
+        cache_key = f"task_lesson_{course_title}_{module_title}_{lesson_title}_{depth_level}"
+        
+        cached_result = self.smart_cache.get(cache_key=cache_key)
+        if cached_result:
+            return AIResponse(
+                status=ResponseStatus.SUCCESS,
+                data=cached_result,
+                message="Task-based lesson retrieved from cache",
+                cached=True,
+                generation_time=0.0
+            )
+        
+        try:
+            result = self.task_based_gen.generate_lesson_with_tasks(
+                course_title=course_title,
+                module_title=module_title,
+                module_description=module_description,
+                module_objectives=module_objectives,
+                lesson_title=lesson_title,
+                lesson_description=lesson_description,
+                difficulty_level=difficulty_level,
+                existing_lessons=existing_lessons,
+                depth_level=depth_level,
+                parallel=parallel
+            )
+            
+            if result and isinstance(result, dict):
+                quality_score = self._assess_content_quality(result)
+                self.smart_cache.set(result, cache_key=cache_key)
+                
+                return AIResponse(
+                    status=ResponseStatus.SUCCESS,
+                    data=result,
+                    message="Task-based lesson generated successfully",
+                    provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+                    generation_time=time.time() - start_time,
+                    content_quality_score=quality_score
+                )
+            else:
+                raise ValueError("Task-based lesson generation returned empty result")
+        except Exception as e:
+            logger.error(f"Task-based lesson generation failed: {e}")
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                message=f"Task-based lesson generation failed: {str(e)}",
+                error_details={"error": str(e)},
+                generation_time=time.time() - start_time
+            )
+    
+    # ===== Deep Lesson Generation =====
+    
+    def generate_deep_lesson(self, course_title: str, module_title: str,
+                            module_description: str, module_objectives: str,
+                            lesson_title: str, lesson_description: str = "",
+                            existing_lessons: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
+        """
+        Generate a deeply comprehensive lesson using task-based approach with 'expert' depth.
+        This is a convenience wrapper around generate_lesson_with_tasks with depth_level='expert'.
+        """
+        return self.generate_lesson_with_tasks(
+            course_title=course_title,
+            module_title=module_title,
+            module_description=module_description,
+            module_objectives=module_objectives,
+            lesson_title=lesson_title,
+            lesson_description=lesson_description,
+            difficulty_level="advanced",
+            existing_lessons=existing_lessons,
+            depth_level="expert",
+            parallel=True
+        )
+    
+    # ===== Chapter-Based Lesson Generation =====
+    
+    def create_chapter_session(self, course_title: str, module_title: str,
+                              module_description: str, module_objectives: str,
+                              lesson_title: str, lesson_description: str = "",
+                              difficulty_level: str = "intermediate",
+                              existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                              target_chapters: int = 5,
+                              chapter_depth: str = "deep") -> str:
+        """Create a chapter-based lesson generation session. Returns session_id."""
+        return self.chapter_gen.create_session(
+            course_title=course_title,
+            module_title=module_title,
+            module_description=module_description,
+            module_objectives=module_objectives,
+            lesson_title=lesson_title,
+            lesson_description=lesson_description,
+            difficulty_level=difficulty_level,
+            existing_lessons=existing_lessons,
+            target_chapters=target_chapters,
+            chapter_depth=chapter_depth
+        )
+    
+    def get_chapter_session_status(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get status of a chapter-based generation session."""
+        return self.chapter_gen.get_session_status(session_id)
+    
+    def outline_lesson_chapters(self, session_id: str) -> List[Dict[str, Any]]:
+        """Generate chapter outlines for a lesson session. Returns list of chapter outlines."""
+        return self.chapter_gen.outline_chapters(session_id)
+    
+    def generate_chapter(self, session_id: str, chapter_id: str) -> Dict[str, Any]:
+        """Generate content for a single chapter in a session."""
+        return self.chapter_gen.generate_chapter(session_id, chapter_id)
+    
+    def generate_lesson_by_chapters(self, course_title: str, module_title: str,
+                                    module_description: str, module_objectives: str,
+                                    lesson_title: str, lesson_description: str = "",
+                                    difficulty_level: str = "intermediate",
+                                    existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                    target_chapters: int = 5,
+                                    chapter_depth: str = "deep") -> AIResponse:
+        """Generate a complete lesson using chapter-by-chapter approach, wrapping in AIResponse."""
+        start_time = time.time()
+        cache_key = f"chapter_lesson_{course_title}_{module_title}_{lesson_title}_{target_chapters}_{chapter_depth}"
+        
+        cached_result = self.smart_cache.get(cache_key=cache_key)
+        if cached_result:
+            return AIResponse(
+                status=ResponseStatus.SUCCESS,
+                data=cached_result,
+                message="Chapter-based lesson retrieved from cache",
+                cached=True,
+                generation_time=0.0
+            )
+        
+        try:
+            result = self.chapter_gen.generate_lesson(
+                course_title=course_title,
+                module_title=module_title,
+                module_description=module_description,
+                module_objectives=module_objectives,
+                lesson_title=lesson_title,
+                lesson_description=lesson_description,
+                difficulty_level=difficulty_level,
+                existing_lessons=existing_lessons,
+                target_chapters=target_chapters,
+                chapter_depth=chapter_depth
+            )
+            
+            if result and isinstance(result, dict):
+                quality_score = self._assess_content_quality(result)
+                self.smart_cache.set(result, cache_key=cache_key)
+                
+                return AIResponse(
+                    status=ResponseStatus.SUCCESS,
+                    data=result,
+                    message="Chapter-based lesson generated successfully",
+                    provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+                    generation_time=time.time() - start_time,
+                    content_quality_score=quality_score
+                )
+            else:
+                raise ValueError("Chapter-based lesson generation returned empty result")
+        except Exception as e:
+            logger.error(f"Chapter-based lesson generation failed: {e}")
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                message=f"Chapter-based lesson generation failed: {str(e)}",
+                error_details={"error": str(e)},
+                generation_time=time.time() - start_time
+            )
+    
+    # ===== Section Content Enhancement =====
+    
+    def enhance_section_content(self, section_type: str, section_content: str,
+                               context: Dict[str, Any]) -> AIResponse:
+        """Enhance a specific section of mixed content, wrapping result in AIResponse."""
+        start_time = time.time()
+        try:
+            result = self.content_enhancer.enhance_section_content(
+                section_type=section_type,
+                section_content=section_content,
+                context=context
+            )
+            
+            if result and isinstance(result, dict):
+                return AIResponse(
+                    status=ResponseStatus.SUCCESS,
+                    data=result,
+                    message="Section content enhanced successfully",
+                    provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+                    generation_time=time.time() - start_time
+                )
+            else:
+                return AIResponse(
+                    status=ResponseStatus.PARTIAL_SUCCESS,
+                    data={"enhanced_content": section_content},
+                    message="Section enhancement had limited improvement",
+                    generation_time=time.time() - start_time
+                )
+        except Exception as e:
+            logger.error(f"Section content enhancement failed: {e}")
+            return AIResponse(
+                status=ResponseStatus.ERROR,
+                message=f"Section enhancement failed: {str(e)}",
+                error_details={"error": str(e)},
+                generation_time=time.time() - start_time
+            )
+    
     # ===== Backwards Compatibility Methods =====
     
     def _make_ai_request(self, prompt: str, temperature: float = 0.7, 
@@ -719,6 +1027,213 @@ class AIAgentService:
     def _validate_content_quality(self, content: str, content_type: str, min_length: int = 500) -> Dict[str, Any]:
         """Validate the quality and completeness of generated content"""
         return content_validator.validate_content_quality(content, content_type, min_length)
+    
+    # =====================================================================
+    # BACKGROUND TASK METHODS
+    # These methods run in background threads via BackgroundTaskManager.
+    # Each accepts task_id as a keyword argument for progress reporting.
+    # =====================================================================
+    
+    def run_single_step_background(self, task_id: str = None,
+                                    method_name: str = '',
+                                    method_kwargs: dict = None) -> Dict[str, Any]:
+        """
+        Generic background wrapper for any single-step generation method.
+        Runs the named method and returns its result as a dict.
+        """
+        from .ai.task_manager import task_manager
+        
+        method = getattr(self, method_name, None)
+        if not method:
+            raise ValueError(f"Unknown method: {method_name}")
+        
+        if task_id:
+            task_manager.update_progress(task_id, 1, 1, "Generating content...")
+        
+        result = method(**(method_kwargs or {}))
+        
+        if task_id:
+            task_manager.complete_step(task_id, 1, 1, "Content generated")
+        
+        if isinstance(result, AIResponse):
+            return result.to_dict()
+        return result
+    
+    def generate_multiple_lessons_stepwise(self, task_id: str = None,
+                                            course_title: str = '',
+                                            module_title: str = '',
+                                            module_description: str = '',
+                                            module_objectives: str = '',
+                                            num_lessons: int = 5,
+                                            existing_lessons: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Step-by-step lesson generation for background execution.
+        
+        Generates each lesson individually with delays between them to avoid rate limits.
+        Each lesson prompt includes context from previously generated lessons for coherence.
+        """
+        from .ai.task_manager import task_manager
+        
+        all_lessons = []
+        accumulated_context = list(existing_lessons or [])
+        start_time = time.time()
+        
+        for i in range(num_lessons):
+            if task_id and task_manager.is_cancelled(task_id):
+                logger.info(f"Task {task_id[:8]}... cancelled at step {i + 1}")
+                break
+            
+            lesson_num = len(accumulated_context) + 1
+            
+            if task_id:
+                task_manager.update_progress(
+                    task_id, i + 1, num_lessons,
+                    f"Generating lesson {i + 1} of {num_lessons}..."
+                )
+            
+            try:
+                result = self.lesson_gen.generate_lesson_content(
+                    course_title=course_title,
+                    module_title=module_title,
+                    module_description=module_description,
+                    module_objectives=module_objectives,
+                    lesson_title="",
+                    lesson_description="",
+                    existing_lessons=accumulated_context
+                )
+            except Exception as e:
+                logger.error(f"Lesson step {i + 1} failed: {e}")
+                result = None
+            
+            if result and isinstance(result, dict):
+                result['order'] = lesson_num
+                all_lessons.append(result)
+                accumulated_context.append({
+                    'title': result.get('title', f'Lesson {lesson_num}'),
+                    'description': result.get('description', ''),
+                    'order': lesson_num,
+                    'duration_minutes': result.get('duration_minutes', 45)
+                })
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, i + 1, num_lessons,
+                        f"✓ Lesson {i + 1}: {result.get('title', f'Lesson {lesson_num}')}"
+                    )
+                logger.info(f"Step {i + 1}/{num_lessons}: Generated '{result.get('title', 'unknown')}'")
+            else:
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, i + 1, num_lessons,
+                        f"✗ Lesson {i + 1}: generation failed (continuing)"
+                    )
+                logger.warning(f"Step {i + 1}/{num_lessons}: Failed to generate lesson")
+            
+            # Delay between steps — sleep in 1s increments to allow quick cancellation
+            if i < num_lessons - 1:
+                if task_id and task_manager.is_cancelled(task_id):
+                    break
+                delay = task_manager.step_delay
+                logger.info(f"Waiting {delay}s before next lesson (rate limit prevention)")
+                for _ in range(delay):
+                    if task_id and task_manager.is_cancelled(task_id):
+                        break
+                    time.sleep(1)
+        
+        status = ResponseStatus.SUCCESS if len(all_lessons) == num_lessons else (
+            ResponseStatus.PARTIAL_SUCCESS if all_lessons else ResponseStatus.ERROR
+        )
+        return AIResponse(
+            status=status,
+            data={"lessons": all_lessons},
+            message=f"Generated {len(all_lessons)} of {num_lessons} lessons step by step",
+            provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+            generation_time=time.time() - start_time,
+        ).to_dict()
+    
+    def generate_multiple_modules_stepwise(self, task_id: str = None,
+                                            course_title: str = '',
+                                            course_description: str = '',
+                                            course_objectives: str = '',
+                                            num_modules: int = 5,
+                                            existing_modules: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Step-by-step module generation for background execution.
+        Generates each module individually with delays between them.
+        """
+        from .ai.task_manager import task_manager
+        
+        all_modules = []
+        accumulated_context = list(existing_modules or [])
+        start_time = time.time()
+        
+        for i in range(num_modules):
+            if task_id and task_manager.is_cancelled(task_id):
+                logger.info(f"Task {task_id[:8]}... cancelled at step {i + 1}")
+                break
+            
+            module_num = len(accumulated_context) + 1
+            
+            if task_id:
+                task_manager.update_progress(
+                    task_id, i + 1, num_modules,
+                    f"Generating module {i + 1} of {num_modules}..."
+                )
+            
+            try:
+                result = self.course_gen.generate_module_content(
+                    course_title=course_title,
+                    course_description=course_description,
+                    course_objectives=course_objectives,
+                    module_title="",
+                    existing_modules=accumulated_context
+                )
+            except Exception as e:
+                logger.error(f"Module step {i + 1} failed: {e}")
+                result = None
+            
+            if result and isinstance(result, dict):
+                result['order'] = module_num
+                all_modules.append(result)
+                accumulated_context.append({
+                    'title': result.get('title', f'Module {module_num}'),
+                    'description': result.get('description', ''),
+                    'learning_objectives': result.get('learning_objectives', ''),
+                    'order': module_num
+                })
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, i + 1, num_modules,
+                        f"✓ Module {i + 1}: {result.get('title', f'Module {module_num}')}"
+                    )
+                logger.info(f"Step {i + 1}/{num_modules}: Generated '{result.get('title', 'unknown')}'")
+            else:
+                if task_id:
+                    task_manager.complete_step(
+                        task_id, i + 1, num_modules,
+                        f"✗ Module {i + 1}: generation failed (continuing)"
+                    )
+                logger.warning(f"Step {i + 1}/{num_modules}: Failed to generate module")
+            
+            if i < num_modules - 1:
+                if task_id and task_manager.is_cancelled(task_id):
+                    break
+                delay = task_manager.step_delay
+                logger.info(f"Waiting {delay}s before next module (rate limit prevention)")
+                for _ in range(delay):
+                    if task_id and task_manager.is_cancelled(task_id):
+                        break
+                    time.sleep(1)
+        
+        status = ResponseStatus.SUCCESS if len(all_modules) == num_modules else (
+            ResponseStatus.PARTIAL_SUCCESS if all_modules else ResponseStatus.ERROR
+        )
+        return AIResponse(
+            status=status,
+            data={"modules": all_modules},
+            message=f"Generated {len(all_modules)} of {num_modules} modules step by step",
+            provider_used=getattr(self.provider, 'current_provider', 'unknown'),
+            generation_time=time.time() - start_time,
+        ).to_dict()
 
 
 # Enhanced singleton instance

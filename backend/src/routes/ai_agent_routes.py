@@ -11,6 +11,7 @@ import logging
 from ..models.user_models import db, User
 from ..models.course_models import Course, Module, Lesson, Quiz
 from ..services.ai_agent_service import ai_agent_service
+from ..services.ai.task_manager import task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +239,88 @@ def force_provider():
         }), 500
 
 # =====================
+# BACKGROUND TASK MANAGEMENT
+# =====================
+
+@ai_agent_bp.route("/task/<task_id>/status", methods=["GET"])
+@instructor_required
+def get_task_status(task_id):
+    """Poll status/progress of a background generation task"""
+    try:
+        status = task_manager.get_task_status(task_id)
+        if not status:
+            return jsonify({"success": False, "message": "Task not found"}), 404
+        return jsonify({"success": True, "data": status}), 200
+    except Exception as e:
+        logger.error(f"Error getting task status: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@ai_agent_bp.route("/task/<task_id>/result", methods=["GET"])
+@instructor_required
+def get_task_result(task_id):
+    """Get the final result of a completed background task"""
+    try:
+        status_info = task_manager.get_task_status(task_id)
+        if not status_info:
+            return jsonify({"success": False, "message": "Task not found"}), 404
+        
+        task_status = status_info.get('status')
+        
+        if task_status == 'completed':
+            result = task_manager.get_task_result(task_id)
+            if result:
+                return jsonify(result), 200
+            return jsonify({"success": False, "message": "Result not available"}), 404
+        elif task_status == 'failed':
+            return jsonify({
+                "success": False, "status": "error",
+                "message": status_info.get('error', 'Task failed'),
+            }), 500
+        elif task_status == 'cancelled':
+            return jsonify({
+                "success": False, "status": "cancelled",
+                "message": "Task was cancelled",
+            }), 200
+        else:
+            return jsonify({
+                "success": False, "status": task_status,
+                "message": "Task is still running",
+                "progress": status_info.get('progress', 0),
+            }), 202
+    except Exception as e:
+        logger.error(f"Error getting task result: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@ai_agent_bp.route("/task/<task_id>/cancel", methods=["POST"])
+@instructor_required
+def cancel_task(task_id):
+    """Cancel a running background task"""
+    try:
+        cancelled = task_manager.cancel_task(task_id)
+        if cancelled:
+            return jsonify({"success": True, "message": "Task cancelled"}), 200
+        return jsonify({"success": False, "message": "Task not found"}), 404
+    except Exception as e:
+        logger.error(f"Error cancelling task: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@ai_agent_bp.route("/task/active", methods=["GET"])
+@instructor_required
+def get_user_active_tasks():
+    """Get all active tasks for the current user"""
+    try:
+        current_user_id = get_jwt_identity()
+        tasks = task_manager.get_user_tasks(current_user_id)
+        return jsonify({"success": True, "data": tasks, "count": len(tasks)}), 200
+    except Exception as e:
+        logger.error(f"Error getting active tasks: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+# =====================
 # COURSE GENERATION
 # =====================
 
@@ -251,7 +334,8 @@ def generate_course_outline():
     {
         "topic": "Machine Learning Basics",
         "target_audience": "Beginners with programming background",
-        "learning_objectives": "Understand ML algorithms and implement them"
+        "learning_objectives": "Understand ML algorithms and implement them",
+        "background": true  // optional: run in background, returns task_id
     }
     """
     try:
@@ -263,8 +347,32 @@ def generate_course_outline():
         topic = data['topic']
         target_audience = data.get('target_audience', '')
         learning_objectives = data.get('learning_objectives', '')
+        background = data.get('background', False)
         
-        logger.info(f"Generating course outline for topic: {topic}")
+        logger.info(f"Generating course outline for topic: {topic} (background={background})")
+        
+        # Background mode: return task_id immediately
+        if background:
+            current_user_id = get_jwt_identity()
+            task_id = task_manager.submit_task(
+                task_type='generate-course-outline',
+                task_func=ai_agent_service.run_single_step_background,
+                kwargs={
+                    'method_name': 'generate_course_outline',
+                    'method_kwargs': {
+                        'topic': topic,
+                        'target_audience': target_audience,
+                        'learning_objectives': learning_objectives,
+                    }
+                },
+                total_steps=1,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Course outline generation started in background"
+            }), 202
         
         ai_response = ai_agent_service.generate_course_outline(
             topic=topic,
@@ -331,6 +439,29 @@ def generate_multiple_modules():
         
         logger.info(f"Generating {num_modules} modules for course: {course.title} with {len(existing_modules)} existing modules")
         
+        background = data.get('background', False)
+        
+        # Background mode: stepwise generation with delays
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='generate-multiple-modules',
+                task_func=ai_agent_service.generate_multiple_modules_stepwise,
+                kwargs={
+                    'course_title': course.title,
+                    'course_description': course.description or '',
+                    'course_objectives': course.learning_objectives or '',
+                    'num_modules': num_modules,
+                    'existing_modules': existing_modules_context,
+                },
+                total_steps=num_modules,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": f"Generating {num_modules} modules step by step in background"
+            }), 202
+        
         ai_response = ai_agent_service.generate_multiple_modules(
             course_title=course.title,
             course_description=course.description or '',
@@ -393,6 +524,32 @@ def generate_module_content():
         } for module in existing_modules]
         
         logger.info(f"Generating module content for course: {course.title} with {len(existing_modules)} existing modules")
+        
+        background = data.get('background', False)
+        
+        if background:
+            current_user_id_bg = get_jwt_identity()
+            task_id = task_manager.submit_task(
+                task_type='generate-module-content',
+                task_func=ai_agent_service.run_single_step_background,
+                kwargs={
+                    'method_name': 'generate_module_content',
+                    'method_kwargs': {
+                        'course_title': course.title,
+                        'course_description': course.description or '',
+                        'course_objectives': course.learning_objectives or '',
+                        'module_title': module_title,
+                        'existing_modules': existing_modules_context,
+                    }
+                },
+                total_steps=1,
+                user_id=current_user_id_bg,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Module content generation started in background"
+            }), 202
         
         ai_response = ai_agent_service.generate_module_content(
             course_title=course.title,
@@ -468,6 +625,30 @@ def generate_multiple_lessons():
         
         logger.info(f"Generating {num_lessons} lessons for module: {module.title} (existing lessons: {len(existing_lessons)})")
         
+        background = data.get('background', False)
+        
+        # Background mode: stepwise generation — one lesson at a time with delays
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='generate-multiple-lessons',
+                task_func=ai_agent_service.generate_multiple_lessons_stepwise,
+                kwargs={
+                    'course_title': course.title,
+                    'module_title': module.title,
+                    'module_description': module.description or '',
+                    'module_objectives': module.learning_objectives or '',
+                    'num_lessons': num_lessons,
+                    'existing_lessons': existing_lessons_data,
+                },
+                total_steps=num_lessons,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": f"Generating {num_lessons} lessons step by step in background"
+            }), 202
+        
         result = ai_agent_service.generate_multiple_lessons(
             course_title=course.title,
             module_title=module.title,
@@ -537,6 +718,33 @@ def generate_lesson_content():
         lesson_description = data.get('lesson_description', '')
         
         logger.info(f"Generating lesson content for module: {module.title} (existing lessons: {len(existing_lessons)})")
+        
+        background = data.get('background', False)
+        
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='generate-lesson-content',
+                task_func=ai_agent_service.run_single_step_background,
+                kwargs={
+                    'method_name': 'generate_lesson_content',
+                    'method_kwargs': {
+                        'course_title': course.title,
+                        'module_title': module.title,
+                        'module_description': module.description or '',
+                        'module_objectives': module.learning_objectives or '',
+                        'lesson_title': lesson_title,
+                        'lesson_description': lesson_description,
+                        'existing_lessons': existing_lessons_data,
+                    }
+                },
+                total_steps=1,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Lesson content generation started in background"
+            }), 202
         
         ai_response = ai_agent_service.generate_lesson_content(
             course_title=course.title,
@@ -716,6 +924,32 @@ def generate_quiz_questions():
         
         logger.info(f"Generating {num_questions} quiz questions for module: {module.title}")
         
+        background = data.get('background', False)
+        
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='generate-quiz-questions',
+                task_func=ai_agent_service.run_single_step_background,
+                kwargs={
+                    'method_name': 'generate_quiz_questions',
+                    'method_kwargs': {
+                        'course_title': course.title,
+                        'module_title': module.title,
+                        'lesson_title': lesson.title if lesson else module.title,
+                        'lesson_content': lesson_content,
+                        'num_questions': num_questions,
+                        'question_types': question_types,
+                    }
+                },
+                total_steps=1,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": f"Generating {num_questions} quiz questions in background"
+            }), 202
+        
         result = ai_agent_service.generate_quiz_questions(
             course_title=course.title,
             module_title=module.title,
@@ -782,6 +1016,30 @@ def generate_assignment():
         
         logger.info(f"Generating assignment for module: {module.title}")
         
+        background = data.get('background', False)
+        
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='generate-assignment',
+                task_func=ai_agent_service.run_single_step_background,
+                kwargs={
+                    'method_name': 'generate_assignment',
+                    'method_kwargs': {
+                        'course_title': course.title,
+                        'module_title': module.title,
+                        'module_description': module.description or '',
+                        'lessons_summary': lessons_summary,
+                    }
+                },
+                total_steps=1,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Assignment generation started in background"
+            }), 202
+        
         result = ai_agent_service.generate_assignment(
             course_title=course.title,
             module_title=module.title,
@@ -838,6 +1096,30 @@ def generate_final_project():
                                     for module in modules]) if modules else "No modules yet"
         
         logger.info(f"Generating final project for course: {course.title}")
+        
+        background = data.get('background', False)
+        
+        if background:
+            task_id = task_manager.submit_task(
+                task_type='generate-final-project',
+                task_func=ai_agent_service.run_single_step_background,
+                kwargs={
+                    'method_name': 'generate_final_project',
+                    'method_kwargs': {
+                        'course_title': course.title,
+                        'course_description': course.description or '',
+                        'course_objectives': course.learning_objectives or '',
+                        'modules_summary': modules_summary,
+                    }
+                },
+                total_steps=1,
+                user_id=current_user_id,
+            )
+            return jsonify({
+                "success": True, "background": True,
+                "task_id": task_id, "status": "pending",
+                "message": "Final project generation started in background"
+            }), 202
         
         result = ai_agent_service.generate_final_project(
             course_title=course.title,
@@ -1159,18 +1441,19 @@ def enhance_content():
         
         logger.info(f"Enhancing {content_type} content with {enhancement_type}")
         
-        enhanced_content = ai_agent_service.enhance_content(
+        result = ai_agent_service.enhance_content(
             content_type=content_type,
             current_content=current_content,
             enhancement_type=enhancement_type
         )
         
-        return jsonify({
-            "success": True,
-            "data": {
-                "enhanced_content": enhanced_content
-            }
-        }), 200
+        # Convert AIResponse to API response format
+        response_data = result.to_dict()
+        
+        if result.status.value in ['success', 'partial_success']:
+            return jsonify(response_data), 200
+        else:
+            return jsonify(response_data), 500
         
     except Exception as e:
         logger.error(f"Error enhancing content: {e}")

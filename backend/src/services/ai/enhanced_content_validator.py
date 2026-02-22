@@ -156,11 +156,80 @@ class EnhancedContentValidator:
         else:
             return QualityScore(aspect, 0.5, "Unknown aspect", [])
     
+    def _extract_main_content(self, content: Dict[str, Any]) -> str:
+        """Extract main text content from various content structures including arrays"""
+        main_content = ""
+        if content.get('content'):
+            main_content = str(content['content'])
+        elif content.get('description'):
+            main_content = str(content['description'])
+        
+        # For module/lesson array structures, aggregate all text content
+        if not main_content or len(main_content.split()) < 20:
+            aggregated = []
+            for key in ['modules', 'suggested_modules', 'lessons', 'suggested_lessons']:
+                items = content.get(key, [])
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            for field in ['title', 'description', 'learning_objectives']:
+                                val = item.get(field)
+                                if val:
+                                    aggregated.append(str(val))
+                            for lesson in item.get('suggested_lessons', []):
+                                if isinstance(lesson, dict):
+                                    for field in ['title', 'description']:
+                                        val = lesson.get(field)
+                                        if val:
+                                            aggregated.append(str(val))
+            if aggregated:
+                main_content = ' '.join(aggregated)
+        
+        return main_content
+    
     def _assess_completeness(self, content: Dict[str, Any], content_type: ContentType) -> QualityScore:
         """Assess content completeness based on expected fields"""
         score = 0.0
         feedback = ""
         suggestions = []
+        
+        # Special handling for modules/lessons arrays that wrap multiple items
+        if content_type == ContentType.COURSE_OUTLINE and isinstance(content.get('modules'), list) and content['modules']:
+            # For {"modules": [...]} structure, assess the array quality
+            modules = content['modules']
+            modules_with_title = sum(1 for m in modules if isinstance(m, dict) and m.get('title'))
+            modules_with_desc = sum(1 for m in modules if isinstance(m, dict) and m.get('description'))
+            modules_with_lessons = sum(1 for m in modules if isinstance(m, dict) and m.get('suggested_lessons'))
+            total = len(modules)
+            
+            if total > 0:
+                score = 0.3  # Base for having modules
+                score += 0.25 * (modules_with_title / total)
+                score += 0.25 * (modules_with_desc / total)
+                score += 0.2 * (modules_with_lessons / total)
+            
+            if modules_with_title == total:
+                feedback = f"All {total} modules have titles"
+            else:
+                feedback = f"{modules_with_title}/{total} modules have titles"
+                suggestions.append("Ensure all modules have titles")
+            
+            return QualityScore(QualityAspect.COMPLETENESS, min(1.0, score), feedback, suggestions)
+        
+        if content_type == ContentType.MODULE_CONTENT and isinstance(content.get('lessons'), list) and content['lessons']:
+            # For {"lessons": [...]} structure, assess the array quality
+            lessons = content['lessons']
+            lessons_with_title = sum(1 for l in lessons if isinstance(l, dict) and l.get('title'))
+            lessons_with_desc = sum(1 for l in lessons if isinstance(l, dict) and l.get('description'))
+            total = len(lessons)
+            
+            if total > 0:
+                score = 0.4  # Base for having lessons
+                score += 0.3 * (lessons_with_title / total)
+                score += 0.3 * (lessons_with_desc / total)
+            
+            feedback = f"{lessons_with_title}/{total} lessons have titles"
+            return QualityScore(QualityAspect.COMPLETENESS, min(1.0, score), feedback, suggestions)
         
         required_fields = self._get_required_fields(content_type)
         optional_fields = self._get_optional_fields(content_type)
@@ -221,7 +290,7 @@ class EnhancedContentValidator:
                     suggestions.append("Consider adding bullet points or numbered lists")
         
         elif content_type == ContentType.COURSE_OUTLINE:
-            modules = content.get('suggested_modules', [])
+            modules = content.get('suggested_modules', content.get('modules', []))
             if isinstance(modules, list) and modules:
                 # Check if modules have proper structure
                 well_structured = all(
@@ -230,9 +299,32 @@ class EnhancedContentValidator:
                     module.get('description')
                     for module in modules
                 )
-                if not well_structured:
-                    score -= 0.3
+                has_lessons = any(
+                    isinstance(module, dict) and module.get('suggested_lessons')
+                    for module in modules
+                )
+                if well_structured:
+                    score += 0.15
+                else:
+                    score -= 0.2
                     suggestions.append("Ensure all modules have title and description")
+                if has_lessons:
+                    score += 0.1
+            elif not modules:
+                score -= 0.2
+                suggestions.append("Add module outlines")
+        
+        elif content_type == ContentType.MODULE_CONTENT:
+            lessons = content.get('suggested_lessons', content.get('lessons', []))
+            if isinstance(lessons, list) and lessons:
+                well_structured = all(
+                    isinstance(lesson, dict) and lesson.get('title')
+                    for lesson in lessons
+                )
+                if well_structured:
+                    score += 0.15
+                else:
+                    score -= 0.2
         
         score = max(0.0, min(1.0, score))
         
@@ -250,11 +342,7 @@ class EnhancedContentValidator:
         suggestions = []
         
         # Assess based on content length and detail
-        main_content = ""
-        if content.get('content'):
-            main_content = str(content['content'])
-        elif content.get('description'):
-            main_content = str(content['description'])
+        main_content = self._extract_main_content(content)
         
         # Word count analysis (more lenient thresholds)
         word_count = len(main_content.split())
@@ -299,11 +387,7 @@ class EnhancedContentValidator:
         feedback = "Clear content"
         suggestions = []
         
-        main_content = ""
-        if content.get('content'):
-            main_content = str(content['content'])
-        elif content.get('description'):
-            main_content = str(content['description'])
+        main_content = self._extract_main_content(content)
         
         if not main_content:
             return QualityScore(QualityAspect.CLARITY, 0.3, "No content to assess", ["Add main content"])
@@ -353,13 +437,26 @@ class EnhancedContentValidator:
         suggestions = []
         
         # Check for learning objectives
-        if content.get('learning_objectives'):
+        has_objectives = content.get('learning_objectives')
+        # Also check nested items for learning objectives
+        if not has_objectives:
+            for key in ['modules', 'suggested_modules']:
+                items = content.get(key, [])
+                if isinstance(items, list):
+                    has_objectives = any(
+                        isinstance(m, dict) and m.get('learning_objectives')
+                        for m in items
+                    )
+                    if has_objectives:
+                        break
+        
+        if has_objectives:
             score += 0.2
         else:
             suggestions.append("Add clear learning objectives")
         
         # Check for assessment elements
-        main_content = str(content.get('content', ''))
+        main_content = self._extract_main_content(content)
         
         assessment_indicators = ['exercise', 'practice', 'quiz', 'question', 'assignment', 'project']
         assessment_count = sum(main_content.lower().count(indicator) for indicator in assessment_indicators)
@@ -388,7 +485,7 @@ class EnhancedContentValidator:
         feedback = "Good formatting"
         suggestions = []
         
-        main_content = str(content.get('content', ''))
+        main_content = self._extract_main_content(content)
         
         if not main_content:
             return QualityScore(QualityAspect.FORMATTING, 0.5, "No content to format", [])
@@ -435,7 +532,7 @@ class EnhancedContentValidator:
     
     def _assess_length(self, content: Dict[str, Any], content_type: ContentType) -> QualityScore:
         """Assess content length appropriateness"""
-        main_content = str(content.get('content', '') or content.get('description', ''))
+        main_content = self._extract_main_content(content)
         word_count = len(main_content.split())
         
         length_ranges = {

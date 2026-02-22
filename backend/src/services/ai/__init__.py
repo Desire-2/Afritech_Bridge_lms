@@ -22,6 +22,7 @@ from .assessment_generator import AssessmentGenerator, assessment_generator
 from .content_validator import ContentValidator, ContentEnhancer, content_validator
 from .enhanced_content_validator import EnhancedContentValidator, enhanced_content_validator, ContentType, QualityAspect
 from .fallback_generators import FallbackGenerators, fallback_generators
+from .task_manager import BackgroundTaskManager, task_manager
 
 __all__ = [
     # Provider Management
@@ -67,4 +68,8 @@ __all__ = [
     # Fallback Generators
     'FallbackGenerators',
     'fallback_generators',
+    
+    # Background Task Manager
+    'BackgroundTaskManager',
+    'task_manager',
 ]
