@@ -246,6 +246,137 @@ class JSONResponseParser:
             logger.error(f"Error extracting JSON: {e}")
             
         return None
+    
+    @staticmethod
+    def extract_outline_from_markdown(text: str) -> Optional[Dict[str, Any]]:
+        """
+        Last-resort recovery: extract a lesson outline structure from a markdown response
+        when the AI returned markdown instead of JSON.
+        
+        This handles cases where the AI ignores the JSON format instruction and returns
+        lesson outlines as markdown with headings, bullet points, etc.
+        
+        Args:
+            text: Raw markdown text from AI response
+            
+        Returns:
+            A dict matching the lesson outline schema, or None if extraction fails
+        """
+        import re
+        
+        if not text or not text.strip():
+            return None
+        
+        # Only attempt this if the response looks like markdown (no JSON braces)
+        if '{' in text and '}' in text:
+            return None  # There's JSON in there — let other strategies handle it
+        
+        lines = text.strip().split('\\n')
+        if len(lines) < 3:
+            # Try actual newlines
+            lines = text.strip().split('\n')
+        
+        if len(lines) < 3:
+            return None
+        
+        # Extract title from first heading or bold text
+        title = ""
+        description = ""
+        sections = []
+        current_section_topics = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Extract title from markdown heading
+            heading_match = re.match(r'^#{1,3}\s+(.+)', line)
+            bold_match = re.match(r'^\*\*(.+?)\*\*', line)
+            
+            if not title:
+                if heading_match:
+                    title = heading_match.group(1).strip()
+                    continue
+                elif bold_match and len(bold_match.group(1)) > 10:
+                    title = bold_match.group(1).strip()
+                    continue
+            
+            # Extract sections from numbered items or sub-headings
+            section_match = re.match(r'^(\d+)\.\s+\*\*(.+?)\*\*', line)
+            sub_heading = re.match(r'^#{2,4}\s+(.+)', line)
+            
+            if section_match:
+                section_title = section_match.group(2).strip()
+                if current_section_topics and sections:
+                    sections[-1]['key_topics'] = current_section_topics
+                current_section_topics = []
+                sections.append({
+                    'id': f'section_{len(sections) + 1}',
+                    'heading': section_title,
+                    'description': section_title,
+                    'target_words': 600,
+                    'key_topics': [],
+                })
+            elif sub_heading and sections:
+                # This is a sub-topic under the current section
+                current_section_topics.append(sub_heading.group(1).strip())
+            elif line.startswith('- ') or line.startswith('* '):
+                topic = line.lstrip('-* ').strip()
+                # Remove markdown formatting
+                topic = re.sub(r'[`*_]', '', topic).strip()
+                if topic and len(topic) > 3:
+                    current_section_topics.append(topic)
+        
+        # Assign final topics
+        if current_section_topics and sections:
+            sections[-1]['key_topics'] = current_section_topics
+        
+        if not title or len(sections) < 2:
+            return None
+        
+        # Clean title — remove prefixes like \"Lesson 3:\"
+        title = re.sub(r'^(Lesson\\s*\\d+\\s*:\\s*)', '', title).strip()
+        title = re.sub(r'^(Lesson\s*\d+\s*:\s*)', '', title).strip()
+        
+        # Build a valid outline structure
+        outline = {
+            'title': title,
+            'description': f'This lesson covers {title} through {len(sections)} main sections.',
+            'learning_objectives': [
+                f'Understand key concepts of {title}',
+                f'Apply {title} principles to practical scenarios',
+                f'Analyze real-world applications',
+                'Develop problem-solving skills in this domain',
+            ],
+            'duration_minutes': 60,
+            'sections': sections if sections else [
+                {
+                    'id': 'section_1',
+                    'heading': 'Core Concepts',
+                    'description': f'Fundamental concepts of {title}',
+                    'target_words': 700,
+                    'key_topics': [title],
+                },
+                {
+                    'id': 'section_2',
+                    'heading': 'Practical Applications',
+                    'description': f'Real-world applications of {title}',
+                    'target_words': 600,
+                    'key_topics': ['applications', 'examples'],
+                },
+                {
+                    'id': 'worked_examples',
+                    'heading': 'Worked Examples',
+                    'description': 'Detailed examples with solutions',
+                    'target_words': 600,
+                    'key_topics': ['examples', 'practice'],
+                },
+            ],
+        }
+        
+        logger.info(f"Recovered outline from markdown: '{title}' with {len(outline['sections'])} sections")
+        return outline
 
 
 # Singleton instance

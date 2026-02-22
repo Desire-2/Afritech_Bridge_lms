@@ -245,7 +245,7 @@ The content_data field MUST contain:
 - DO NOT write vague, generic, or placeholder content
 - Every section must have substantive, educational content
 
-IMPORTANT: Return ONLY valid JSON. Escape all special characters properly.
+IMPORTANT: Return ONLY valid JSON. No markdown, no explanatory text, no code blocks — just the raw JSON object. Escape all special characters properly.
 
 Format as JSON:
 {{
@@ -274,6 +274,8 @@ Format as JSON:
                 return parsed
             else:
                 logger.warning(f"Failed to parse JSON response from {provider}, trying alternative approach")
+                # Invalidate bad cached response so it's not served again
+                self.provider.invalidate_cache_for_prompt(prompt)
         else:
             logger.warning(f"No result from {provider}, content generation failed")
         
@@ -428,7 +430,7 @@ For EACH lesson, you MUST provide:
 - Make content immediately applicable to real work
 - DO NOT write generic or placeholder content
 
-IMPORTANT: Return ONLY valid JSON.
+IMPORTANT: Return ONLY valid JSON. No markdown, no explanatory text, no code blocks — just the raw JSON object.
 
 Format as JSON:
 {{
@@ -1027,7 +1029,9 @@ REQUIREMENTS:
 - Each section must have SPECIFIC, unique topics (not generic)
 - Ensure NO overlap with existing lessons listed above
 - Each section should build on the previous one
-- Include practical applications and real-world examples in the plan"""
+- Include practical applications and real-world examples in the plan
+
+CRITICAL: Return ONLY valid JSON. No markdown, no explanatory text, no code blocks — just the raw JSON object."""
 
         result, provider = self.provider.make_ai_request(prompt, temperature=0.6, max_tokens=4096)
         if result:
@@ -1041,6 +1045,45 @@ REQUIREMENTS:
                     logger.info(f"Replaced generic outline title with: {parsed['title']}")
                 logger.info(f"Deep outline generated: {parsed.get('title', 'untitled')} with {len(parsed.get('sections', []))} sections")
                 return parsed
+            else:
+                # JSON parse failed — the AI returned non-JSON (e.g., markdown)
+                logger.warning(f"Outline response from {provider} was not valid JSON. Invalidating cache and attempting recovery...")
+                
+                # Invalidate the cached bad response so future requests get a fresh one
+                self.provider.invalidate_cache_for_prompt(prompt)
+                
+                # Recovery strategy 1: Try to extract outline from markdown
+                markdown_outline = json_parser.extract_outline_from_markdown(result)
+                if markdown_outline:
+                    if self._is_generic_title(markdown_outline.get('title', '')):
+                        markdown_outline['title'] = self._generate_meaningful_title(
+                            module_title, course_title, existing_lessons
+                        )
+                    logger.info(f"Recovered outline from markdown: {markdown_outline.get('title')} with {len(markdown_outline.get('sections', []))} sections")
+                    return markdown_outline
+                
+                # Recovery strategy 2: Retry with Gemini directly (if different from original provider)
+                if provider != 'gemini' and self.provider.gemini_model:
+                    logger.info("Retrying outline generation with Gemini...")
+                    retry_result = self.provider._make_gemini_request(prompt, retry_count=1, temperature=0.6)
+                    if retry_result:
+                        retry_parsed = json_parser.parse_json_response(retry_result, "lesson outline (gemini retry)")
+                        if retry_parsed:
+                            if self._is_generic_title(retry_parsed.get('title', '')):
+                                retry_parsed['title'] = self._generate_meaningful_title(
+                                    module_title, course_title, existing_lessons
+                                )
+                            logger.info(f"Gemini retry succeeded: {retry_parsed.get('title')}")
+                            return retry_parsed
+                        # Also try markdown extraction on Gemini response
+                        md_outline = json_parser.extract_outline_from_markdown(retry_result)
+                        if md_outline:
+                            if self._is_generic_title(md_outline.get('title', '')):
+                                md_outline['title'] = self._generate_meaningful_title(
+                                    module_title, course_title, existing_lessons
+                                )
+                            return md_outline
+        
         return None
 
     def generate_lesson_deep_section(self, course_title: str, module_title: str,

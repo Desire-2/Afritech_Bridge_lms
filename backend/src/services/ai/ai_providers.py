@@ -148,6 +148,38 @@ class AIProviderManager:
         """Clear the response cache"""
         self.response_cache.clear()
         logger.info("Response cache cleared")
+
+    def invalidate_cache_for_prompt(self, prompt: str):
+        """Invalidate all cached responses for a given prompt (across all providers/models).
+        
+        Call this when a cached response is discovered to be unusable (e.g., wrong format).
+        """
+        keys_to_remove = []
+        prompt_hash_fragment = hashlib.md5(prompt.encode()).hexdigest()[:8]
+        for key in list(self.response_cache.keys()):
+            # Rebuild cache key for each provider/model combo and check
+            cached_data = self.response_cache.get(key)
+            if cached_data:
+                # Check if response contains the same prompt hash
+                # Since we can't reverse the hash, iterate all and check by re-computing
+                for provider in ['openrouter', 'gemini']:
+                    for model_tier in self.MODEL_CONFIGS:
+                        model_name = self.MODEL_CONFIGS[model_tier]['name']
+                        expected_key = self._get_cache_key(prompt, provider, model_name)
+                        if expected_key == key:
+                            keys_to_remove.append(key)
+                    # Also check gemini model
+                    expected_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.5-flash')
+                    if expected_key == key:
+                        keys_to_remove.append(key)
+        
+        removed = 0
+        for key in set(keys_to_remove):
+            if key in self.response_cache:
+                del self.response_cache[key]
+                removed += 1
+        if removed:
+            logger.info(f"Invalidated {removed} cached response(s) for prompt")
     
     # ===== Rate Limiting =====
     
@@ -296,7 +328,7 @@ class AIProviderManager:
                     "messages": [
                         {
                             "role": "system",
-                            "content": "You are an expert instructional designer and course content creator. Provide detailed, well-structured, and engaging educational content."
+                            "content": "You are an expert instructional designer and course content creator. Provide detailed, well-structured, and engaging educational content. When the user asks for JSON output, you MUST respond with ONLY valid JSON — no markdown, no explanatory text, no code blocks."
                         },
                         {
                             "role": "user",
