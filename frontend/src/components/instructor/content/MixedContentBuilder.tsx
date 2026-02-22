@@ -5,8 +5,18 @@ import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea
 import { 
   Plus, GripVertical, Trash2, Type, Video, FileText, 
   Image as ImageIcon, Heading1, Eye, Code, Check, X,
-  BookOpen, PlayCircle, FileCheck, Sparkles, Wand2, Loader2
+  BookOpen, PlayCircle, FileCheck, Sparkles, Wand2, Loader2,
+  LayoutGrid, ChevronDown, Grip, ArrowUpDown, PanelTop
 } from 'lucide-react';
+
+// Type-specific accent colors
+const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; icon: string; badge: string }> = {
+  heading: { bg: 'bg-amber-50 dark:bg-amber-900/20', border: 'border-l-amber-400', text: 'text-amber-700 dark:text-amber-300', icon: 'text-amber-500', badge: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300' },
+  text: { bg: 'bg-blue-50 dark:bg-blue-900/20', border: 'border-l-blue-400', text: 'text-blue-700 dark:text-blue-300', icon: 'text-blue-500', badge: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' },
+  video: { bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-l-red-400', text: 'text-red-700 dark:text-red-300', icon: 'text-red-500', badge: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' },
+  pdf: { bg: 'bg-emerald-50 dark:bg-emerald-900/20', border: 'border-l-emerald-400', text: 'text-emerald-700 dark:text-emerald-300', icon: 'text-emerald-500', badge: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300' },
+  image: { bg: 'bg-violet-50 dark:bg-violet-900/20', border: 'border-l-violet-400', text: 'text-violet-700 dark:text-violet-300', icon: 'text-violet-500', badge: 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' },
+};
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -667,16 +677,24 @@ export default function MixedContentBuilder({
 
   if (showTemplates) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-5">
+        {/* Header */}
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-purple-500" />
-            Choose a Template
-          </h3>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-500 flex items-center justify-center">
+              <LayoutGrid className="w-4.5 h-4.5 text-white" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                Choose a Template
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Start with a structured layout</p>
+            </div>
+          </div>
           <button
             type="button"
             onClick={() => setShowTemplates(false)}
-            className="text-sm text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+            className="text-xs px-3 py-1.5 rounded-md border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
           >
             {sections.length > 0 ? 'Cancel' : 'Skip'}
           </button>
@@ -684,11 +702,13 @@ export default function MixedContentBuilder({
 
         {/* AI Feature Info */}
         {courseId && moduleId && lessonTitle && (
-          <div className="p-3 bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-700 rounded-lg">
-            <div className="flex items-start gap-2">
-              <Wand2 className="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0 mt-0.5" />
+          <div className="p-3.5 bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200/60 dark:border-purple-700/60 rounded-xl">
+            <div className="flex items-start gap-2.5">
+              <div className="w-7 h-7 rounded-full bg-purple-100 dark:bg-purple-900/40 flex items-center justify-center flex-shrink-0">
+                <Wand2 className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+              </div>
               <p className="text-sm text-purple-900 dark:text-purple-100">
-                <strong>AI Auto-fill Available!</strong> When you select a template, you'll be able to auto-fill it with AI-generated content or create an empty form to fill manually.
+                <strong>AI Auto-fill Available!</strong> Select a template to auto-fill with AI-generated content or create an empty form.
               </p>
             </div>
           </div>
@@ -696,33 +716,40 @@ export default function MixedContentBuilder({
 
         {/* Info message when editing existing content */}
         {sections.length > 0 && (
-          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200/60 dark:border-blue-700/60 rounded-xl">
             <p className="text-sm text-blue-800 dark:text-blue-300">
-              💡 <strong>You have {sections.length} existing section{sections.length !== 1 ? 's' : ''}.</strong>
-              {' '}When you select a template, you'll be asked whether to add the template sections to your existing content or replace it entirely.
+              <strong>{sections.length} existing section{sections.length !== 1 ? 's' : ''}</strong> &mdash; you can append or replace when selecting a template.
             </p>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {CONTENT_TEMPLATES.map(template => (
             <button
               key={template.id}
               type="button"
               onClick={() => applyTemplate(template.id)}
-              className="p-4 border-2 border-slate-200 dark:border-slate-700 rounded-lg hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition-all text-left"
+              className="group p-4 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-purple-400 dark:hover:border-purple-500 hover:shadow-md hover:shadow-purple-500/5 transition-all text-left bg-white dark:bg-slate-800"
             >
-              <div className="flex items-start justify-between">
-                <div className="text-2xl mb-2">{template.name.split(' ')[0]}</div>
-              </div>
-              <div className="font-semibold text-slate-900 dark:text-white mb-1">
-                {template.name.substring(2)}
-              </div>
-              <div className="text-sm text-slate-600 dark:text-slate-400">
-                {template.description}
-              </div>
-              <div className="mt-2 text-xs text-slate-500 dark:text-slate-500">
-                {template.sections.length} sections
+              <div className="flex items-start gap-3">
+                <div className="text-2xl">{template.name.split(' ')[0]}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-sm text-slate-900 dark:text-white mb-0.5 group-hover:text-purple-700 dark:group-hover:text-purple-300 transition-colors">
+                    {template.name.substring(2)}
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    {template.description}
+                  </div>
+                  {template.sections.length > 0 && (
+                    <div className="mt-2 flex gap-1">
+                      {template.sections.map((s: any, i: number) => (
+                        <span key={i} className={`inline-flex items-center justify-center w-5 h-5 rounded text-[10px] ${TYPE_COLORS[s.type]?.badge || 'bg-slate-100 text-slate-500'}`}>
+                          {s.type === 'heading' ? 'H' : s.type === 'text' ? 'T' : s.type === 'video' ? 'V' : s.type === 'pdf' ? 'P' : 'I'}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </button>
           ))}
@@ -734,28 +761,33 @@ export default function MixedContentBuilder({
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-            Mixed Content Builder
-          </h3>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
+      <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-md bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
+            <PanelTop className="w-3.5 h-3.5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+              Mixed Content Builder
+            </h3>
+          </div>
+          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
             {sections.length} section{sections.length !== 1 ? 's' : ''}
           </span>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <button
             type="button"
             onClick={() => setShowTemplates(true)}
-            className="text-xs px-3 py-1 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors flex items-center gap-1"
+            className="text-xs px-2.5 py-1.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-300 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors flex items-center gap-1.5 border border-purple-200/60 dark:border-purple-700/60"
           >
-            <Sparkles className="w-3 h-3" />
+            <LayoutGrid className="w-3 h-3" />
             Templates
           </button>
           <button
             type="button"
             onClick={() => setShowPreview(!showPreview)}
-            className="text-xs px-3 py-1 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors flex items-center gap-1"
+            className="text-xs px-2.5 py-1.5 bg-slate-50 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors flex items-center gap-1.5 border border-slate-200 dark:border-slate-600"
           >
             <Eye className="w-3 h-3" />
             {showPreview ? 'Edit' : 'Preview'}
@@ -834,12 +866,13 @@ export default function MixedContentBuilder({
         </div>
       ) : (
         <>
-          {/* Add Section Buttons */}
-          <div className="flex flex-wrap gap-2 p-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
+          {/* Add Section Toolbar */}
+          <div className="flex flex-wrap items-center gap-1.5 p-2.5 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700">
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-400 dark:text-slate-500 px-1.5 mr-0.5">Add</span>
             <button
               type="button"
               onClick={() => addSection('heading')}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 border border-amber-200 dark:border-amber-800/40 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-900/20 text-amber-700 dark:text-amber-300 transition-colors"
             >
               <Heading1 className="w-3 h-3" />
               Heading
@@ -847,7 +880,7 @@ export default function MixedContentBuilder({
             <button
               type="button"
               onClick={() => addSection('text')}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 border border-blue-200 dark:border-blue-800/40 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-blue-700 dark:text-blue-300 transition-colors"
             >
               <Type className="w-3 h-3" />
               Text
@@ -855,7 +888,7 @@ export default function MixedContentBuilder({
             <button
               type="button"
               onClick={() => addSection('video')}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 border border-red-200 dark:border-red-800/40 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-700 dark:text-red-300 transition-colors"
             >
               <Video className="w-3 h-3" />
               Video
@@ -863,7 +896,7 @@ export default function MixedContentBuilder({
             <button
               type="button"
               onClick={() => addSection('pdf')}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 border border-emerald-200 dark:border-emerald-800/40 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 transition-colors"
             >
               <FileText className="w-3 h-3" />
               PDF
@@ -871,7 +904,7 @@ export default function MixedContentBuilder({
             <button
               type="button"
               onClick={() => addSection('image')}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 border border-violet-200 dark:border-violet-800/40 rounded-lg hover:bg-violet-50 dark:hover:bg-violet-900/20 text-violet-700 dark:text-violet-300 transition-colors"
             >
               <ImageIcon className="w-3 h-3" />
               Image
@@ -880,17 +913,22 @@ export default function MixedContentBuilder({
 
           {/* Sections List */}
           {sections.length === 0 ? (
-            <div className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-8 text-center">
-              <div className="text-4xl mb-3">📝</div>
-              <p className="text-slate-600 dark:text-slate-400 mb-4">
-                No content sections yet. Add your first section above or choose a template.
+            <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-10 text-center bg-slate-50/50 dark:bg-slate-800/30">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-100 to-indigo-100 dark:from-purple-900/30 dark:to-indigo-900/30 flex items-center justify-center mx-auto mb-4">
+                <PanelTop className="w-7 h-7 text-purple-500 dark:text-purple-400" />
+              </div>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                No content sections yet
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mb-5">
+                Use the toolbar above to add sections, or start with a template.
               </p>
               <button
                 type="button"
                 onClick={() => setShowTemplates(true)}
-                className="px-4 py-2 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors flex items-center gap-2 mx-auto"
+                className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-sm font-medium rounded-lg hover:from-purple-600 hover:to-indigo-600 transition-all shadow-sm flex items-center gap-2 mx-auto"
               >
-                <Sparkles className="w-4 h-4" />
+                <LayoutGrid className="w-4 h-4" />
                 Browse Templates
               </button>
             </div>
@@ -905,21 +943,23 @@ export default function MixedContentBuilder({
                           <div
                             ref={provided.innerRef}
                             {...provided.draggableProps}
-                            className={`border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 ${
-                              snapshot.isDragging ? 'shadow-lg ring-2 ring-blue-500' : ''
+                            className={`border border-slate-200 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 border-l-[3px] ${TYPE_COLORS[section.type]?.border || 'border-l-slate-300'} transition-shadow ${
+                              snapshot.isDragging ? 'shadow-xl ring-2 ring-blue-400/50' : 'hover:shadow-sm'
                             }`}
                           >
                             {/* Section Header */}
-                            <div className="flex items-center gap-2 p-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50">
-                              <div {...provided.dragHandleProps} className="cursor-move text-slate-400 hover:text-slate-600">
+                            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-slate-100 dark:border-slate-700/50">
+                              <div {...provided.dragHandleProps} className="cursor-grab active:cursor-grabbing p-0.5 rounded text-slate-300 hover:text-slate-500 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">
                                 <GripVertical className="w-4 h-4" />
                               </div>
-                              <div className="flex items-center gap-2 flex-1">
-                                {getSectionIcon(section.type)}
-                                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                              <div className="flex items-center gap-2 flex-1 min-w-0">
+                                <span className={`${TYPE_COLORS[section.type]?.icon || 'text-slate-400'}`}>
+                                  {getSectionIcon(section.type)}
+                                </span>
+                                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 truncate">
                                   {getSectionLabel(section.type)}
                                 </span>
-                                <span className="text-xs text-slate-500 dark:text-slate-400">
+                                <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
                                   #{index + 1}
                                 </span>
                               </div>
@@ -929,13 +969,13 @@ export default function MixedContentBuilder({
                                   type="button"
                                   onClick={() => enhanceSection(section.id)}
                                   disabled={enhancingSection === section.id}
-                                  className="text-xs px-2 py-1 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded hover:from-purple-600 hover:to-indigo-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                  className="text-[11px] px-2.5 py-1 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-lg hover:from-purple-600 hover:to-indigo-600 transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-sm"
                                   title="Enhance this section with AI"
                                 >
                                   {enhancingSection === section.id ? (
                                     <>
                                       <Loader2 className="w-3 h-3 animate-spin" />
-                                      <span className="hidden sm:inline">{enhanceProgress || 'Enhancing...'}</span>
+                                      <span className="hidden sm:inline max-w-[120px] truncate">{enhanceProgress || 'Enhancing...'}</span>
                                     </>
                                   ) : (
                                     <>
@@ -948,10 +988,10 @@ export default function MixedContentBuilder({
                               <button
                                 type="button"
                                 onClick={() => removeSection(section.id)}
-                                className="text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 p-1"
+                                className="p-1 rounded-md text-slate-300 dark:text-slate-500 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                                 title="Remove section"
                               >
-                                <Trash2 className="w-4 h-4" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
 

@@ -40,6 +40,10 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const [isGeneratingContent, setIsGeneratingContent] = useState(false);
   const [showMixedContentAI, setShowMixedContentAI] = useState(false);
   const [isGeneratingMixedContent, setIsGeneratingMixedContent] = useState(false);
+  const [contentGenProgress, setContentGenProgress] = useState<{
+    currentStep: number; totalSteps: number; description: string; percentage: number;
+  } | null>(null);
+  const [contentGenTaskId, setContentGenTaskId] = useState<string | null>(null);
   
   const [moduleForm, setModuleForm] = useState({
     title: '',
@@ -1063,9 +1067,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     }
   };
 
-  // Handler for AI content enhancement
+  // Handler for AI content generation (background deep stepwise)
   const handleContentAIGenerate = async () => {
-    // Both Add and Edit modes use lessonForm state
     if (!lessonForm.title) {
       toast.warning('Please enter a lesson title first');
       return;
@@ -1073,9 +1076,9 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
     setIsGeneratingContent(true);
     setShowContentAI(false);
+    setContentGenProgress(null);
 
     try {
-      // Get module ID based on mode (editingLesson if editing, showLessonForm if adding)
       const currentModuleId = editingLesson?.moduleId || showLessonForm.moduleId;
       const currentModule = modules.find(m => m.id === currentModuleId);
       
@@ -1084,15 +1087,25 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         return;
       }
 
-      const response = await aiAgentService.generateLessonContent({
-        course_id: course.id,
-        module_id: currentModule.id,
-        lesson_title: lessonForm.title,
-        lesson_description: lessonForm.description
-      });
+      const response = await aiAgentService.generateLessonContent(
+        {
+          course_id: course.id,
+          module_id: currentModule.id,
+          lesson_title: lessonForm.title,
+          lesson_description: lessonForm.description
+        },
+        (status) => {
+          setContentGenProgress({
+            currentStep: status.current_step,
+            totalSteps: status.total_steps,
+            description: status.current_step_description || 'Processing...',
+            percentage: status.progress || 0,
+          });
+          if (status.task_id) setContentGenTaskId(status.task_id);
+        }
+      );
 
       if ((response.success || response.status === 'partial_success') && response.data) {
-        // Update lessonForm state (used by both Add and Edit forms)
         setLessonForm(prev => ({
           ...prev,
           content_data: response.data.content_data || prev.content_data,
@@ -1110,6 +1123,18 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       toast.error('Failed to generate content. Please try again.');
     } finally {
       setIsGeneratingContent(false);
+      setContentGenProgress(null);
+      setContentGenTaskId(null);
+    }
+  };
+
+  const handleCancelContentGen = async () => {
+    if (contentGenTaskId) {
+      await aiAgentService.cancelTask(contentGenTaskId);
+      setIsGeneratingContent(false);
+      setContentGenProgress(null);
+      setContentGenTaskId(null);
+      toast.info('Content generation cancelled');
     }
   };
 
@@ -1472,6 +1497,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             showDialog={showContentAI}
                                             onToggleDialog={() => setShowContentAI(!showContentAI)}
                                             onGenerate={handleContentAIGenerate}
+                                            progress={contentGenProgress}
+                                            onCancel={handleCancelContentGen}
                                           />
                                           <button
                                             type="button"
@@ -1859,6 +1886,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             showDialog={showContentAI}
                                             onToggleDialog={() => setShowContentAI(!showContentAI)}
                                             onGenerate={handleContentAIGenerate}
+                                            progress={contentGenProgress}
+                                            onCancel={handleCancelContentGen}
                                           />
                                           <button
                                             type="button"

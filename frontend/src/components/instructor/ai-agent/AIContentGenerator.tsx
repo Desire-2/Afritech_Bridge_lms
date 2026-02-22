@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, Loader2, AlertCircle, CheckCircle2, Clock, XCircle, CircleDot } from 'lucide-react';
+import { Sparkles, Loader2, AlertCircle, CheckCircle2, Clock, XCircle, CircleDot, Zap, Brain, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -236,24 +236,45 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
   const progress = taskStatus?.progress ?? 0;
   const isBatchWithSteps = taskStatus && taskStatus.total_steps > 1;
 
+  const getTypeIcon = () => {
+    switch (type) {
+      case 'module': return <Layers className="w-5 h-5" />;
+      case 'lesson': return <Brain className="w-5 h-5" />;
+      default: return <Zap className="w-5 h-5" />;
+    }
+  };
+
   return (
-    <Card className="border-purple-200 dark:border-purple-800">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Sparkles className="w-5 h-5 text-purple-600" />
+    <Card className="border-purple-200/80 dark:border-purple-800/60 shadow-md overflow-hidden">
+      {/* Gradient accent bar */}
+      <div className="h-1 bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600" />
+
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2.5 text-lg">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white shadow-sm">
+            {getTypeIcon()}
+          </div>
           {config.title}
         </CardTitle>
-        <CardDescription>{config.description}</CardDescription>
+        <CardDescription className="text-sm">{config.description}</CardDescription>
       </CardHeader>
+
       <CardContent className="space-y-4">
-        {context.courseTitle && (
-          <div className="text-sm text-slate-600 dark:text-slate-400">
-            <strong>Course:</strong> {context.courseTitle}
-          </div>
-        )}
-        {context.moduleTitle && (
-          <div className="text-sm text-slate-600 dark:text-slate-400">
-            <strong>Module:</strong> {context.moduleTitle}
+        {/* Context info */}
+        {(context.courseTitle || context.moduleTitle) && (
+          <div className="flex flex-wrap gap-2">
+            {context.courseTitle && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-md text-xs font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                {context.courseTitle}
+              </span>
+            )}
+            {context.moduleTitle && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 rounded-md text-xs font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                {context.moduleTitle}
+              </span>
+            )}
           </div>
         )}
 
@@ -263,22 +284,22 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
             value={customInput}
             onChange={(e) => setCustomInput(e.target.value)}
             placeholder={config.placeholder}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 dark:bg-slate-800 dark:border-slate-600"
+            className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent dark:bg-slate-800 dark:text-white text-sm transition-shadow"
             disabled={loading}
           />
         </div>
 
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="py-2">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription className="text-sm">{error}</AlertDescription>
           </Alert>
         )}
 
         {success && (
-          <Alert className="bg-green-50 text-green-800 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-800">
+          <Alert className="bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800 py-2">
             <CheckCircle2 className="h-4 w-4" />
-            <AlertDescription>Content generated successfully!</AlertDescription>
+            <AlertDescription className="text-sm">Content generated successfully!</AlertDescription>
           </Alert>
         )}
 
@@ -286,8 +307,8 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
           <Button
             onClick={handleGenerate}
             disabled={loading}
-            className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-            size="sm"
+            className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all"
+            size="default"
           >
             {loading ? (
               <>
@@ -305,9 +326,9 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
           {loading && (
             <Button
               onClick={handleCancel}
-              variant="destructive"
-              size="sm"
-              className="shrink-0"
+              variant="outline"
+              size="default"
+              className="shrink-0 border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
             >
               <XCircle className="w-4 h-4 mr-1" />
               Cancel
@@ -317,48 +338,50 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
 
         {/* Step-by-step progress panel */}
         {loading && (
-          <div className="space-y-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
+          <div className="space-y-3 p-4 bg-gradient-to-br from-purple-50/80 to-indigo-50/50 dark:from-purple-900/15 dark:to-indigo-900/10 rounded-xl border border-purple-200/60 dark:border-purple-800/40">
             {/* Current step description */}
-            <div className="flex items-center gap-2 text-sm text-purple-700 dark:text-purple-300">
-              <Clock className="w-4 h-4 shrink-0" />
-              <span className="truncate">
+            <div className="flex items-center gap-2.5 text-sm text-purple-700 dark:text-purple-300">
+              <div className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-800/40 flex items-center justify-center shrink-0">
+                <Clock className="w-3.5 h-3.5" />
+              </div>
+              <span className="truncate font-medium">
                 {taskStatus?.current_step_description || 'Submitting task to background...'}
               </span>
             </div>
 
             {/* Progress bar */}
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-2 bg-purple-200 dark:bg-purple-800 rounded-full overflow-hidden">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-2.5 bg-purple-100 dark:bg-purple-900/30 rounded-full overflow-hidden">
                 <div 
-                  className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full transition-all duration-500 ease-out"
-                  style={{ width: `${Math.max(2, taskStatus ? progress : Math.min(10, elapsedSeconds))}%` }}
+                  className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${Math.max(3, taskStatus ? progress : Math.min(10, elapsedSeconds))}%` }}
                 />
               </div>
-              <span className="text-xs text-purple-600 dark:text-purple-400 tabular-nums min-w-[48px] text-right">
+              <span className="text-xs font-semibold text-purple-600 dark:text-purple-400 tabular-nums min-w-[48px] text-right">
                 {taskStatus ? `${Math.round(progress)}%` : `${elapsedSeconds}s`}
               </span>
             </div>
 
             {/* Step list for multi-step tasks */}
             {isBatchWithSteps && taskStatus.steps.length > 0 && (
-              <div className="space-y-1 max-h-40 overflow-y-auto">
+              <div className="space-y-1 max-h-48 overflow-y-auto pr-1 scrollbar-thin">
                 {taskStatus.steps.map((step) => (
                   <div 
                     key={step.step_number}
-                    className={`flex items-center gap-2 text-xs py-1 px-2 rounded ${
+                    className={`flex items-center gap-2 text-xs py-1.5 px-2.5 rounded-lg transition-colors ${
                       step.status === 'completed' 
-                        ? 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20'
+                        ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-50/80 dark:bg-emerald-900/15'
                         : step.status === 'in_progress'
-                        ? 'text-purple-700 dark:text-purple-300 bg-purple-100 dark:bg-purple-900/30'
+                        ? 'text-purple-700 dark:text-purple-300 bg-purple-100/80 dark:bg-purple-900/20 ring-1 ring-purple-200 dark:ring-purple-700'
                         : step.status === 'failed'
-                        ? 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20'
-                        : 'text-slate-500 dark:text-slate-400'
+                        ? 'text-red-600 dark:text-red-400 bg-red-50/80 dark:bg-red-900/15'
+                        : 'text-slate-400 dark:text-slate-500'
                     }`}
                   >
-                    {step.status === 'completed' && <CheckCircle2 className="w-3 h-3 shrink-0" />}
-                    {step.status === 'in_progress' && <Loader2 className="w-3 h-3 shrink-0 animate-spin" />}
-                    {step.status === 'failed' && <XCircle className="w-3 h-3 shrink-0" />}
-                    {step.status === 'pending' && <CircleDot className="w-3 h-3 shrink-0 opacity-40" />}
+                    {step.status === 'completed' && <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />}
+                    {step.status === 'in_progress' && <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin" />}
+                    {step.status === 'failed' && <XCircle className="w-3.5 h-3.5 shrink-0" />}
+                    {step.status === 'pending' && <CircleDot className="w-3.5 h-3.5 shrink-0 opacity-30" />}
                     <span className="truncate">{step.description}</span>
                   </div>
                 ))}
@@ -366,9 +389,9 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
             )}
 
             {/* Elapsed time */}
-            <div className="text-xs text-slate-500 dark:text-slate-400 text-right">
-              Elapsed: {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
-              {batchMode && ' — runs in background, safe to wait'}
+            <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-purple-100 dark:border-purple-800/30">
+              <span>Elapsed: {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}</span>
+              {batchMode && <span className="text-purple-500 dark:text-purple-400">Runs in background — safe to wait</span>}
             </div>
           </div>
         )}
