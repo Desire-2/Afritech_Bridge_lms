@@ -34,7 +34,8 @@ class JSONResponseParser:
             
             # Try to parse JSON
             try:
-                return json.loads(cleaned_result)
+                parsed = json.loads(cleaned_result)
+                return JSONResponseParser._ensure_dict(parsed, context)
             except json.JSONDecodeError as e:
                 # Try to fix common JSON issues
                 logger.warning(f"Initial JSON parse failed for {context}: {e}. Attempting to fix...")
@@ -45,18 +46,39 @@ class JSONResponseParser:
                 # Try multiple recovery strategies
                 fixed_json = JSONResponseParser._attempt_json_recovery(cleaned_result)
                 if fixed_json:
-                    return fixed_json
+                    return JSONResponseParser._ensure_dict(fixed_json, context)
                 
                 # Last resort: try to extract just the JSON object
                 extracted_json = JSONResponseParser._extract_json_object(cleaned_result)
                 if extracted_json:
-                    return extracted_json
+                    return JSONResponseParser._ensure_dict(extracted_json, context)
                         
         except Exception as e:
             logger.error(f"Failed to parse AI {context} as JSON: {e}")
             
         return None
     
+    @staticmethod
+    def _ensure_dict(parsed: Any, context: str = "response") -> Optional[Dict[str, Any]]:
+        """Ensure the parsed JSON is a dict. If it's a list, try to unwrap it."""
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list):
+            # AI returned a JSON array instead of an object
+            if len(parsed) == 1 and isinstance(parsed[0], dict):
+                # Single-element array — unwrap it
+                logger.info(f"Unwrapped single-element JSON array for {context}")
+                return parsed[0]
+            elif len(parsed) > 1 and all(isinstance(item, dict) for item in parsed):
+                # Multiple objects — likely "lessons" array without wrapper
+                # Wrap in the expected format
+                logger.info(f"Wrapped JSON array ({len(parsed)} items) in dict for {context}")
+                return {"lessons": parsed}
+            elif len(parsed) > 0 and isinstance(parsed[0], dict):
+                return parsed[0]
+        logger.warning(f"Parsed {context} is not a dict (type: {type(parsed).__name__}), returning None")
+        return None
+
     @staticmethod
     def clean_json_response(result: str) -> str:
         """
