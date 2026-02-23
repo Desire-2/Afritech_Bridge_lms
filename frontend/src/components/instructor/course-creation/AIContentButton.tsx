@@ -21,6 +21,8 @@ interface AIContentButtonProps {
   } | null;
   /** Cancel callback for background task */
   onCancel?: () => void;
+  /** Dismiss progress panel while task continues (fire-and-forget) */
+  onDismiss?: () => void;
 }
 
 export const AIContentButton: React.FC<AIContentButtonProps> = ({
@@ -34,6 +36,7 @@ export const AIContentButton: React.FC<AIContentButtonProps> = ({
   onGenerate,
   progress,
   onCancel,
+  onDismiss,
 }) => {
   return (
     <>
@@ -94,6 +97,18 @@ export const AIContentButton: React.FC<AIContentButtonProps> = ({
           <p className="text-xs text-slate-600 dark:text-slate-400 truncate">
             {progress.description}
           </p>
+
+          {/* Continue Working / Dismiss button */}
+          {onDismiss && (
+            <div className="mt-3 pt-2 border-t border-purple-200/60 dark:border-purple-800/40">
+              <button
+                onClick={onDismiss}
+                className="w-full text-xs px-3 py-1.5 text-purple-700 dark:text-purple-300 bg-purple-100/60 dark:bg-purple-800/30 hover:bg-purple-200/80 dark:hover:bg-purple-800/50 rounded-md transition-colors font-medium"
+              >
+                Continue Working — AI will save &amp; notify when done
+              </button>
+            </div>
+          )}
         </div>
       )}
 

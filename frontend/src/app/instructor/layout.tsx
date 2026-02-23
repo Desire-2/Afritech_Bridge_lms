@@ -4,6 +4,7 @@ import React from 'react';
 import InstructorSidebar from '@/components/instructor/InstructorSidebar';
 import { InstructorGuard } from '@/components/guards/instructor-guard';
 import { SidebarProvider, useSidebar } from '@/contexts/SidebarContext';
+import NotificationBell from '@/components/notifications/NotificationBell';
 
 function InstructorLayoutContent({
   children,
@@ -52,7 +53,8 @@ function InstructorLayoutContent({
                 </h1>
               </div>
               <div className="flex items-center">
-                {/* Could add notification bell, profile dropdown, etc. here */}
+                {/* Notification bell and profile actions */}
+                <NotificationBell />
               </div>
             </div>
           </div>

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import aiAgentService, { TaskStatus } from '@/services/ai-agent.service';
+import { toast } from 'sonner';
 
 interface AIContentGeneratorProps {
   type: 'module' | 'lesson' | 'quiz' | 'assignment' | 'project';
@@ -393,6 +394,22 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
               <span>Elapsed: {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}</span>
               {batchMode && <span className="text-purple-500 dark:text-purple-400">Runs in background — safe to wait</span>}
             </div>
+
+            {/* Continue Working button — dismiss UI while task keeps running */}
+            <button
+              onClick={() => {
+                setLoading(false);
+                setTaskId(null);
+                setTaskStatus(null);
+                toast.info(
+                  'AI is still generating in the background. You\'ll get a notification when it\'s done and content is saved automatically.',
+                  { duration: 5000 }
+                );
+              }}
+              className="w-full text-xs px-3 py-2 text-purple-700 dark:text-purple-300 bg-purple-100/60 dark:bg-purple-800/30 hover:bg-purple-200/80 dark:hover:bg-purple-800/50 rounded-lg transition-colors font-medium"
+            >
+              Continue Working — AI will save &amp; notify when done
+            </button>
           </div>
         )}
       </CardContent>

@@ -1138,6 +1138,21 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     }
   };
 
+  /**
+   * Dismiss the progress panel while the backend task keeps running.
+   * The backend will auto-save the result and create a notification.
+   */
+  const handleDismissContentGen = () => {
+    setIsGeneratingContent(false);
+    setContentGenProgress(null);
+    // Don't clear contentGenTaskId — it keeps running in the backend
+    setContentGenTaskId(null);
+    toast.info(
+      'AI is still generating in the background. You\'ll get a notification when it\'s done and content is saved automatically.',
+      { duration: 5000 }
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1499,6 +1514,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             onGenerate={handleContentAIGenerate}
                                             progress={contentGenProgress}
                                             onCancel={handleCancelContentGen}
+                                            onDismiss={handleDismissContentGen}
                                           />
                                           <button
                                             type="button"
@@ -1888,6 +1904,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             onGenerate={handleContentAIGenerate}
                                             progress={contentGenProgress}
                                             onCancel={handleCancelContentGen}
+                                            onDismiss={handleDismissContentGen}
                                           />
                                           <button
                                             type="button"

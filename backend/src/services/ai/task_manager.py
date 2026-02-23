@@ -143,12 +143,18 @@ class BackgroundTaskManager:
 
     def submit_task(self, task_type: str, task_func: Callable,
                     args: tuple = (), kwargs: dict = None,
-                    total_steps: int = 1, user_id: int = None) -> str:
+                    total_steps: int = 1, user_id: int = None,
+                    on_complete: Callable = None,
+                    task_meta: dict = None) -> str:
         """
         Submit a task for background execution. Returns task_id immediately.
         
         The task_func MUST accept a `task_id` keyword argument:
             def my_func(arg1, arg2, task_id=None, **kwargs): ...
+
+        on_complete: optional callback(task_id, task_type, result, task_meta)
+                     called after successful completion (for auto-save, notifications, etc.)
+        task_meta:   arbitrary dict passed through to on_complete (e.g. course_id, module_id)
         """
         task_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
@@ -166,7 +172,8 @@ class BackgroundTaskManager:
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, task_func, args, kwargs or {}),
+            args=(task_id, task_func, args, kwargs or {},
+                  on_complete, task_meta or {}),
             daemon=True,
         )
         thread.start()
@@ -174,7 +181,8 @@ class BackgroundTaskManager:
         logger.info(f"Task {task_id[:8]}... submitted: {task_type} (steps={total_steps})")
         return task_id
 
-    def _run_task(self, task_id: str, task_func: Callable, args: tuple, kwargs: dict):
+    def _run_task(self, task_id: str, task_func: Callable, args: tuple, kwargs: dict,
+                  on_complete: Callable = None, task_meta: dict = None):
         """Execute a task in a background thread"""
         task = self.tasks.get(task_id)
         if not task:
@@ -202,11 +210,28 @@ class BackgroundTaskManager:
             self.task_results[task_id] = result
             logger.info(f"Task {task_id[:8]}... completed successfully")
 
+            # Fire completion callback (auto-save, notifications, etc.)
+            if on_complete:
+                try:
+                    on_complete(task_id, task.task_type, result,
+                                task_meta or {}, task.user_id)
+                except Exception as cb_err:
+                    logger.error(f"Task {task_id[:8]}... on_complete callback failed: {cb_err}")
+
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.completed_at = datetime.utcnow().isoformat()
             task.error = str(e)
             logger.error(f"Task {task_id[:8]}... failed: {e}")
+
+            # Fire on_complete for failures too (so we can send failure notifications)
+            if on_complete:
+                try:
+                    on_complete(task_id, task.task_type, None,
+                                task_meta or {}, task.user_id,
+                                error=str(e))
+                except Exception as cb_err:
+                    logger.error(f"Task {task_id[:8]}... failure callback failed: {cb_err}")
 
     # ===== Progress Tracking =====
 

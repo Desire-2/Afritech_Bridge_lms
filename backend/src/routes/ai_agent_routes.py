@@ -12,6 +12,7 @@ from ..models.user_models import db, User
 from ..models.course_models import Course, Module, Lesson, Quiz
 from ..services.ai_agent_service import ai_agent_service
 from ..services.ai.task_manager import task_manager
+from ..services.content_auto_save import handle_task_completion
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,26 @@ def _gather_course_context(course_id: int, exclude_module_id: int = None) -> lis
             })
         context.append(mod_data)
     return context
+
+
+def _make_task_meta(course_id: int = None, module_id: int = None,
+                    course_title: str = '', **extra) -> dict:
+    """
+    Build the metadata dict passed to the on_complete callback.
+    Includes the Flask app reference so the callback can push an app context
+    in the background thread.
+    """
+    from flask import current_app
+    meta = {
+        '_flask_app': current_app._get_current_object(),
+        'course_id': course_id,
+        'module_id': module_id,
+        'course_title': course_title,
+        'auto_save': True,
+    }
+    meta.update(extra)
+    return meta
+
 
 # =====================
 # ENHANCED HEALTH & STATUS
@@ -406,6 +427,8 @@ def generate_course_outline():
                 },
                 total_steps=1,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_title=topic),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -498,6 +521,8 @@ def generate_multiple_modules():
                 },
                 total_steps=num_modules,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -592,6 +617,8 @@ def generate_module_content():
                 },
                 total_steps=1,
                 user_id=current_user_id_bg,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -695,6 +722,8 @@ def generate_multiple_lessons():
                 },
                 total_steps=num_lessons,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -795,6 +824,8 @@ def generate_lesson_content():
                 },
                 total_steps=5,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -918,6 +949,8 @@ def generate_comprehensive_lesson():
                 },
                 total_steps=6,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -1029,6 +1062,8 @@ def generate_quiz_questions():
                 },
                 total_steps=1,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -1119,6 +1154,8 @@ def generate_assignment():
                 },
                 total_steps=1,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -1200,6 +1237,8 @@ def generate_final_project():
                 },
                 total_steps=1,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=course_id, course_title=course.title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -1563,6 +1602,8 @@ def enhance_content():
                 },
                 total_steps=3,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_id=data.get('course_id'), course_title=course_title),
             )
             return jsonify({
                 "success": True, "background": True,
@@ -1736,6 +1777,8 @@ def enhance_section_content():
                 },
                 total_steps=3,
                 user_id=current_user_id,
+                on_complete=handle_task_completion,
+                task_meta=_make_task_meta(course_title=course_title),
             )
             return jsonify({
                 "success": True, "background": True,

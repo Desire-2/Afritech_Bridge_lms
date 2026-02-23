@@ -402,10 +402,18 @@ export interface WebSocketMessage {
 export interface Notification {
   id: number;
   user_id: number;
-  type: 'info' | 'success' | 'warning' | 'error';
+  notification_type: 'ai_task_completed' | 'ai_task_failed' | 'content_saved' | 'system' | string;
+  type?: 'info' | 'success' | 'warning' | 'error';
   title: string;
   message: string;
-  read: boolean;
+  is_read?: boolean;
+  read?: boolean;
+  task_id?: string;
+  task_type?: string;
+  course_id?: number;
+  module_id?: number;
+  lesson_id?: number;
+  metadata?: Record<string, any>;
   created_at: string;
   action_url?: string;
 }

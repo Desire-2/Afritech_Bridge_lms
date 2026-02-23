@@ -183,6 +183,9 @@ class AIProviderManager:
     
     # ===== Rate Limiting =====
     
+    # Maximum seconds we'll ever sleep for a single rate-limit cooldown
+    MAX_COOLDOWN_SLEEP = 120
+
     def _wait_for_rate_limit(self, provider: str = 'openrouter'):
         """Implement provider-specific rate limiting with cooldown awareness"""
         current_time = time.time()
@@ -193,6 +196,12 @@ class AIProviderManager:
         cooldown_until = self._rate_limit_cooldown_until.get(provider, 0)
         cooldown_remaining = cooldown_until - current_time
         if cooldown_remaining > 0:
+            # Safety cap: never sleep longer than MAX_COOLDOWN_SLEEP
+            if cooldown_remaining > self.MAX_COOLDOWN_SLEEP:
+                logger.warning(f"Cooldown for {provider} was {cooldown_remaining:.1f}s — capping to {self.MAX_COOLDOWN_SLEEP}s")
+                cooldown_remaining = self.MAX_COOLDOWN_SLEEP
+                # Reset the stored value so next call isn't stuck too
+                self._rate_limit_cooldown_until[provider] = current_time + cooldown_remaining
             logger.info(f"Rate limit cooldown active for {provider}: waiting {cooldown_remaining:.1f}s")
             time.sleep(cooldown_remaining)
             current_time = time.time()
@@ -391,15 +400,34 @@ class AIProviderManager:
                     # Rate limit — exponential backoff: 5s, 10s, 20s (capped at 60s)
                     backoff_time = min(60, (2 ** attempt) * 5)
                     
-                    # Check for Retry-After header from the provider
-                    retry_after = None
+                    # Check for Retry-After / x-ratelimit-reset headers
                     if e.response is not None:
-                        retry_after = e.response.headers.get('Retry-After') or e.response.headers.get('x-ratelimit-reset')
-                    if retry_after:
-                        try:
-                            backoff_time = max(backoff_time, int(float(retry_after)) + 1)
-                        except (ValueError, TypeError):
-                            pass
+                        retry_after = e.response.headers.get('Retry-After')
+                        ratelimit_reset = e.response.headers.get('x-ratelimit-reset')
+                        
+                        if retry_after:
+                            try:
+                                ra_val = float(retry_after)
+                                # Retry-After is typically a relative delay in seconds
+                                backoff_time = max(backoff_time, int(ra_val) + 1)
+                            except (ValueError, TypeError):
+                                pass
+                        elif ratelimit_reset:
+                            try:
+                                reset_val = float(ratelimit_reset)
+                                now = time.time()
+                                # x-ratelimit-reset is an ABSOLUTE Unix timestamp
+                                # (if it's in the future and > 1 billion, it's a timestamp)
+                                if reset_val > 1_000_000_000 and reset_val > now:
+                                    backoff_time = max(backoff_time, int(reset_val - now) + 1)
+                                else:
+                                    # Treat as relative seconds (small values)
+                                    backoff_time = max(backoff_time, int(reset_val) + 1)
+                            except (ValueError, TypeError):
+                                pass
+                    
+                    # Safety cap: never set a backoff larger than 120s
+                    backoff_time = min(backoff_time, self.MAX_COOLDOWN_SLEEP)
                     
                     logger.warning(f"OpenRouter rate limit 429 (attempt {attempt + 1}/{retry_count + 1}). Backing off {backoff_time}s...")
                     
@@ -511,24 +539,33 @@ class AIProviderManager:
                 if '429' in error_msg or 'quota' in error_msg.lower() or 'rate limit' in error_msg.lower():
                     logger.error(f"Gemini quota/rate limit error on attempt {attempt + 1}: {error_msg}")
                     
-                    # Set cooldown for Gemini rate limiting
-                    backoff_time = (attempt + 1) * 10
-                    self._rate_limit_cooldown_until['gemini'] = time.time() + backoff_time
+                    # Default exponential backoff
+                    backoff_time = min(self.MAX_COOLDOWN_SLEEP, (attempt + 1) * 15)
                     
+                    # Try to parse the server-suggested retry delay
                     if 'retry in' in error_msg.lower():
                         try:
                             match = re.search(r'retry in (\d+\.?\d*)s', error_msg)
                             if match:
-                                retry_delay = float(match.group(1)) + 2
-                                if attempt < retry_count:
-                                    logger.info(f"Waiting {retry_delay}s before retry...")
-                                    time.sleep(retry_delay)
-                                    continue
-                        except:
+                                server_delay = float(match.group(1)) + 2
+                                backoff_time = min(self.MAX_COOLDOWN_SLEEP, max(backoff_time, server_delay))
+                        except Exception:
                             pass
                     
+                    # Also try to parse retry_delay { seconds: N } from protobuf-style error
+                    retry_seconds_match = re.search(r'retry_delay\s*\{\s*seconds:\s*(\d+)', error_msg)
+                    if retry_seconds_match:
+                        try:
+                            server_delay = float(retry_seconds_match.group(1)) + 2
+                            backoff_time = min(self.MAX_COOLDOWN_SLEEP, max(backoff_time, server_delay))
+                        except Exception:
+                            pass
+                    
+                    # Set cooldown so _wait_for_rate_limit also respects it
+                    self._rate_limit_cooldown_until['gemini'] = time.time() + backoff_time
+                    
                     if attempt < retry_count:
-                        logger.info(f"Backing off for {backoff_time}s before retry...")
+                        logger.info(f"Waiting {backoff_time:.1f}s before retry (server suggested delay respected)...")
                         time.sleep(backoff_time)
                         continue
                 
@@ -562,9 +599,9 @@ class AIProviderManager:
             if result:
                 return result, 'openrouter'
             
-            # Fallback to Gemini with fewer retries to avoid long waits
+            # Fallback to Gemini — give it enough retries to wait out rate limits
             logger.warning("OpenRouter failed, falling back to Gemini")
-            result = self._make_gemini_request(prompt, 1, temperature)
+            result = self._make_gemini_request(prompt, 2, temperature)
             if result:
                 return result, 'gemini'
         else:
@@ -588,14 +625,14 @@ class AIProviderManager:
             "openrouter": {
                 "available": bool(self.openrouter_api_key),
                 "failure_count": self.provider_failure_counts.get('openrouter', 0),
-                "last_success": datetime.fromtimestamp(self.provider_last_success.get('openrouter', 0)).isoformat(),
+                "last_success": datetime.fromtimestamp(min(self.provider_last_success.get('openrouter', 0), time.time())).isoformat(),
                 "requests_in_queue": len(self.request_timestamps['openrouter']),
                 "max_rpm": self.openrouter_max_rpm,
             },
             "gemini": {
                 "available": bool(self.gemini_model),
                 "failure_count": self.provider_failure_counts.get('gemini', 0),
-                "last_success": datetime.fromtimestamp(self.provider_last_success.get('gemini', 0)).isoformat(),
+                "last_success": datetime.fromtimestamp(min(self.provider_last_success.get('gemini', 0), time.time())).isoformat(),
                 "requests_in_queue": len(self.request_timestamps['gemini']),
                 "max_rpm": self.gemini_max_rpm,
             },

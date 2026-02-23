@@ -259,7 +259,7 @@ class AIAgentService {
    * Submit a request to run in background mode.
    * Sends { ...requestData, background: true } and returns the task_id.
    */
-  private async submitBackground(endpoint: string, requestData: any): Promise<BackgroundTaskResponse> {
+  async submitBackground(endpoint: string, requestData: any): Promise<BackgroundTaskResponse> {
     const response = await aiApiClient.post(endpoint, {
       ...requestData,
       background: true,
@@ -396,6 +396,24 @@ class AIAgentService {
         error: error.message,
       };
     }
+  }
+
+  /**
+   * Fire-and-forget: submit a background task and return the task_id immediately
+   * without polling. The backend auto-saves the result and creates a notification
+   * when done. Use this when the user wants to navigate away while AI works.
+   *
+   * Returns the task_id so the caller can optionally cancel it later.
+   */
+  async submitAndForget(
+    endpoint: string,
+    requestData: any,
+  ): Promise<{ task_id: string; message: string }> {
+    const resp = await this.submitBackground(endpoint, requestData);
+    return {
+      task_id: resp.task_id || '',
+      message: resp.message || 'Task submitted',
+    };
   }
 
   // =====================================================
