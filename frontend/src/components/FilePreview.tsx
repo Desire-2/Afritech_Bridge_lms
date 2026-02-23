@@ -25,7 +25,7 @@ import {
   Clock,
   User
 } from 'lucide-react';
-import { FileInfo } from '@/utils/fileUtils';
+import { FileInfo, isOfficeDocument, isSpreadsheet, getOfficePrevUrl } from '@/utils/fileUtils';
 import ZipFileViewer from './ZipFileViewer';
 
 interface FilePreviewProps {
@@ -179,6 +179,75 @@ const FilePreview: React.FC<FilePreviewProps> = ({
               title={file.filename}
               onError={() => setPreviewError('Failed to load PDF')}
             />
+          );
+        }
+        // Excel, Word, PowerPoint - use appropriate embedded viewer
+        if (isOfficeDocument(fileInfo.extension)) {
+          const embedUrl = getOfficePrevUrl(file.file_url);
+          return (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800 px-3 py-2 rounded-t-lg border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded flex items-center justify-center text-white text-xs font-bold ${
+                    isSpreadsheet(fileInfo.extension) ? 'bg-green-600' :
+                    fileInfo.extension === 'pptx' || fileInfo.extension === 'ppt' ? 'bg-orange-500' :
+                    'bg-blue-600'
+                  }`}>
+                    {isSpreadsheet(fileInfo.extension) ? 'X' :
+                     fileInfo.extension === 'pptx' || fileInfo.extension === 'ppt' ? 'P' : 'W'}
+                  </div>
+                  <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {isSpreadsheet(fileInfo.extension) ? 'Excel' :
+                     fileInfo.extension === 'pptx' || fileInfo.extension === 'ppt' ? 'PowerPoint' : 'Word'} Preview
+                  </span>
+                  <span className="text-xs text-gray-400 uppercase">.{fileInfo.extension}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={file.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs px-2 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded transition-colors"
+                  >
+                    Open in new tab
+                  </a>
+                  <button
+                    onClick={handleDownload}
+                    disabled={isDownloading}
+                    className="text-xs px-2 py-1 bg-green-100 text-green-700 hover:bg-green-200 rounded transition-colors disabled:opacity-50"
+                  >
+                    Download
+                  </button>
+                </div>
+              </div>
+              {embedUrl ? (
+                <iframe
+                  src={embedUrl}
+                  className="w-full h-[500px] border border-slate-200 dark:border-slate-700 rounded-b-lg"
+                  title={`${file.filename} - Document Preview`}
+                  sandbox="allow-scripts allow-same-origin allow-popups"
+                  allow="autoplay"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-64 text-gray-500 border border-slate-200 dark:border-slate-700 rounded-b-lg">
+                  <FileText className="w-12 h-12 mb-3" />
+                  <p className="text-sm font-medium">Preview not available for local files</p>
+                  <p className="text-xs text-gray-400 mt-1">Download the file to view its contents</p>
+                  <button
+                    onClick={handleDownload}
+                    disabled={isDownloading}
+                    className={`mt-3 px-4 py-2 rounded transition-colors flex items-center gap-2 ${
+                      isDownloading
+                        ? 'bg-gray-400 text-gray-700 cursor-not-allowed'
+                        : 'bg-blue-600 text-white hover:bg-blue-700'
+                    }`}
+                  >
+                    <Download className="w-4 h-4" />
+                    {isDownloading ? 'Downloading...' : 'Download to View'}
+                  </button>
+                </div>
+              )}
+            </div>
           );
         }
         // For other documents, show download option

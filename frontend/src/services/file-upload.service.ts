@@ -82,6 +82,7 @@ export class FileUploadService {
     // Spreadsheets & Presentations
     'application/vnd.ms-excel',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel.sheet.macroEnabled.12',
     'application/vnd.ms-powerpoint',
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     
@@ -179,9 +180,14 @@ export class FileUploadService {
       if (options.assignmentId) formData.append('assignmentId', options.assignmentId.toString());
       if (options.studentId) formData.append('studentId', options.studentId.toString());
 
+      // Include auth token so the Next.js API route can forward it to the backend
+      // (required for Google Drive uploads which go through the Flask backend)
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+
       const response = await fetch('/api/upload', {
         method: 'POST',
         body: formData,
+        headers: token ? { 'Authorization': `Bearer ${token}` } : undefined,
       });
 
       if (!response.ok) {
@@ -404,6 +410,7 @@ export class FileUploadService {
       'rar': 'application/x-rar-compressed',
       'xls': 'application/vnd.ms-excel',
       'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
       'ppt': 'application/vnd.ms-powerpoint',
       'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       'mp3': 'audio/mpeg',

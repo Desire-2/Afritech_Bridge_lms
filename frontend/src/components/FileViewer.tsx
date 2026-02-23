@@ -10,8 +10,11 @@ import {
   Globe,
   Play,
   Maximize,
-  X
+  X,
+  Table,
+  AlertCircle
 } from 'lucide-react';
+import { isOfficeDocument, isSpreadsheet, getOfficePrevUrl } from '@/utils/fileUtils';
 
 interface FileViewerProps {
   file?: {
@@ -76,6 +79,9 @@ const FileViewer: React.FC<FileViewerProps> = ({ file, externalUrl, content }) =
     if (type.includes('pdf') || name.includes('.pdf')) {
       return <FileText className="w-5 h-5 text-red-500" />;
     }
+    if (/\.(xls|xlsx|xlsm|csv)$/i.test(name) || type.includes('spreadsheet') || type.includes('excel')) {
+      return <Table className="w-5 h-5 text-green-600" />;
+    }
     if (type.includes('text') || type.includes('document') || /\.(doc|docx|txt|rtf)$/i.test(name)) {
       return <FileText className="w-5 h-5 text-blue-500" />;
     }
@@ -92,7 +98,23 @@ const FileViewer: React.FC<FileViewerProps> = ({ file, externalUrl, content }) =
       type.includes('pdf') ||
       name.includes('.pdf') ||
       /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(name) ||
+      /\.(xls|xlsx|xlsm|doc|docx|ppt|pptx)$/i.test(name) ||
+      type.includes('spreadsheet') ||
+      type.includes('excel') ||
       getGoogleDriveInfo(url || '').isGoogleDrive
+    );
+  };
+
+  // Check if file is an Office document
+  const isOfficeFile = (fileName?: string, fileType?: string) => {
+    const name = (fileName || '').toLowerCase();
+    const type = fileType || '';
+    return (
+      /\.(xls|xlsx|xlsm|doc|docx|ppt|pptx)$/i.test(name) ||
+      type.includes('spreadsheet') ||
+      type.includes('excel') ||
+      type.includes('wordprocessingml') ||
+      type.includes('presentationml')
     );
   };
 
@@ -299,6 +321,69 @@ const FileViewer: React.FC<FileViewerProps> = ({ file, externalUrl, content }) =
                 title={fileName}
                 onError={() => setPreviewError(true)}
               />
+            ) : isOfficeFile(fileName, fileType) ? (
+              (() => {
+                const embedUrl = getOfficePrevUrl(fileUrl || '');
+                return embedUrl ? (
+                  <div className="flex flex-col h-full">
+                    <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-700 px-4 py-2 rounded-t-lg border-b">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-6 h-6 rounded flex items-center justify-center text-white text-xs font-bold ${
+                          /\.(xls|xlsx|xlsm|csv)$/i.test(fileName) ? 'bg-green-600' :
+                          /\.(ppt|pptx)$/i.test(fileName) ? 'bg-orange-500' :
+                          'bg-blue-600'
+                        }`}>
+                          {/\.(xls|xlsx|xlsm|csv)$/i.test(fileName) ? 'X' :
+                           /\.(ppt|pptx)$/i.test(fileName) ? 'P' : 'W'}
+                        </div>
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                          {/\.(xls|xlsx|xlsm|csv)$/i.test(fileName) ? 'Excel' :
+                           /\.(ppt|pptx)$/i.test(fileName) ? 'PowerPoint' : 'Word'} Document Preview
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {fileUrl && (
+                          <a
+                            href={fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                          >
+                            Download Original
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                    <iframe
+                      src={embedUrl}
+                      className="flex-1 w-full rounded-b-lg border"
+                      title={`${fileName} - Document Preview`}
+                      sandbox="allow-scripts allow-same-origin allow-popups"
+                      allow="autoplay"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center">
+                      <FileText className="w-12 h-12 text-slate-400 mx-auto mb-4" />
+                      <p className="text-slate-600 dark:text-slate-400 mb-2">
+                        Preview not available for local files.
+                      </p>
+                      {fileUrl && (
+                        <a
+                          href={fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Download to View
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()
             ) : (
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">

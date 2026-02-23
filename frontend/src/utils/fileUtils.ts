@@ -18,7 +18,7 @@ export interface FileInfo {
 const FILE_CATEGORIES = {
   document: [
     'pdf', 'doc', 'docx', 'txt', 'rtf', 'odt', 'pages',
-    'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'md', 'tex'
+    'ppt', 'pptx', 'xls', 'xlsx', 'xlsm', 'csv', 'md', 'tex'
   ],
   image: [
     'jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp',
@@ -84,10 +84,76 @@ export function truncateFilename(
  */
 const VIEWABLE_TYPES = [
   'pdf', 'txt', 'md', 'json', 'xml', 'csv',
+  'xls', 'xlsx', 'xlsm',
+  'doc', 'docx', 'ppt', 'pptx',
   'jpg', 'jpeg', 'png', 'gif', 'svg', 'webp',
   'mp4', 'webm', 'ogg', 'mp3', 'wav',
   'html', 'css', 'js', 'ts', 'py', 'java', 'cpp', 'c'
 ];
+
+/**
+ * Office document types that can be previewed via Microsoft Office Online
+ */
+const OFFICE_VIEWABLE_TYPES = ['xls', 'xlsx', 'xlsm', 'doc', 'docx', 'ppt', 'pptx'];
+
+/**
+ * Check if file is an Office document that can be previewed via Office Online viewer
+ */
+export function isOfficeDocument(extension: string): boolean {
+  return OFFICE_VIEWABLE_TYPES.includes(extension.toLowerCase());
+}
+
+/**
+ * Check if file is a spreadsheet (Excel) file
+ */
+export function isSpreadsheet(extension: string): boolean {
+  return ['xls', 'xlsx', 'xlsm', 'csv', 'ods'].includes(extension.toLowerCase());
+}
+
+/**
+ * Get Microsoft Office Online viewer URL for a file
+ * Requires the file to be publicly accessible via a direct download URL
+ */
+export function getOfficeViewerUrl(fileUrl: string): string {
+  return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
+}
+
+/**
+ * Get Google Docs viewer URL as fallback for Office documents
+ */
+export function getGoogleDocsViewerUrl(fileUrl: string): string {
+  return `https://docs.google.com/gview?url=${encodeURIComponent(fileUrl)}&embedded=true`;
+}
+
+/**
+ * Get the best embed/preview URL for an Office document based on the file's storage location.
+ * - Google Drive files → use Drive's native /preview embed
+ * - Public URLs (Vercel Blob, etc.) → use Google Docs Viewer (most reliable)
+ * - Local/relative URLs → not embeddable, returns null
+ */
+export function getOfficePrevUrl(fileUrl: string): string | null {
+  if (!fileUrl) return null;
+
+  // Google Drive file → use Google Drive's native preview embed
+  if (isGoogleDriveUrl(fileUrl)) {
+    const fileId = extractGoogleDriveFileId(fileUrl);
+    if (fileId) {
+      return `https://drive.google.com/file/d/${fileId}/preview`;
+    }
+  }
+
+  // Relative / local URL → can't embed externally
+  if (fileUrl.startsWith('/') || fileUrl.startsWith('localhost')) {
+    return null;
+  }
+
+  // Public URL → use Google Docs Viewer (handles more file types than Office Online)
+  if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
+    return getGoogleDocsViewerUrl(fileUrl);
+  }
+
+  return null;
+}
 
 /**
  * Get file extension from filename or URL
@@ -151,6 +217,7 @@ export function getMimeType(extension: string): string {
     // Spreadsheets
     'xls': 'application/vnd.ms-excel',
     'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xlsm': 'application/vnd.ms-excel.sheet.macroEnabled.12',
     'csv': 'text/csv',
     
     // Presentations
@@ -170,7 +237,7 @@ export function getMimeType(extension: string): string {
     // Video
     'mp4': 'video/mp4',
     'webm': 'video/webm',
-    'ogg': 'video/ogg',
+    'ogv': 'video/ogg',
     'avi': 'video/x-msvideo',
     'mov': 'video/quicktime',
     

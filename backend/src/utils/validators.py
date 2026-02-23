@@ -390,7 +390,7 @@ class StudentValidators:
                 '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z',
                 
                 # Spreadsheets & Presentations
-                '.xls', '.xlsx', '.csv', '.ods',
+                '.xls', '.xlsx', '.xlsm', '.csv', '.ods',
                 '.ppt', '.pptx', '.odp',
                 
                 # Media (limited)
