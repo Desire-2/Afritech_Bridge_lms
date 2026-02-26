@@ -266,6 +266,12 @@ class WaitlistService:
         course = enrollment.course
         window = enrollment.application_window
 
+        # Resolve window for legacy enrollments
+        if window is None and course:
+            window = ApplicationWindow.query.filter_by(
+                course_id=course.id
+            ).order_by(ApplicationWindow.id.desc()).first()
+
         # Determine if payment is required for this enrollment
         requires_payment = False
         if window:
@@ -358,6 +364,13 @@ class WaitlistService:
         window = enrollment.application_window
         course = enrollment.course
 
+        # Resolve window for legacy enrollments (don't lazy-patch here,
+        # get_enrollment_cohort_payment_info will handle that)
+        if window is None and course:
+            window = ApplicationWindow.query.filter_by(
+                course_id=course.id
+            ).order_by(ApplicationWindow.id.desc()).first()
+
         requires_payment = False
         if window:
             requires_payment = _cohort_requires_payment(window)
@@ -384,6 +397,87 @@ class WaitlistService:
         return False, "Payment required - access blocked until payment is verified"
 
     @staticmethod
+    def _resolve_enrollment_window(enrollment: Enrollment) -> Optional[ApplicationWindow]:
+        """
+        Try to find the correct ApplicationWindow for an enrollment that has
+        no ``application_window_id`` set (legacy data).
+
+        Resolution order:
+        1. Via linked application (application_id → CourseApplication.application_window_id)
+        2. Via matching application by student_id + course_id
+        3. Via enrollment.cohort_label → matching window for the same course
+        4. Fallback: latest window for the course
+
+        When a window is resolved, the enrollment is **lazily updated** so
+        subsequent lookups are instant.
+        """
+        window: Optional[ApplicationWindow] = None
+        course_id = enrollment.course_id
+
+        # 1) Via linked application
+        if enrollment.application_id:
+            try:
+                app = CourseApplication.query.get(enrollment.application_id)
+                if app and app.application_window_id:
+                    window = ApplicationWindow.query.get(app.application_window_id)
+            except Exception:
+                pass
+
+        # 2) Via matching application by student + course
+        if not window:
+            try:
+                app = CourseApplication.query.filter_by(
+                    course_id=course_id,
+                    status='approved'
+                ).filter(
+                    db.or_(
+                        CourseApplication.student_id == enrollment.student_id,
+                        CourseApplication.email == (
+                            User.query.get(enrollment.student_id).email
+                            if enrollment.student_id else None
+                        )
+                    )
+                ).order_by(CourseApplication.created_at.desc()).first()
+                if app and app.application_window_id:
+                    window = ApplicationWindow.query.get(app.application_window_id)
+            except Exception:
+                pass
+
+        # 3) Via cohort_label on the enrollment itself
+        if not window and enrollment.cohort_label:
+            window = ApplicationWindow.query.filter_by(
+                course_id=course_id,
+                cohort_label=enrollment.cohort_label
+            ).first()
+
+        # 4) Fallback: latest window for the course
+        if not window:
+            window = ApplicationWindow.query.filter_by(
+                course_id=course_id
+            ).order_by(ApplicationWindow.id.desc()).first()
+
+        # Lazy-patch the enrollment so future lookups are instant
+        if window:
+            try:
+                enrollment.application_window_id = window.id
+                if not enrollment.cohort_label and window.cohort_label:
+                    enrollment.cohort_label = window.cohort_label
+                if not enrollment.cohort_start_date and window.cohort_start:
+                    enrollment.cohort_start_date = window.cohort_start
+                if not enrollment.cohort_end_date and window.cohort_end:
+                    enrollment.cohort_end_date = window.cohort_end
+                db.session.commit()
+                logger.info(
+                    f"Lazy-linked enrollment {enrollment.id} → window {window.id} "
+                    f"({window.cohort_label})"
+                )
+            except Exception as e:
+                logger.warning(f"Could not lazy-patch enrollment {enrollment.id}: {e}")
+                db.session.rollback()
+
+        return window
+
+    @staticmethod
     def get_enrollment_cohort_payment_info(enrollment: Enrollment) -> Dict:
         """
         Build cohort-level payment details for an enrollment.
@@ -392,9 +486,16 @@ class WaitlistService:
         payment display — it always reads from the cohort (ApplicationWindow),
         never from the course, so full-scholarship / partial-scholarship /
         full-tuition are all correctly represented.
+
+        If the enrollment has no application_window_id set (legacy data), the
+        method will attempt to resolve the correct window automatically.
         """
         window = enrollment.application_window
         course = enrollment.course
+
+        # ── Resolve window for legacy enrollments ──
+        if window is None and course:
+            window = WaitlistService._resolve_enrollment_window(enrollment)
 
         # Determine access
         access_allowed, access_reason = WaitlistService.is_enrollment_access_allowed(enrollment)
@@ -407,7 +508,7 @@ class WaitlistService:
         info: Dict = {
             # Identity
             'enrollment_status': enrollment.status,
-            'cohort_label': enrollment.cohort_label,
+            'cohort_label': enrollment.cohort_label or (window.cohort_label if window else None),
             'application_window_id': enrollment.application_window_id,
             # Payment booleans
             'payment_status': enrollment.payment_status,
@@ -434,7 +535,7 @@ class WaitlistService:
                 'cohort_installment_count': ps.get('installment_count'),
             })
         else:
-            # Fallback — no cohort, read from course
+            # Fallback — no cohort AND no windows exist for course, read from course
             info.update({
                 'cohort_enrollment_type': course.enrollment_type if course else 'free',
                 'cohort_scholarship_type': None,

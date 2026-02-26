@@ -385,8 +385,98 @@ def application_received_email(application, course_title):
     {get_email_footer()}
     """
 
-def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None):
-    """🎉 Creative celebration email template for application approval"""
+def _build_payment_section(payment_info: dict) -> str:
+    """Build the payment / scholarship info block for the approval email."""
+    if not payment_info:
+        return ""
+
+    etype = payment_info.get('cohort_enrollment_type', 'free')
+    scholarship_type = payment_info.get('cohort_scholarship_type')
+    scholarship_pct = payment_info.get('cohort_scholarship_percentage')
+    effective_price = payment_info.get('cohort_effective_price', 0)
+    currency = payment_info.get('cohort_currency', 'USD')
+    original_price = payment_info.get('cohort_original_price')
+    payment_required = payment_info.get('payment_required', False)
+
+    # Full scholarship — congratulate, no payment
+    if etype == 'scholarship' and scholarship_type == 'full':
+        return '''
+        <div style="background-color: #064e3b; border: 2px solid #10b981; border-radius: 8px; padding: 25px; margin: 20px 0; text-align: center;">
+            <span style="font-size: 40px; display: block; margin-bottom: 10px;">🎓</span>
+            <h3 style="margin: 0 0 10px 0; color: #34d399; font-size: 18px;">Full Scholarship Awarded!</h3>
+            <p style="color: #a7f3d0; margin: 0; line-height: 1.6; font-size: 15px;">
+                Congratulations! You have received a <strong style="color: #ffffff;">full scholarship</strong>.
+                No payment is required — focus on learning!
+            </p>
+        </div>'''
+
+    # Free enrollment
+    if etype == 'free' or (not payment_required and effective_price == 0):
+        return ""  # No payment info needed for free courses
+
+    # Partial scholarship
+    if etype == 'scholarship' and scholarship_type == 'partial' and scholarship_pct:
+        discount_line = ""
+        if original_price and original_price > 0:
+            discount_line = f'''
+                <tr>
+                    <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Original Price:</td>
+                    <td style="padding: 8px 0; color: #e5e7eb; text-decoration: line-through;">{currency} {int(original_price):,}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Scholarship:</td>
+                    <td style="padding: 8px 0; color: #34d399; font-weight: 700;">{int(scholarship_pct)}% Coverage</td>
+                </tr>'''
+        return f'''
+        <div style="background-color: #2c3e50; border: 2px solid #f59e0b; border-radius: 8px; padding: 25px; margin: 20px 0;">
+            <div style="text-align: center; margin-bottom: 15px;">
+                <span style="font-size: 36px; display: block; margin-bottom: 8px;">💰</span>
+                <h3 style="margin: 0; color: #fbbf24; font-size: 18px;">Payment Information</h3>
+                <p style="color: #e5e7eb; margin: 5px 0 0 0; font-size: 13px;">Partial Scholarship Applied</p>
+            </div>
+            <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
+                {discount_line}
+                <tr style="border-top: 2px solid #f59e0b;">
+                    <td style="padding: 12px 0; font-weight: 700; color: #ffffff; font-size: 16px;">Amount Due:</td>
+                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">{currency} {int(effective_price):,}</td>
+                </tr>
+            </table>
+            <p style="color: #fde68a; font-size: 13px; margin: 15px 0 0 0; text-align: center;">
+                Please complete your payment to access course content.
+            </p>
+        </div>'''
+
+    # Paid (no scholarship)
+    if payment_required and effective_price and effective_price > 0:
+        return f'''
+        <div style="background-color: #2c3e50; border: 2px solid #f59e0b; border-radius: 8px; padding: 25px; margin: 20px 0;">
+            <div style="text-align: center; margin-bottom: 15px;">
+                <span style="font-size: 36px; display: block; margin-bottom: 8px;">💰</span>
+                <h3 style="margin: 0; color: #fbbf24; font-size: 18px;">Payment Required</h3>
+            </div>
+            <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
+                <tr>
+                    <td style="padding: 12px 0; font-weight: 700; color: #ffffff; font-size: 16px;">Amount Due:</td>
+                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">{currency} {int(effective_price):,}</td>
+                </tr>
+            </table>
+            <p style="color: #fde68a; font-size: 13px; margin: 15px 0 0 0; text-align: center;">
+                Please complete your payment to access course content.
+            </p>
+        </div>'''
+
+    return ""
+
+
+def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None, payment_info=None):
+    """🎉 Creative celebration email template for application approval
+    
+    Args:
+        payment_info: Optional dict with cohort payment details:
+            - cohort_label, cohort_enrollment_type, cohort_scholarship_type,
+              cohort_scholarship_percentage, cohort_effective_price, cohort_currency,
+              cohort_original_price, payment_required
+    """
     
     # Determine account type message and credentials display
     account_type_msg = ""
@@ -575,12 +665,15 @@ def application_approved_email(application, course, username, temp_password, cus
                     <td style="padding: 8px 0; font-weight: 600;">Instructor:</td>
                     <td style="padding: 8px 0;">{course.instructor.first_name} {course.instructor.last_name}</td>
                 </tr>
+                {"<tr><td style='padding: 8px 0; font-weight: 600;'>Cohort:</td><td style='padding: 8px 0;'>" + str(payment_info.get('cohort_label', '')) + "</td></tr>" if payment_info and payment_info.get('cohort_label') else ""}
                 <tr>
                     <td style="padding: 8px 0; font-weight: 600;">Enrollment Date:</td>
                     <td style="padding: 8px 0;">{datetime.now().strftime('%B %d, %Y')}</td>
                 </tr>
             </table>
         </div>
+        
+        {_build_payment_section(payment_info) if payment_info else ''}
         
         <!-- Tips for Success -->
         <div style="background-color: #2c3e50; border-left: 4px solid #22c55e; border-radius: 8px; padding: 20px; margin: 20px 0;">

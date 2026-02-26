@@ -321,11 +321,26 @@ class EnrollmentService:
             return False, "Error reviewing application"
     
     @staticmethod
-    def _create_enrollment(student_id: int, course_id: int) -> Enrollment:
-        """Create enrollment and initialize student progress tracking"""
+    def _create_enrollment(student_id: int, course_id: int, application_window_id: int = None) -> Enrollment:
+        """Create enrollment and initialize student progress tracking.
+        
+        If ``application_window_id`` is not provided, the method will attempt
+        to resolve the latest ApplicationWindow for the course so that
+        cohort-level pricing is always available.
+        """
+        # Resolve window if not explicitly provided
+        if application_window_id is None:
+            from ..models.course_models import ApplicationWindow
+            window = ApplicationWindow.query.filter_by(
+                course_id=course_id
+            ).order_by(ApplicationWindow.id.desc()).first()
+            if window:
+                application_window_id = window.id
+
         enrollment = Enrollment(
             student_id=student_id,
             course_id=course_id,
+            application_window_id=application_window_id,
             enrollment_date=datetime.utcnow()
         )
         db.session.add(enrollment)

@@ -1716,6 +1716,13 @@ def approve_application(app_id):
                 if not new_account and temp_password is None:
                     reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/reset-password?token={reset_token}&email={application.email}"
                 
+                # Build cohort payment info for the email
+                cohort_payment_info = None
+                try:
+                    cohort_payment_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
+                except Exception:
+                    pass
+                
                 # Send professional welcome email
                 email_html = application_approved_email(
                     application=application,
@@ -1724,7 +1731,8 @@ def approve_application(app_id):
                     temp_password=temp_password,
                     custom_message=custom_message,
                     is_new_account=new_account,
-                    password_reset_link=reset_link
+                    password_reset_link=reset_link,
+                    payment_info=cohort_payment_info
                 )
                 
                 email_sent = brevo_service.send_email(
@@ -2649,6 +2657,7 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
     try:
         from ..models.course_models import Course
         from ..models.student_models import ModuleProgress
+        from ..services.waitlist_service import WaitlistService
         
         # Validate course exists
         course = Course.query.get(application.course_id)
@@ -2755,6 +2764,13 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
                 if not new_account and temp_password is None:
                     reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/reset-password?token={reset_token}&email={application.email}"
                 
+                # Build cohort payment info for the email
+                bulk_payment_info = None
+                try:
+                    bulk_payment_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
+                except Exception:
+                    pass
+                
                 # Send professional welcome email matching single approval
                 email_content = application_approved_email(
                     application=application,
@@ -2763,7 +2779,8 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
                     temp_password=temp_password,
                     custom_message=custom_message,
                     is_new_account=new_account,
-                    password_reset_link=reset_link
+                    password_reset_link=reset_link,
+                    payment_info=bulk_payment_info
                 )
                 
                 send_email(
