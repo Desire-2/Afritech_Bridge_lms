@@ -2047,7 +2047,27 @@ def get_courses_for_filtering():
     for row in course_rows:
         course = Course.query.get(row.id)
         windows = ApplicationWindow.query.filter_by(course_id=row.id).order_by(ApplicationWindow.id).all()
-        
+
+        # ── Auto-resolve orphan applications (lazy-link) ──
+        # If there are unlinked applications AND at least one window exists,
+        # bulk-link them to the latest window so they stop showing as "Unassigned".
+        if windows:
+            orphan_apps = CourseApplication.query.filter_by(
+                course_id=row.id, application_window_id=None
+            ).all()
+            if orphan_apps:
+                target_window = windows[-1]  # latest window
+                for app in orphan_apps:
+                    app.application_window_id = target_window.id
+                    if not app.cohort_label:
+                        app.cohort_label = target_window.cohort_label
+                try:
+                    db.session.commit()
+                    logger.info(f"Auto-linked {len(orphan_apps)} orphan applications for course {row.id} to window {target_window.id}")
+                except Exception as e:
+                    db.session.rollback()
+                    logger.warning(f"Failed to auto-link orphan applications for course {row.id}: {e}")
+
         windows_data = []
         for w in windows:
             app_count = CourseApplication.query.filter_by(
@@ -2057,7 +2077,7 @@ def get_courses_for_filtering():
             wd['applications_count'] = app_count
             windows_data.append(wd)
 
-        # Count applications with no window (legacy)
+        # Count applications with no window (legacy — should be 0 after auto-link)
         no_window_count = CourseApplication.query.filter_by(
             course_id=row.id, application_window_id=None
         ).count()
