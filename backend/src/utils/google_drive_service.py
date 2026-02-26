@@ -26,8 +26,8 @@ class GoogleDriveService:
     
     # Define SCOPES at class level
     SCOPES = [
+        'https://www.googleapis.com/auth/drive',
         'https://www.googleapis.com/auth/drive.file',
-        'https://www.googleapis.com/auth/drive.readonly'
     ]
     
     def __init__(self):
@@ -38,7 +38,13 @@ class GoogleDriveService:
         self._initialize_service()
     
     def _initialize_service(self):
-        """Initialize Google Drive service with service account credentials"""
+        """Initialize Google Drive service with service account credentials.
+        
+        Supports OAuth domain-wide delegation: set GOOGLE_DRIVE_DELEGATED_USER
+        to a real Google Workspace user email so the service account impersonates
+        that user.  This avoids the "Service Accounts do not have storage quota"
+        error because files are created under the delegated user's quota.
+        """
         try:
             # Get service account credentials from environment
             service_account_info = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
@@ -55,11 +61,20 @@ class GoogleDriveService:
                 self.is_configured = False
                 return
             
-            # Create credentials
-            self.credentials = Credentials.from_service_account_info(
-                creds_dict,
-                scopes=self.SCOPES
-            )
+            # Create credentials — with optional domain-wide delegation
+            delegated_user = os.getenv('GOOGLE_DRIVE_DELEGATED_USER', '').strip()
+            if delegated_user:
+                self.credentials = Credentials.from_service_account_info(
+                    creds_dict,
+                    scopes=self.SCOPES,
+                    subject=delegated_user,
+                )
+                logger.info(f"Google Drive: using domain-wide delegation as {delegated_user}")
+            else:
+                self.credentials = Credentials.from_service_account_info(
+                    creds_dict,
+                    scopes=self.SCOPES,
+                )
             
             # Build the service
             self.service = build('drive', 'v3', credentials=self.credentials)

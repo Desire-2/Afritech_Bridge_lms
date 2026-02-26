@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PaymentMethod = 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe' | 'kpay' | 'flutterwave';
+type PaymentMethod = 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe' | 'kpay' | 'flutterwave' | string;
 type PaymentStatus =
   | 'pending'
   | 'pending_bank_transfer'
@@ -30,11 +30,19 @@ interface PaymentRecord {
   payment_method?: PaymentMethod;
   payment_status?: PaymentStatus;
   payment_reference?: string;
+  payment_currency?: string;
   status: string;
   created_at: string;
   admin_notes?: string;
   country?: string;
   cohort_label?: string;
+  cohort_effective_price?: number;
+  cohort_scholarship_type?: string;
+  cohort_scholarship_percentage?: number;
+  cohort_enrollment_type?: string;
+  payment_slip_url?: string;
+  payment_slip_filename?: string;
+  has_payment_slip?: boolean;
 }
 
 interface MethodRevenue {
@@ -54,6 +62,9 @@ interface CourseBreakdown {
   pending_bank: number;
   failed: number;
   revenue: Record<string, number>;
+  cohort_label?: string;
+  cohort_effective_price?: number;
+  cohort_enrollment_type?: string;
 }
 
 interface PaymentSummary {
@@ -77,25 +88,31 @@ type Tab = 'all' | 'action' | 'courses';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const METHOD_LABELS: Record<PaymentMethod, string> = {
+const METHOD_LABELS: Record<string, string> = {
   paypal: 'PayPal',
   mobile_money: 'Mobile Money',
   bank_transfer: 'Bank Transfer',
   stripe: 'Stripe',
+  kpay: 'K-Pay',
+  flutterwave: 'Flutterwave',
 };
 
-const METHOD_BG: Record<PaymentMethod, string> = {
+const METHOD_BG: Record<string, string> = {
   paypal: 'bg-blue-50 text-blue-700 border-blue-200',
   mobile_money: 'bg-yellow-50 text-yellow-700 border-yellow-200',
   bank_transfer: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   stripe: 'bg-violet-50 text-violet-700 border-violet-200',
+  kpay: 'bg-orange-50 text-orange-700 border-orange-200',
+  flutterwave: 'bg-amber-50 text-amber-700 border-amber-200',
 };
 
-const METHOD_ICON_BG: Record<PaymentMethod, string> = {
+const METHOD_ICON_BG: Record<string, string> = {
   paypal: 'bg-blue-600',
   mobile_money: 'bg-yellow-500',
   bank_transfer: 'bg-emerald-600',
   stripe: 'bg-violet-600',
+  kpay: 'bg-orange-600',
+  flutterwave: 'bg-amber-500',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -133,9 +150,14 @@ function authHeaders() {
 }
 
 function formatAmount(amount?: number | null, currency?: string | null) {
-  if (!amount) return '—';
+  if (amount === null || amount === undefined) return '—';
   const ccy = currency || 'USD';
-  const sym = ccy === 'XAF' ? 'XAF ' : ccy === 'GHS' ? 'GH₵' : ccy === 'EUR' ? '€' : '$';
+  const SYMBOLS: Record<string, string> = {
+    USD: '$', EUR: '€', GBP: '£', GHS: 'GH₵', XAF: 'XAF ',
+    RWF: 'RWF ', KES: 'KES ', UGX: 'UGX ', TZS: 'TZS ', NGN: '₦',
+    ZAR: 'R', INR: '₹',
+  };
+  const sym = SYMBOLS[ccy] || `${ccy} `;
   return `${sym}${amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
@@ -174,8 +196,24 @@ function MethodIcon({ method, size = 'sm' }: { method: PaymentMethod; size?: 'sm
     </span>
   );
 
+  if (method === 'kpay') return (
+    <span className={`${sz} ${bg} rounded-full flex items-center justify-center shrink-0`} title="K-Pay">
+      <svg viewBox="0 0 24 24" className="w-4 h-4 fill-white">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+      </svg>
+    </span>
+  );
+
+  if (method === 'flutterwave') return (
+    <span className={`${sz} ${bg} rounded-full flex items-center justify-center shrink-0`} title="Flutterwave">
+      <svg viewBox="0 0 24 24" className="w-4 h-4 fill-white">
+        <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z" />
+      </svg>
+    </span>
+  );
+
   return (
-    <span className={`${sz} ${bg} rounded-full flex items-center justify-center shrink-0`} title="Mobile Money">
+    <span className={`${sz} ${bg || 'bg-yellow-500'} rounded-full flex items-center justify-center shrink-0`} title={METHOD_LABELS[method] || 'Mobile Money'}>
       <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="white" strokeWidth={2}>
         <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
         <line x1="12" y1="18" x2="12.01" y2="18" />
@@ -226,6 +264,27 @@ function DetailDrawer({
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+
+  // Lazy-load payment slip on demand (base64 data can be 7MB+, too big for list API)
+  const [slipUrl, setSlipUrl] = useState<string | null>(record.payment_slip_url || null);
+  const [slipLoading, setSlipLoading] = useState(false);
+  const hasSlip = record.has_payment_slip || !!record.payment_slip_url;
+
+  useEffect(() => {
+    // If we already have a URL (Google Drive link), no need to fetch
+    if (slipUrl || !hasSlip) return;
+    let cancelled = false;
+    setSlipLoading(true);
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    fetch(`${API_BASE}/applications/${record.id}/payment-slip`, {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
+    })
+      .then(r => r.ok ? r.json() as Promise<{ slip_url?: string }> : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(data => { if (!cancelled) setSlipUrl(data.slip_url || null); })
+      .catch(() => { /* silently ignore — slip section just won't render */ })
+      .finally(() => { if (!cancelled) setSlipLoading(false); });
+    return () => { cancelled = true; };
+  }, [record.id, hasSlip, slipUrl]);
 
   const handleChange = async () => {
     if (!newStatus) return;
@@ -279,16 +338,126 @@ function DetailDrawer({
             <DRow label="Date">{record.created_at ? new Date(record.created_at).toLocaleString() : '—'}</DRow>
           </section>
 
+          {/* Payment Slip — lazy-loaded from dedicated endpoint */}
+          {hasSlip && (() => {
+            if (slipLoading) {
+              return (
+                <section className="bg-gray-50 rounded-xl p-4 flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm text-gray-500">Loading payment slip…</p>
+                </section>
+              );
+            }
+            if (!slipUrl) {
+              return (
+                <section className="bg-gray-50 rounded-xl p-4">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Payment Slip / Receipt</p>
+                  <p className="text-sm text-gray-500">Slip uploaded but could not be loaded.</p>
+                </section>
+              );
+            }
+
+            const isDataUrl = slipUrl.startsWith('data:');
+            const isImage = isDataUrl
+              ? /^data:image\//i.test(slipUrl)
+              : /\.(png|jpg|jpeg|gif|webp)$/i.test(record.payment_slip_filename || '');
+            const isPdf = isDataUrl
+              ? /^data:application\/pdf/i.test(slipUrl)
+              : /\.pdf$/i.test(record.payment_slip_filename || '');
+
+            const openSlip = () => {
+              if (!isDataUrl) { window.open(slipUrl, '_blank', 'noopener'); return; }
+              try {
+                const [header, b64] = slipUrl.split(',');
+                const mime = (header.match(/data:([^;]+)/)?.[1]) || 'application/octet-stream';
+                const bin = atob(b64);
+                const bytes = new Uint8Array(bin.length);
+                for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+                const blob = new Blob([bytes], { type: mime });
+                const blobUrl = URL.createObjectURL(blob);
+                window.open(blobUrl, '_blank', 'noopener');
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+              } catch {
+                const a = document.createElement('a');
+                a.href = slipUrl;
+                a.download = record.payment_slip_filename || 'payment-slip';
+                a.click();
+              }
+            };
+
+            return (
+              <section className="bg-gray-50 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Payment Slip / Receipt</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                    <svg viewBox="0 0 24 24" className="w-5 h-5 fill-emerald-600">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM6 20V4h7v5h5v11H6z" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{record.payment_slip_filename || 'Payment Slip'}</p>
+                    <p className="text-xs text-gray-500">Uploaded by applicant</p>
+                  </div>
+                  <button onClick={openSlip} type="button"
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer">
+                    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current">
+                      <path d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
+                    </svg>
+                    View
+                  </button>
+                </div>
+                {isImage && (
+                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 bg-white">
+                    <img src={slipUrl} alt="Payment slip" className="max-h-64 w-auto mx-auto" />
+                  </div>
+                )}
+                {isPdf && isDataUrl && (
+                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 bg-white">
+                    <iframe src={slipUrl} title="Payment slip PDF" className="w-full h-96 border-0" />
+                  </div>
+                )}
+              </section>
+            );
+          })()}
+
           <section className="bg-gray-50 rounded-xl p-4 space-y-1">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Course</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Course & Cohort</p>
             <DRow label="Title">{record.course_title || '—'}</DRow>
+            <DRow label="Cohort">
+              {record.cohort_label
+                ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">{record.cohort_label}</span>
+                : '—'}
+            </DRow>
             <DRow label="Full Price">{formatAmount(record.course_price, record.course_currency)}</DRow>
+            {record.cohort_effective_price !== undefined && record.cohort_effective_price !== null && record.cohort_effective_price !== record.course_price && (
+              <DRow label="Cohort Price">
+                <span className="font-bold text-emerald-700">{formatAmount(record.cohort_effective_price, record.course_currency)}</span>
+              </DRow>
+            )}
+            {record.cohort_enrollment_type === 'scholarship' && (
+              <DRow label="Scholarship">
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${
+                  record.cohort_scholarship_type === 'full'
+                    ? 'bg-green-50 text-green-700 border-green-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                  {record.cohort_scholarship_type === 'full'
+                    ? '🎓 Full Scholarship'
+                    : `🎓 ${record.cohort_scholarship_percentage || 0}% Scholarship`}
+                </span>
+              </DRow>
+            )}
+            {record.cohort_enrollment_type === 'free' && (
+              <DRow label="Type">
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">Free Enrollment</span>
+              </DRow>
+            )}
             <DRow label="Payment Mode"><span className="capitalize">{record.course_payment_mode || 'full'}</span></DRow>
             {record.course_enabled_methods && record.course_enabled_methods.length > 0 && (
               <DRow label="Enabled Methods">
                 <div className="flex flex-wrap gap-1 justify-end">
                   {record.course_enabled_methods.map((m) => (
-                    <span key={m} className={`text-xs px-2 py-0.5 rounded-full border ${METHOD_BG[m]}`}>{METHOD_LABELS[m]}</span>
+                    <span key={m} className={`text-xs px-2 py-0.5 rounded-full border ${METHOD_BG[m] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>{METHOD_LABELS[m] || m}</span>
                   ))}
                 </div>
               </DRow>
@@ -299,7 +468,6 @@ function DetailDrawer({
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Applicant</p>
             <DRow label="Phone">{record.phone || '—'}</DRow>
             <DRow label="Country">{record.country || '—'}</DRow>
-            <DRow label="Cohort">{record.cohort_label || '—'}</DRow>
             <DRow label="App Status"><span className="capitalize">{record.status}</span></DRow>
           </section>
 
@@ -342,14 +510,28 @@ function DetailDrawer({
 // ─── Course Breakdown Card ────────────────────────────────────────────────────
 
 function CourseBreakdownCard({ course, onFilter }: { course: CourseBreakdown; onFilter: (id: number) => void }) {
+  const isFreeOrScholarship = course.cohort_enrollment_type === 'free' || course.cohort_enrollment_type === 'scholarship';
   return (
     <div className="bg-white border rounded-xl p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-gray-900 text-sm truncate">{course.course_title}</p>
-          <p className="text-xs text-gray-500 mt-0.5">
-            {formatAmount(course.price, course.currency)} · <span className="capitalize">{course.payment_mode}</span>
-          </p>
+          <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
+            {course.cohort_label && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">{course.cohort_label}</span>
+            )}
+            <span className="text-xs text-gray-500">
+              {course.cohort_effective_price !== undefined && course.cohort_effective_price !== null
+                ? formatAmount(course.cohort_effective_price, course.currency)
+                : formatAmount(course.price, course.currency)}
+              {' \u00b7 '}<span className="capitalize">{course.payment_mode}</span>
+            </span>
+            {isFreeOrScholarship && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-green-50 text-green-700 border border-green-200">
+                {course.cohort_enrollment_type === 'free' ? 'Free' : 'Scholarship'}
+              </span>
+            )}
+          </div>
         </div>
         <button onClick={() => onFilter(course.course_id)}
           className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 px-2 py-1 rounded-lg shrink-0">
@@ -491,11 +673,14 @@ export default function PaymentsDashboard({ role }: Props) {
   };
 
   const exportCSV = () => {
-    const headers = ['ID', 'Name', 'Email', 'Course', 'Method', 'Amount', 'Currency', 'Status', 'Reference', 'Date'];
+    const headers = ['ID', 'Name', 'Email', 'Course', 'Cohort', 'Method', 'Amount', 'Currency', 'Status', 'Reference', 'Scholarship', 'Payment Slip', 'Date'];
     const rows = records.map((r) => [
       r.id, `"${r.full_name}"`, r.email, `"${r.course_title || ''}"`,
-      r.payment_method || '', r.amount_paid ?? '', r.course_currency || '',
+      `"${r.cohort_label || ''}"`,
+      r.payment_method || '', r.amount_paid ?? '', r.payment_currency || r.course_currency || '',
       r.payment_status || '', `"${r.payment_reference || ''}"`,
+      r.cohort_scholarship_type ? `${r.cohort_scholarship_type}${r.cohort_scholarship_percentage ? ` (${r.cohort_scholarship_percentage}%)` : ''}` : '',
+      (r.has_payment_slip || r.payment_slip_url) ? 'Yes' : 'No',
       r.created_at ? new Date(r.created_at).toLocaleDateString() : '',
     ]);
     const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -625,6 +810,8 @@ export default function PaymentsDashboard({ role }: Props) {
               <option value="stripe">Stripe</option>
               <option value="bank_transfer">Bank Transfer</option>
               <option value="mobile_money">Mobile Money</option>
+              <option value="kpay">K-Pay</option>
+              <option value="flutterwave">Flutterwave</option>
             </select>
             <select value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
               className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
@@ -671,7 +858,7 @@ export default function PaymentsDashboard({ role }: Props) {
                 <thead className="bg-gray-50 border-b">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Applicant</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Course</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Course / Cohort</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Method</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Amount</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
@@ -687,17 +874,25 @@ export default function PaymentsDashboard({ role }: Props) {
                         <p className="font-medium text-gray-900">{rec.full_name}</p>
                         <p className="text-xs text-gray-500">{rec.email}</p>
                       </td>
-                      <td className="px-4 py-3 text-gray-600 max-w-36 truncate text-xs">{rec.course_title || '—'}</td>
+                      <td className="px-4 py-3 max-w-44">
+                        <p className="text-gray-600 text-xs truncate">{rec.course_title || '—'}</p>
+                        {rec.cohort_label && (
+                          <span className="inline-block mt-0.5 text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">{rec.cohort_label}</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         {rec.payment_method ? (
                           <div className="flex items-center gap-1.5">
                             <MethodIcon method={rec.payment_method} />
-                            <span className="text-xs text-gray-700 hidden sm:inline">{METHOD_LABELS[rec.payment_method]}</span>
+                            <span className="text-xs text-gray-700 hidden sm:inline">{METHOD_LABELS[rec.payment_method] || rec.payment_method}</span>
+                            {(rec.has_payment_slip || rec.payment_slip_url) && (
+                              <span title="Payment slip attached" className="text-emerald-500">📎</span>
+                            )}
                           </div>
                         ) : <span className="text-gray-400 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3 font-medium text-gray-800 text-xs whitespace-nowrap">
-                        {formatAmount(rec.amount_paid, rec.course_currency)}
+                        {formatAmount(rec.amount_paid, rec.payment_currency || rec.course_currency)}
                         {rec.course_payment_mode === 'partial' && <span className="ml-1 text-gray-400 text-xs font-normal">(part)</span>}
                       </td>
                       <td className="px-4 py-3">

@@ -105,6 +105,8 @@ class CourseApplication(db.Model):
     payment_reference = db.Column(db.String(150), nullable=True)  # Gateway order_id / transfer reference
     amount_paid = db.Column(db.Float, nullable=True)            # Actual amount charged (from course price/partial)
     payment_currency = db.Column(db.String(10), nullable=True)  # e.g. 'USD', 'XAF', 'GHS'
+    payment_slip_url = db.Column(db.Text, nullable=True)              # URL to uploaded payment slip/screenshot (Google Drive or base64 fallback)
+    payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of slip
 
     # ========== Workflow ==========
     status = db.Column(
@@ -189,6 +191,17 @@ class CourseApplication(db.Model):
             "payment_reference": self.payment_reference,
             "amount_paid": self.amount_paid,
             "payment_currency": self.payment_currency,
+            # Never send raw base64 data URLs in list responses — they can be
+            # multiple MB.  Send the URL only when it's a short external link;
+            # otherwise just flag that a slip exists so the frontend can fetch
+            # it on demand via GET /<id>/payment-slip.
+            "payment_slip_url": (
+                self.payment_slip_url
+                if self.payment_slip_url and not self.payment_slip_url.startswith("data:")
+                else None
+            ),
+            "has_payment_slip": bool(self.payment_slip_url),
+            "payment_slip_filename": self.payment_slip_filename,
             "application_window_id": self.application_window_id,
             "cohort_label": self.cohort_label,
             "cohort_start_date": self.cohort_start_date.isoformat() if self.cohort_start_date else None,

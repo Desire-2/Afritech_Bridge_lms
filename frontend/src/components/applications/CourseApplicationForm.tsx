@@ -391,6 +391,12 @@ export default function CourseApplicationForm({
   const [bankTransferInfo, setBankTransferInfo] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  // Payment slip upload state
+  const [paymentSlipFile, setPaymentSlipFile] = useState<File | null>(null);
+  const [paymentSlipUploading, setPaymentSlipUploading] = useState(false);
+  const [paymentSlipUrl, setPaymentSlipUrl] = useState<string | null>(null);
+  const [paymentSlipError, setPaymentSlipError] = useState<string | null>(null);
+
   // Flutterwave inline checkout modal
   const [showFwModal, setShowFwModal] = useState(false);
 
@@ -1012,6 +1018,43 @@ export default function CourseApplicationForm({
       setError(err.message || 'Payment verification failed');
     } finally {
       setPaymentLoading(false);
+    }
+  };
+
+  // Upload payment slip for bank transfer
+  const handlePaymentSlipUpload = async (file: File) => {
+    setPaymentSlipFile(file);
+    setPaymentSlipError(null);
+    setPaymentSlipUploading(true);
+
+    // We need an application ID to attach the slip to
+    const appId = savedDraftId || applicationId;
+    if (!appId) {
+      setPaymentSlipError('Please save your application first before uploading a payment slip.');
+      setPaymentSlipUploading(false);
+      return;
+    }
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const emailParam = formData.email ? `?email=${encodeURIComponent(formData.email)}` : '';
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/applications/${appId}/upload-payment-slip${emailParam}`,
+        { method: 'POST', body: fd }
+      );
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+
+      setPaymentSlipUrl(data.slip_url);
+      setPaymentSlipError(null);
+    } catch (err: any) {
+      setPaymentSlipError(err.message || 'Failed to upload payment slip');
+      setPaymentSlipUrl(null);
+    } finally {
+      setPaymentSlipUploading(false);
     }
   };
 
@@ -2647,13 +2690,73 @@ export default function CourseApplicationForm({
                       )}
                       <div className="space-y-1.5">
                         <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">How to complete payment:</p>
-                        {['Copy the account number above','Log in to your bank app or visit a branch','Make a transfer for the exact course fee','Use your unique reference as the payment narration','Screenshot your receipt, then click "I’ve Completed Payment"'].map((step, i) => (
+                        {['Copy the account number above','Log in to your bank app or visit a branch','Make a transfer for the exact course fee','Use your unique reference as the payment narration','Upload your receipt below, then click "I\'ve Completed Payment"'].map((step, i) => (
                           <div key={i} className="flex items-start gap-2">
                             <span className="flex-shrink-0 w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
                             <p className="text-xs text-gray-600">{step}</p>
                           </div>
                         ))}
                       </div>
+
+                      {/* Payment Slip Upload */}
+                      {paymentReference && (
+                        <div className="bg-white rounded-lg border-2 border-dashed border-emerald-300 p-4">
+                          <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide mb-2">📎 Upload Payment Slip / Screenshot</p>
+                          {paymentSlipUrl ? (
+                            <div className="flex items-center gap-3 bg-emerald-50 p-3 rounded-lg border border-emerald-200">
+                              <svg viewBox="0 0 24 24" className="w-8 h-8 text-emerald-600 shrink-0 fill-current">
+                                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                              </svg>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold text-emerald-800">Slip uploaded successfully!</p>
+                                <p className="text-xs text-emerald-600 truncate">{paymentSlipFile?.name}</p>
+                              </div>
+                              <button type="button" onClick={() => { setPaymentSlipUrl(null); setPaymentSlipFile(null); }}
+                                className="text-xs text-emerald-600 hover:text-emerald-800 underline shrink-0">Replace</button>
+                            </div>
+                          ) : (
+                            <>
+                              <label className="flex flex-col items-center justify-center cursor-pointer py-4 hover:bg-emerald-50/50 rounded-lg transition-colors group">
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*,.pdf"
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) handlePaymentSlipUpload(f);
+                                  }}
+                                  disabled={paymentSlipUploading}
+                                />
+                                {paymentSlipUploading ? (
+                                  <div className="flex items-center gap-2 text-emerald-600">
+                                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                    </svg>
+                                    <span className="text-sm font-medium">Uploading…</span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-emerald-400 group-hover:text-emerald-600 transition-colors mb-1 fill-current">
+                                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM6 20V4h7v5h5v11H6z" />
+                                    </svg>
+                                    <p className="text-sm font-medium text-gray-700 group-hover:text-emerald-700">
+                                      Click to upload payment slip
+                                    </p>
+                                    <p className="text-xs text-gray-400 mt-0.5">PNG, JPG, PDF — max 10 MB</p>
+                                  </>
+                                )}
+                              </label>
+                              {paymentSlipFile && !paymentSlipUrl && !paymentSlipUploading && (
+                                <p className="text-xs text-gray-500 mt-1 text-center">Selected: {paymentSlipFile.name}</p>
+                              )}
+                            </>
+                          )}
+                          {paymentSlipError && (
+                            <p className="text-xs text-red-600 mt-2 bg-red-50 p-2 rounded border border-red-200">{paymentSlipError}</p>
+                          )}
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div className="text-center py-4">

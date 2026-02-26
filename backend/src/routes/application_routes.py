@@ -4249,11 +4249,195 @@ def verify_payment():
         }), 500
 
 
+# ============================================================
+# PAYMENT SLIP / SCREENSHOT  —  SERVE & UPLOAD
+# ============================================================
+
+@application_bp.route("/<int:application_id>/payment-slip", methods=["GET"])
+@jwt_required()
+def get_payment_slip(application_id):
+    """
+    Return the payment slip URL (or serve the base64 content) for one
+    application.  This is intentionally a separate endpoint so that the
+    large base64 payload is NOT included in every list response.
+    """
+    application = CourseApplication.query.get(application_id)
+    if not application:
+        return jsonify({"error": "Application not found"}), 404
+
+    if not application.payment_slip_url:
+        return jsonify({"error": "No payment slip uploaded for this application"}), 404
+
+    url = application.payment_slip_url
+
+    # If it's a normal URL (Google Drive), just return it
+    if not url.startswith("data:"):
+        return jsonify({
+            "slip_url": url,
+            "slip_filename": application.payment_slip_filename,
+        }), 200
+
+    # For base64 data URIs — return inline so the frontend can render them
+    # directly (it's smaller than re-encoding to multipart).
+    return jsonify({
+        "slip_url": url,
+        "slip_filename": application.payment_slip_filename,
+    }), 200
+
+
+@application_bp.route("/<int:application_id>/upload-payment-slip", methods=["POST"])
+def upload_payment_slip(application_id):
+    """
+    Upload a bank transfer payment slip / screenshot for an application.
+    No auth required — the applicant may not have an LMS account yet.
+    Uses Google Drive for storage. Falls back to base64 data-URL when
+    Google Drive is not configured.
+
+    Expects: multipart/form-data with field name 'file'
+    Optional query param: ?email=<applicant_email> (for verification)
+    """
+    application = CourseApplication.query.get(application_id)
+    if not application:
+        return jsonify({"error": "Application not found"}), 404
+
+    # Optional email verification — prevent random uploads
+    supplied_email = request.args.get("email") or (request.form.get("email") if request.form else None)
+    if supplied_email and supplied_email.lower().strip() != (application.email or "").lower().strip():
+        return jsonify({"error": "Email does not match the application"}), 403
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded. Please attach a payment slip."}), 400
+
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({"error": "Empty file"}), 400
+
+    # Validate file type (images and PDF only)
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'heic', 'heif'}
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    if ext not in ALLOWED_EXTENSIONS:
+        return jsonify({
+            "error": f"Unsupported file type '.{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+        }), 400
+
+    # Limit file size (10 MB)
+    MAX_SIZE = 10 * 1024 * 1024
+    file.seek(0, 2)  # Seek to end
+    size = file.tell()
+    file.seek(0)     # Reset
+    if size > MAX_SIZE:
+        return jsonify({"error": "File too large. Maximum 10 MB."}), 400
+
+    mime_type = file.content_type or 'application/octet-stream'
+    original_filename = file.filename
+
+    try:
+        # Try Google Drive upload
+        from ..utils.google_drive_service import GoogleDriveService
+        drive_service = GoogleDriveService()
+
+        slip_url = None
+        file_bytes = None
+
+        if drive_service.is_configured:
+            from io import BytesIO
+            import os as _os
+
+            file_bytes = file.read()
+            file_data = BytesIO(file_bytes)
+
+            # Use a dedicated payment-slips folder
+            root_folder_id = _os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
+            if not root_folder_id:
+                raise ValueError("GOOGLE_DRIVE_ROOT_FOLDER_ID not configured")
+
+            # Create/get Payment_Slips folder
+            slips_folder_id = drive_service._get_or_create_folder(
+                'Payment_Slips', root_folder_id
+            )
+
+            # Generate unique filename
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            safe_name = f"slip_{application_id}_{timestamp}_{original_filename}"
+
+            from googleapiclient.http import MediaIoBaseUpload as _MediaUpload
+            from googleapiclient.errors import HttpError as _HttpError
+
+            file_metadata = {
+                'name': safe_name,
+                'parents': [slips_folder_id],
+                'description': f"Payment slip for application #{application_id} ({application.full_name})"
+            }
+            media = _MediaUpload(file_data, mimetype=mime_type, resumable=False)
+
+            try:
+                uploaded = drive_service.service.files().create(
+                    body=file_metadata,
+                    media_body=media,
+                    fields='id,name,webViewLink,webContentLink',
+                    supportsAllDrives=True,
+                ).execute()
+
+                # Make file viewable by anyone with the link
+                try:
+                    drive_service.service.permissions().create(
+                        fileId=uploaded['id'],
+                        body={'type': 'anyone', 'role': 'reader'},
+                        supportsAllDrives=True,
+                    ).execute()
+                except Exception:
+                    pass  # Permission setting failure is non-fatal
+
+                slip_url = uploaded.get('webViewLink') or uploaded.get('webContentLink') or f"https://drive.google.com/file/d/{uploaded['id']}/view"
+            except _HttpError as drive_err:
+                # Catch quota / permission errors and fall back to base64 storage
+                logger.warning(
+                    f"Google Drive upload failed for application {application_id}, "
+                    f"falling back to base64 storage: {drive_err}"
+                )
+
+        # Fallback: store as base64 data URL when Drive is unavailable or failed
+        if slip_url is None:
+            import base64
+            raw = file_bytes if file_bytes is not None else file.read()
+            data = base64.b64encode(raw).decode('utf-8')
+            slip_url = f"data:{mime_type};base64,{data}"
+
+    except Exception as e:
+        logger.error(f"Payment slip upload failed for application {application_id}: {e}", exc_info=True)
+        return jsonify({"error": f"File upload failed: {str(e)}"}), 500
+
+    # Save to application record
+    application.payment_slip_url = slip_url
+    application.payment_slip_filename = original_filename
+
+    # Also add a note
+    note_entry = f"[{datetime.utcnow().isoformat()}] Payment slip uploaded: {original_filename}"
+    application.admin_notes = (
+        f"{application.admin_notes}\n{note_entry}".strip()
+        if application.admin_notes
+        else note_entry
+    )
+
+    db.session.commit()
+
+    return jsonify({
+        "message": "Payment slip uploaded successfully",
+        "application_id": application_id,
+        "slip_url": slip_url,
+        "slip_filename": original_filename,
+    }), 200
+
+
 @application_bp.route("/<int:application_id>/confirm-bank-transfer", methods=["POST"])
 @jwt_required()
 def confirm_bank_transfer(application_id):
     """
     Admin/Instructor endpoint to manually confirm a bank transfer payment.
+
+    When the application is still a draft (is_draft=True), confirming the
+    bank transfer also auto-submits the application (is_draft → False,
+    status → 'pending') so it appears in the review queue.
 
     Body (JSON):
       notes : str  (optional) – admin confirmation note
@@ -4277,7 +4461,17 @@ def confirm_bank_transfer(application_id):
     notes = data.get("notes", "")
 
     application.payment_status = "confirmed"
+
+    # Auto-submit draft applications on payment confirmation
+    was_draft = application.is_draft
+    if application.is_draft:
+        application.is_draft = False
+        if application.status not in ("approved", "rejected"):
+            application.status = "pending"
+
     note_entry = f"[{datetime.utcnow().isoformat()}] Bank transfer confirmed by {current_user.email}"
+    if was_draft:
+        note_entry += " (draft auto-submitted)"
     if notes:
         note_entry += f": {notes}"
     application.admin_notes = (
@@ -4289,10 +4483,12 @@ def confirm_bank_transfer(application_id):
     db.session.commit()
 
     return jsonify({
-        "message": "Bank transfer confirmed successfully",
+        "message": "Bank transfer confirmed successfully" + (" — application auto-submitted for review" if was_draft else ""),
         "application_id": application_id,
         "payment_status": application.payment_status,
         "payment_reference": application.payment_reference,
+        "is_draft": application.is_draft,
+        "application_status": application.status,
     }), 200
 
 
@@ -4366,9 +4562,28 @@ def get_payment_summary():
 
     # ── helper: get amount_paid and currency for an application ──────────────
     def _get_amount_and_currency(a):
+        """Cohort-aware pricing: use ApplicationWindow if available, else course defaults."""
         course = a.course
         if not course:
             return 0.0, 'USD'
+
+        # Try cohort-level pricing via application window
+        window = a.application_window
+        if window:
+            effective_price = window.get_effective_price()
+            currency = window.get_effective_currency()
+            payment_mode = window.get_effective_payment_mode()
+            if effective_price is not None:
+                if payment_mode == 'partial':
+                    pa = window.partial_payment_amount or (course.partial_payment_amount if course else None)
+                    pp = window.partial_payment_percentage or (course.partial_payment_percentage if course else None)
+                    if pa:
+                        return pa, currency
+                    elif pp and effective_price:
+                        return round(effective_price * pp / 100, 2), currency
+                return effective_price or 0.0, currency
+
+        # Fallback to course-level pricing
         currency = course.currency or 'USD'
         if course.payment_mode == 'partial':
             if course.partial_payment_amount:
@@ -4435,6 +4650,9 @@ def get_payment_summary():
                     'pending_bank': 0,
                     'failed': 0,
                     'revenue': {},   # { currency: amount }
+                    'cohort_label': a.cohort_label,
+                    'cohort_effective_price': (a.application_window.get_effective_price() if a.application_window else None),
+                    'cohort_enrollment_type': (a.application_window.get_effective_enrollment_type() if a.application_window else None),
                 }
             entry = by_course[cid]
             entry['total'] += 1
@@ -4453,14 +4671,21 @@ def get_payment_summary():
     recent = []
     for app in recent_q.all():
         amount, currency = _get_amount_and_currency(app)
+        window = app.application_window
         record = {
             **app.to_dict(include_sensitive=True),
             'course_title': app.course.title if app.course else None,
             'course_price': app.course.price if app.course else None,
             'course_currency': currency,
-            'amount_paid': amount,
-            'course_payment_mode': (app.course.payment_mode or 'full') if app.course else 'full',
-            'course_enabled_methods': app.course._get_payment_methods() if app.course else [],
+            'amount_paid': app.amount_paid if app.amount_paid else amount,
+            'course_payment_mode': (window.get_effective_payment_mode() if window else (app.course.payment_mode or 'full')) if app.course else 'full',
+            'course_enabled_methods': (window.get_effective_payment_methods() if window else app.course._get_payment_methods()) if app.course else [],
+            # Cohort-aware fields
+            'cohort_label': app.cohort_label or (window.cohort_label if window else None),
+            'cohort_effective_price': window.get_effective_price() if window else (app.course.price if app.course else None),
+            'cohort_scholarship_type': window.scholarship_type if window else None,
+            'cohort_scholarship_percentage': window.scholarship_percentage if window else None,
+            'cohort_enrollment_type': window.get_effective_enrollment_type() if window else (app.course.enrollment_type if app.course else None),
         }
         recent.append(record)
 
@@ -4516,10 +4741,19 @@ def update_payment_status_endpoint(application_id):
     old_status = application.payment_status
     application.payment_status = new_status
 
+    # Auto-submit draft applications when payment is confirmed or completed
+    was_draft = application.is_draft
+    if new_status in ("confirmed", "completed") and application.is_draft:
+        application.is_draft = False
+        if application.status not in ("approved", "rejected"):
+            application.status = "pending"
+
     note_entry = (
         f"[{datetime.utcnow().isoformat()}] Payment status changed "
         f"{old_status} → {new_status} by {current_user.email}"
     )
+    if was_draft and new_status in ("confirmed", "completed"):
+        note_entry += " (draft auto-submitted)"
     if notes:
         note_entry += f": {notes}"
     application.admin_notes = (
@@ -4531,8 +4765,9 @@ def update_payment_status_endpoint(application_id):
     db.session.commit()
 
     return jsonify({
-        "message": "Payment status updated",
+        "message": "Payment status updated" + (" — application auto-submitted for review" if was_draft and new_status in ("confirmed", "completed") else ""),
         "application_id": application_id,
         "old_status": old_status,
         "payment_status": application.payment_status,
+        "is_draft": application.is_draft,
     }), 200
