@@ -107,6 +107,11 @@ class CourseApplication(db.Model):
     payment_currency = db.Column(db.String(10), nullable=True)  # e.g. 'USD', 'XAF', 'GHS'
     payment_slip_url = db.Column(db.Text, nullable=True)              # URL to uploaded payment slip/screenshot (Google Drive or base64 fallback)
     payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of slip
+    
+    # ========== Payment Reminder Tracking ==========
+    last_payment_reminder_sent = db.Column(db.DateTime, nullable=True)  # When last reminder was sent
+    last_payment_reminder_type = db.Column(db.String(20), nullable=True)  # 'first' | 'urgent' | 'final'
+    payment_reminder_count = db.Column(db.Integer, default=0)  # Total number of reminders sent
 
     # ========== Workflow ==========
     status = db.Column(

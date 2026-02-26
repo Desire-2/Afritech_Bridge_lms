@@ -28,6 +28,13 @@ from ..utils.email_templates import (
     application_status_withdrawn_email,
     custom_application_email
 )
+from ..utils.payment_notifications import (
+    send_payment_pending_notification,
+    send_payment_confirmation_notification,
+    send_payment_failed_notification,
+    get_payment_info_from_application_window,
+    get_payment_info_from_course
+)
 import pandas as pd
 import io
 import json
@@ -636,6 +643,56 @@ def save_application_draft():
         evaluate_application(app)
 
         db.session.commit()
+        
+        # ──── Send email notification for payment-required courses ────
+        try:
+            # Check if course requires payment (paid or scholarship with payment)
+            requires_payment = False
+            payment_info = {}
+            
+            # Try to get payment info from application window first
+            if open_window:
+                payment_info = get_payment_info_from_application_window(open_window)
+                enrollment_type = payment_info.get('enrollment_type', 'free')
+                amount = payment_info.get('amount', 0)
+                
+                # Requires payment if it's paid or scholarship with amount > 0
+                requires_payment = (
+                    (enrollment_type == 'paid' and amount > 0) or
+                    (enrollment_type == 'scholarship' and amount > 0)
+                )
+            else:
+                # Fall back to course-level payment info
+                payment_info = get_payment_info_from_course(course)
+                enrollment_type = payment_info.get('enrollment_type', 'free')
+                amount = payment_info.get('amount', 0)
+                requires_payment = (
+                    (enrollment_type == 'paid' and amount > 0) or
+                    (enrollment_type == 'scholarship' and amount > 0)
+                )
+            
+            # Send email notification if payment is required
+            if requires_payment and amount > 0:
+                logger.info(f"📧 Sending payment pending email for draft application #{app.id}")
+                email_sent = send_payment_pending_notification(
+                    application=app,
+                    course_title=course.title,
+                    payment_info=payment_info
+                )
+                
+                if email_sent:
+                    logger.info(f"✅ Payment pending email sent to {app.email} for draft application #{app.id}")
+                else:
+                    logger.warning(f"⚠️ Failed to send payment pending email to {app.email}")
+            else:
+                logger.info(f"ℹ️ No payment required for course {course.id}, skipping payment email")
+                
+        except Exception as email_error:
+            # Log error but don't fail the draft save
+            logger.error(f"❌ Error sending payment pending email: {str(email_error)}")
+            import traceback
+            traceback.print_exc()
+        # ────────────────────────────────────────────────────────────────
 
         return jsonify({
             "message": "Application draft saved successfully",
@@ -4481,6 +4538,35 @@ def confirm_bank_transfer(application_id):
     )
 
     db.session.commit()
+    
+    # ──── Send payment confirmation email ────
+    try:
+        course = Course.query.get(application.course_id)
+        if course:
+            logger.info(f"📧 Sending payment confirmation email for application #{application_id}")
+            
+            payment_details = {
+                'amount_paid': application.amount_paid or 0,
+                'currency': application.payment_currency or 'USD',
+                'payment_method': 'Bank Transfer',
+                'payment_reference': application.payment_reference or f'APP-{application_id}',
+                'payment_date': datetime.utcnow()
+            }
+            
+            email_sent = send_payment_confirmation_notification(
+                application=application,
+                course_title=course.title,
+                payment_details=payment_details
+            )
+            
+            if email_sent:
+                logger.info(f"✅ Payment confirmation email sent to {application.email}")
+            else:
+                logger.warning(f"⚠️ Failed to send payment confirmation email to {application.email}")
+    except Exception as email_error:
+        # Log but don't fail the confirmation
+        logger.error(f"❌ Error sending payment confirmation email: {str(email_error)}")
+    # ────────────────────────────────────────
 
     return jsonify({
         "message": "Bank transfer confirmed successfully" + (" — application auto-submitted for review" if was_draft else ""),
@@ -4763,6 +4849,57 @@ def update_payment_status_endpoint(application_id):
     )
 
     db.session.commit()
+    
+    # ──── Send appropriate email notification based on status change ────
+    try:
+        course = Course.query.get(application.course_id)
+        if course and old_status != new_status:
+            # Payment confirmed or completed - send confirmation email
+            if new_status in ("confirmed", "completed"):
+                logger.info(f"📧 Sending payment confirmation email for application #{application_id}")
+                
+                payment_details = {
+                    'amount_paid': application.amount_paid or 0,
+                    'currency': application.payment_currency or 'USD',
+                    'payment_method': application.payment_method or 'Payment Gateway',
+                    'payment_reference': application.payment_reference or f'APP-{application_id}',
+                    'payment_date': datetime.utcnow()
+                }
+                
+                email_sent = send_payment_confirmation_notification(
+                    application=application,
+                    course_title=course.title,
+                    payment_details=payment_details
+                )
+                
+                if email_sent:
+                    logger.info(f"✅ Payment confirmation email sent to {application.email}")
+                else:
+                    logger.warning(f"⚠️ Failed to send payment confirmation email")
+            
+            # Payment failed - send failure email
+            elif new_status == "failed":
+                logger.info(f"📧 Sending payment failure email for application #{application_id}")
+                
+                failure_reason = notes or "Payment could not be processed. Please try again or contact support."
+                
+                email_sent = send_payment_failed_notification(
+                    application=application,
+                    course_title=course.title,
+                    failure_reason=failure_reason
+                )
+                
+                if email_sent:
+                    logger.info(f"✅ Payment failure email sent to {application.email}")
+                else:
+                    logger.warning(f"⚠️ Failed to send payment failure email")
+                    
+    except Exception as email_error:
+        # Log but don't fail the status update
+        logger.error(f"❌ Error sending payment notification email: {str(email_error)}")
+        import traceback
+        traceback.print_exc()
+    # ────────────────────────────────────────────────────────────────
 
     return jsonify({
         "message": "Payment status updated" + (" — application auto-submitted for review" if was_draft and new_status in ("confirmed", "completed") else ""),
@@ -4771,3 +4908,171 @@ def update_payment_status_endpoint(application_id):
         "payment_status": application.payment_status,
         "is_draft": application.is_draft,
     }), 200
+
+
+# ============================================================
+# PAYMENT REMINDER SCHEDULER ENDPOINTS
+# ============================================================
+
+@application_bp.route("/payment-reminders/run", methods=["POST"])
+@jwt_required()
+def run_payment_reminder_scheduler():
+    """
+    Admin/Instructor: Manually trigger the payment reminder scheduler
+    
+    Body (JSON):
+      dry_run : bool (optional) – if true, only preview without sending emails
+    
+    Returns summary of reminders sent
+    """
+    from flask_jwt_extended import get_jwt_identity
+    from ..models.user_models import User
+    from ..services.payment_reminder_scheduler import PaymentReminderScheduler
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+    
+    data = request.get_json(silent=True) or {}
+    dry_run = data.get("dry_run", False)
+    
+    try:
+        logger.info(
+            f"🚀 Payment reminder scheduler triggered by {current_user.email} "
+            f"(dry_run={dry_run})"
+        )
+        
+        result = PaymentReminderScheduler.run_scheduler(dry_run=dry_run)
+        
+        if result.get('status') == 'success':
+            return jsonify({
+                "message": "Payment reminder scheduler completed successfully",
+                "dry_run": dry_run,
+                "summary": {
+                    "total_checked": result.get('total_checked', 0),
+                    "reminders_needed": result.get('reminders_needed', 0),
+                    "sent": result.get('sent', 0),
+                    "failed": result.get('failed', 0),
+                    "skipped": result.get('skipped', 0),
+                    "duration_seconds": result.get('duration_seconds', 0)
+                },
+                "errors": result.get('errors', []),
+                "applications": result.get('applications', []) if dry_run else None
+            }), 200
+        else:
+            return jsonify({
+                "error": "Payment reminder scheduler failed",
+                "details": result.get('error', 'Unknown error'),
+                "duration_seconds": result.get('duration_seconds', 0)
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"❌ Payment reminder scheduler API error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": "Failed to run payment reminder scheduler",
+            "details": str(e)
+        }), 500
+
+
+@application_bp.route("/<int:application_id>/send-payment-reminder", methods=["POST"])
+@jwt_required()
+def send_payment_reminder_to_application(application_id):
+    """
+    Admin/Instructor: Manually send a payment reminder to a specific application
+    
+    Returns confirmation of email sent
+    """
+    from flask_jwt_extended import get_jwt_identity
+    from ..models.user_models import User
+    from ..services.payment_reminder_scheduler import PaymentReminderScheduler
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+    
+    try:
+        logger.info(
+            f"📧 Manual payment reminder triggered for application #{application_id} "
+            f"by {current_user.email}"
+        )
+        
+        result = PaymentReminderScheduler.send_single_reminder(application_id)
+        
+        if result.get('status') == 'success':
+            return jsonify({
+                "message": result.get('message'),
+                "application_id": application_id
+            }), 200
+        else:
+            return jsonify({
+                "error": result.get('error', 'Failed to send payment reminder')
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"❌ Manual payment reminder error: {str(e)}")
+        return jsonify({
+            "error": "Failed to send payment reminder",
+            "details": str(e)
+        }), 500
+
+
+@application_bp.route("/payment-reminders/preview", methods=["GET"])
+@jwt_required()
+def preview_payment_reminders():
+    """
+    Admin/Instructor: Preview which applications would receive payment reminders
+    without actually sending any emails
+    
+    Returns list of applications that need reminders
+    """
+    from flask_jwt_extended import get_jwt_identity
+    from ..models.user_models import User
+    from ..services.payment_reminder_scheduler import PaymentReminderScheduler
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+    
+    try:
+        applications_to_remind = PaymentReminderScheduler.get_applications_needing_reminders()
+        
+        preview_data = []
+        for application, course, app_window, days_remaining, reminder_type in applications_to_remind:
+            preview_data.append({
+                "application_id": application.id,
+                "applicant_name": application.full_name,
+                "email": application.email,
+                "course_id": course.id,
+                "course_title": course.title,
+                "days_remaining": days_remaining,
+                "reminder_type": reminder_type,
+                "deadline": (app_window.application_deadline or app_window.cohort_start).isoformat() if (app_window.application_deadline or app_window.cohort_start) else None,
+                "amount_due": application.amount_paid or app_window.cohort_price or course.price or 0,
+                "currency": application.payment_currency or app_window.cohort_currency or course.currency or 'USD',
+                "last_reminder_sent": application.last_payment_reminder_sent.isoformat() if application.last_payment_reminder_sent else None,
+                "last_reminder_type": application.last_payment_reminder_type,
+                "reminder_count": application.payment_reminder_count or 0
+            })
+        
+        return jsonify({
+            "total_count": len(preview_data),
+            "applications": preview_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"❌ Payment reminder preview error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "error": "Failed to preview payment reminders",
+            "details": str(e)
+        }), 500
+
