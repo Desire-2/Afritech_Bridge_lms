@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PaymentMethod = 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe';
+type PaymentMethod = 'paypal' | 'mobile_money' | 'bank_transfer' | 'stripe' | 'kpay' | 'flutterwave';
 type PaymentStatus =
   | 'pending'
   | 'pending_bank_transfer'

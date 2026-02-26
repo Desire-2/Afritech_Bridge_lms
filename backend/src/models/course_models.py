@@ -33,6 +33,7 @@ class Course(db.Model):
     mobile_money_enabled = db.Column(db.Boolean, default=True, nullable=False)  # Mobile Money toggle
     bank_transfer_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Bank transfer toggle
     kpay_enabled = db.Column(db.Boolean, default=True, nullable=False)  # K-Pay gateway toggle (MTN/Airtel MoMo, Visa, SPENN)
+    flutterwave_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Flutterwave gateway toggle (Card, MoMo, Bank, USSD)
     bank_transfer_details = db.Column(db.Text, nullable=True)  # Bank account info for manual transfer
     installment_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Allow installment payments
     installment_count = db.Column(db.Integer, nullable=True)  # Number of installments (2, 3, 4, etc.)
@@ -98,6 +99,8 @@ class Course(db.Model):
             methods.append('mobile_money')
         if self.bank_transfer_enabled:
             methods.append('bank_transfer')
+        if getattr(self, 'flutterwave_enabled', False):
+            methods.append('flutterwave')
 
         return methods if methods else ['kpay']
 
@@ -311,6 +314,7 @@ class Course(db.Model):
             'mobile_money_enabled': self.mobile_money_enabled,
             'bank_transfer_enabled': self.bank_transfer_enabled,
             'kpay_enabled': getattr(self, 'kpay_enabled', True),
+            'flutterwave_enabled': getattr(self, 'flutterwave_enabled', False),
             'bank_transfer_details': self.bank_transfer_details,
             'installment_enabled': self.installment_enabled,
             'installment_count': self.installment_count,
@@ -353,17 +357,39 @@ class ApplicationWindow(db.Model):
     """
     Represents a single application/cohort window for a course.
     A course can have multiple windows (e.g., Jan cohort, Mar cohort).
+    Each cohort can override the course-level payment settings to support
+    different funding models (full scholarship, partial scholarship, paid).
     """
     __tablename__ = 'application_windows'
 
     id = db.Column(db.Integer, primary_key=True)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
     cohort_label = db.Column(db.String(120), nullable=True)
+    description = db.Column(db.Text, nullable=True)  # Description for this cohort
     opens_at = db.Column(db.DateTime, nullable=True)
     closes_at = db.Column(db.DateTime, nullable=True)
     cohort_start = db.Column(db.DateTime, nullable=True)
     cohort_end = db.Column(db.DateTime, nullable=True)
     status_override = db.Column(db.String(20), nullable=True)  # manual override: 'open', 'closed', 'upcoming'
+    max_students = db.Column(db.Integer, nullable=True)  # Capacity limit for this cohort
+
+    # ── Cohort-level payment overrides ──
+    # NULL values mean "inherit from course". Non-NULL = override for this cohort.
+    enrollment_type = db.Column(db.String(20), nullable=True)  # 'free', 'paid', 'scholarship', NULL=inherit
+    price = db.Column(db.Float, nullable=True)  # Override price for this cohort
+    currency = db.Column(db.String(10), nullable=True)  # Override currency
+    scholarship_type = db.Column(db.String(20), nullable=True)  # 'full', 'partial', NULL
+    scholarship_percentage = db.Column(db.Float, nullable=True)  # 0-100, how much tuition is covered
+    payment_mode = db.Column(db.String(20), nullable=True)  # 'full', 'partial', NULL=inherit
+    partial_payment_amount = db.Column(db.Float, nullable=True)
+    partial_payment_percentage = db.Column(db.Float, nullable=True)
+    payment_methods = db.Column(db.Text, nullable=True)  # JSON array, NULL=inherit from course
+    payment_deadline_days = db.Column(db.Integer, nullable=True)
+    require_payment_before_application = db.Column(db.Boolean, nullable=True)  # NULL=inherit
+    installment_enabled = db.Column(db.Boolean, nullable=True)  # NULL=inherit
+    installment_count = db.Column(db.Integer, nullable=True)
+    installment_interval_days = db.Column(db.Integer, nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -394,6 +420,111 @@ class ApplicationWindow(db.Model):
             return "closed"
         return "open"
 
+    def get_effective_enrollment_type(self):
+        """Return the enrollment type, falling back to course setting."""
+        if self.enrollment_type is not None:
+            return self.enrollment_type
+        return self.course.enrollment_type if self.course else 'free'
+
+    def get_effective_price(self):
+        """Return the effective price for this cohort, applying scholarship if applicable."""
+        base_price = self.price if self.price is not None else (self.course.price if self.course else None)
+        etype = self.get_effective_enrollment_type()
+
+        if etype == 'free':
+            return 0.0
+        if etype == 'scholarship':
+            if self.scholarship_type == 'full':
+                return 0.0
+            if self.scholarship_type == 'partial' and self.scholarship_percentage is not None and base_price:
+                discount = base_price * (self.scholarship_percentage / 100.0)
+                return round(base_price - discount, 2)
+        return base_price
+
+    def get_effective_currency(self):
+        return self.currency or (self.course.currency if self.course else 'USD')
+
+    def get_effective_payment_mode(self):
+        # Scholarship enrollment types determine pricing via scholarship_percentage,
+        # so partial-payment mode from the course should NOT leak in.
+        etype = self.get_effective_enrollment_type()
+        if etype in ('free', 'scholarship'):
+            return self.payment_mode or 'full'
+        if self.payment_mode is not None:
+            return self.payment_mode
+        return self.course.payment_mode if self.course else 'full'
+
+    def get_effective_payment_methods(self):
+        """Return payment methods, falling back to course setting."""
+        import json
+        if self.payment_methods:
+            try:
+                parsed = json.loads(self.payment_methods)
+                if isinstance(parsed, list) and parsed:
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return self.course._get_payment_methods() if self.course else ['kpay']
+
+    def get_enrollment_count(self):
+        """Return the number of active enrollments for this cohort."""
+        return self.enrollments.filter(
+            Enrollment.status.in_(['active', 'completed'])
+        ).count()
+
+    def get_payment_summary(self):
+        """Return a cohort-specific payment summary, inheriting from course where not overridden."""
+        etype = self.get_effective_enrollment_type()
+        effective_price = self.get_effective_price()
+        currency = self.get_effective_currency()
+        mode = self.get_effective_payment_mode()
+        methods = self.get_effective_payment_methods()
+
+        # Inherit installment settings
+        inst_enabled = self.installment_enabled if self.installment_enabled is not None else (
+            self.course.installment_enabled if self.course else False)
+        inst_count = self.installment_count or (self.course.installment_count if self.course else None)
+        inst_interval = self.installment_interval_days or (self.course.installment_interval_days if self.course else None)
+        req_before = self.require_payment_before_application if self.require_payment_before_application is not None else (
+            self.course.require_payment_before_application if self.course else False)
+        deadline = self.payment_deadline_days if self.payment_deadline_days is not None else (
+            self.course.payment_deadline_days if self.course else None)
+
+        # Partial payment calc — only for 'paid' enrollment types.
+        # Scholarship cohorts already have pricing via scholarship_percentage;
+        # we must NOT inherit partial-payment settings from the course on top.
+        pp_amount = self.partial_payment_amount or (self.course.partial_payment_amount if self.course else None)
+        pp_pct = self.partial_payment_percentage or (self.course.partial_payment_percentage if self.course else None)
+
+        amount_due_now = effective_price
+        remaining = 0.0
+        if etype == 'paid' and mode == 'partial' and effective_price:
+            if pp_amount and pp_amount < effective_price:
+                amount_due_now = pp_amount
+                remaining = round(effective_price - pp_amount, 2)
+            elif pp_pct and pp_pct < 100:
+                amount_due_now = round(effective_price * pp_pct / 100, 2)
+                remaining = round(effective_price - amount_due_now, 2)
+
+        return {
+            'required': etype == 'paid' or (etype == 'scholarship' and self.scholarship_type == 'partial'),
+            'enrollment_type': etype,
+            'scholarship_type': self.scholarship_type,
+            'scholarship_percentage': self.scholarship_percentage,
+            'total_price': effective_price,
+            'original_price': self.price if self.price is not None else (self.course.price if self.course else None),
+            'currency': currency,
+            'payment_mode': mode,
+            'amount_due_now': amount_due_now,
+            'remaining_balance': remaining,
+            'require_payment_before_application': req_before,
+            'payment_deadline_days': deadline,
+            'enabled_methods': methods,
+            'installment_enabled': inst_enabled,
+            'installment_count': inst_count if inst_enabled else None,
+            'installment_interval_days': inst_interval if inst_enabled else None,
+        }
+
     def to_dict(self, now=None):
         current_time = now or datetime.now(timezone.utc)
 
@@ -415,11 +546,34 @@ class ApplicationWindow(db.Model):
             "status": status,
             "reason": reason,
             "cohort_label": self.cohort_label,
+            "description": self.description,
             "opens_at": _iso(self.opens_at),
             "closes_at": _iso(self.closes_at),
             "cohort_start": _iso(self.cohort_start),
             "cohort_end": _iso(self.cohort_end),
             "status_override": self.status_override,
+            "max_students": self.max_students,
+            "enrollment_count": self.get_enrollment_count(),
+            # Payment overrides (NULL = inheriting from course)
+            "enrollment_type": self.enrollment_type,
+            "price": self.price,
+            "currency": self.currency,
+            "scholarship_type": self.scholarship_type,
+            "scholarship_percentage": self.scholarship_percentage,
+            "payment_mode": self.payment_mode,
+            "partial_payment_amount": self.partial_payment_amount,
+            "partial_payment_percentage": self.partial_payment_percentage,
+            "payment_methods": self.get_effective_payment_methods() if self.payment_methods else None,
+            "payment_deadline_days": self.payment_deadline_days,
+            "require_payment_before_application": self.require_payment_before_application,
+            "installment_enabled": self.installment_enabled,
+            "installment_count": self.installment_count,
+            "installment_interval_days": self.installment_interval_days,
+            # Computed effective values (after inheritance + scholarship)
+            "effective_enrollment_type": self.get_effective_enrollment_type(),
+            "effective_price": self.get_effective_price(),
+            "effective_currency": self.get_effective_currency(),
+            "payment_summary": self.get_payment_summary(),
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

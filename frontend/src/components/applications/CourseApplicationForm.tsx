@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import applicationService from '@/services/api/application.service';
 import { ApplicationSubmitData } from '@/services/api/types';
 import { Course } from '@/services/api/types';
+import type { ApplicationWindowData } from '@/types/api';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,12 +17,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTriangle, User, Mail, Phone, Globe, GraduationCap, Briefcase, Monitor, Target, Clock, Award, Sparkles, TrendingUp, Shield, Zap, CreditCard, Copy, Check, Building2 } from 'lucide-react';
 import { AutoSaveIndicator, DraftRestoreBanner } from '@/components/ui/form-components';
 import { CurrencySelector, ConvertedBadge } from '@/components/ui/CurrencyDisplay';
+import FlutterwaveCheckoutModal from '@/components/payments/FlutterwaveCheckoutModal';
 import type { AutoSaveStatus } from '@/hooks/useAutoSave';
 
 interface CourseApplicationFormProps {
   courseId: number;
   courseTitle?: string;
   courseData?: Course; // Full course data passed from parent
+  selectedWindow?: ApplicationWindowData; // Currently selected cohort/application window
   onSuccess?: (applicationId: number) => void;
   onCancel?: () => void;
 }
@@ -356,6 +359,7 @@ export default function CourseApplicationForm({
   courseId,
   courseTitle,
   courseData,
+  selectedWindow,
   onSuccess,
   onCancel,
 }: CourseApplicationFormProps) {
@@ -386,6 +390,9 @@ export default function CourseApplicationForm({
   // Informational message after bank transfer "I've Completed Payment"
   const [bankTransferInfo, setBankTransferInfo] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Flutterwave inline checkout modal
+  const [showFwModal, setShowFwModal] = useState(false);
 
   // MTN MoMo: real-time phone number validation
   const [momoValidation, setMomoValidation] = useState<{
@@ -426,28 +433,17 @@ export default function CourseApplicationForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Set default payment method to the first enabled method when course data loads.
-  // Runs whenever courseData changes so it always reflects current course settings.
+  // Set default payment method to the first enabled method when course/cohort data loads.
+  // Runs whenever courseData or selectedWindow changes.
   useEffect(() => {
-    const requiresPayment =
-      courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
-    if (!requiresPayment || !courseData) return;
-
-    // Use payment_summary.enabled_methods (authoritative server-side list) or
-    // fall back to the payment_methods array serialised in the course object.
-    const enabledMethods: string[] =
-      (courseData.payment_summary?.enabled_methods && courseData.payment_summary.enabled_methods.length > 0)
-        ? courseData.payment_summary.enabled_methods
-        : (courseData.payment_methods && courseData.payment_methods.length > 0
-            ? courseData.payment_methods
-            : ['kpay']);
+    if (!effectiveNeedsPayment) return;
 
     // Reset to first available method if the currently selected one is not enabled
-    if (!enabledMethods.includes(formData.payment_method as string)) {
-      handleInputChange('payment_method', enabledMethods[0]);
+    if (!effectiveEnabledMethods.includes(formData.payment_method as string)) {
+      handleInputChange('payment_method', effectiveEnabledMethods[0]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseData]);
+  }, [courseData, selectedWindow]);
   
   // Duplicate check states
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
@@ -528,10 +524,45 @@ export default function CourseApplicationForm({
   // Tracks if we're in the initial mount tick to skip saving the just-loaded draft
   const initialMountRef = useRef(true);
 
+  // ── Cohort-aware effective payment values ────────────────────────────────
+  // Prefer values from selectedWindow (cohort-level) over courseData (course-level).
+  // The backend payment_summary on applicationWindow already factors in
+  // scholarship, partial payment, etc. correctly at the cohort level.
+  const wps = selectedWindow?.payment_summary;
+  const effectiveEnrollmentType =
+    wps?.enrollment_type || selectedWindow?.effective_enrollment_type || courseData?.enrollment_type;
+  const effectiveCurrency =
+    wps?.currency || selectedWindow?.effective_currency || courseData?.currency || 'USD';
+  const effectiveOriginalPrice =
+    wps?.original_price ?? wps?.total_price ?? selectedWindow?.effective_price ?? courseData?.price ?? 0;
+  const effectivePaymentMode =
+    wps?.payment_mode || selectedWindow?.payment_mode || courseData?.payment_mode || 'full';
+  const effectiveAmountDue =
+    wps?.amount_due_now ?? effectiveOriginalPrice;
+  const effectiveRemainingBalance =
+    wps?.remaining_balance ?? (effectiveOriginalPrice > effectiveAmountDue ? effectiveOriginalPrice - effectiveAmountDue : null);
+  const effectivePaymentSummary = wps ?? courseData?.payment_summary ?? null;
+  const effectiveEnabledMethods: string[] =
+    (wps?.enabled_methods && wps.enabled_methods.length > 0)
+      ? wps.enabled_methods
+      : (courseData?.payment_summary?.enabled_methods && courseData.payment_summary.enabled_methods.length > 0)
+        ? courseData.payment_summary.enabled_methods
+        : (courseData?.payment_methods && courseData.payment_methods.length > 0
+            ? courseData.payment_methods
+            : ['kpay']);
+  const effectiveRequireBeforeApp =
+    wps?.require_payment_before_application ?? selectedWindow?.require_payment_before_application ?? courseData?.require_payment_before_application ?? false;
+  const effectiveScholarshipPct =
+    wps?.scholarship_percentage ?? selectedWindow?.scholarship_percentage ?? null;
+  // Whether this cohort actually requires a payment step
+  const effectiveNeedsPayment =
+    effectiveEnrollmentType === 'paid' ||
+    (effectiveEnrollmentType === 'scholarship' && effectiveAmountDue > 0) ||
+    effectiveRequireBeforeApp === true;
+
   // ── Payment-as-next-step flow ────────────────────────────────────────────
-  // True when this course requires payment (paid enrollment or require_payment_before_application)
-  const requiresPaymentStep =
-    courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application === true;
+  // True when this course/cohort requires payment (paid enrollment, partial scholarship, or require_payment_before_application)
+  const requiresPaymentStep = effectiveNeedsPayment;
   // Total form sections: 6 for free/scholarship, 7 for courses requiring payment
   const totalSections = requiresPaymentStep ? 7 : 6;
 
@@ -734,8 +765,7 @@ export default function CourseApplicationForm({
 
     if (section === 7) {
       // Payment section validation — only reached for paid/require_payment courses
-      const needsPayment = courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
-      if (needsPayment) {
+      if (effectiveNeedsPayment) {
         if (formData.payment_method === 'mobile_money' && !formData.payment_phone_number?.trim()) {
           errors.payment_phone_number = 'Mobile money number is required for payment';
         }
@@ -821,35 +851,14 @@ export default function CourseApplicationForm({
     // Validate payment fields first (section 7 covers MoMo phone number etc.)
     if (!validateSection(7)) return;
 
-    const needsPayment = courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
-    if (!needsPayment) return;
+    if (!effectiveNeedsPayment) return;
 
     setPaymentLoading(true);
     setError(null);
 
-    // ── Determine the correct amount to charge based on payment mode ──
-    const paymentMode = courseData?.payment_mode || 'full';
-    const fullPrice = courseData?.price ?? 0;
-    // payment_summary is the backend-authoritative breakdown for ALL payment modes
-    const ps = courseData?.payment_summary;
-    let amountDue: number;
-    if (ps?.amount_due_now != null) {
-      // Best case: backend-computed amount (works for full, partial, installment)
-      amountDue = ps.amount_due_now;
-    } else if (paymentMode === 'partial') {
-      // Fallback for partial when payment_summary is unavailable
-      if (courseData?.partial_payment_amount != null) {
-        amountDue = courseData.partial_payment_amount;
-      } else if (courseData?.partial_payment_percentage != null && fullPrice > 0) {
-        amountDue = Math.round(fullPrice * courseData.partial_payment_percentage / 100 * 100) / 100;
-      } else {
-        amountDue = fullPrice;
-      }
-    } else {
-      amountDue = fullPrice;
-    }
-
-    const currency = courseData?.currency || 'USD';
+    // ── Use cohort-aware effective values for the correct amount ──
+    const amountDue = effectiveAmountDue;
+    const currency = effectiveCurrency;
     const method = formData.payment_method as string;
 
     try {
@@ -860,8 +869,12 @@ export default function CourseApplicationForm({
         currency,
         payment_method: method,
         email: formData.email,
-        payment_mode: paymentMode,
+        payment_mode: effectivePaymentMode,
       };
+      // Include cohort/window ID so backend can associate correctly
+      if (selectedWindow?.id != null) {
+        basePayload.application_window_id = selectedWindow.id;
+      }
 
       if (method === 'mobile_money') {
         basePayload.phone_number = formData.payment_phone_number || formData.phone;
@@ -875,6 +888,15 @@ export default function CourseApplicationForm({
         basePayload.return_url = `${window.location.origin}/payment/success?course_id=${courseId}`;
         // kpay_pmethod: default to momo; could be extended to let user choose cc/spenn
         basePayload.kpay_pmethod = 'momo';
+      } else if (method === 'flutterwave') {
+        basePayload.return_url = `${window.location.origin}/payment/success?course_id=${courseId}`;
+        basePayload.cancel_url = `${window.location.origin}/payment/cancel?course_id=${courseId}`;
+        basePayload.phone_number = formData.payment_phone_number || formData.phone || '';
+        basePayload.payer_name = formData.payment_payer_name || formData.full_name || '';
+        // Open the inline Flutterwave checkout modal instead of redirecting
+        setShowFwModal(true);
+        setPaymentLoading(false);
+        return;
       }
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/applications/initiate-payment`, {
@@ -1055,9 +1077,7 @@ export default function CourseApplicationForm({
     }
     
     // For paid courses, ensure payment is approved first
-    const requiresPayment = courseData?.enrollment_type === 'paid';
-    const requireBeforeApp = courseData?.require_payment_before_application;
-    if ((requiresPayment || requireBeforeApp) && paymentStatus !== 'approved') {
+    if (effectiveNeedsPayment && paymentStatus !== 'approved') {
       setError('Please complete payment before submitting your application.');
       return;
     }
@@ -1070,30 +1090,33 @@ export default function CourseApplicationForm({
     try {
       const payload: ApplicationSubmitData = {
         ...formData,
-        payment_method: courseData?.enrollment_type === 'paid' ? formData.payment_method : undefined,
-        payment_phone_number: courseData?.enrollment_type === 'paid' && formData.payment_method === 'mobile_money'
+        payment_method: effectiveNeedsPayment ? formData.payment_method : undefined,
+        payment_phone_number: effectiveNeedsPayment && formData.payment_method === 'mobile_money'
           ? (formData.payment_phone_number || formData.phone)
           : undefined,
-        payment_payer_name: courseData?.enrollment_type === 'paid' && formData.payment_method === 'mobile_money'
+        payment_payer_name: effectiveNeedsPayment && formData.payment_method === 'mobile_money'
           ? (formData.payment_payer_name || formData.full_name)
           : undefined,
-        paypal_email: courseData?.enrollment_type === 'paid' && formData.payment_method === 'paypal'
+        paypal_email: effectiveNeedsPayment && formData.payment_method === 'paypal'
           ? formData.email
           : undefined,
       };
 
       // Always pass payment tracking fields to the backend so it can store them
-      const needsPaymentTracking = courseData?.enrollment_type === 'paid' || courseData?.require_payment_before_application;
-      if (needsPaymentTracking && paymentReference) {
+      if (effectiveNeedsPayment && paymentReference) {
         (payload as any).payment_reference = paymentReference;
         (payload as any).payment_status = paymentStatus === 'approved' ? 'approved' : paymentStatus;
       }
       // Include payment method for bank transfer even when require_payment_before_application
-      if (needsPaymentTracking) {
+      if (effectiveNeedsPayment) {
         (payload as any).payment_method = formData.payment_method;
       }
+      // Include cohort/window ID
+      if (selectedWindow?.id != null) {
+        (payload as any).application_window_id = selectedWindow.id;
+      }
 
-      if (!needsPaymentTracking) {
+      if (!effectiveNeedsPayment) {
         delete payload.payment_method;
         delete payload.payment_phone_number;
         delete payload.payment_payer_name;
@@ -2144,34 +2167,26 @@ export default function CourseApplicationForm({
             <div>
               <p className="text-base font-bold text-gray-900">Next Step: Complete Payment</p>
               <p className="text-sm text-gray-600 mt-0.5">
-                {courseData?.require_payment_before_application
+                {effectiveRequireBeforeApp
                   ? 'Payment must be completed before your application is submitted.'
                   : 'Payment will be collected on the next screen after you save this form.'}
               </p>
             </div>
           </div>
           {(() => {
-            const cur = courseData?.currency || 'USD';
-            const ps = courseData?.payment_summary;
-            const full = courseData?.price ?? 0;
-            const pm = courseData?.payment_mode || 'full';
-            const due = ps?.amount_due_now != null
-              ? ps.amount_due_now
-              : pm === 'partial'
-                ? (courseData?.partial_payment_amount ?? (courseData?.partial_payment_percentage != null && full > 0
-                    ? Math.round(full * courseData.partial_payment_percentage / 100 * 100) / 100 : full))
-                : full;
-            if (due <= 0) return null;
+            if (effectiveAmountDue <= 0) return null;
+            const isPartialScholarship = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100;
+            const studentPct = isPartialScholarship ? (100 - effectiveScholarshipPct) : null;
             return (
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="inline-flex items-center gap-2 bg-white border-2 border-indigo-300 text-indigo-700 px-4 py-2 rounded-xl text-sm font-bold shadow-sm">
                   <CreditCard className="w-4 h-4" />
-                  Amount due: {cur} {due.toLocaleString()}
-                  {pm === 'partial' && <span className="text-xs font-normal text-indigo-500">(your contribution)</span>}
+                  Amount due: {effectiveCurrency} {effectiveAmountDue.toLocaleString()}
+                  {studentPct != null && <span className="text-xs font-normal text-indigo-500">({studentPct}% your contribution)</span>}
                 </div>
-                {(courseData?.payment_methods || []).length > 0 && (
+                {effectiveEnabledMethods.length > 0 && (
                   <span className="text-xs text-gray-500">
-                    Accepted: {(courseData?.payment_methods || []).join(', ')}
+                    Accepted: {effectiveEnabledMethods.join(', ')}
                   </span>
                 )}
               </div>
@@ -2230,35 +2245,23 @@ export default function CourseApplicationForm({
 
   // ─── renderPaymentStep ────────────────────────────────────────────────────
   const renderPaymentStep = () => {
-    const paymentMode = courseData?.payment_mode || 'full';
-    const currency = courseData?.currency || 'USD';
-    const fullPrice = courseData?.price ?? 0;
-    const ps = courseData?.payment_summary;
-    const amountDue: number = ps?.amount_due_now != null
-      ? ps.amount_due_now
-      : paymentMode === 'partial'
-        ? (courseData?.partial_payment_amount
-            ?? (courseData?.partial_payment_percentage != null && fullPrice > 0
-              ? Math.round(fullPrice * courseData.partial_payment_percentage / 100 * 100) / 100
-              : fullPrice))
-        : fullPrice;
-    const remainingBalance: number | null = ps?.remaining_balance != null
-      ? ps.remaining_balance
-      : (paymentMode === 'partial' && fullPrice > 0 && amountDue > 0
-        ? Math.round((fullPrice - amountDue) * 100) / 100
-        : null);
+    // Use cohort-aware effective values
+    const paymentMode = effectivePaymentMode;
+    const currency = effectiveCurrency;
+    const fullPrice = effectiveOriginalPrice;
+    const amountDue = effectiveAmountDue;
+    const remainingBalance = effectiveRemainingBalance;
+    const isPartialScholarship = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100;
+    const studentPct = isPartialScholarship ? (100 - effectiveScholarshipPct) : null;
+    const isPartial = isPartialScholarship || paymentMode === 'partial';
 
-    const enabledMethods: string[] =
-      (courseData?.payment_summary?.enabled_methods && courseData.payment_summary.enabled_methods.length > 0)
-        ? courseData.payment_summary.enabled_methods
-        : (courseData?.payment_methods && courseData.payment_methods.length > 0
-            ? courseData.payment_methods
-            : ['kpay']);
+    const enabledMethods = effectiveEnabledMethods;
     const methodLabels: Record<string, { label: string; sub: string; color: string }> = {
       kpay: { label: 'K-Pay', sub: 'MTN / Airtel MoMo, Visa, Mastercard, SPENN', color: 'violet' },
       paypal: { label: 'PayPal', sub: 'Credit/debit card or PayPal balance', color: 'blue' },
       mobile_money: { label: 'MTN Mobile Money', sub: 'Mobile wallet (Africa)', color: 'amber' },
       stripe: { label: 'Card (Stripe)', sub: 'Visa, Mastercard, Amex via Stripe', color: 'indigo' },
+      flutterwave: { label: 'Flutterwave', sub: 'Card, Mobile Money, Bank, USSD, Apple Pay', color: 'orange' },
       bank_transfer: { label: 'Bank Transfer', sub: 'Manual wire transfer', color: 'emerald' },
     };
 
@@ -2271,7 +2274,7 @@ export default function CourseApplicationForm({
             <span className="text-lg font-bold">Complete Your Payment</span>
           </div>
           <p className="text-gray-600 max-w-lg mx-auto">
-            {courseData?.require_payment_before_application
+            {effectiveRequireBeforeApp
               ? 'Payment is required before your application is reviewed.'
               : 'Complete payment to finalise your application.'}
           </p>
@@ -2280,17 +2283,17 @@ export default function CourseApplicationForm({
         {/* Amount breakdown */}
         <div className={`bg-indigo-50 border-2 border-indigo-300 p-6 rounded-2xl shadow-sm`}>
           <div className="flex items-center gap-3 mb-5">
-            <div className={`p-2 rounded-lg ${paymentMode === 'partial' ? 'bg-purple-600' : 'bg-indigo-600'}`}>
+            <div className={`p-2 rounded-lg ${isPartial ? 'bg-purple-600' : 'bg-indigo-600'}`}>
               <CreditCard className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-3 flex-wrap">
                 <p className="text-lg font-bold text-gray-900">
-                  {paymentMode === 'partial' ? 'Partial Scholarship — Your Contribution' : 'Full Tuition — Payment Required'}
+                  {isPartial ? 'Partial Scholarship — Your Contribution' : 'Full Tuition — Payment Required'}
                 </p>
                 <CurrencySelector compact />
               </div>
-              {courseData?.require_payment_before_application && (
+              {effectiveRequireBeforeApp && (
                 <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold border border-amber-300">
                   Must complete payment before applying
                 </span>
@@ -2298,10 +2301,10 @@ export default function CourseApplicationForm({
             </div>
           </div>
 
-          <div className={`grid gap-3 mb-5 ${paymentMode === 'partial' ? 'grid-cols-3' : 'grid-cols-1'}`}>
-            <div className={`rounded-xl p-3 border ${paymentMode === 'partial' ? 'bg-purple-50 border-purple-200' : 'bg-indigo-50 border-indigo-200'}`}>
+          <div className={`grid gap-3 mb-5 ${isPartial ? 'grid-cols-3' : 'grid-cols-1'}`}>
+            <div className={`rounded-xl p-3 border ${isPartial ? 'bg-purple-50 border-purple-200' : 'bg-indigo-50 border-indigo-200'}`}>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                {paymentMode === 'partial' ? 'Your Contribution' : 'Tuition Fee'}
+                {isPartial ? 'Your Contribution' : 'Tuition Fee'}
               </p>
               <p className="text-2xl font-bold text-indigo-700">
                 {amountDue > 0 ? `${currency} ${amountDue.toLocaleString()}` : 'TBD'}
@@ -2309,11 +2312,11 @@ export default function CourseApplicationForm({
               {amountDue > 0 && (
                 <ConvertedBadge amount={amountDue} currency={currency} className="text-sm block mt-0.5" />
               )}
-              {paymentMode === 'partial' && courseData?.partial_payment_percentage != null && (
-                <p className="text-xs text-purple-500 mt-0.5">{courseData.partial_payment_percentage}% your contribution — rest covered by scholarship</p>
+              {isPartial && studentPct != null && (
+                <p className="text-xs text-purple-500 mt-0.5">{studentPct}% your contribution — rest covered by scholarship</p>
               )}
             </div>
-            {paymentMode === 'partial' && (
+            {isPartial && (
               <>
                 <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Covered by Scholarship</p>
@@ -2512,6 +2515,68 @@ export default function CourseApplicationForm({
                   <p className="text-sm text-gray-700 mt-1">
                     Click <strong>Pay Now</strong> to open Stripe Checkout. Supports Visa, Mastercard, Amex, and more.
                   </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Flutterwave */}
+          {formData.payment_method === 'flutterwave' && (
+            <div className="space-y-4 animate-in fade-in duration-300">
+              <div className="bg-orange-50 border border-orange-200 p-4 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-orange-500 rounded-lg"><Globe className="w-5 h-5 text-white" /></div>
+                  <div>
+                    <p className="font-bold text-gray-900">Flutterwave Secure Checkout</p>
+                    <p className="text-sm text-gray-700 mt-1">
+                      Click <strong>{(() => {
+                        const isPartialHere = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100 || effectivePaymentMode === 'partial';
+                        return `Pay ${isPartialHere ? 'My Contribution' : 'Now'}`;
+                      })()}</strong> to open the Flutterwave payment page. You can pay using:
+                    </p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {[
+                        { icon: '💳', label: 'Card (Visa, Mastercard, Amex)' },
+                        { icon: '📱', label: 'Mobile Money' },
+                        { icon: '🏦', label: 'Bank Transfer' },
+                        { icon: '📲', label: 'USSD' },
+                      ].map((pm) => (
+                        <span key={pm.label} className="inline-flex items-center gap-1 text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full border border-orange-200 font-medium">
+                          <span>{pm.icon}</span> {pm.label}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-sm text-gray-600 mt-2">
+                      Confirmation will be sent to: <span className="font-semibold">{formData.email}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="fw_payer_name" className="text-base font-bold text-gray-900">
+                    Full Name <span className="text-gray-500 font-normal">(optional)</span>
+                  </Label>
+                  <Input
+                    id="fw_payer_name"
+                    value={formData.payment_payer_name}
+                    onChange={(e) => handleInputChange('payment_payer_name', e.target.value)}
+                    placeholder="Your full name"
+                    className="py-6 text-base border-2 rounded-xl border-gray-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="fw_phone" className="text-base font-bold text-gray-900">
+                    Phone Number <span className="text-gray-500 font-normal">(for Mobile Money)</span>
+                  </Label>
+                  <Input
+                    id="fw_phone"
+                    value={formData.payment_phone_number}
+                    onChange={(e) => handleInputChange('payment_phone_number', e.target.value)}
+                    placeholder="e.g. +250780000000"
+                    className="py-6 text-base border-2 rounded-xl border-gray-300 focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
+                  />
+                  <p className="text-xs text-gray-500">Optional — only needed if paying via Mobile Money.</p>
                 </div>
               </div>
             </div>
@@ -2950,19 +3015,8 @@ export default function CourseApplicationForm({
                           <>
                             <CreditCard className="w-6 h-6 mr-3" />
                             {(() => {
-                              const pm = courseData?.payment_mode || 'full';
-                              const cur = courseData?.currency || 'USD';
-                              const full = courseData?.price ?? 0;
-                              const psum = courseData?.payment_summary;
-                              const due = psum?.amount_due_now != null
-                                ? psum.amount_due_now
-                                : pm === 'partial'
-                                  ? (courseData?.partial_payment_amount
-                                      ?? (courseData?.partial_payment_percentage != null && full > 0
-                                        ? Math.round(full * courseData.partial_payment_percentage / 100 * 100) / 100
-                                        : full))
-                                  : full;
-                              return `Pay ${pm === 'partial' ? 'My Contribution' : 'Now'} (${cur} ${due > 0 ? due.toLocaleString() : '—'})`;
+                              const isPartialHere = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100 || effectivePaymentMode === 'partial';
+                              return `Pay ${isPartialHere ? 'My Contribution' : 'Now'} (${effectiveCurrency} ${effectiveAmountDue > 0 ? effectiveAmountDue.toLocaleString() : '—'})`;
                             })()}
                           </>
                         )}
@@ -3009,6 +3063,32 @@ export default function CourseApplicationForm({
         </form>
       </CardContent>
     </Card>
+
+    {/* Flutterwave inline checkout modal (card iframe + mobile money direct charge) */}
+    <FlutterwaveCheckoutModal
+      open={showFwModal}
+      onClose={() => setShowFwModal(false)}
+      onSuccess={(data) => {
+        setShowFwModal(false);
+        setPaymentReference(data.reference || data.charge_id);
+        setPaymentStatus('approved');
+        // Store verification so the form knows payment is complete
+        localStorage.setItem(`payment_verified_for_course_${courseId}`, 'true');
+        localStorage.setItem(`payment_reference_for_course_${courseId}`, data.reference || data.charge_id);
+        localStorage.setItem(`payment_method_for_course_${courseId}`, 'flutterwave');
+        // Clean up
+        localStorage.removeItem('flutterwave_charge_id');
+        localStorage.removeItem('flutterwave_reference');
+      }}
+      amount={effectiveAmountDue}
+      currency={effectiveCurrency}
+      courseId={courseId}
+      email={formData.email}
+      fullName={formData.full_name || formData.payment_payer_name || ''}
+      phone={formData.payment_phone_number || formData.phone || ''}
+      applicationWindowId={selectedWindow?.id}
+      paymentMode={effectivePaymentMode}
+    />
     </div>
   );
 }

@@ -56,34 +56,292 @@ course_bp = Blueprint("course_bp", __name__, url_prefix=
 
 def _sync_application_windows(course, windows_data):
     """
-    Replace all ApplicationWindow rows for a course with the provided list.
-    Each entry: { cohort_label, opens_at, closes_at, cohort_start, cohort_end, status }
+    Sync ApplicationWindow rows for a course using UPSERT logic.
+    - Existing windows (with id) are updated in place to preserve FK references.
+    - New windows (without id or id=0) are created.
+    - Windows not in the payload are deleted (soft removal).
+    Each entry: { id?, cohort_label, opens_at, closes_at, cohort_start, cohort_end, status,
+                  enrollment_type?, price?, currency?, scholarship_type?, scholarship_percentage?,
+                  payment_mode?, partial_payment_amount?, partial_payment_percentage?,
+                  payment_methods?, payment_deadline_days?, require_payment_before_application?,
+                  installment_enabled?, installment_count?, installment_interval_days?,
+                  max_students?, description? }
     """
     if windows_data is None:
         return
     if not isinstance(windows_data, list):
         return
 
-    # Delete existing windows
-    ApplicationWindow.query.filter_by(course_id=course.id).delete()
+    existing_windows = {w.id: w for w in ApplicationWindow.query.filter_by(course_id=course.id).all()}
+    incoming_ids = set()
 
     for idx, win in enumerate(windows_data):
         if not isinstance(win, dict):
             continue
         try:
-            new_win = ApplicationWindow(
-                course_id=course.id,
-                cohort_label=win.get("cohort_label") or win.get("label") or f"Cohort {idx + 1}",
-                opens_at=parse_iso_datetime(win.get("opens_at") or win.get("opensAt"), f"application_windows[{idx}].opens_at"),
-                closes_at=parse_iso_datetime(win.get("closes_at") or win.get("closesAt"), f"application_windows[{idx}].closes_at"),
-                cohort_start=parse_iso_datetime(win.get("cohort_start") or win.get("startDate") or win.get("start_date"), f"application_windows[{idx}].cohort_start"),
-                cohort_end=parse_iso_datetime(win.get("cohort_end") or win.get("endDate") or win.get("end_date"), f"application_windows[{idx}].cohort_end"),
-                status_override=win.get("status_override") or None,
-            )
-            db.session.add(new_win)
+            win_id = win.get("id")
+            # Try to match to existing window by numeric ID
+            existing = None
+            if win_id and isinstance(win_id, int) and win_id in existing_windows:
+                existing = existing_windows[win_id]
+                incoming_ids.add(win_id)
+            elif win_id and str(win_id).isdigit() and int(win_id) in existing_windows:
+                existing = existing_windows[int(win_id)]
+                incoming_ids.add(int(win_id))
+
+            # Parse dates
+            opens_at = parse_iso_datetime(win.get("opens_at") or win.get("opensAt"), f"windows[{idx}].opens_at")
+            closes_at = parse_iso_datetime(win.get("closes_at") or win.get("closesAt"), f"windows[{idx}].closes_at")
+            cohort_start = parse_iso_datetime(win.get("cohort_start") or win.get("startDate") or win.get("start_date"), f"windows[{idx}].cohort_start")
+            cohort_end = parse_iso_datetime(win.get("cohort_end") or win.get("endDate") or win.get("end_date"), f"windows[{idx}].cohort_end")
+
+            # Parse payment override fields
+            payment_methods_val = win.get("payment_methods")
+            payment_methods_json = json.dumps(payment_methods_val) if payment_methods_val and isinstance(payment_methods_val, list) else None
+
+            def _float_or_none(v):
+                if v is None or v == '' or v == 'null':
+                    return None
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            def _int_or_none(v):
+                if v is None or v == '' or v == 'null':
+                    return None
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    return None
+
+            def _bool_or_none(v):
+                if v is None:
+                    return None
+                return bool(v)
+
+            label = win.get("cohort_label") or win.get("label") or f"Cohort {idx + 1}"
+            status_override = win.get("status_override") or None
+            enrollment_type = win.get("enrollment_type") or None
+            scholarship_type = win.get("scholarship_type") or None
+            scholarship_percentage = _float_or_none(win.get("scholarship_percentage"))
+            price_val = _float_or_none(win.get("price"))
+            currency_val = win.get("currency") or None
+            payment_mode_val = win.get("payment_mode") or None
+            pp_amount = _float_or_none(win.get("partial_payment_amount"))
+            pp_pct = _float_or_none(win.get("partial_payment_percentage"))
+            payment_deadline = _int_or_none(win.get("payment_deadline_days"))
+            req_before = _bool_or_none(win.get("require_payment_before_application"))
+            inst_enabled = _bool_or_none(win.get("installment_enabled"))
+            inst_count = _int_or_none(win.get("installment_count"))
+            inst_interval = _int_or_none(win.get("installment_interval_days"))
+            max_students = _int_or_none(win.get("max_students"))
+            description = win.get("description") or None
+
+            if existing:
+                # UPDATE existing window in place (preserves FK references)
+                existing.cohort_label = label
+                existing.description = description
+                existing.opens_at = opens_at
+                existing.closes_at = closes_at
+                existing.cohort_start = cohort_start
+                existing.cohort_end = cohort_end
+                existing.status_override = status_override
+                existing.max_students = max_students
+                existing.enrollment_type = enrollment_type
+                existing.price = price_val
+                existing.currency = currency_val
+                existing.scholarship_type = scholarship_type
+                existing.scholarship_percentage = scholarship_percentage
+                existing.payment_mode = payment_mode_val
+                existing.partial_payment_amount = pp_amount
+                existing.partial_payment_percentage = pp_pct
+                existing.payment_methods = payment_methods_json
+                existing.payment_deadline_days = payment_deadline
+                existing.require_payment_before_application = req_before
+                existing.installment_enabled = inst_enabled
+                existing.installment_count = inst_count
+                existing.installment_interval_days = inst_interval
+            else:
+                # CREATE new window
+                new_win = ApplicationWindow(
+                    course_id=course.id,
+                    cohort_label=label,
+                    description=description,
+                    opens_at=opens_at,
+                    closes_at=closes_at,
+                    cohort_start=cohort_start,
+                    cohort_end=cohort_end,
+                    status_override=status_override,
+                    max_students=max_students,
+                    enrollment_type=enrollment_type,
+                    price=price_val,
+                    currency=currency_val,
+                    scholarship_type=scholarship_type,
+                    scholarship_percentage=scholarship_percentage,
+                    payment_mode=payment_mode_val,
+                    partial_payment_amount=pp_amount,
+                    partial_payment_percentage=pp_pct,
+                    payment_methods=payment_methods_json,
+                    payment_deadline_days=payment_deadline,
+                    require_payment_before_application=req_before,
+                    installment_enabled=inst_enabled,
+                    installment_count=inst_count,
+                    installment_interval_days=inst_interval,
+                )
+                db.session.add(new_win)
         except ValueError as exc:
             logger.warning(f"Skipping invalid application window {idx}: {exc}")
             continue
+
+    # Delete windows that were not included in the payload
+    for win_id, win_obj in existing_windows.items():
+        if win_id not in incoming_ids:
+            # Check if there are enrollments referencing this window
+            enrollment_count = win_obj.enrollments.filter(
+                Enrollment.status.in_(['active', 'completed'])
+            ).count()
+            if enrollment_count == 0:
+                db.session.delete(win_obj)
+            else:
+                logger.warning(f"Keeping window {win_id} (has {enrollment_count} active enrollments)")
+
+
+# ── Cohort CRUD endpoints ──
+
+@course_bp.route("/<int:course_id>/cohorts", methods=["GET"])
+@role_required(["admin", "instructor"])
+def list_cohorts(course_id):
+    """List all cohorts (application windows) for a course with payment info and enrollment counts."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "Not authorized"}), 403
+
+    windows = ApplicationWindow.query.filter_by(course_id=course_id).order_by(ApplicationWindow.opens_at).all()
+    return jsonify({
+        "cohorts": [w.to_dict() for w in windows],
+        "course_payment_defaults": {
+            "enrollment_type": course.enrollment_type,
+            "price": course.price,
+            "currency": course.currency,
+            "payment_mode": course.payment_mode,
+        }
+    }), 200
+
+
+@course_bp.route("/<int:course_id>/cohorts/<int:cohort_id>", methods=["GET"])
+@role_required(["admin", "instructor"])
+def get_cohort(course_id, cohort_id):
+    """Get a single cohort with full payment details."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "Not authorized"}), 403
+
+    window = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course_id).first_or_404()
+    return jsonify(window.to_dict()), 200
+
+
+@course_bp.route("/<int:course_id>/cohorts/<int:cohort_id>", methods=["PUT"])
+@role_required(["admin", "instructor"])
+def update_cohort(course_id, cohort_id):
+    """Update a single cohort's settings including payment overrides."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "Not authorized"}), 403
+
+    window = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course_id).first_or_404()
+    data = request.get_json()
+
+    try:
+        # Date fields
+        if "cohort_label" in data:
+            window.cohort_label = data.get("cohort_label") or window.cohort_label
+        if "description" in data:
+            window.description = data.get("description")
+        if "opens_at" in data:
+            window.opens_at = parse_iso_datetime(data.get("opens_at"), "opens_at")
+        if "closes_at" in data:
+            window.closes_at = parse_iso_datetime(data.get("closes_at"), "closes_at")
+        if "cohort_start" in data:
+            window.cohort_start = parse_iso_datetime(data.get("cohort_start"), "cohort_start")
+        if "cohort_end" in data:
+            window.cohort_end = parse_iso_datetime(data.get("cohort_end"), "cohort_end")
+        if "status_override" in data:
+            window.status_override = data.get("status_override") or None
+        if "max_students" in data:
+            val = data.get("max_students")
+            window.max_students = int(val) if val is not None else None
+
+        # Payment override fields
+        if "enrollment_type" in data:
+            et = data.get("enrollment_type")
+            if et and et not in ["free", "paid", "scholarship"]:
+                return jsonify({"message": "Invalid enrollment_type. Use free, paid, or scholarship."}), 400
+            window.enrollment_type = et or None
+        if "price" in data:
+            val = data.get("price")
+            window.price = float(val) if val is not None else None
+        if "currency" in data:
+            window.currency = data.get("currency") or None
+        if "scholarship_type" in data:
+            st = data.get("scholarship_type")
+            if st and st not in ["full", "partial"]:
+                return jsonify({"message": "Invalid scholarship_type. Use full or partial."}), 400
+            window.scholarship_type = st or None
+        if "scholarship_percentage" in data:
+            val = data.get("scholarship_percentage")
+            if val is not None:
+                val = float(val)
+                if val < 0 or val > 100:
+                    return jsonify({"message": "scholarship_percentage must be between 0 and 100"}), 400
+            window.scholarship_percentage = val
+        if "payment_mode" in data:
+            pm = data.get("payment_mode")
+            if pm and pm not in ["full", "partial"]:
+                return jsonify({"message": "Invalid payment_mode"}), 400
+            window.payment_mode = pm or None
+        if "partial_payment_amount" in data:
+            val = data.get("partial_payment_amount")
+            window.partial_payment_amount = float(val) if val is not None else None
+        if "partial_payment_percentage" in data:
+            val = data.get("partial_payment_percentage")
+            window.partial_payment_percentage = float(val) if val is not None else None
+        if "payment_methods" in data:
+            methods = data.get("payment_methods")
+            window.payment_methods = json.dumps(methods) if methods and isinstance(methods, list) else None
+        if "payment_deadline_days" in data:
+            val = data.get("payment_deadline_days")
+            window.payment_deadline_days = int(val) if val is not None else None
+        if "require_payment_before_application" in data:
+            val = data.get("require_payment_before_application")
+            window.require_payment_before_application = bool(val) if val is not None else None
+        if "installment_enabled" in data:
+            val = data.get("installment_enabled")
+            window.installment_enabled = bool(val) if val is not None else None
+        if "installment_count" in data:
+            val = data.get("installment_count")
+            window.installment_count = int(val) if val is not None else None
+        if "installment_interval_days" in data:
+            val = data.get("installment_interval_days")
+            window.installment_interval_days = int(val) if val is not None else None
+
+        db.session.commit()
+        return jsonify(window.to_dict()), 200
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({"message": str(exc)}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not update cohort", "error": str(e)}), 500
 module_bp = Blueprint("module_bp", __name__, url_prefix="/api/v1/modules")
 lesson_bp = Blueprint("lesson_bp", __name__, url_prefix="/api/v1/lessons")
 enrollment_bp = Blueprint("enrollment_bp", __name__, url_prefix="/api/v1/enrollments")
@@ -188,6 +446,7 @@ def create_course():
             mobile_money_enabled=data.get("mobile_money_enabled", True),
             bank_transfer_enabled=data.get("bank_transfer_enabled", False),
             kpay_enabled=data.get("kpay_enabled", True),
+            flutterwave_enabled=data.get("flutterwave_enabled", False),
             bank_transfer_details=data.get("bank_transfer_details"),
             installment_enabled=data.get("installment_enabled", False),
             installment_count=data.get("installment_count"),
@@ -342,6 +601,9 @@ def update_course(course_id):
 
         if "kpay_enabled" in data:
             course.kpay_enabled = bool(data.get("kpay_enabled"))
+
+        if "flutterwave_enabled" in data:
+            course.flutterwave_enabled = bool(data.get("flutterwave_enabled"))
 
         if "bank_transfer_details" in data:
             course.bank_transfer_details = data.get("bank_transfer_details")

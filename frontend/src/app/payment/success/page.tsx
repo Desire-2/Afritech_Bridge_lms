@@ -17,6 +17,9 @@ function PaymentSuccessContent() {
   const paypalToken = searchParams.get('token');
   // Stripe returns: ?session_id=SESSION_ID
   const stripeSessionId = searchParams.get('session_id');
+  // Flutterwave v4 returns: ?status=successful&checkout_session_id=che_xxx or ?tx_ref=xxx
+  const fwCheckoutSession = searchParams.get('checkout_session_id');
+  const fwTxRef = searchParams.get('tx_ref');
   const [status, setStatus] = useState<VerifyStatus>('verifying');
   const [message, setMessage] = useState('Verifying your payment…');
   const [reference, setReference] = useState<string | null>(null);
@@ -38,14 +41,26 @@ function PaymentSuccessContent() {
     } else if (stripeSessionId) {
       paymentMethod = 'stripe';
       paymentReference = stripeSessionId;
+    } else if (fwCheckoutSession) {
+      // Flutterwave v4 redirect with checkout session ID in URL
+      paymentMethod = 'flutterwave';
+      paymentReference = fwCheckoutSession;
+    } else if (fwTxRef) {
+      // Flutterwave fallback: tx_ref in URL — use stored charge_id for verification
+      paymentMethod = 'flutterwave';
+      paymentReference = localStorage.getItem('flutterwave_charge_id') || fwTxRef;
     } else {
-      // Fall back to localStorage (K-Pay, PayPal, Stripe via stored refs)
+      // Fall back to localStorage (K-Pay, Flutterwave, PayPal, Stripe via stored refs)
       const storedKpay = localStorage.getItem('kpay_reference');
+      const storedFlutterwave = localStorage.getItem('flutterwave_charge_id');
       const storedPaypal = localStorage.getItem('paypal_order_id');
       const storedStripe = localStorage.getItem('stripe_session_id');
       if (storedKpay) {
         paymentMethod = 'kpay';
         paymentReference = storedKpay;
+      } else if (storedFlutterwave) {
+        paymentMethod = 'flutterwave';
+        paymentReference = storedFlutterwave;
       } else if (storedPaypal) {
         paymentMethod = 'paypal';
         paymentReference = storedPaypal;
@@ -71,7 +86,8 @@ function PaymentSuccessContent() {
           }),
         });
 
-        const data = await res.json();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: any = await res.json();
 
         if (res.ok && (data.status === 'completed' || data.status === 'approved' || data.status === 'SUCCESSFUL')) {
           // Store verification so the application form can pick it up
@@ -83,6 +99,8 @@ function PaymentSuccessContent() {
           localStorage.removeItem('stripe_session_id');
           localStorage.removeItem('kpay_reference');
           localStorage.removeItem('kpay_tid');
+          localStorage.removeItem('flutterwave_charge_id');
+          localStorage.removeItem('flutterwave_reference');
 
           setReference(paymentReference);
           setStatus('success');

@@ -51,6 +51,7 @@ export interface CohortOption {
 export interface PaymentSummary {
   required: boolean;
   total_price: number | null;
+  original_price?: number | null;
   currency: string;
   payment_mode: 'full' | 'partial' | 'installment';
   amount_due_now: number | null;

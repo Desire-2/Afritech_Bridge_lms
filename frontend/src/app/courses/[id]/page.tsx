@@ -120,6 +120,7 @@ interface Course {
   require_payment_before_application?: boolean;
   payment_summary?: {
     total_price: number | null;
+    original_price?: number | null;
     currency: string;
     payment_mode: string;
     amount_due_now: number | null;
@@ -374,6 +375,24 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
   const heroCohortLabel = applicationWindow?.cohort_label || course.cohort_label;
   const hasMultipleApplicationWindows = applicationWindows.length > 1;
 
+  // Derive effective enrollment info from primary cohort window (falls back to course-level)
+  const effectiveEnrollmentType = applicationWindow?.effective_enrollment_type ?? applicationWindow?.enrollment_type ?? course.enrollment_type;
+  const effectivePrice = applicationWindow?.effective_price ?? applicationWindow?.price ?? course.price;
+  const effectiveCurrency = applicationWindow?.effective_currency ?? applicationWindow?.currency ?? course.currency ?? 'USD';
+  const effectivePaymentMode = applicationWindow?.payment_mode ?? course.payment_mode;
+  const effectivePaymentMethods = applicationWindow?.payment_methods ?? course.payment_methods;
+  const effectivePaymentSummary = applicationWindow?.payment_summary ?? course.payment_summary;
+  const effectivePartialAmount = applicationWindow?.partial_payment_amount ?? course.partial_payment_amount;
+  const isScholarshipPartial = effectiveEnrollmentType === 'scholarship' && applicationWindow?.scholarship_type === 'partial';
+  const scholarshipPct = applicationWindow?.scholarship_percentage;
+  // For scholarship: student pays (100 - scholarship_percentage)%; for paid partial: use partial_payment_percentage directly
+  const effectiveStudentPct = isScholarshipPartial && scholarshipPct != null
+    ? Math.round((100 - scholarshipPct) * 100) / 100
+    : (applicationWindow?.partial_payment_percentage ?? course.partial_payment_percentage);
+  const effectiveOriginalPrice = effectivePaymentSummary?.original_price ?? course.price; // Pre-scholarship total
+  const isPartialScholarship = (effectiveEnrollmentType === 'scholarship' && applicationWindow?.scholarship_type === 'partial') ||
+                               (effectiveEnrollmentType === 'paid' && effectivePaymentMode === 'partial');
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
       <div className="container mx-auto px-4 py-6">
@@ -428,9 +447,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           TZ {course.application_timezone}
                         </Badge>
                       )}
-                      {course.enrollment_type && (
+                      {effectiveEnrollmentType && (
                         <Badge className="bg-emerald-400/30 border-white/10 text-white capitalize">
-                          {course.enrollment_type} enrollment
+                          {isPartialScholarship ? 'partial scholarship' : effectiveEnrollmentType === 'scholarship' ? 'scholarship' : effectiveEnrollmentType} enrollment
                         </Badge>
                       )}
                     </div>
@@ -505,18 +524,20 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                   {/* Action Buttons */}
                   <div className="flex flex-wrap gap-4">
                     {!isEnrolled ? (
-                      course.enrollment_type === 'paid' || course.enrollment_type === 'scholarship' ? (
+                      effectiveEnrollmentType === 'paid' || effectiveEnrollmentType === 'scholarship' ? (
                         <Button
                           size="lg"
                           onClick={() => router.push(`/courses/${courseId}/apply`)}
-                          className={course.enrollment_type === 'scholarship'
+                          className={effectiveEnrollmentType === 'scholarship' && !isPartialScholarship
                             ? 'bg-amber-500 hover:bg-amber-600 text-white font-semibold shadow-lg shadow-amber-900/30'
                             : 'bg-white text-blue-600 hover:bg-blue-50 font-semibold shadow-lg shadow-blue-900/30'}
                         >
-                          {course.enrollment_type === 'scholarship' ? (
+                          {effectiveEnrollmentType === 'scholarship' && !isPartialScholarship ? (
                             <><GraduationCap className="h-5 w-5 mr-2" />Apply for Scholarship</>
+                          ) : isPartialScholarship ? (
+                            <><GraduationCap className="h-5 w-5 mr-2" />Apply (Partial Scholarship)</>
                           ) : (
-                            <><CreditCard className="h-5 w-5 mr-2" />Apply & Pay</>
+                            <><CreditCard className="h-5 w-5 mr-2" />Apply &amp; Pay</>
                           )}
                         </Button>
                       ) : (
@@ -933,7 +954,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
               {/* Tuition & Enrollment Card */}
               <Card className="sticky top-6 overflow-hidden">
                 {/* Header bar by type */}
-                {course.enrollment_type === 'scholarship' ? (
+                {effectiveEnrollmentType === 'scholarship' && !isPartialScholarship ? (
                   <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-6 py-4">
                     <div className="flex items-center gap-2 text-white">
                       <GraduationCap className="h-5 w-5" />
@@ -941,16 +962,16 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </div>
                     <p className="text-amber-100 text-xs mt-1">Merit-based enrollment · Application required</p>
                   </div>
-                ) : course.enrollment_type === 'paid' ? (
+                ) : effectiveEnrollmentType === 'paid' || isPartialScholarship ? (
                   <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-4">
                     <div className="flex items-center gap-2 text-white">
                       <CreditCard className="h-5 w-5" />
                       <span className="font-bold text-lg">
-                        {course.payment_mode === 'partial' ? 'Partial Scholarship' : 'Full Tuition'}
+                        {isPartialScholarship ? 'Partial Scholarship' : 'Full Tuition'}
                       </span>
                     </div>
                     <p className="text-blue-100 text-xs mt-1">
-                      {course.payment_mode === 'partial'
+                      {isPartialScholarship
                         ? 'Pay your share — scholarship covers the rest'
                         : 'One-time full payment to enroll'}
                     </p>
@@ -967,7 +988,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
 
                 <CardContent className="p-6 space-y-5">
                   {/* ── Scholarship: no price, just apply ── */}
-                  {course.enrollment_type === 'scholarship' && (
+                  {effectiveEnrollmentType === 'scholarship' && !isPartialScholarship && (
                     <div className="space-y-4">
                       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
                         <p className="text-sm font-semibold text-amber-900 flex items-center gap-2">
@@ -998,47 +1019,55 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                   )}
 
                   {/* ── Paid: full or partial tuition ── */}
-                  {course.enrollment_type === 'paid' && (
+                  {(effectiveEnrollmentType === 'paid' || isPartialScholarship) && (
                     <div className="space-y-4">
                       {/* Price breakdown */}
                       <div className="flex items-center justify-end">
                         <CurrencySelector compact />
                       </div>
-                      {course.payment_mode === 'partial' ? (
+                      {isPartialScholarship ? (
                         <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 space-y-3">
                           <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Partial Scholarship</p>
                           <div className="flex items-baseline gap-2">
                             <span className="text-3xl font-bold text-indigo-700">
-                              {course.payment_summary?.amount_due_now != null
-                                ? `${course.currency || 'USD'} ${course.payment_summary.amount_due_now.toLocaleString()}`
-                                : course.partial_payment_amount != null
-                                ? `${course.currency || 'USD'} ${course.partial_payment_amount.toLocaleString()}`
+                              {effectivePaymentSummary?.amount_due_now != null
+                                ? `${effectiveCurrency} ${effectivePaymentSummary.amount_due_now.toLocaleString()}`
+                                : effectivePartialAmount != null
+                                ? `${effectiveCurrency} ${effectivePartialAmount.toLocaleString()}`
                                 : '—'}
                             </span>
                             <span className="text-sm text-indigo-500">your contribution</span>
                           </div>
                           <ConvertedBadge
-                            amount={course.payment_summary?.amount_due_now ?? course.partial_payment_amount ?? undefined}
-                            currency={course.currency || 'USD'}
+                            amount={effectivePaymentSummary?.amount_due_now ?? effectivePartialAmount ?? undefined}
+                            currency={effectiveCurrency}
                             className="text-sm"
                           />
-                          {course.payment_summary?.remaining_balance != null && course.payment_summary.remaining_balance > 0 && (
+                          {effectiveOriginalPrice != null && effectiveOriginalPrice > 0 && (
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               <div className="bg-white rounded-lg p-2 border border-indigo-100">
                                 <p className="text-gray-500">Total program cost</p>
-                                <p className="font-bold text-gray-800">{course.currency || 'USD'} {(course.price || 0).toLocaleString()}</p>
-                                <ConvertedBadge amount={course.price ?? undefined} currency={course.currency || 'USD'} className="text-xs" />
+                                <p className="font-bold text-gray-800">{effectiveCurrency} {effectiveOriginalPrice.toLocaleString()}</p>
+                                <ConvertedBadge amount={effectiveOriginalPrice} currency={effectiveCurrency} className="text-xs" />
                               </div>
                               <div className="bg-emerald-50 rounded-lg p-2 border border-emerald-200">
                                 <p className="text-gray-500">Covered by scholarship</p>
-                                <p className="font-bold text-emerald-700">{course.currency || 'USD'} {course.payment_summary.remaining_balance.toLocaleString()}</p>
-                                <ConvertedBadge amount={course.payment_summary.remaining_balance} currency={course.currency || 'USD'} className="text-xs" />
+                                <p className="font-bold text-emerald-700">{effectiveCurrency} {(() => {
+                                  const amtDue = effectivePaymentSummary?.amount_due_now ?? effectivePartialAmount ?? 0;
+                                  return (effectiveOriginalPrice - amtDue).toLocaleString();
+                                })()}</p>
+                                <ConvertedBadge amount={(() => {
+                                  const amtDue = effectivePaymentSummary?.amount_due_now ?? effectivePartialAmount ?? 0;
+                                  return effectiveOriginalPrice - amtDue;
+                                })()} currency={effectiveCurrency} className="text-xs" />
                               </div>
                             </div>
                           )}
-                          {course.partial_payment_percentage != null && (
+                          {effectiveStudentPct != null && effectiveStudentPct > 0 && (
                             <p className="text-xs text-indigo-500">
-                              {course.partial_payment_percentage}% your contribution · scholarship covers the rest
+                              {isScholarshipPartial
+                                ? `${effectiveStudentPct}% of total · scholarship covers the rest`
+                                : `${effectiveStudentPct}% payment now`}
                             </p>
                           )}
                         </div>
@@ -1047,31 +1076,37 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                           <p className="text-xs font-semibold text-indigo-500 uppercase tracking-wide">Full Tuition</p>
                           <div className="flex items-baseline gap-2">
                             <span className="text-3xl font-bold text-indigo-700">
-                              {course.price
-                                ? `${course.currency || 'USD'} ${course.price.toLocaleString()}`
+                              {effectivePrice
+                                ? `${effectiveCurrency} ${effectivePrice.toLocaleString()}`
                                 : 'Price on request'}
                             </span>
                           </div>
-                          <ConvertedBadge amount={course.price ?? undefined} currency={course.currency || 'USD'} className="text-sm" />
+                          <ConvertedBadge amount={effectivePrice ?? undefined} currency={effectiveCurrency} className="text-sm" />
                           <p className="text-xs text-indigo-400">One-time payment — lifetime access</p>
                         </div>
                       )}
 
                       {/* Payment methods */}
-                      {(course.payment_methods && course.payment_methods.length > 0) && (
+                      {(effectivePaymentMethods && effectivePaymentMethods.length > 0) && (
                         <div>
                           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Accepted Payments</p>
                           <div className="flex flex-wrap gap-1.5">
-                            {course.payment_methods.includes('paypal') && (
+                            {effectivePaymentMethods.includes('paypal') && (
                               <Badge className="bg-blue-50 text-blue-700 border-blue-200 text-xs">PayPal</Badge>
                             )}
-                            {course.payment_methods.includes('stripe') && (
+                            {effectivePaymentMethods.includes('stripe') && (
                               <Badge className="bg-violet-50 text-violet-700 border-violet-200 text-xs">Card (Stripe)</Badge>
                             )}
-                            {course.payment_methods.includes('mobile_money') && (
+                            {effectivePaymentMethods.includes('mobile_money') && (
                               <Badge className="bg-yellow-50 text-yellow-700 border-yellow-200 text-xs">Mobile Money</Badge>
                             )}
-                            {course.payment_methods.includes('bank_transfer') && (
+                            {effectivePaymentMethods.includes('kpay') && (
+                              <Badge className="bg-violet-50 text-violet-700 border-violet-200 text-xs">K-Pay</Badge>
+                            )}
+                            {effectivePaymentMethods.includes('flutterwave') && (
+                              <Badge className="bg-orange-50 text-orange-700 border-orange-200 text-xs">Flutterwave</Badge>
+                            )}
+                            {effectivePaymentMethods.includes('bank_transfer') && (
                               <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs">Bank Transfer</Badge>
                             )}
                           </div>
@@ -1112,7 +1147,7 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                   )}
 
                   {/* ── Free: direct enroll ── */}
-                  {(!course.enrollment_type || course.enrollment_type === 'free') && (
+                  {(!effectiveEnrollmentType || effectiveEnrollmentType === 'free') && (
                     <div className="space-y-4">
                       <div className="text-center">
                         <span className="text-4xl font-bold text-emerald-600">Free</span>
@@ -1295,50 +1330,128 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                     </CardTitle>
                     <p className="text-sm text-slate-600">
                       {hasMultipleApplicationWindows
-                        ? 'Multiple cohorts available with separate timelines.'
+                        ? 'Multiple cohorts available — each may have different pricing and scholarship options.'
                         : 'Cohort timeline for this course.'}
                     </p>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    {applicationWindows.map((window, index) => (
-                      <div
-                        key={`cohort-${window.id ?? index}`}
-                        className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Badge className="bg-blue-100 text-blue-900 border-blue-200">
-                              {window.cohort_label || `Cohort ${index + 1}`}
-                            </Badge>
-                            <Badge variant="outline" className={getApplicationStatusStyles(window.status)}>
-                              {window.status || 'pending'}
-                            </Badge>
-                          </div>
-                          <span className="text-xs text-slate-600">
-                            {formatDate(window.cohort_start) || 'Start TBA'}
-                          </span>
-                        </div>
+                    {applicationWindows.map((window, index) => {
+                      const effType = window.effective_enrollment_type ?? window.enrollment_type ?? course.enrollment_type;
+                      const effPrice = window.effective_price ?? window.price ?? course.price;
+                      const effCurrency = window.effective_currency ?? window.currency ?? course.currency ?? 'USD';
+                      const scholarshipType = window.scholarship_type;
+                      const ps = window.payment_summary;
+                      const isFree = effType === 'free';
+                      const isScholarship = effType === 'scholarship' && scholarshipType !== 'partial';
+                      const isPartial = (effType === 'scholarship' && scholarshipType === 'partial') ||
+                                        (effType === 'paid' && (window.payment_mode ?? course.payment_mode) === 'partial');
+                      const isPaid = effType === 'paid' && !isPartial;
 
-                        <div className="grid grid-cols-2 gap-2 text-xs text-slate-700 mt-3">
-                          <div className="flex items-center gap-2">
-                            <Clock className="h-3 w-3" />
-                            <span>Opens {formatDateTime(window.opens_at) || 'TBA'}</span>
+                      const tierBadge = isFree
+                        ? { label: '✨ Free', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' }
+                        : isScholarship
+                        ? { label: '🎓 Scholarship', cls: 'bg-amber-100 text-amber-800 border-amber-200' }
+                        : isPartial
+                        ? { label: '🎓 Partial', cls: 'bg-indigo-100 text-indigo-800 border-indigo-200' }
+                        : { label: '💳 Paid', cls: 'bg-blue-100 text-blue-800 border-blue-200' };
+
+                      return (
+                        <div
+                          key={`cohort-${window.id ?? index}`}
+                          className="rounded-lg border border-slate-200 bg-slate-50/60 p-3 space-y-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge className="bg-blue-100 text-blue-900 border-blue-200">
+                                {window.cohort_label || `Cohort ${index + 1}`}
+                              </Badge>
+                              <Badge variant="outline" className={getApplicationStatusStyles(window.status)}>
+                                {window.status || 'pending'}
+                              </Badge>
+                              <Badge variant="outline" className={tierBadge.cls}>
+                                {tierBadge.label}
+                              </Badge>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Clock className="h-3 w-3" />
-                            <span>Closes {formatDateTime(window.closes_at) || 'TBA'}</span>
+
+                          {/* Per-cohort payment info */}
+                          <div className="flex items-center gap-3 text-xs">
+                            {isFree && (
+                              <span className="text-emerald-700 font-semibold">Free — No payment required</span>
+                            )}
+                            {isScholarship && (
+                              <span className="text-amber-700 font-semibold">Full scholarship — Competitive selection</span>
+                            )}
+                            {isPartial && (
+                              <span className="text-indigo-700 font-semibold">
+                                Pay {ps?.amount_due_now != null
+                                  ? `${effCurrency} ${ps.amount_due_now.toLocaleString()}`
+                                  : window.partial_payment_amount != null
+                                  ? `${effCurrency} ${window.partial_payment_amount.toLocaleString()}`
+                                  : 'your contribution'}
+                                {window.scholarship_percentage != null ? ` (${window.scholarship_percentage}% covered)` : ''}
+                              </span>
+                            )}
+                            {isPaid && (
+                              <span className="text-blue-700 font-semibold">
+                                {effPrice != null ? `${effCurrency} ${effPrice.toLocaleString()}` : 'Price on request'} — Full tuition
+                              </span>
+                            )}
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-3 w-3" />
-                            <span>Cohort start {formatDate(window.cohort_start) || 'TBA'}</span>
+
+                          {/* Description */}
+                          {window.description && (
+                            <p className="text-xs text-slate-600 leading-relaxed">{window.description}</p>
+                          )}
+
+                          {/* Enrollment capacity */}
+                          {window.max_students && (
+                            <div className="flex items-center gap-2 text-xs text-slate-600">
+                              <Users className="h-3 w-3" />
+                              <span>{window.enrollment_count ?? 0} / {window.max_students} enrolled</span>
+                              {(window.enrollment_count ?? 0) >= window.max_students && (
+                                <Badge variant="outline" className="text-red-600 border-red-200 text-[10px] py-0">Full</Badge>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3 w-3" />
+                              <span>Opens {formatDateTime(window.opens_at) || 'TBA'}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Clock className="h-3 w-3" />
+                              <span>Closes {formatDateTime(window.closes_at) || 'TBA'}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-3 w-3" />
+                              <span>Starts {formatDate(window.cohort_start) || 'TBA'}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-3 w-3" />
+                              <span>Ends {formatDate(window.cohort_end) || 'TBD'}</span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-3 w-3" />
-                            <span>Cohort end {formatDate(window.cohort_end) || 'TBD'}</span>
-                          </div>
+
+                          {/* Apply button per cohort */}
+                          {window.status === 'open' && !isEnrolled && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full border-blue-200 text-blue-700 hover:bg-blue-50 mt-1"
+                              onClick={() => router.push(`/courses/${courseId}/apply`)}
+                            >
+                              <ArrowRight className="h-3.5 w-3.5 mr-1.5" />
+                              {isFree ? 'Enroll Free' :
+                               isScholarship ? 'Apply for Scholarship' :
+                               isPartial ? `Apply & Pay ${ps?.amount_due_now != null ? `${effCurrency} ${ps.amount_due_now.toLocaleString()}` : ''}` :
+                               `Apply & Pay ${effPrice != null ? `${effCurrency} ${effPrice.toLocaleString()}` : ''}`}
+                            </Button>
+                          )}
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </CardContent>
                 </Card>
               )}

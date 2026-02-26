@@ -1,6 +1,6 @@
 """
 Payment Service – Afritec Bridge LMS
-Supports: PayPal Checkout, Stripe, MTN Mobile Money (MOMO), Bank Transfer
+Supports: PayPal Checkout, Stripe, MTN Mobile Money (MOMO), Bank Transfer, K-Pay, Flutterwave
 """
 
 import os
@@ -50,11 +50,35 @@ def _paypal_get_access_token() -> str:
     return resp.json()["access_token"]
 
 
+# Currencies supported by PayPal Checkout (ISO 4217)
+PAYPAL_SUPPORTED_CURRENCIES = {
+    'AUD', 'BRL', 'CAD', 'CNY', 'CZK', 'DKK', 'EUR', 'HKD', 'HUF', 'ILS',
+    'JPY', 'MYR', 'MXN', 'TWD', 'NZD', 'NOK', 'PHP', 'PLN', 'GBP', 'RUB',
+    'SGD', 'SEK', 'CHF', 'THB', 'USD', 'INR',
+}
+
+# Zero-decimal currencies (no fractional units) for PayPal
+PAYPAL_ZERO_DECIMAL_CURRENCIES = {'JPY', 'HUF', 'TWD'}
+
+
 def paypal_create_order(amount: float, currency: str, return_url: str, cancel_url: str, description: str = "") -> dict:
     """
     Create a PayPal Checkout Order (v2).
     Returns dict with: order_id, approval_url
     """
+    cur = currency.upper()
+    if cur not in PAYPAL_SUPPORTED_CURRENCIES:
+        raise ValueError(
+            f"Currency '{cur}' is not supported by PayPal. "
+            f"Supported currencies: {', '.join(sorted(PAYPAL_SUPPORTED_CURRENCIES))}"
+        )
+
+    # Format amount: zero-decimal currencies must not have decimal places
+    if cur in PAYPAL_ZERO_DECIMAL_CURRENCIES:
+        formatted_amount = str(int(amount))
+    else:
+        formatted_amount = f"{amount:.2f}"
+
     token = _paypal_get_access_token()
 
     payload = {
@@ -62,8 +86,8 @@ def paypal_create_order(amount: float, currency: str, return_url: str, cancel_ur
         "purchase_units": [
             {
                 "amount": {
-                    "currency_code": currency.upper(),
-                    "value": f"{amount:.2f}",
+                    "currency_code": cur,
+                    "value": formatted_amount,
                 },
                 "description": description or "Course Enrollment",
             }
@@ -86,7 +110,14 @@ def paypal_create_order(amount: float, currency: str, return_url: str, cancel_ur
         json=payload,
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        # Log the full PayPal error body for debugging
+        try:
+            error_body = resp.json()
+        except Exception:
+            error_body = resp.text
+        logger.error("PayPal order creation failed (%s): %s", resp.status_code, error_body)
+        resp.raise_for_status()
     data = resp.json()
 
     approval_url = next(
@@ -850,4 +881,735 @@ def kpay_check_status(refid: str) -> dict:
         "tid": data.get("tid", ""),
         "refid": data.get("refid", refid),
         "momo_txn": data.get("momtransactionid", ""),
+    }
+
+
+# ============================================================
+# FLUTTERWAVE (flutterwave.com) – Africa-focused global payment gateway
+# Supports: Card (Visa/MC/Amex), Mobile Money, Bank Transfer, USSD, Apple Pay, Google Pay
+# Docs: https://developer.flutterwave.com/reference
+# New v2 API uses Client ID + Client Secret + Encryption Key
+# ============================================================
+
+FLUTTERWAVE_CLIENT_ID = os.environ.get('FLUTTERWAVE_CLIENT_ID', '')
+FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY', '')
+FLUTTERWAVE_ENCRYPTION_KEY = os.environ.get('FLUTTERWAVE_ENCRYPTION_KEY', '')
+# Sandbox: https://developersandbox-api.flutterwave.com
+# Production: https://api.flutterwave.com
+_FLUTTERWAVE_IS_SANDBOX = os.environ.get('FLUTTERWAVE_SANDBOX', 'true').lower() in ('1', 'true', 'yes')
+
+FLUTTERWAVE_BASE_URL = os.environ.get(
+    'FLUTTERWAVE_BASE_URL',
+    'https://developersandbox-api.flutterwave.com' if _FLUTTERWAVE_IS_SANDBOX
+    else 'https://api.flutterwave.com'
+)
+
+# Checkout page host (user is redirected here to complete payment)
+# Sandbox: https://developersandbox.flutterwave.com/checkout/{session_id}
+# Production: https://flutterwave.com/checkout/{session_id}  (TBC when v4 goes GA)
+FLUTTERWAVE_CHECKOUT_HOST = os.environ.get(
+    'FLUTTERWAVE_CHECKOUT_HOST',
+    'https://developersandbox.flutterwave.com' if _FLUTTERWAVE_IS_SANDBOX
+    else 'https://flutterwave.com'
+)
+
+# OAuth2 token endpoint (same for sandbox and production)
+FLUTTERWAVE_TOKEN_URL = 'https://idp.flutterwave.com/realms/flutterwave/protocol/openid-connect/token'
+
+# In-memory cache for the OAuth2 access token
+_flutterwave_token_cache = {
+    "access_token": None,
+    "expires_at": 0,  # epoch timestamp
+}
+
+
+def _flutterwave_get_access_token() -> str:
+    """
+    Obtain a valid OAuth2 access token from Flutterwave's IDP.
+
+    Uses the client_credentials grant with FLUTTERWAVE_CLIENT_ID and
+    FLUTTERWAVE_SECRET_KEY. Tokens are cached in memory and refreshed
+    at least 60 seconds before expiry.
+
+    Returns
+    -------
+    str : A valid Bearer access token.
+
+    Raises
+    ------
+    ValueError  : If client credentials are not configured.
+    RuntimeError: If the token exchange fails.
+    """
+    import time as _time
+
+    if not FLUTTERWAVE_CLIENT_ID or not FLUTTERWAVE_SECRET_KEY:
+        raise ValueError(
+            "Flutterwave credentials not configured. "
+            "Set FLUTTERWAVE_CLIENT_ID and FLUTTERWAVE_SECRET_KEY in .env."
+        )
+
+    now = _time.time()
+    # Return cached token if still valid (with 60-second safety margin)
+    if (_flutterwave_token_cache["access_token"]
+            and _flutterwave_token_cache["expires_at"] - now > 60):
+        return _flutterwave_token_cache["access_token"]
+
+    # Exchange client credentials for an access token
+    logger.info("Refreshing Flutterwave OAuth2 access token …")
+    resp = requests.post(
+        FLUTTERWAVE_TOKEN_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={
+            "client_id": FLUTTERWAVE_CLIENT_ID,
+            "client_secret": FLUTTERWAVE_SECRET_KEY,
+            "grant_type": "client_credentials",
+        },
+        timeout=15,
+    )
+
+    if not resp.ok:
+        try:
+            err_body = resp.json()
+        except Exception:
+            err_body = resp.text
+        logger.error("Flutterwave token exchange failed (%s): %s", resp.status_code, err_body)
+        raise RuntimeError(
+            f"Flutterwave OAuth2 token exchange failed ({resp.status_code}): {err_body}"
+        )
+
+    token_data = resp.json()
+    access_token = token_data.get("access_token")
+    expires_in = token_data.get("expires_in", 600)  # default 10 min
+
+    if not access_token:
+        raise RuntimeError(
+            f"Flutterwave token response missing access_token: {token_data}"
+        )
+
+    _flutterwave_token_cache["access_token"] = access_token
+    _flutterwave_token_cache["expires_at"] = now + expires_in
+
+    logger.info("Flutterwave OAuth2 token obtained (expires in %ss)", expires_in)
+    return access_token
+
+
+def _flutterwave_headers() -> dict:
+    """Build the auth headers for Flutterwave API calls.
+    Obtains an OAuth2 access token via client_credentials grant."""
+    token = _flutterwave_get_access_token()
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def flutterwave_initiate_charge(
+    amount: float,
+    currency: str,
+    email: str,
+    name: str,
+    phone: str,
+    reference: str,
+    redirect_url: str,
+    description: str = "Course Payment",
+    payment_method: str = "card",
+    meta: dict = None,
+) -> dict:
+    """
+    Create a Flutterwave Checkout Session and return a hosted checkout URL.
+
+    Uses POST /checkout/sessions (v4 API) which creates a hosted payment page
+    where customers can pay via card, mobile money, bank transfer, etc.
+    The customer is redirected to the Flutterwave-hosted page and back to
+    ``redirect_url`` after completing (or cancelling) the payment.
+
+    Parameters
+    ----------
+    amount       : Payment amount in decimal.
+    currency     : ISO 4217 code, e.g. 'USD', 'NGN', 'RWF', 'KES', 'GHS'.
+    email        : Customer email address.
+    name         : Customer full name.
+    phone        : Customer phone number (with country code).
+    reference    : Unique payment reference (6-42 chars).
+    redirect_url : URL to redirect after payment completes.
+    description  : Human-readable payment description.
+    payment_method : Ignored for checkout sessions (all methods are offered).
+    meta         : Additional metadata dict.
+
+    Returns
+    -------
+    dict with keys: charge_id, checkout_url, reference, status, success
+
+    Raises
+    ------
+    ValueError      : Flutterwave credentials not configured.
+    requests.HTTPError : Network or API error.
+    RuntimeError    : Flutterwave returned an error status.
+    """
+    # Clean phone
+    clean_phone = phone.replace('+', '').replace(' ', '').replace('-', '') if phone else ''
+
+    # Split name into first/last
+    name_parts = (name or 'Customer').strip().split(' ', 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else ''
+
+    payload = {
+        "amount": float(amount),
+        "currency": currency.upper(),
+        "reference": reference,
+        "redirect_url": redirect_url,
+        "customer": {
+            "email": email,
+            "name": {
+                "first": first_name,
+                "last": last_name,
+            },
+        },
+        "customizations": {
+            "title": "Afritech Bridge - Course Payment",
+            "description": description,
+        },
+    }
+
+    # Add phone if provided
+    if clean_phone and len(clean_phone) > 3:
+        payload["customer"]["phone"] = {
+            "country_code": clean_phone[:3],
+            "number": clean_phone[3:],
+        }
+
+    # Add meta if provided
+    if meta:
+        payload["meta"] = meta
+
+    logger.info("Creating Flutterwave checkout session for ref=%s amount=%s %s",
+                reference, amount, currency)
+
+    resp = requests.post(
+        f"{FLUTTERWAVE_BASE_URL}/checkout/sessions",
+        headers=_flutterwave_headers(),
+        json=payload,
+        timeout=30,
+    )
+
+    if not resp.ok:
+        try:
+            error_body = resp.json()
+        except Exception:
+            error_body = resp.text
+        logger.error("Flutterwave checkout session failed (%s): %s",
+                     resp.status_code, error_body)
+        resp.raise_for_status()
+
+    data = resp.json()
+
+    if data.get("status") != "success":
+        raise RuntimeError(
+            f"Flutterwave error: {data.get('message', 'Unknown error')}"
+        )
+
+    session_data = data.get("data", {})
+    session_id = session_data.get("id", "")
+
+    # Construct the hosted checkout page URL from the session ID
+    # Sandbox: https://developersandbox.flutterwave.com/checkout/{session_id}
+    # Production: https://flutterwave.com/checkout/{session_id}
+    checkout_url = f"{FLUTTERWAVE_CHECKOUT_HOST}/checkout/{session_id}"
+
+    logger.info("Flutterwave checkout session created: id=%s url=%s",
+                session_id, checkout_url)
+
+    return {
+        "charge_id": session_id,
+        "checkout_url": checkout_url,
+        "reference": session_data.get("reference", reference),
+        "status": "pending",
+        "success": True,
+    }
+
+
+# ─── Flutterwave v4 Direct Charge (3-step tokenisation flow) ─────
+
+# Country-code → dial-code mapping used by the direct-charge helpers
+_COUNTRY_DIAL_CODES = {
+    "RW": "250", "NG": "234", "GH": "233", "KE": "254",
+    "UG": "256", "TZ": "255", "ZA": "27",  "CM": "237",
+    "CI": "225", "SN": "221",
+}
+
+# Country → mobile money currency (the only currency Flutterwave accepts for
+# direct MoMo charges in each country)
+_MOMO_CURRENCIES = {
+    "RW": "RWF", "NG": "NGN", "GH": "GHS", "KE": "KES",
+    "UG": "UGX", "TZ": "TZS", "ZA": "ZAR",
+}
+
+
+def flutterwave_create_customer(
+    email: str,
+    first_name: str = "",
+    last_name: str = "",
+    phone_country_code: str = "",
+    phone_number: str = "",
+) -> dict:
+    """Create (or reuse) a Flutterwave v4 customer.
+
+    Returns
+    -------
+    dict  with key ``customer_id`` (e.g. ``cus_xxxxx``).
+    """
+    payload: dict = {"email": email}
+    if first_name or last_name:
+        payload["name"] = {
+            "first": first_name or "Student",
+            "last": last_name or "",
+        }
+    if phone_country_code and phone_number:
+        payload["phone"] = {
+            "country_code": phone_country_code,
+            "number": phone_number,
+        }
+
+    headers = _flutterwave_headers()
+    resp = requests.post(
+        f"{FLUTTERWAVE_BASE_URL}/customers",
+        headers=headers,
+        json=payload,
+        timeout=15,
+    )
+
+    # 201 = created
+    if resp.status_code in (200, 201):
+        data = resp.json().get("data", {})
+        cust_id = data.get("id", "")
+        logger.info("Flutterwave customer created: %s (email=%s)", cust_id, email)
+        return {"customer_id": cust_id, "data": data}
+
+    # 409 = customer already exists – look them up by email
+    if resp.status_code == 409:
+        logger.info("Flutterwave customer already exists for %s – looking up…", email)
+        try:
+            list_resp = requests.get(
+                f"{FLUTTERWAVE_BASE_URL}/customers",
+                headers=headers,
+                params={"page": 1, "size": 50},
+                timeout=15,
+            )
+            if list_resp.ok:
+                for cust in list_resp.json().get("data", []):
+                    if (cust.get("email") or "").lower() == email.lower():
+                        cust_id = cust.get("id", "")
+                        logger.info("Flutterwave existing customer found: %s", cust_id)
+                        return {"customer_id": cust_id, "data": cust}
+        except Exception as e:
+            logger.warning("Flutterwave customer lookup failed: %s", e)
+
+        raise RuntimeError(
+            "Customer already exists on Flutterwave but could not be retrieved. "
+            "Please try again or contact support."
+        )
+
+    # Other error
+    logger.error("Flutterwave create customer failed (%s): %s",
+                 resp.status_code, resp.text[:500])
+    resp.raise_for_status()
+    return {"customer_id": "", "data": {}}  # unreachable, keeps type-checker happy
+
+
+def flutterwave_create_payment_method(
+    customer_id: str,
+    pm_type: str,
+    details: dict,
+) -> dict:
+    """Tokenise a payment method for a Flutterwave customer.
+
+    Parameters
+    ----------
+    customer_id : ``cus_xxx`` ID from ``flutterwave_create_customer``.
+    pm_type     : ``"mobile_money"`` | ``"bank_account"`` | ``"ussd"`` | ``"card"``.
+    details     : Method-specific payload placed under the *pm_type* key.
+                  For ``mobile_money``: ``{"phone_number", "country_code" (3-digit), "network"}``.
+                  For ``bank_account``: ``{}``  (empty dict is accepted).
+                  For ``card``: requires client-side encrypted fields.
+
+    Returns
+    -------
+    dict with ``payment_method_id`` (``pmd_xxx``) and ``data``.
+    """
+    payload = {
+        "customer_id": customer_id,
+        "type": pm_type,
+        pm_type: details,
+    }
+
+    resp = requests.post(
+        f"{FLUTTERWAVE_BASE_URL}/payment-methods",
+        headers=_flutterwave_headers(),
+        json=payload,
+        timeout=15,
+    )
+
+    if not resp.ok:
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"message": resp.text[:500]}
+        logger.error("Flutterwave create PM (%s) failed (%s): %s",
+                     pm_type, resp.status_code, body)
+        raise RuntimeError(
+            body.get("error", {}).get("message", f"Payment method creation failed ({resp.status_code})")
+        )
+
+    data = resp.json().get("data", {})
+    pm_id = data.get("id", "")
+    logger.info("Flutterwave payment method: %s (type=%s, customer=%s)",
+                pm_id, pm_type, customer_id)
+    return {"payment_method_id": pm_id, "data": data}
+
+
+def flutterwave_create_direct_charge(
+    customer_id: str,
+    payment_method_id: str,
+    amount: float,
+    currency: str,
+    reference: str,
+    redirect_url: str,
+    meta: dict = None,
+) -> dict:
+    """Create a charge using a tokenised customer + payment method.
+
+    Returns
+    -------
+    dict with keys: ``charge_id``, ``status``, ``reference``, ``next_action``,
+    ``amount``, ``currency``, ``success``.
+    """
+    payload: dict = {
+        "amount": float(amount),
+        "currency": currency.upper(),
+        "reference": reference,
+        "redirect_url": redirect_url,
+        "customer_id": customer_id,
+        "payment_method_id": payment_method_id,
+    }
+    if meta:
+        payload["meta"] = meta
+
+    logger.info("Flutterwave direct charge: customer=%s pm=%s %s %s ref=%s",
+                customer_id, payment_method_id, amount, currency, reference)
+
+    resp = requests.post(
+        f"{FLUTTERWAVE_BASE_URL}/charges",
+        headers=_flutterwave_headers(),
+        json=payload,
+        timeout=30,
+    )
+
+    if not resp.ok:
+        body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"message": resp.text[:500]}
+        error_msg = body.get("error", {}).get("message", f"Charge failed ({resp.status_code})")
+        error_type = body.get("error", {}).get("type", "")
+        logger.error("Flutterwave direct charge failed (%s): %s", resp.status_code, body)
+        raise RuntimeError(f"{error_type}: {error_msg}" if error_type else error_msg)
+
+    data = resp.json().get("data", {})
+    charge_id = data.get("id", "")
+    status = data.get("status", "pending")
+    next_action = data.get("next_action", {})
+
+    logger.info("Flutterwave charge created: %s status=%s next_action=%s",
+                charge_id, status, next_action.get("type", "none"))
+
+    return {
+        "charge_id": charge_id,
+        "status": status,
+        "reference": data.get("reference", reference),
+        "next_action": next_action,
+        "amount": data.get("amount", amount),
+        "currency": data.get("currency", currency),
+        "fees": data.get("fees", []),
+        "success": True,
+    }
+
+
+def flutterwave_initiate_mobile_money(
+    amount: float,
+    currency: str,
+    email: str,
+    name: str,
+    phone: str,
+    country_code: str,
+    network: str,
+    reference: str,
+    redirect_url: str,
+    meta: dict = None,
+) -> dict:
+    """
+    Complete mobile money charge in one call (customer → PM → charge).
+
+    Orchestrates the 3-step Flutterwave v4 flow for mobile money.
+    The resulting charge will have ``next_action.type == "payment_instruction"``
+    telling the user to approve the push on their handset.
+
+    Parameters
+    ----------
+    amount        : Amount to charge.
+    currency      : ISO 4217 (use local currency, e.g. 'RWF' for Rwanda).
+    email         : Customer email.
+    name          : Full name.
+    phone         : Phone number (local format, e.g. ``0780000000``).
+    country_code  : 2-letter ISO country (``RW``, ``NG``, …) – converted to
+                    3-digit dial code automatically.
+    network       : Mobile network (``MTN``, ``AIRTEL``, ``VODAFONE``, …).
+    reference     : Unique 6-42 char reference.
+    redirect_url  : URL after payment.
+    meta          : Extra metadata dict.
+
+    Returns
+    -------
+    dict with ``charge_id``, ``status``, ``next_action``, ``payment_instruction``,
+    ``customer_id``, ``payment_method_id``.
+
+    Raises
+    ------
+    ValueError if the country/currency combination is unsupported.
+    """
+    # Resolve dial code
+    dial_code = _COUNTRY_DIAL_CODES.get(country_code.upper(), "")
+    if not dial_code:
+        dial_code = country_code  # assume it's already 3-digit
+
+    # Validate currency for mobile money
+    expected_currency = _MOMO_CURRENCIES.get(country_code.upper())
+    if expected_currency and currency.upper() != expected_currency:
+        logger.warning(
+            "MoMo currency mismatch: got %s but %s expects %s – auto-correcting",
+            currency, country_code, expected_currency,
+        )
+        currency = expected_currency
+
+    # Split name
+    parts = (name or "Student").strip().split(" ", 1)
+    first_name, last_name = parts[0], (parts[1] if len(parts) > 1 else "")
+
+    # ── Normalise phone to local 7-10 digit format ──
+    # Remove spaces, dashes, and leading '+'
+    raw_phone = (phone or "").replace(" ", "").replace("-", "").lstrip("+")
+    # Strip leading dial code (e.g. '250' from '250780784924') to get local number
+    if raw_phone.startswith(dial_code) and len(raw_phone) > len(dial_code):
+        local_phone = raw_phone[len(dial_code):]
+    else:
+        local_phone = raw_phone
+    # Ensure leading 0 for local format if it's 9 digits (common in RW, KE, etc.)
+    if len(local_phone) == 9 and not local_phone.startswith("0"):
+        local_phone = "0" + local_phone
+    logger.debug("Flutterwave MoMo phone normalised: '%s' → local='%s' dial='%s'",
+                 phone, local_phone, dial_code)
+
+    # Step 1: Create customer
+    cust = flutterwave_create_customer(
+        email=email,
+        first_name=first_name,
+        last_name=last_name,
+        phone_country_code=dial_code,
+        phone_number=local_phone.lstrip("0"),  # customer phone: no leading 0
+    )
+    customer_id = cust["customer_id"]
+
+    # Step 2: Create mobile money payment method
+    pm = flutterwave_create_payment_method(
+        customer_id=customer_id,
+        pm_type="mobile_money",
+        details={
+            "phone_number": local_phone,   # 7-10 digit local number
+            "country_code": dial_code,     # 3-digit dial code
+            "network": network.upper(),
+        },
+    )
+    payment_method_id = pm["payment_method_id"]
+
+    # Step 3: Create charge
+    charge = flutterwave_create_direct_charge(
+        customer_id=customer_id,
+        payment_method_id=payment_method_id,
+        amount=amount,
+        currency=currency,
+        reference=reference,
+        redirect_url=redirect_url,
+        meta=meta,
+    )
+
+    # Extract payment instruction text
+    next_action = charge.get("next_action", {})
+    instruction = ""
+    if next_action.get("type") == "payment_instruction":
+        instruction = next_action.get("payment_instruction", {}).get("note", "")
+
+    charge["customer_id"] = customer_id
+    charge["payment_method_id"] = payment_method_id
+    charge["payment_instruction"] = instruction
+
+    return charge
+
+
+def flutterwave_verify_charge(charge_id: str) -> dict:
+    """
+    Verify a Flutterwave payment via the checkout session or charges API.
+
+    First tries to retrieve the checkout session (ID starts with ``che_``).
+    If the session contains charge info, extracts it.
+    Falls back to the ``/charges/{id}`` endpoint for direct charge IDs.
+
+    Parameters
+    ----------
+    charge_id : The Flutterwave checkout session ID (che_xxx) or charge ID.
+
+    Returns
+    -------
+    dict with keys: status, charge_id, amount, currency, reference, customer_email
+    """
+    _STATUS_MAP = {
+        "succeeded": "completed",
+        "successful": "completed",
+        "completed": "completed",
+        "pending": "pending",
+        "failed": "failed",
+        "voided": "failed",
+        "cancelled": "failed",
+    }
+
+    headers = _flutterwave_headers()
+
+    # If it's a checkout session ID, fetch via /checkout/sessions
+    if charge_id.startswith("che_"):
+        try:
+            resp = requests.get(
+                f"{FLUTTERWAVE_BASE_URL}/checkout/sessions/{charge_id}",
+                headers=headers,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            if data.get("status") == "success":
+                session_data = data.get("data", {})
+
+                # Try to also list charges by the session reference to get payment status
+                ref = session_data.get("reference", "")
+                if ref:
+                    charges_resp = requests.get(
+                        f"{FLUTTERWAVE_BASE_URL}/charges",
+                        headers=headers,
+                        params={"reference": ref, "page": 1, "size": 10},
+                        timeout=15,
+                    )
+                    if charges_resp.ok:
+                        charges_data = charges_resp.json()
+                        charges_list = charges_data.get("data", [])
+                        if charges_list:
+                            charge = charges_list[0]
+                            raw_status = (charge.get("status") or "pending").lower()
+                            return {
+                                "status": _STATUS_MAP.get(raw_status, "pending"),
+                                "charge_id": charge.get("id", charge_id),
+                                "amount": charge.get("amount") or session_data.get("amount"),
+                                "currency": charge.get("currency") or session_data.get("currency"),
+                                "reference": charge.get("reference", ref),
+                                "customer_email": (charge.get("billing_details") or {}).get("email", ""),
+                                "raw_status": raw_status,
+                            }
+
+                # No charge found yet — session still pending
+                return {
+                    "status": "pending",
+                    "charge_id": charge_id,
+                    "amount": session_data.get("amount"),
+                    "currency": session_data.get("currency"),
+                    "reference": ref,
+                    "customer_email": "",
+                    "raw_status": "pending",
+                }
+
+        except Exception as e:
+            logger.warning("Flutterwave session verification failed for %s: %s",
+                           charge_id, e)
+
+    # Fall back to /charges/{id} for direct charge IDs
+    try:
+        resp = requests.get(
+            f"{FLUTTERWAVE_BASE_URL}/charges/{charge_id}",
+            headers=headers,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        if data.get("status") != "success":
+            return {
+                "status": "failed",
+                "charge_id": charge_id,
+                "error": data.get("message", "Verification failed"),
+            }
+
+        charge_data = data.get("data", {})
+        raw_status = (charge_data.get("status") or "failed").lower()
+
+        return {
+            "status": _STATUS_MAP.get(raw_status, "failed"),
+            "charge_id": charge_id,
+            "amount": charge_data.get("amount"),
+            "currency": charge_data.get("currency"),
+            "reference": charge_data.get("reference", ""),
+            "customer_email": (charge_data.get("billing_details") or {}).get("email", ""),
+            "raw_status": raw_status,
+        }
+    except Exception as e:
+        logger.error("Flutterwave charge verification failed for %s: %s", charge_id, e)
+        return {
+            "status": "failed",
+            "charge_id": charge_id,
+            "error": str(e),
+        }
+
+
+def flutterwave_list_charges(
+    status: str = None,
+    reference: str = None,
+    page: int = 1,
+    size: int = 10,
+) -> dict:
+    """
+    List Flutterwave charges with optional filters.
+
+    Parameters
+    ----------
+    status    : Filter by status ('succeeded', 'pending', 'failed', 'voided').
+    reference : Filter by transaction reference.
+    page      : Page number (default 1).
+    size      : Results per page (10-50, default 10).
+
+    Returns
+    -------
+    dict with keys: charges (list), total, current_page, total_pages
+    """
+    params = {"page": page, "size": min(max(size, 10), 50)}
+    if status:
+        params["status"] = status
+    if reference:
+        params["reference"] = reference
+
+    resp = requests.get(
+        f"{FLUTTERWAVE_BASE_URL}/charges",
+        headers=_flutterwave_headers(),
+        params=params,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    page_info = data.get("meta", {}).get("page_info", {})
+
+    return {
+        "charges": data.get("data", []),
+        "total": page_info.get("total", 0),
+        "current_page": page_info.get("current_page", page),
+        "total_pages": page_info.get("total_pages", 0),
     }

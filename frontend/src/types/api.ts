@@ -59,11 +59,51 @@ export interface ApplicationWindowData {
   status: CohortStatus;
   reason?: string | null;
   cohort_label?: string | null;
+  description?: string | null;
   opens_at?: string | null;
   closes_at?: string | null;
   cohort_start?: string | null;
   cohort_end?: string | null;
   status_override?: string | null;
+  max_students?: number | null;
+  enrollment_count?: number;
+  // Payment overrides (null = inherit from course)
+  enrollment_type?: 'free' | 'paid' | 'scholarship' | null;
+  price?: number | null;
+  currency?: string | null;
+  scholarship_type?: 'full' | 'partial' | null;
+  scholarship_percentage?: number | null;
+  payment_mode?: 'full' | 'partial' | null;
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  payment_methods?: string[] | null;
+  payment_deadline_days?: number | null;
+  require_payment_before_application?: boolean | null;
+  installment_enabled?: boolean | null;
+  installment_count?: number | null;
+  installment_interval_days?: number | null;
+  // Computed effective values
+  effective_enrollment_type?: string;
+  effective_price?: number | null;
+  effective_currency?: string;
+  payment_summary?: {
+    required: boolean;
+    enrollment_type?: string;
+    scholarship_type?: string | null;
+    scholarship_percentage?: number | null;
+    total_price?: number;
+    original_price?: number | null;
+    currency?: string;
+    payment_mode?: string;
+    amount_due_now?: number;
+    remaining_balance?: number;
+    require_payment_before_application?: boolean;
+    payment_deadline_days?: number | null;
+    enabled_methods?: string[];
+    installment_enabled?: boolean;
+    installment_count?: number | null;
+    installment_interval_days?: number | null;
+  } | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -109,6 +149,7 @@ export interface Course {
   mobile_money_enabled?: boolean;
   bank_transfer_enabled?: boolean;
   kpay_enabled?: boolean;
+  flutterwave_enabled?: boolean;
   bank_transfer_details?: string | null;
   installment_enabled?: boolean;
   installment_count?: number | null;
@@ -116,6 +157,7 @@ export interface Course {
   payment_summary?: {
     required: boolean;
     total_price?: number;
+    original_price?: number | null;
     currency?: string;
     payment_mode?: string;
     require_payment_before_application?: boolean;

@@ -3677,6 +3677,8 @@ def initiate_payment():
         get_bank_transfer_info,
         _use_madapi as _mtn_use_madapi,
         kpay_initiate_payment,
+        flutterwave_initiate_charge,
+        flutterwave_initiate_mobile_money,
     )
 
     data = request.get_json(silent=True) or {}
@@ -3703,6 +3705,16 @@ def initiate_payment():
 
     try:
         if payment_method == "paypal":
+            # Import supported currencies; validate before calling PayPal
+            from src.services.payment_service import PAYPAL_SUPPORTED_CURRENCIES
+            if currency not in PAYPAL_SUPPORTED_CURRENCIES:
+                return jsonify({
+                    "error": f"Currency '{currency}' is not supported by PayPal. "
+                             f"Please use one of: {', '.join(sorted(PAYPAL_SUPPORTED_CURRENCIES))}",
+                    "unsupported_currency": True,
+                    "supported_currencies": sorted(PAYPAL_SUPPORTED_CURRENCIES),
+                }), 400
+
             return_url = data.get("return_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/success?course_id={course_id}"
             cancel_url = data.get("cancel_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/cancel?course_id={course_id}"
             result = paypal_create_order(
@@ -3853,17 +3865,103 @@ def initiate_payment():
                 "message": "Redirect to K-Pay to complete your payment.",
             }), 200
 
+        elif payment_method == "flutterwave":
+            email = data.get("email") or ""
+            payer_name = data.get("payer_name") or data.get("full_name") or "Student"
+            phone = data.get("phone_number") or data.get("phone") or ""
+            # Flutterwave sub-method: card, mobile_money, bank_account, ussd
+            fw_method = data.get("flutterwave_method") or "card"
+
+            frontend_url = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+            return_url = data.get("return_url") or f"{frontend_url}/payment/success?course_id={course_id}"
+
+            # Flutterwave v4 /charges requires HTTPS redirect_url.
+            # For local dev, use the production URL as a passthrough
+            # (the frontend modal verifies via polling, not via redirect).
+            if return_url.startswith("http://"):
+                prod_frontend = os.environ.get('PRODUCTION_FRONTEND_URL', '')
+                if prod_frontend and prod_frontend.startswith("https://"):
+                    return_url = f"{prod_frontend}/payment/success?course_id={course_id}"
+                else:
+                    # Fallback: use a safe HTTPS placeholder; the frontend
+                    # verifies payment status via the API, not the redirect.
+                    return_url = f"https://flutterwave.com/redirect?course_id={course_id}"
+
+            # Build unique reference (Flutterwave requires 6-42 chars)
+            fw_reference = f"ATB-{uuid.uuid4().hex[:16].upper()}"
+
+            # ── Mobile Money: use the 3-step direct charge flow ──
+            if fw_method == "mobile_money":
+                if not phone:
+                    return jsonify({"error": "Phone number is required for mobile money payment."}), 400
+
+                # Country code: 2-letter ISO from request, default RW
+                fw_country = data.get("country_code") or "RW"
+                fw_network = data.get("network") or "MTN"
+
+                result = flutterwave_initiate_mobile_money(
+                    amount=amount,
+                    currency=currency,
+                    email=email,
+                    name=payer_name,
+                    phone=phone,
+                    country_code=fw_country,
+                    network=fw_network,
+                    reference=fw_reference,
+                    redirect_url=return_url,
+                    meta={"course_id": str(course_id), "email": email},
+                )
+
+                return jsonify({
+                    "payment_method": "flutterwave",
+                    "flutterwave_method": "mobile_money",
+                    "charge_id": result["charge_id"],
+                    "reference": result["reference"],
+                    "status": result["status"],
+                    "next_action": result.get("next_action", {}),
+                    "payment_instruction": result.get("payment_instruction", ""),
+                    "amount": result["amount"],
+                    "currency": result["currency"],
+                    "message": result.get("payment_instruction") or "Approve the payment on your phone.",
+                }), 200
+
+            # ── Card / default: checkout session (embedded in iframe on frontend) ──
+            result = flutterwave_initiate_charge(
+                amount=amount,
+                currency=currency,
+                email=email,
+                name=payer_name,
+                phone=phone,
+                reference=fw_reference,
+                redirect_url=return_url,
+                description=f"Enrollment: {course.title}",
+                payment_method=fw_method,
+                meta={"course_id": str(course_id), "email": email},
+            )
+
+            return jsonify({
+                "payment_method": "flutterwave",
+                "flutterwave_method": fw_method,
+                "checkout_url": result["checkout_url"],
+                "charge_id": result["charge_id"],
+                "reference": result["reference"],
+                "status": "pending",
+                "message": "Complete your payment via the Flutterwave checkout.",
+            }), 200
+
         else:
             return jsonify({"error": f"Unsupported payment method: {payment_method}"}), 400
 
     except ValueError as ve:
-        # Missing credentials / configuration error
-        logger.warning(f"Payment config error for method {payment_method}: {ve}")
+        # Missing credentials / configuration error / unsupported currency
+        error_msg = str(ve)
+        is_currency_error = "not supported" in error_msg.lower() or "currency" in error_msg.lower()
+        logger.warning(f"Payment config/validation error for method {payment_method}: {ve}")
         return jsonify({
-            "error": "Payment gateway not configured on the server.",
-            "detail": str(ve),
+            "error": error_msg if is_currency_error else "Payment gateway not configured on the server.",
+            "detail": error_msg,
             "payment_method": payment_method,
-        }), 503
+        }), 400 if is_currency_error else 503
     except Exception as e:
         logger.error(f"Payment initiation error ({payment_method}): {e}", exc_info=True)
         return jsonify({
@@ -3903,6 +4001,45 @@ def kpay_callback():
     return jsonify({"tid": tid, "refid": refid, "reply": "OK"}), 200
 
 
+@application_bp.route("/flutterwave-webhook", methods=["POST"])
+def flutterwave_webhook():
+    """
+    Flutterwave webhook endpoint.
+
+    Flutterwave POSTs here when a charge status changes.
+    Verify the webhook using the secret hash header.
+
+    The webhook payload contains:
+      event       : Event type (e.g. 'charge.completed')
+      data        : Charge data object with id, reference, status, amount, currency, etc.
+    """
+    import hashlib
+    import hmac
+
+    # Verify webhook signature using FLUTTERWAVE_WEBHOOK_SECRET_HASH
+    webhook_secret = os.environ.get('FLUTTERWAVE_WEBHOOK_SECRET_HASH', '')
+    signature = request.headers.get('verif-hash', '')
+
+    if webhook_secret and signature != webhook_secret:
+        logger.warning("Flutterwave webhook: invalid signature")
+        return jsonify({"error": "Invalid signature"}), 401
+
+    data = request.get_json(silent=True) or {}
+    event = data.get("event", "")
+    charge_data = data.get("data", {})
+    charge_id = charge_data.get("id", "")
+    reference = charge_data.get("reference", "")
+    status = charge_data.get("status", "")
+
+    logger.info(
+        f"Flutterwave webhook received: event={event} charge_id={charge_id} "
+        f"reference={reference} status={status}"
+    )
+
+    # Acknowledge immediately – Flutterwave expects a 200 response
+    return jsonify({"status": "ok"}), 200
+
+
 @application_bp.route("/verify-payment", methods=["POST"])
 def verify_payment():
     """
@@ -3918,6 +4055,7 @@ def verify_payment():
         stripe_retrieve_checkout_session,
         mtn_check_payment_status,
         kpay_check_status,
+        flutterwave_verify_charge,
     )
 
     data = request.get_json(silent=True) or {}
@@ -4024,6 +4162,16 @@ def verify_payment():
                 "tid": result.get("tid"),
                 "statusdesc": result.get("statusdesc"),
                 "momo_txn": result.get("momo_txn"),
+            }), 200
+
+        elif payment_method == "flutterwave":
+            result = flutterwave_verify_charge(reference)
+            return jsonify({
+                "status": result["status"],   # 'completed' | 'pending' | 'failed'
+                "charge_id": reference,
+                "amount": result.get("amount"),
+                "currency": result.get("currency"),
+                "reference": result.get("reference"),
             }), 200
 
         else:
