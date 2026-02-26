@@ -499,6 +499,29 @@ class CourseApplicationService extends BaseApiService {
   }
 
   /**
+   * Migrate a waitlisted application to a different cohort (Admin only)
+   */
+  async migrateToNextCohort(id: number, data: {
+    target_window_id: number;
+    notes?: string;
+    send_email?: boolean;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    data: {
+      application_id: number;
+      original_window_id: number;
+      target_window_id: number;
+      new_status: string;
+      cohort_label: string;
+      requires_payment: boolean;
+      email_sent: boolean;
+    };
+  }> {
+    return this.post(`${this.BASE_PATH}/${id}/migrate`, data);
+  }
+
+  /**
    * Send custom update email to waitlisted applicant (Admin only)
    */
   async sendWaitlistUpdate(id: number, message: string): Promise<{

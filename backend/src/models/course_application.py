@@ -130,10 +130,18 @@ class CourseApplication(db.Model):
     cohort_start_date = db.Column(db.DateTime, nullable=True)
     cohort_end_date = db.Column(db.DateTime, nullable=True)
 
+    # ========== Waitlist Migration Tracking ==========
+    original_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # Original cohort before migration
+    migrated_to_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # Target cohort after migration
+    migrated_at = db.Column(db.DateTime, nullable=True)  # When migration happened
+    migration_notes = db.Column(db.Text, nullable=True)  # Admin notes about migration
+
     # ========== Relationships ==========
     course = db.relationship('Course', backref=db.backref('course_applications', lazy='dynamic'))
     approver = db.relationship('User', foreign_keys=[approved_by], backref=db.backref('approved_applications', lazy='dynamic'))
-    application_window = db.relationship('ApplicationWindow', backref=db.backref('applications', lazy='dynamic'))
+    application_window = db.relationship('ApplicationWindow', foreign_keys=[application_window_id], backref=db.backref('applications', lazy='dynamic'))
+    original_window = db.relationship('ApplicationWindow', foreign_keys=[original_window_id])
+    migrated_to_window = db.relationship('ApplicationWindow', foreign_keys=[migrated_to_window_id])
 
     def to_dict(self, include_sensitive=False):
         """Convert application to dictionary for API responses"""
@@ -185,6 +193,12 @@ class CourseApplication(db.Model):
             "cohort_label": self.cohort_label,
             "cohort_start_date": self.cohort_start_date.isoformat() if self.cohort_start_date else None,
             "cohort_end_date": self.cohort_end_date.isoformat() if self.cohort_end_date else None,
+            
+            # Migration tracking
+            "original_window_id": self.original_window_id,
+            "migrated_to_window_id": self.migrated_to_window_id,
+            "migrated_at": self.migrated_at.isoformat() if self.migrated_at else None,
+            "migration_notes": self.migration_notes,
             
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

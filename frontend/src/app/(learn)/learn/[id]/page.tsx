@@ -11,7 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw } from 'lucide-react';
+import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw, CreditCard } from 'lucide-react';
 import Link from 'next/link';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -92,6 +92,8 @@ const LearningPage = () => {
   const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Cohort-level payment info from 402 response
+  const [paymentInfo, setPaymentInfo] = useState<Record<string, any> | null>(null);
   const [currentLesson, setCurrentLesson] = useState<any>(null);
   const [currentModuleId, setCurrentModuleId] = useState<number | null>(null);
   
@@ -1427,7 +1429,13 @@ const LearningPage = () => {
 
       } catch (err: any) {
         console.error('Failed to fetch course data:', err);
-        setError(err.response?.data?.error || err.message || 'Failed to load course');
+        // Handle 402 Payment Required from the backend payment gate
+        if (err.response?.status === 402) {
+          setError(err.response?.data?.error || 'Payment required to access this course');
+          setPaymentInfo(err.response?.data || null);
+        } else {
+          setError(err.response?.data?.error || err.message || 'Failed to load course');
+        }
       } finally {
         setLoading(false);
       }
@@ -2199,6 +2207,7 @@ const LearningPage = () => {
     const isNotEnrolled = error.toLowerCase().includes('not enrolled');
     const isNotFound = error.toLowerCase().includes('not found');
     const isNetworkError = error.toLowerCase().includes('network') || error.toLowerCase().includes('fetch') || error.toLowerCase().includes('timeout');
+    const isPaymentRequired = error.toLowerCase().includes('payment required') || error.toLowerCase().includes('payment must be');
     
     let errorIcon = <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />;
     let errorTitle = "Unable to Load Course";
@@ -2209,7 +2218,35 @@ const LearningPage = () => {
     let messageColor = "text-red-200";
     let showRetry = false;
     
-    if (isNetworkError) {
+    if (isPaymentRequired) {
+      errorIcon = <CreditCard className="h-12 w-12 text-amber-400 mx-auto mb-4" />;
+
+      // Use cohort-level info for a precise title/message
+      const pi = paymentInfo;
+      const isScholarship = pi?.cohort_enrollment_type === 'scholarship' && pi?.cohort_scholarship_type === 'partial';
+      errorTitle = isScholarship ? "Partial Scholarship — Payment Required" : "Tuition Payment Required";
+
+      if (pi?.cohort_effective_price != null && pi.cohort_effective_price > 0) {
+        const cur = pi.cohort_currency || 'USD';
+        const price = Number(pi.cohort_effective_price).toLocaleString();
+        errorMessage = `Amount due: ${cur} ${price}`;
+        if (pi.cohort_scholarship_percentage) {
+          errorMessage += ` (${pi.cohort_scholarship_percentage}% scholarship applied)`;
+        }
+      } else {
+        errorMessage = "Your enrollment requires payment before you can access this course.";
+      }
+
+      if (pi?.cohort_installment_enabled && pi?.cohort_installment_count && pi.cohort_installment_count > 1) {
+        const dueNow = pi.cohort_amount_due != null ? ` — ${pi.cohort_currency || 'USD'} ${Number(pi.cohort_amount_due).toLocaleString()} due now` : '';
+        errorDescription = `Installment plan available: ${pi.cohort_installment_count} payments${dueNow}. `;
+      }
+      errorDescription += "Please complete your payment to unlock the course content. If you've already paid, contact support so an admin can verify your payment.";
+
+      borderColor = "border-amber-900/50";
+      titleColor = "text-amber-300";
+      messageColor = "text-amber-200";
+    } else if (isNetworkError) {
       errorIcon = <Wifi className="h-12 w-12 text-orange-400 mx-auto mb-4" />;
       errorTitle = "Connection Issue";
       errorMessage = "Unable to connect to the learning platform.";
@@ -2263,7 +2300,16 @@ const LearningPage = () => {
               <p className="text-gray-400 text-sm mb-6">{errorDescription}</p>
             )}
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
-              {isNotEnrolled ? (
+              {isPaymentRequired ? (
+                <>
+                  <Button asChild variant="outline" className="border-amber-600 text-amber-300 hover:bg-amber-900/30">
+                    <Link href="/student/mylearning">My Learning</Link>
+                  </Button>
+                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                    <Link href="/student/dashboard">Dashboard</Link>
+                  </Button>
+                </>
+              ) : isNotEnrolled ? (
                 <>
                   <Button asChild className="bg-green-600 hover:bg-green-700">
                     <Link href={`/courses/${courseId}`}>Enroll Now</Link>

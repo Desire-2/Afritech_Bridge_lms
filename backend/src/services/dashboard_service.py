@@ -288,8 +288,22 @@ class DashboardService:
                         student_id, enrollment.course_id, enrollment.id
                     )
                     
+                    course_dict = enrollment.course.to_dict()
+                    
+                    # Inject cohort-level payment/access fields (single source of truth)
+                    try:
+                        from .waitlist_service import WaitlistService
+                        cohort_payment_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
+                        course_dict.update(cohort_payment_info)
+                    except Exception:
+                        # Gracefully degrade — safe defaults
+                        course_dict['enrollment_status'] = enrollment.status
+                        course_dict['payment_required'] = False
+                        course_dict['access_allowed'] = True
+                        course_dict['access_reason'] = ''
+                    
                     learning_data["active_courses"].append({
-                        "course": enrollment.course.to_dict(),
+                        "course": course_dict,
                         "progress_percentage": course_progress["completion_percentage"],
                         "current_module": course_progress["current_module"],
                         "next_lesson": course_progress["next_lesson"]

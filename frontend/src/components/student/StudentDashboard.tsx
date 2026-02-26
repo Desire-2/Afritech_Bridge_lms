@@ -17,7 +17,9 @@ import {
   ChevronRight,
   PlayCircle,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  CreditCard,
+  ShieldAlert
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -90,9 +92,13 @@ interface CourseCardProps {
   lastAccessed: string;
 }
 
-const CourseCard: React.FC<CourseCardProps> = ({ course, progress, lastAccessed }) => (
+const CourseCard: React.FC<CourseCardProps> = ({ course, progress, lastAccessed }) => {
+  const isAccessBlocked = course.access_allowed === false;
+  const needsPayment = course.payment_required === true;
+
+  return (
   <motion.div variants={itemVariants}>
-    <Card className="hover:shadow-lg transition-all duration-300 hover:scale-105">
+    <Card className={`hover:shadow-lg transition-all duration-300 hover:scale-105 ${isAccessBlocked ? 'border-amber-200' : ''}`}>
       <CardContent className="p-6">
         <div className="flex items-start justify-between mb-4">
           <div className="flex-1">
@@ -104,6 +110,38 @@ const CourseCard: React.FC<CourseCardProps> = ({ course, progress, lastAccessed 
             </div>
           </div>
         </div>
+        
+        {/* Payment status warning — cohort-level */}
+        {isAccessBlocked && (
+          <div className="flex items-start gap-2 p-2.5 rounded-md bg-amber-50 border border-amber-200 mb-3">
+            <ShieldAlert className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-amber-800">
+                {needsPayment
+                  ? course.cohort_enrollment_type === 'scholarship' && course.cohort_scholarship_type === 'partial'
+                    ? 'Partial Scholarship — Payment Required'
+                    : 'Tuition Payment Required'
+                  : 'Access Restricted'}
+              </p>
+              <p className="text-xs text-amber-700">
+                {needsPayment && course.cohort_effective_price != null && course.cohort_effective_price > 0
+                  ? `${course.cohort_currency || 'USD'} ${course.cohort_effective_price.toLocaleString()} due${
+                      course.cohort_scholarship_percentage
+                        ? ` (${course.cohort_scholarship_percentage}% scholarship applied)`
+                        : ''
+                    }`
+                  : needsPayment
+                    ? 'Complete payment to access this course.'
+                    : (course.access_reason || 'Contact admin for access.')}
+              </p>
+              {course.payment_status === 'completed' && !course.payment_verified && (
+                <Badge variant="outline" className="mt-1 text-xs border-blue-200 text-blue-700">
+                  <Clock className="h-3 w-3 mr-1" /> Verification Pending
+                </Badge>
+              )}
+            </div>
+          </div>
+        )}
         
         <div className="space-y-3">
           <div>
@@ -118,18 +156,26 @@ const CourseCard: React.FC<CourseCardProps> = ({ course, progress, lastAccessed 
             <div className="text-sm text-muted-foreground">
               Last accessed: {new Date(lastAccessed).toLocaleDateString()}
             </div>
-            <Link href={`/courses/${course.id}`}>
-              <Button size="sm" className="ml-auto">
-                Continue
-                <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
-            </Link>
+            {isAccessBlocked ? (
+              <Badge variant="outline" className="border-amber-300 text-amber-700">
+                <CreditCard className="h-3 w-3 mr-1" />
+                {needsPayment ? 'Unpaid' : 'Locked'}
+              </Badge>
+            ) : (
+              <Link href={`/courses/${course.id}`}>
+                <Button size="sm" className="ml-auto">
+                  Continue
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </Link>
+            )}
           </div>
         </div>
       </CardContent>
     </Card>
   </motion.div>
-);
+  );
+};
 
 interface ActivityItemProps {
   activity: any;

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import applicationService from '@/services/api/application.service';
+import waitlistService from '@/services/api/waitlist.service';
 import { CourseApplication, ApplicationStatistics } from '@/services/api/types';
 import type { CohortOption, CohortStatus } from '@/types/api';
 import { getStatusBadgeStyles as getCohortBadgeStyles } from '@/utils/cohort-utils';
@@ -37,6 +38,7 @@ import {
   CalendarDays,
   GraduationCap,
   Layers,
+  ArrowRightLeft,
 } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────────────────────────
@@ -157,6 +159,12 @@ export default function AdminApplicationsManager() {
   // Waitlist action state
   const [waitlistModalOpen, setWaitlistModalOpen] = useState(false);
   const [waitlistUpdateMessage, setWaitlistUpdateMessage] = useState('');
+  // Migration state
+  const [migrateModalOpen, setMigrateModalOpen] = useState(false);
+  const [migrateNotes, setMigrateNotes] = useState('');
+  const [migrateSendEmail, setMigrateSendEmail] = useState(true);
+  const [nextCohortInfo, setNextCohortInfo] = useState<any>(null);
+  const [loadingNextCohort, setLoadingNextCohort] = useState(false);
   const [resendEmailModalOpen, setResendEmailModalOpen] = useState(false);
   const [resendWithCredentials, setResendWithCredentials] = useState(false);
   const [resendCustomMessage, setResendCustomMessage] = useState('');
@@ -918,6 +926,70 @@ export default function AdminApplicationsManager() {
     }
   };
 
+  const handleOpenMigrateModal = async (application: CourseApplication) => {
+    setSelectedApplication(application);
+    setMigrateNotes('');
+    setMigrateSendEmail(true);
+    setNextCohortInfo(null);
+    setMigrateModalOpen(true);
+    
+    // Auto-detect next cohort
+    setLoadingNextCohort(true);
+    try {
+      const res = await waitlistService.getNextCohort(
+        application.course_id,
+        application.application_window_id ?? undefined
+      );
+      setNextCohortInfo(res.data);
+    } catch {
+      setNextCohortInfo(null);
+    } finally {
+      setLoadingNextCohort(false);
+    }
+  };
+
+  const handleMigrateToNextCohort = async () => {
+    if (!selectedApplication || !nextCohortInfo) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await waitlistService.migrateApplication(selectedApplication.id, {
+        target_window_id: nextCohortInfo.window_id,
+        notes: migrateNotes || undefined,
+        send_email: migrateSendEmail,
+      });
+      await loadApplications();
+      await loadStatistics();
+      setMigrateModalOpen(false);
+      setDetailModalOpen(false);
+      setSelectedApplication(null);
+      alert(`✅ Application migrated to ${nextCohortInfo.cohort_label || 'next cohort'} successfully!${nextCohortInfo.requires_payment ? ' (Payment required for new cohort)' : ''}`);
+    } catch (err: any) {
+      setActionError(`❌ Migration failed: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleBulkMigrateWaitlist = async (courseId: number) => {
+    if (!confirm('Migrate all waitlisted applications for this course to the next available cohort?')) return;
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const res = await waitlistService.bulkMigrateWaitlist({
+        course_id: courseId,
+        send_emails: true,
+      });
+      await loadApplications();
+      await loadStatistics();
+      alert(`✅ Migrated ${res.data.migrated_count} application(s) to ${res.data.target_cohort_label}. Failed: ${res.data.failed_count}`);
+    } catch (err: any) {
+      setActionError(`❌ Bulk migration failed: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleSendWaitlistUpdate = async () => {
     if (!selectedApplication || !waitlistUpdateMessage.trim()) {
       setActionError('⚠️ Please enter an update message');
@@ -1425,6 +1497,18 @@ export default function AdminApplicationsManager() {
                     <Pause className="w-4 h-4 mr-1" />
                     Bulk Waitlist
                   </Button>
+                  {selectedCourseId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleBulkMigrateWaitlist(parseInt(selectedCourseId))}
+                      disabled={actionLoading}
+                      className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                    >
+                      <ArrowRightLeft className="w-4 h-4 mr-1" />
+                      Migrate Waitlist
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="destructive"
@@ -1860,8 +1944,22 @@ export default function AdminApplicationsManager() {
                         <Clock className="h-4 w-4 text-yellow-600" />
                         <AlertDescription className="text-yellow-900">
                           This application is on the waitlist.
+                          {selectedApplication.migrated_to_window_id && (
+                            <span className="block mt-1 text-xs text-yellow-700">
+                              Migrated at: {selectedApplication.migrated_at ? new Date(selectedApplication.migrated_at).toLocaleString() : 'N/A'}
+                            </span>
+                          )}
                         </AlertDescription>
                       </Alert>
+                      
+                      <Button
+                        onClick={() => handleOpenMigrateModal(selectedApplication)}
+                        disabled={actionLoading}
+                        className="w-full bg-blue-600 hover:bg-blue-700"
+                      >
+                        <ArrowRightLeft className="w-4 h-4 mr-2" />
+                        Migrate to Next Cohort
+                      </Button>
                       
                       <Button
                         onClick={() => handlePromoteFromWaitlist(selectedApplication.id)}
@@ -2104,6 +2202,105 @@ export default function AdminApplicationsManager() {
                 disabled={actionLoading || !waitlistUpdateMessage.trim()}
               >
                 {actionLoading ? 'Sending...' : 'Send Update'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Migrate to Next Cohort Modal */}
+      <Dialog open={migrateModalOpen} onOpenChange={setMigrateModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+              Migrate to Next Cohort
+            </DialogTitle>
+            <DialogDescription>
+              Move {selectedApplication?.full_name}&apos;s waitlisted application to a new cohort
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {actionError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription className="whitespace-pre-wrap">{actionError}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Target cohort info */}
+            {loadingNextCohort ? (
+              <div className="flex items-center justify-center py-4 text-sm text-gray-500">
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Detecting next cohort...
+              </div>
+            ) : nextCohortInfo ? (
+              <div className="p-4 rounded-lg border bg-blue-50 border-blue-200 space-y-2">
+                <p className="text-sm font-semibold text-blue-800">
+                  Target: {nextCohortInfo.cohort_label || `Window #${nextCohortInfo.window_id}`}
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-xs text-blue-700">
+                  <span>Status: <strong>{nextCohortInfo.status}</strong></span>
+                  <span>Enrolled: <strong>{nextCohortInfo.enrollment_count}{nextCohortInfo.max_students ? `/${nextCohortInfo.max_students}` : ''}</strong></span>
+                  {nextCohortInfo.cohort_start && (
+                    <span>Starts: <strong>{new Date(nextCohortInfo.cohort_start).toLocaleDateString()}</strong></span>
+                  )}
+                  <span>Type: <strong>{nextCohortInfo.effective_enrollment_type}</strong></span>
+                </div>
+                {nextCohortInfo.requires_payment && (
+                  <Alert className="bg-amber-50 border-amber-200 mt-2">
+                    <AlertCircle className="h-3.5 w-3.5 text-amber-600" />
+                    <AlertDescription className="text-xs text-amber-800">
+                      This cohort requires payment ({nextCohortInfo.effective_price} {nextCohortInfo.effective_currency}).
+                      The student will need to pay before accessing content.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            ) : (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>No available next cohort found for this course. Create a new application window first.</AlertDescription>
+              </Alert>
+            )}
+
+            <div>
+              <Label htmlFor="migrate_notes">Migration Notes (optional)</Label>
+              <Textarea
+                id="migrate_notes"
+                value={migrateNotes}
+                onChange={(e) => setMigrateNotes(e.target.value)}
+                rows={3}
+                placeholder="Reason for migration..."
+              />
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="migrate_send_email"
+                checked={migrateSendEmail}
+                onCheckedChange={(v) => setMigrateSendEmail(v as boolean)}
+              />
+              <Label htmlFor="migrate_send_email" className="text-sm">Send notification email to student</Label>
+            </div>
+
+            <div className="flex gap-2 justify-end pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setMigrateModalOpen(false);
+                  setActionError(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleMigrateToNextCohort}
+                disabled={actionLoading || !nextCohortInfo}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {actionLoading ? 'Migrating...' : 'Confirm Migration'}
               </Button>
             </div>
           </div>

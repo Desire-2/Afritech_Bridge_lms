@@ -57,6 +57,7 @@ from src.routes.system_settings_routes import settings_bp # Import system settin
 from src.routes.file_upload_routes import file_upload_bp # Import file upload blueprint
 from src.routes.maintenance_routes import maintenance_bp # Import maintenance routes
 from src.routes.notification_routes import notification_bp # Import notification routes
+from src.routes.waitlist_routes import waitlist_bp # Import waitlist management routes
 from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance middleware
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
@@ -313,6 +314,7 @@ app.register_blueprint(settings_bp) # Register system settings blueprint
 app.register_blueprint(file_upload_bp) # Register file upload blueprint
 app.register_blueprint(maintenance_bp) # Register maintenance routes (public endpoints)
 app.register_blueprint(notification_bp) # Register notification routes
+app.register_blueprint(waitlist_bp) # Register waitlist management routes
 
 # Initialize maintenance mode middleware - MUST BE AFTER BLUEPRINT REGISTRATION
 maintenance_mode = MaintenanceMode(app)

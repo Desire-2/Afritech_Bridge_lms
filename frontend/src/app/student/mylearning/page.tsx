@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { StudentService, EnrolledCourse } from '@/services/student.service';
-import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2, TrendingUp, Award, Search, Filter, UserCircle } from 'lucide-react';
+import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2, TrendingUp, Award, Search, Filter, UserCircle, AlertTriangle, CreditCard, ShieldAlert } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const MyLearningPage = () => {
@@ -286,6 +286,51 @@ const MyLearningPage = () => {
                     {course.description}
                   </p>
 
+                  {/* Payment Status Banner — cohort-level */}
+                  {course.access_allowed === false && (
+                    <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50">
+                      <div className="flex items-start gap-2">
+                        <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-amber-800">
+                            {course.payment_required
+                              ? course.cohort_enrollment_type === 'scholarship' && course.cohort_scholarship_type === 'partial'
+                                ? `Partial Scholarship — Payment Required`
+                                : 'Tuition Payment Required'
+                              : 'Access Restricted'}
+                          </p>
+                          <p className="text-xs text-amber-700 mt-0.5">
+                            {course.payment_required
+                              ? course.cohort_effective_price != null && course.cohort_effective_price > 0
+                                ? `Amount due: ${course.cohort_currency || 'USD'} ${course.cohort_effective_price.toLocaleString()}${
+                                    course.cohort_scholarship_percentage
+                                      ? ` (${course.cohort_scholarship_percentage}% scholarship applied)`
+                                      : ''
+                                  }`
+                                : 'Complete your payment to access course content.'
+                              : (course.access_reason || 'Contact an administrator for access.')}
+                          </p>
+                          {course.cohort_installment_enabled && course.cohort_installment_count && course.cohort_installment_count > 1 && (
+                            <p className="text-xs text-amber-600 mt-0.5">
+                              Installment plan: {course.cohort_installment_count} payments
+                              {course.cohort_amount_due != null && ` — ${course.cohort_currency || 'USD'} ${course.cohort_amount_due.toLocaleString()} due now`}
+                            </p>
+                          )}
+                          {course.payment_status === 'completed' && !course.payment_verified && (
+                            <span className="inline-flex items-center mt-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                              <Clock className="w-3 h-3 mr-1" /> Verification Pending
+                            </span>
+                          )}
+                          {course.payment_status === 'pending' && (
+                            <span className="inline-flex items-center mt-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                              <CreditCard className="w-3 h-3 mr-1" /> Unpaid
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Progress Section */}
                   <div className="mb-4">
                     <div className="flex justify-between items-center text-sm mb-2">
@@ -342,7 +387,12 @@ const MyLearningPage = () => {
 
                   {/* Action Buttons */}
                   <div className="flex gap-2">
-                    {course.progress >= 100 ? (
+                    {course.access_allowed === false ? (
+                      <div className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gray-100 text-gray-400 rounded-lg cursor-not-allowed font-medium">
+                        <AlertTriangle className="w-4 h-4" />
+                        {course.payment_required ? 'Payment Pending' : 'Access Locked'}
+                      </div>
+                    ) : course.progress >= 100 ? (
                       <Link
                         href={`/learn/${course.id}`}
                         className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all shadow-sm hover:shadow-md font-medium"
@@ -370,14 +420,23 @@ const MyLearningPage = () => {
                 </div>
 
                 {/* Status Badge at bottom */}
-                {course.progress >= 100 && (
+                {course.access_allowed === false ? (
+                  <div className="px-6 pb-4">
+                    <div className="flex items-center justify-center gap-2 py-2 bg-amber-50 rounded-lg border border-amber-200">
+                      <CreditCard className="w-4 h-4 text-amber-600" />
+                      <span className="text-sm font-semibold text-amber-700">
+                        {course.enrollment_status === 'pending_payment' ? 'Pending Payment' : 'Access Restricted'}
+                      </span>
+                    </div>
+                  </div>
+                ) : course.progress >= 100 ? (
                   <div className="px-6 pb-4">
                     <div className="flex items-center justify-center gap-2 py-2 bg-green-50 rounded-lg border border-green-200">
                       <CheckCircle2 className="w-4 h-4 text-green-600" />
                       <span className="text-sm font-semibold text-green-700">Course Completed!</span>
                     </div>
                   </div>
-                )}
+                ) : null}
               </div>
             ))}
           </div>

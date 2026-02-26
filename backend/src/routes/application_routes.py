@@ -1658,6 +1658,28 @@ def approve_application(app_id):
         application.reviewed_at = datetime.utcnow()
         
         db.session.flush()
+
+        # ── Payment verification for paid cohorts ──
+        # If the cohort requires payment, set enrollment to pending_payment
+        # unless payment was already completed on the application
+        from ..services.waitlist_service import WaitlistService
+        requires_payment = WaitlistService.should_require_payment_on_approval(application)
+        if requires_payment:
+            app_payment = application.payment_status
+            if app_payment in ('completed', 'confirmed'):
+                enrollment.payment_status = 'completed'
+                enrollment.payment_verified = True
+                enrollment.payment_verified_at = datetime.utcnow()
+            else:
+                enrollment.status = 'pending_payment'
+                enrollment.payment_status = 'pending'
+                enrollment.payment_verified = False
+                logger.info(f"Enrollment {enrollment.id} set to pending_payment (paid cohort, no payment yet)")
+        else:
+            enrollment.payment_status = 'not_required'
+            enrollment.payment_verified = True
+        
+        db.session.flush()
         
         # Initialize progress tracking for course modules (skip if already exists)
         from ..models.student_models import ModuleProgress

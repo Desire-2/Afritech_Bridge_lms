@@ -672,14 +672,23 @@ class Enrollment(db.Model):
     cohort_end_date = db.Column(db.DateTime, nullable=True)
 
     # Enrollment status and termination tracking
-    status = db.Column(db.String(20), default='active')  # 'active', 'completed', 'terminated', 'suspended'
+    status = db.Column(db.String(20), default='active')  # 'active', 'completed', 'terminated', 'suspended', 'pending_payment'
     terminated_at = db.Column(db.DateTime, nullable=True)
     termination_reason = db.Column(db.String(255), nullable=True)
     terminated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
+    # ── Payment verification for paid cohorts ──
+    payment_status = db.Column(db.String(30), nullable=True)  # 'pending', 'completed', 'waived', 'not_required'
+    payment_verified = db.Column(db.Boolean, default=False, nullable=False)  # True once admin confirms payment or cohort is free
+    payment_verified_at = db.Column(db.DateTime, nullable=True)
+    payment_verified_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    migrated_from_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # If student was migrated from a waitlisted cohort
+
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('enrollments', lazy='dynamic'))
     terminator = db.relationship('User', foreign_keys=[terminated_by])
-    application_window = db.relationship('ApplicationWindow', backref=db.backref('enrollments', lazy='dynamic'))
+    payment_verifier = db.relationship('User', foreign_keys=[payment_verified_by])
+    application_window = db.relationship('ApplicationWindow', foreign_keys=[application_window_id], backref=db.backref('enrollments', lazy='dynamic'))
+    migrated_from_window = db.relationship('ApplicationWindow', foreign_keys=[migrated_from_window_id])
     application = db.relationship('CourseApplication', foreign_keys=[application_id], backref=db.backref('enrollment', uselist=False))
     # Course relationship is already defined in Course model via backref
 
@@ -761,6 +770,11 @@ class Enrollment(db.Model):
             'application_window_id': self.application_window_id,
             'application_id': self.application_id,
             'application_window': window_data,
+            # ── Payment verification ──
+            'payment_status': self.payment_status,
+            'payment_verified': self.payment_verified,
+            'payment_verified_at': self.payment_verified_at.isoformat() if self.payment_verified_at else None,
+            'migrated_from_window_id': self.migrated_from_window_id,
         }
 
 class Quiz(db.Model):

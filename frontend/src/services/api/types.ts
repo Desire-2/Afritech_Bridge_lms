@@ -489,6 +489,11 @@ export interface CourseApplication {
   submission_date: string;
   reviewed_date?: string;
   reviewed_by?: number;
+  // Migration tracking
+  original_window_id?: number;
+  migrated_to_window_id?: number;
+  migrated_at?: string;
+  migration_notes?: string;
 }
 
 export interface ApplicationSubmitData {

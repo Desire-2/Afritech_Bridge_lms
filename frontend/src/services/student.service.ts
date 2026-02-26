@@ -30,6 +30,25 @@ export interface EnrolledCourse {
   cohort_start_date?: string | null;
   cohort_end_date?: string | null;
   application_window_id?: number | null;
+  // Payment / access gate fields
+  enrollment_status?: string;
+  payment_status?: string | null;
+  payment_verified?: boolean;
+  payment_required?: boolean;
+  access_allowed?: boolean;
+  access_reason?: string;
+  // Cohort-level payment details (resolved from ApplicationWindow, NOT course)
+  cohort_enrollment_type?: string;        // 'free' | 'paid' | 'scholarship'
+  cohort_scholarship_type?: string | null; // 'full' | 'partial' | null
+  cohort_scholarship_percentage?: number | null;
+  cohort_effective_price?: number | null;  // What the student actually pays (after scholarship discount)
+  cohort_currency?: string;
+  cohort_payment_mode?: string;            // 'full' | 'partial'
+  cohort_amount_due?: number | null;       // Amount due now (may differ from total if installment/partial)
+  cohort_original_price?: number | null;   // Pre-discount price
+  cohort_remaining_balance?: number;
+  cohort_installment_enabled?: boolean;
+  cohort_installment_count?: number | null;
 }
 
 export interface CourseProgress {

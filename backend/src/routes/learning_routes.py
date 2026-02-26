@@ -272,6 +272,21 @@ def get_course_for_learning(course_id):
         if not enrollment and not is_instructor and not is_admin:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
+        # ── Payment verification gate ──
+        # Block access for students in paid cohorts who haven't paid
+        if enrollment and not is_instructor and not is_admin:
+            from ..services.waitlist_service import WaitlistService
+            access_allowed, access_reason = WaitlistService.is_enrollment_access_allowed(enrollment)
+            if not access_allowed:
+                # Include full cohort-level payment info so the frontend
+                # can show the correct amount, scholarship type, etc.
+                cohort_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
+                return jsonify({
+                    "error": "Payment required",
+                    "message": access_reason,
+                    **cohort_info,
+                }), 402  # 402 Payment Required
+        
         # OPTIMIZED: Load modules and lessons in efficient batch queries
         # For students: only show published AND released modules
         # For instructors/admins: show all modules
