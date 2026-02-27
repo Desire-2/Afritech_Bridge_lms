@@ -447,8 +447,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       console.log('Starting AI generation for tab:', activeTab);
       console.log('Active tab type:', typeof activeTab, 'Value:', activeTab);
       
-      // Don't set success message here - wait for actual success
-      // setSuccessMessage('⏳ AI is analyzing content... This may take up to 2 minutes.');
+      // Show generating message — these run as background tasks
+      setSuccessMessage('⏳ AI is generating in background... Please wait.');
 
       // Generate based on active tab
       if (activeTab === 'quiz') {

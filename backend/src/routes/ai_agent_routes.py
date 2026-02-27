@@ -1349,18 +1349,30 @@ def generate_quiz_from_content():
         
         logger.info(f"Generating quiz from {content_type}: {content_title} ({num_questions} questions, {difficulty} difficulty)")
         
-        result = ai_agent_service.generate_quiz_from_content(
-            lesson_or_module_content=content_text,
-            content_title=content_title,
-            content_type=content_type,
-            num_questions=num_questions,
-            difficulty=difficulty
+        # Always use background task to avoid Gunicorn worker timeout
+        task_id = task_manager.submit_task(
+            task_type='generate-quiz-from-content',
+            task_func=ai_agent_service.run_single_step_background,
+            kwargs={
+                'method_name': 'generate_quiz_from_content',
+                'method_kwargs': {
+                    'lesson_or_module_content': content_text,
+                    'content_title': content_title,
+                    'content_type': content_type,
+                    'num_questions': num_questions,
+                    'difficulty': difficulty,
+                }
+            },
+            total_steps=1,
+            user_id=current_user_id,
+            on_complete=handle_task_completion,
+            task_meta=_make_task_meta(course_id=course_id, module_id=data.get('module_id'), course_title=course.title),
         )
-        
-        # Convert AIResponse to dict for JSON serialization
-        response_data = result.to_dict()
-        
-        return jsonify(response_data), 200
+        return jsonify({
+            "success": True, "background": True,
+            "task_id": task_id, "status": "pending",
+            "message": f"Generating {num_questions} quiz questions in background"
+        }), 202
         
     except Exception as e:
         logger.error(f"Error generating quiz from content: {e}")
@@ -1447,17 +1459,29 @@ def generate_assignment_from_content():
         
         logger.info(f"Generating {assignment_type} assignment from {content_type}: {content_title}")
         
-        result = ai_agent_service.generate_assignment_from_content(
-            lesson_or_module_content=content_text,
-            content_title=content_title,
-            content_type=content_type,
-            assignment_type=assignment_type
+        # Always use background task to avoid Gunicorn worker timeout
+        task_id = task_manager.submit_task(
+            task_type='generate-assignment-from-content',
+            task_func=ai_agent_service.run_single_step_background,
+            kwargs={
+                'method_name': 'generate_assignment_from_content',
+                'method_kwargs': {
+                    'lesson_or_module_content': content_text,
+                    'content_title': content_title,
+                    'content_type': content_type,
+                    'assignment_type': assignment_type,
+                }
+            },
+            total_steps=1,
+            user_id=current_user_id,
+            on_complete=handle_task_completion,
+            task_meta=_make_task_meta(course_id=course_id, module_id=data.get('module_id'), course_title=course.title),
         )
-        
-        # Convert AIResponse to dict for JSON serialization
-        response_data = result.to_dict()
-        
-        return jsonify(response_data), 200
+        return jsonify({
+            "success": True, "background": True,
+            "task_id": task_id, "status": "pending",
+            "message": f"Generating {assignment_type} assignment in background"
+        }), 202
         
     except Exception as e:
         logger.error(f"Error generating assignment from content: {e}")
@@ -1517,16 +1541,28 @@ def generate_project_from_content():
         
         logger.info(f"Generating project from module: {module.title} ({len(module_contents)} lessons)")
         
-        result = ai_agent_service.generate_project_from_content(
-            module_contents=module_contents,
-            module_title=module.title,
-            course_title=course.title
+        # Always use background task to avoid Gunicorn worker timeout
+        task_id = task_manager.submit_task(
+            task_type='generate-project-from-content',
+            task_func=ai_agent_service.run_single_step_background,
+            kwargs={
+                'method_name': 'generate_project_from_content',
+                'method_kwargs': {
+                    'module_contents': module_contents,
+                    'module_title': module.title,
+                    'course_title': course.title,
+                }
+            },
+            total_steps=1,
+            user_id=current_user_id,
+            on_complete=handle_task_completion,
+            task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
         )
-        
-        # Convert AIResponse to dict for JSON serialization
-        response_data = result.to_dict()
-        
-        return jsonify(response_data), 200
+        return jsonify({
+            "success": True, "background": True,
+            "task_id": task_id, "status": "pending",
+            "message": f"Generating project from {module.title} in background"
+        }), 202
         
     except Exception as e:
         logger.error(f"Error generating project from content: {e}")
@@ -1691,20 +1727,32 @@ def generate_mixed_content():
         
         logger.info(f"Generating mixed content for lesson: {lesson_title} with template: {template_id}")
         
-        result = ai_agent_service.generate_mixed_content(
-            course_title=course.title,
-            module_title=module.title,
-            module_description=module.description or "",
-            lesson_title=lesson_title,
-            lesson_description=lesson_description,
-            template_id=template_id,
-            existing_sections=existing_sections
+        # Always use background task to avoid Gunicorn worker timeout
+        task_id = task_manager.submit_task(
+            task_type='generate-mixed-content',
+            task_func=ai_agent_service.run_single_step_background,
+            kwargs={
+                'method_name': 'generate_mixed_content',
+                'method_kwargs': {
+                    'course_title': course.title,
+                    'module_title': module.title,
+                    'module_description': module.description or '',
+                    'lesson_title': lesson_title,
+                    'lesson_description': lesson_description,
+                    'template_id': template_id,
+                    'existing_sections': existing_sections,
+                }
+            },
+            total_steps=1,
+            user_id=current_user_id,
+            on_complete=handle_task_completion,
+            task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
         )
-        
-        # Convert AIResponse to dict for JSON serialization
-        response_data = result.to_dict()
-        
-        return jsonify(response_data), 200
+        return jsonify({
+            "success": True, "background": True,
+            "task_id": task_id, "status": "pending",
+            "message": f"Generating mixed content for {lesson_title} in background"
+        }), 202
         
     except Exception as e:
         logger.error(f"Error generating mixed content: {e}")

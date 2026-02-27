@@ -527,78 +527,50 @@ class AIAgentService {
   }
 
   /**
-   * Generate quiz from actual lesson/module content (synchronous — typically fast)
+   * Generate quiz from actual lesson/module content (background task)
    */
-  async generateQuizFromContent(request: QuizFromContentRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-quiz-from-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating quiz from content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate quiz from content',
-        error: error.message
-      };
-    }
+  async generateQuizFromContent(
+    request: QuizFromContentRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-quiz-from-content', request, onProgress);
   }
 
   /**
-   * Generate assignment from actual lesson/module content (synchronous)
+   * Generate assignment from actual lesson/module content (background task)
    */
-  async generateAssignmentFromContent(request: AssignmentFromContentRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-assignment-from-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating assignment from content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate assignment from content',
-        error: error.message
-      };
-    }
+  async generateAssignmentFromContent(
+    request: AssignmentFromContentRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-assignment-from-content', request, onProgress);
   }
 
   /**
-   * Generate project from actual module content (synchronous)
+   * Generate project from actual module content (background task)
    */
-  async generateProjectFromContent(request: ProjectFromContentRequest): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-project-from-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating project from content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate project from content',
-        error: error.message
-      };
-    }
+  async generateProjectFromContent(
+    request: ProjectFromContentRequest,
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-project-from-content', request, onProgress);
   }
 
   /**
-   * Generate mixed content lesson with template support (synchronous)
+   * Generate mixed content lesson with template support (background task)
    */
-  async generateMixedContent(request: {
-    course_id: number;
-    module_id: number;
-    lesson_title: string;
-    lesson_description?: string;
-    template_id?: string;
-    existing_sections?: any[];
-  }): Promise<AIResponse> {
-    try {
-      const response = await aiApiClient.post('/ai-agent/generate-mixed-content', request);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error generating mixed content:', error);
-      return {
-        success: false,
-        message: error.response?.data?.message || 'Failed to generate mixed content',
-        error: error.message
-      };
-    }
+  async generateMixedContent(
+    request: {
+      course_id: number;
+      module_id: number;
+      lesson_title: string;
+      lesson_description?: string;
+      template_id?: string;
+      existing_sections?: any[];
+    },
+    onProgress?: TaskProgressCallback,
+  ): Promise<AIResponse> {
+    return this.runInBackground('/ai-agent/generate-mixed-content', request, onProgress);
   }
 
   /**
