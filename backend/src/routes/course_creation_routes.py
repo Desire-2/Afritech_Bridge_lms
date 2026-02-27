@@ -375,16 +375,74 @@ def reorder_modules(course_id):
 @course_creation_bp.route("/<int:course_id>/modules/<int:module_id>", methods=["DELETE"])
 @course_ownership_required
 def delete_module(course_id, module_id):
-    """Delete a module"""
+    """Delete a module and all its dependent records"""
     try:
         module = Module.query.filter_by(id=module_id, course_id=course_id).first_or_404()
+
+        # Import models that reference modules/lessons without cascade delete
+        from ..models.student_models import (
+            ModuleProgress, AssessmentAttempt, StudentSkillBadge,
+            StudentSuspension
+        )
+        from ..models.quiz_progress_models import ModuleCompletion
+
+        # Collect lesson IDs and quiz IDs belonging to this module
+        lesson_ids = [l.id for l in Lesson.query.filter_by(module_id=module_id).all()]
+        quiz_ids = [q.id for q in Quiz.query.filter_by(module_id=module_id).all()]
+
+        # --- Clean up records referencing lessons in this module ---
+        if lesson_ids:
+            # Submissions linked to lessons
+            Submission.query.filter(
+                Submission.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
+            # Lesson completions
+            LessonCompletion.query.filter(
+                LessonCompletion.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
+            # Student notes
+            StudentNote.query.filter(
+                StudentNote.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
+            # Nullify current_lesson_id in UserProgress
+            UserProgress.query.filter(
+                UserProgress.current_lesson_id.in_(lesson_ids)
+            ).update({UserProgress.current_lesson_id: None}, synchronize_session=False)
+
+        # --- Clean up records referencing quizzes in this module ---
+        if quiz_ids:
+            # Quiz attempt answers then attempts (cascade should handle, but be safe)
+            attempt_ids = [a.id for a in QuizAttempt.query.filter(
+                QuizAttempt.quiz_id.in_(quiz_ids)
+            ).all()]
+            if attempt_ids:
+                UserAnswer.query.filter(
+                    UserAnswer.quiz_attempt_id.in_(attempt_ids)
+                ).delete(synchronize_session=False)
+                QuizAttempt.query.filter(
+                    QuizAttempt.id.in_(attempt_ids)
+                ).delete(synchronize_session=False)
+            # Submissions linked to quizzes
+            Submission.query.filter(
+                Submission.quiz_id.in_(quiz_ids)
+            ).delete(synchronize_session=False)
+
+        # --- Clean up records referencing this module directly ---
+        ModuleProgress.query.filter_by(module_id=module_id).delete(synchronize_session=False)
+        ModuleCompletion.query.filter_by(module_id=module_id).delete(synchronize_session=False)
+        AssessmentAttempt.query.filter_by(module_id=module_id).delete(synchronize_session=False)
+        StudentSkillBadge.query.filter_by(module_id=module_id).delete(synchronize_session=False)
+        StudentSuspension.query.filter_by(failed_module_id=module_id).delete(synchronize_session=False)
+
+        # Now delete the module (cascades to lessons, quizzes, assignments, etc.)
         db.session.delete(module)
         db.session.commit()
-        
+
         return jsonify({"message": "Module deleted successfully"}), 200
-        
+
     except Exception as e:
         db.session.rollback()
+        logger.error(f"Failed to delete module {module_id}: {str(e)}")
         return jsonify({"message": "Failed to delete module", "error": str(e)}), 500
 
 # =====================
