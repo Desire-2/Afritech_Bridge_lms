@@ -130,10 +130,10 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-4 py-3 flex items-center justify-between">
+      <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Star className="w-5 h-5 text-white" />
-          <h4 className="text-lg font-semibold text-white">Rubric Grading</h4>
+          <Star className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+          <h4 className="text-base sm:text-lg font-semibold text-white">Rubric Grading</h4>
         </div>
         <button
           onClick={onClose}
@@ -145,7 +145,7 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
 
       {/* Rubric Selection */}
       {rubrics.length > 1 && (
-        <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+        <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
             Select Rubric
           </label>
@@ -169,21 +169,21 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
 
       {/* Rubric Description */}
       {selectedRubric?.description && (
-        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
-          <p className="text-sm text-blue-900 dark:text-blue-300">
+        <div className="p-3 sm:p-4 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
+          <p className="text-xs sm:text-sm text-blue-900 dark:text-blue-300">
             {selectedRubric.description}
           </p>
         </div>
       )}
 
       {/* Criteria List */}
-      <div className="max-h-96 overflow-y-auto">
+      <div className="max-h-64 sm:max-h-96 overflow-y-auto">
         {selectedRubric?.criteria.map((criterion, idx) => (
           <div
             key={criterion.id}
-            className="p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0"
+            className="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-700 last:border-b-0"
           >
-            <div className="flex items-start justify-between mb-3">
+            <div className="flex items-start justify-between mb-2 sm:mb-3">
               <div className="flex-1">
                 <h5 className="font-medium text-slate-900 dark:text-white mb-1">
                   {idx + 1}. {criterion.name}
@@ -194,8 +194,8 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
                   </p>
                 )}
               </div>
-              <div className="ml-4 text-right">
-                <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                <div className="ml-3 sm:ml-4 text-right">
+                <div className="text-base sm:text-lg font-bold text-green-600 dark:text-green-400">
                   {scores[criterion.id] || 0}
                 </div>
                 <div className="text-xs text-slate-500 dark:text-slate-400">
@@ -208,10 +208,10 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
             {criterion.performance_levels && criterion.performance_levels.length > 0 ? (
               <div className="grid grid-cols-1 gap-2">
                 {criterion.performance_levels.map((level, levelIdx) => (
-                  <button
+                    <button
                     key={levelIdx}
                     onClick={() => handleCriterionScore(criterion.id, level.points)}
-                    className={`p-3 rounded-lg border-2 text-left transition-all ${
+                    className={`p-2.5 sm:p-3 rounded-lg border-2 text-left transition-all ${
                       scores[criterion.id] === level.points
                         ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
                         : 'border-slate-200 dark:border-slate-700 hover:border-green-300 dark:hover:border-green-700'
@@ -259,17 +259,17 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
       </div>
 
       {/* Footer - Total Score */}
-      <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-t border-green-200 dark:border-green-800">
-        <div className="flex items-center justify-between mb-4">
+      <div className="p-3 sm:p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-t border-green-200 dark:border-green-800">
+        <div className="flex items-center justify-between mb-3 sm:mb-4">
           <div>
-            <div className="text-sm text-slate-600 dark:text-slate-400">Total Score</div>
-            <div className="text-3xl font-bold text-green-600 dark:text-green-400">
+            <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">Total Score</div>
+            <div className="text-xl sm:text-3xl font-bold text-green-600 dark:text-green-400">
               {totalScore} / {selectedRubric?.total_points || maxPoints}
             </div>
           </div>
           <div className="text-right">
-            <div className="text-sm text-slate-600 dark:text-slate-400">Percentage</div>
-            <div className="text-3xl font-bold text-green-600 dark:text-green-400">
+            <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">Percentage</div>
+            <div className="text-xl sm:text-3xl font-bold text-green-600 dark:text-green-400">
               {percentage}%
             </div>
           </div>
@@ -277,7 +277,7 @@ export const RubricGradingPanel: React.FC<RubricGradingPanelProps> = ({
 
         <button
           onClick={handleApply}
-          className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 font-medium transition-all flex items-center justify-center space-x-2"
+          className="w-full py-2.5 sm:py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 font-medium transition-all flex items-center justify-center space-x-2 text-sm sm:text-base"
         >
           <CheckCircle className="w-5 h-5" />
           <span>Apply Rubric Scores</span>

@@ -115,10 +115,10 @@ export const CommentBankPanel: React.FC<CommentBankPanelProps> = ({
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-3 flex items-center justify-between">
+      <div className="bg-gradient-to-r from-purple-500 to-pink-500 px-3 py-2.5 sm:px-4 sm:py-3 flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Star className="w-5 h-5 text-white" />
-          <h4 className="text-lg font-semibold text-white">Comment Bank</h4>
+          <Star className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+          <h4 className="text-base sm:text-lg font-semibold text-white">Comment Bank</h4>
         </div>
         <button
           onClick={onClose}
@@ -129,9 +129,9 @@ export const CommentBankPanel: React.FC<CommentBankPanelProps> = ({
       </div>
 
       {/* Search */}
-      <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+      <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
         <div className="relative">
-          <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-2.5 sm:top-3 h-4 w-4 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
@@ -143,13 +143,13 @@ export const CommentBankPanel: React.FC<CommentBankPanelProps> = ({
       </div>
 
       {/* Categories */}
-      <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
-        <div className="flex flex-wrap gap-2">
+      <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex flex-wrap gap-1.5 sm:gap-2">
           {categories.map(cat => (
             <button
               key={cat.value}
               onClick={() => setSelectedCategory(cat.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                 selectedCategory === cat.value
                   ? 'bg-purple-600 text-white'
                   : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -162,7 +162,7 @@ export const CommentBankPanel: React.FC<CommentBankPanelProps> = ({
       </div>
 
       {/* Templates List */}
-      <div className="max-h-96 overflow-y-auto">
+      <div className="max-h-64 sm:max-h-96 overflow-y-auto">
         {filteredTemplates.length === 0 ? (
           <div className="p-8 text-center text-slate-500 dark:text-slate-400">
             <p>No feedback templates found</p>
@@ -174,7 +174,7 @@ export const CommentBankPanel: React.FC<CommentBankPanelProps> = ({
               <button
                 key={template.id}
                 onClick={() => handleSelectTemplate(template)}
-                className="w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-slate-900 transition-colors group"
+                className="w-full text-left p-3 sm:p-4 hover:bg-slate-50 dark:hover:bg-slate-900 transition-colors group"
               >
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex items-center space-x-2">
@@ -215,7 +215,7 @@ export const CommentBankPanel: React.FC<CommentBankPanelProps> = ({
       </div>
 
       {/* Footer */}
-      <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 text-center">
+      <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700 text-center">
         <button
           className="text-sm text-purple-600 dark:text-purple-400 hover:underline"
           onClick={() => {

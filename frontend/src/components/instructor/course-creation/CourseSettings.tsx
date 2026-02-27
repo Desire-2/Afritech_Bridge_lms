@@ -76,6 +76,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [success, setSuccess] = useState<string | null>(null);
   const [moduleReleaseData, setModuleReleaseData] = useState<ModuleReleaseData | null>(null);
   const [savingApplication, setSavingApplication] = useState(false);
+  const [releasingModuleId, setReleasingModuleId] = useState<number | null>(null);
   
   // Form state
   const [enableModuleRelease, setEnableModuleRelease] = useState(false);
@@ -392,7 +393,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   // Release or unrelease a specific module
   const handleToggleModuleRelease = async (moduleId: number, currentlyReleased: boolean) => {
     if (!token) return;
-    
+    setReleasingModuleId(moduleId);
     try {
       const endpoint = currentlyReleased ? 'unrelease' : 'release';
       const response = await fetch(`${API_URL}/modules/${moduleId}/${endpoint}`, {
@@ -412,6 +413,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       setSuccess(`Module ${currentlyReleased ? 'unreleased' : 'released'} successfully`);
     } catch (err: any) {
       setError(err.message || 'Failed to update module');
+    } finally {
+      setReleasingModuleId(null);
     }
   };
 
@@ -1392,12 +1395,18 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                           variant={module.is_manually_released ? "outline" : "default"}
                           size="sm"
                           onClick={() => handleToggleModuleRelease(module.id, module.is_manually_released)}
-                          className={module.is_manually_released 
+                          disabled={releasingModuleId === module.id}
+                          className={`disabled:opacity-50 disabled:cursor-not-allowed ${module.is_manually_released 
                             ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
                             : "bg-green-600 hover:bg-green-700 text-white"
-                          }
+                          }`}
                         >
-                          {module.is_manually_released ? (
+                          {releasingModuleId === module.id ? (
+                            <>
+                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                              {module.is_manually_released ? 'Revoking...' : 'Releasing...'}
+                            </>
+                          ) : module.is_manually_released ? (
                             <>
                               <Lock className="h-3 w-3 mr-1" />
                               Revoke

@@ -40,6 +40,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const [isGeneratingContent, setIsGeneratingContent] = useState(false);
   const [showMixedContentAI, setShowMixedContentAI] = useState(false);
   const [isGeneratingMixedContent, setIsGeneratingMixedContent] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [contentGenProgress, setContentGenProgress] = useState<{
     currentStep: number; totalSteps: number; description: string; percentage: number;
   } | null>(null);
@@ -626,6 +627,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   };
 
   const handleCreateModule = async () => {
+    setActionLoading('create-module');
     try {
       const newModule = await CourseCreationService.createModule(course.id, moduleForm);
       setModules([...modules, newModule]);
@@ -634,12 +636,14 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error) {
       console.error('Error creating module:', error);
       toast.error('Failed to create module');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handleUpdateModule = async (moduleId: number) => {
     if (!editingModule) return;
-    
+    setActionLoading('update-module');
     try {
       const updatedModule = await CourseCreationService.updateModule(course.id, moduleId, moduleForm);
       setModules(modules.map(m => m.id === moduleId ? updatedModule : m));
@@ -648,6 +652,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error) {
       console.error('Error updating module:', error);
       toast.error('Failed to update module');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -655,17 +661,20 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     if (!confirm('Are you sure you want to delete this module? This will also delete all lessons in it.')) {
       return;
     }
-    
+    setActionLoading(`delete-module-${moduleId}`);
     try {
       await CourseCreationService.deleteModule(course.id, moduleId);
       setModules(modules.filter(m => m.id !== moduleId));
     } catch (error) {
       console.error('Error deleting module:', error);
       toast.error('Failed to delete module');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handleCreateLesson = async (moduleId: number) => {
+    setActionLoading(`create-lesson-${moduleId}`);
     try {
       // Verify the module exists in our local state
       const moduleExists = modules.find(m => m.id === moduleId);
@@ -691,12 +700,14 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       console.error('Error creating lesson:', error);
       const errorMessage = error.response?.data?.message || error.message || 'Failed to create lesson';
       toast.error(errorMessage);
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handleUpdateLesson = async (moduleId: number, lessonId: number) => {
     if (!editingLesson) return;
-    
+    setActionLoading(`update-lesson-${moduleId}-${lessonId}`);
     try {
       const durationMinutes = lessonForm.duration_minutes ? parseInt(lessonForm.duration_minutes) : undefined;
       const updatedLesson = await CourseCreationService.updateLesson(course.id, moduleId, lessonId, {
@@ -717,6 +728,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error) {
       console.error('Error updating lesson:', error);
       toast.error('Failed to update lesson');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -724,7 +737,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     if (!confirm('Are you sure you want to delete this lesson?')) {
       return;
     }
-    
+    setActionLoading(`delete-lesson-${moduleId}-${lessonId}`);
     try {
       await CourseCreationService.deleteLesson(course.id, moduleId, lessonId);
       setModules(modules.map(m => 
@@ -735,10 +748,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error) {
       console.error('Error deleting lesson:', error);
       toast.error('Failed to delete lesson');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handlePublishModule = async (moduleId: number, isPublished: boolean) => {
+    setActionLoading(`publish-module-${moduleId}`);
     try {
       await CourseCreationService.updateModule(course.id, moduleId, {
         is_published: !isPublished
@@ -753,10 +769,13 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error) {
       console.error('Error publishing/unpublishing module:', error);
       toast.error('Failed to update module publication status');
+    } finally {
+      setActionLoading(null);
     }
   };
 
   const handlePublishLesson = async (moduleId: number, lessonId: number, isPublished: boolean) => {
+    setActionLoading(`publish-lesson-${moduleId}-${lessonId}`);
     try {
       await CourseCreationService.updateLesson(course.id, moduleId, lessonId, {
         is_published: !isPublished
@@ -778,6 +797,8 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
     } catch (error) {
       console.error('Error publishing/unpublishing lesson:', error);
       toast.error('Failed to update lesson publication status');
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -1301,15 +1322,25 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                   setEditingModule(null);
                   resetModuleForm();
                 }}
-                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                disabled={actionLoading === 'create-module' || actionLoading === 'update-module'}
+                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={() => editingModule ? handleUpdateModule(editingModule.id) : handleCreateModule()}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                disabled={actionLoading === 'create-module' || actionLoading === 'update-module'}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
-                {editingModule ? 'Update Module' : 'Create Module'}
+                {(actionLoading === 'create-module' || actionLoading === 'update-module') && (
+                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                )}
+                {editingModule
+                  ? (actionLoading === 'update-module' ? 'Updating...' : 'Update Module')
+                  : (actionLoading === 'create-module' ? 'Creating...' : 'Create Module')}
               </button>
             </div>
           </div>
@@ -1381,25 +1412,38 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                             </button>
                             <button
                               onClick={() => startEditingModule(module)}
-                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
+                              disabled={!!actionLoading}
+                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               Edit
                             </button>
                             <button
                               onClick={() => handlePublishModule(module.id, module.is_published)}
-                              className={`text-xs sm:text-sm px-2 sm:px-3 py-1 rounded transition-colors ${
+                              disabled={!!actionLoading}
+                              className={`text-xs sm:text-sm px-2 sm:px-3 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                                 module.is_published
                                   ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
                                   : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
                               }`}
                             >
-                              {module.is_published ? 'Unpublish' : 'Publish'}
+                              {actionLoading === `publish-module-${module.id}` ? (
+                                <span className="flex items-center gap-1">
+                                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                                  <span className="hidden sm:inline">Updating...</span>
+                                </span>
+                              ) : (module.is_published ? 'Unpublish' : 'Publish')}
                             </button>
                             <button
                               onClick={() => handleDeleteModule(module.id)}
-                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
+                              disabled={!!actionLoading}
+                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              Delete
+                              {actionLoading === `delete-module-${module.id}` ? (
+                                <span className="flex items-center gap-1">
+                                  <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                                  <span className="hidden sm:inline">Deleting...</span>
+                                </span>
+                              ) : 'Delete'}
                             </button>
                           </div>
                         </div>
@@ -1744,15 +1788,23 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                   setShowLessonForm({ moduleId: null });
                                   resetLessonForm();
                                 }}
-                                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                                disabled={!!actionLoading}
+                                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 Cancel
                               </button>
                               <button
                                 onClick={() => handleCreateLesson(module.id)}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                disabled={actionLoading === `create-lesson-${module.id}`}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                               >
-                                Add Lesson
+                                {actionLoading === `create-lesson-${module.id}` && (
+                                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                )}
+                                {actionLoading === `create-lesson-${module.id}` ? 'Adding...' : 'Add Lesson'}
                               </button>
                             </div>
                           </div>
@@ -1804,25 +1856,36 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                             <div className="flex items-center gap-1.5 sm:gap-2 ml-6 sm:ml-0 shrink-0">
                                               <button
                                                 onClick={() => startEditingLesson(module.id, lesson as EnhancedLesson)}
-                                                className="text-xs px-2 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-300 rounded"
+                                                disabled={!!actionLoading}
+                                                className="text-xs px-2 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                                               >
                                                 Edit
                                               </button>
                                               <button
                                                 onClick={() => handlePublishLesson(module.id, lesson.id, (lesson as EnhancedLesson).is_published)}
-                                                className={`text-xs px-2 py-1 rounded transition-colors ${
+                                                disabled={!!actionLoading}
+                                                className={`text-xs px-2 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                                                   (lesson as EnhancedLesson).is_published
                                                     ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
                                                     : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
                                                 }`}
                                               >
-                                                {(lesson as EnhancedLesson).is_published ? 'Unpublish' : 'Publish'}
+                                                {actionLoading === `publish-lesson-${module.id}-${lesson.id}` ? (
+                                                  <span className="flex items-center gap-1">
+                                                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                                                  </span>
+                                                ) : ((lesson as EnhancedLesson).is_published ? 'Unpublish' : 'Publish')}
                                               </button>
                                               <button
                                                 onClick={() => handleDeleteLesson(module.id, lesson.id)}
-                                                className="text-xs px-2 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded"
+                                                disabled={!!actionLoading}
+                                                className="text-xs px-2 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                                               >
-                                                Delete
+                                                {actionLoading === `delete-lesson-${module.id}-${lesson.id}` ? (
+                                                  <span className="flex items-center gap-1">
+                                                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                                                  </span>
+                                                ) : 'Delete'}
                                               </button>
                                             </div>
                                           </div>
@@ -2076,15 +2139,23 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                   setEditingLesson(null);
                                   resetLessonForm();
                                 }}
-                                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                                disabled={!!actionLoading}
+                                className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 Cancel
                               </button>
                               <button
                                 onClick={() => handleUpdateLesson(module.id, editingLesson.lesson.id)}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                disabled={actionLoading?.startsWith('update-lesson') || false}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
                               >
-                                Update Lesson
+                                {actionLoading?.startsWith('update-lesson') && (
+                                  <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                )}
+                                {actionLoading?.startsWith('update-lesson') ? 'Updating...' : 'Update Lesson'}
                               </button>
                             </div>
                           </div>

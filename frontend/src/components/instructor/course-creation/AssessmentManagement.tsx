@@ -63,6 +63,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [currentQuestions, setCurrentQuestions] = useState<QuizQuestionForm[]>([]);
   const [rubricCriteria, setRubricCriteria] = useState<RubricCriteria[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [cardActionLoading, setCardActionLoading] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -1183,7 +1184,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const handleDeleteAssignment = async (assignmentId: number) => {
     if (!confirm('Are you sure you want to delete this assignment? This action cannot be undone.')) return;
     
-    setIsLoading(true);
+    setCardActionLoading(`delete-assignment-${assignmentId}`);
     setErrorMessage(null);
     try {
       await CourseCreationService.deleteAssignment(assignmentId);
@@ -1195,14 +1196,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete assignment';
       setErrorMessage(errorMsg);
     } finally {
-      setIsLoading(false);
+      setCardActionLoading(null);
     }
   };
 
   const handleDeleteProject = async (projectId: number) => {
     if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) return;
     
-    setIsLoading(true);
+    setCardActionLoading(`delete-project-${projectId}`);
     setErrorMessage(null);
     try {
       await CourseCreationService.deleteProject(projectId);
@@ -1214,14 +1215,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete project';
       setErrorMessage(errorMsg);
     } finally {
-      setIsLoading(false);
+      setCardActionLoading(null);
     }
   };
 
   const handleDeleteQuiz = async (quizId: number) => {
     if (!confirm('Are you sure you want to delete this quiz? This action cannot be undone.')) return;
     
-    setIsLoading(true);
+    setCardActionLoading(`delete-quiz-${quizId}`);
     setErrorMessage(null);
     try {
       await CourseCreationService.deleteQuiz(quizId);
@@ -1233,13 +1234,13 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const errorMsg = error?.response?.data?.message || error?.message || 'Failed to delete quiz';
       setErrorMessage(errorMsg);
     } finally {
-      setIsLoading(false);
+      setCardActionLoading(null);
     }
   };
 
   // Publish/Unpublish handlers
   const handlePublishAssignment = async (assignmentId: number, isPublished: boolean) => {
-    setIsLoading(true);
+    setCardActionLoading(`publish-assignment-${assignmentId}`);
     setErrorMessage(null);
     try {
       await CourseCreationService.updateAssignment(assignmentId, {
@@ -1253,12 +1254,12 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update assignment publication status';
       setErrorMessage(errorMsg);
     } finally {
-      setIsLoading(false);
+      setCardActionLoading(null);
     }
   };
 
   const handlePublishProject = async (projectId: number, isPublished: boolean) => {
-    setIsLoading(true);
+    setCardActionLoading(`publish-project-${projectId}`);
     setErrorMessage(null);
     try {
       await CourseCreationService.updateProject(projectId, {
@@ -1272,7 +1273,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update project publication status';
       setErrorMessage(errorMsg);
     } finally {
-      setIsLoading(false);
+      setCardActionLoading(null);
     }
   };
 
@@ -1286,7 +1287,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       }
     }
 
-    setIsLoading(true);
+    setCardActionLoading(`publish-quiz-${quizId}`);
     setErrorMessage(null);
     try {
       await CourseCreationService.updateQuiz(quizId, {
@@ -1300,7 +1301,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const errorMsg = error?.response?.data?.message || error?.message || 'Failed to update quiz publication status';
       setErrorMessage(errorMsg);
     } finally {
-      setIsLoading(false);
+      setCardActionLoading(null);
     }
   };
 
@@ -3490,25 +3491,34 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                         <button 
                           onClick={() => handleEditAssignment(assignment)}
-                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium"
+                          disabled={!!cardActionLoading}
+                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           ✏️ <span className="hidden sm:inline">Edit</span>
                         </button>
                         <button
                           onClick={() => handlePublishAssignment(assignment.id, assignment.is_published)}
-                          className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium ${
+                          disabled={!!cardActionLoading}
+                          className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
                             assignment.is_published
                               ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-200'
                               : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200'
                           }`}
                         >
-                          {assignment.is_published ? '📤' : '📣'} <span className="hidden sm:inline">{assignment.is_published ? 'Unpublish' : 'Publish'}</span>
+                          {cardActionLoading === `publish-assignment-${assignment.id}` ? (
+                            <span className="flex items-center gap-1"><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg></span>
+                          ) : (
+                            <>{assignment.is_published ? '📤' : '📣'} <span className="hidden sm:inline">{assignment.is_published ? 'Unpublish' : 'Publish'}</span></>
+                          )}
                         </button>
                         <button 
                           onClick={() => handleDeleteAssignment(assignment.id)}
-                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium"
+                          disabled={!!cardActionLoading}
+                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          🗑️
+                          {cardActionLoading === `delete-assignment-${assignment.id}` ? (
+                            <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                          ) : '🗑️'}
                         </button>
                       </div>
                     </div>
@@ -3668,25 +3678,34 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                         <button 
                           onClick={() => handleEditProject(project)}
-                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium"
+                          disabled={!!cardActionLoading}
+                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           ✏️ <span className="hidden sm:inline">Edit</span>
                         </button>
                         <button
                           onClick={() => handlePublishProject(project.id, project.is_published)}
-                          className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium ${
+                          disabled={!!cardActionLoading}
+                          className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
                             project.is_published
                               ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-200'
                               : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 hover:bg-green-200'
                           }`}
                         >
-                          {project.is_published ? '📤' : '📣'} <span className="hidden sm:inline">{project.is_published ? 'Unpublish' : 'Publish'}</span>
+                          {cardActionLoading === `publish-project-${project.id}` ? (
+                            <span className="flex items-center gap-1"><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg></span>
+                          ) : (
+                            <>{project.is_published ? '📤' : '📣'} <span className="hidden sm:inline">{project.is_published ? 'Unpublish' : 'Publish'}</span></>
+                          )}
                         </button>
                         <button 
                           onClick={() => handleDeleteProject(project.id)}
-                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium"
+                          disabled={!!cardActionLoading}
+                          className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          🗑️
+                          {cardActionLoading === `delete-project-${project.id}` ? (
+                            <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                          ) : '🗑️'}
                         </button>
                       </div>
                     </div>
@@ -3812,25 +3831,32 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     <div className="flex items-center space-x-2 ml-4">
                       <button 
                         onClick={() => handleEditProject(project)}
-                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
+                        disabled={!!cardActionLoading}
+                        className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         ✏️ Edit
                       </button>
                       <button
                         onClick={() => handlePublishProject(project.id, project.is_published)}
-                        className={`text-sm px-3 py-1 rounded transition-colors ${
+                        disabled={!!cardActionLoading}
+                        className={`text-sm px-3 py-1 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                           project.is_published
                             ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
                             : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
                         }`}
                       >
-                        {project.is_published ? '📤 Unpublish' : '📣 Publish'}
+                        {cardActionLoading === `publish-project-${project.id}` ? (
+                          <span className="flex items-center gap-1"><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Updating...</span>
+                        ) : (project.is_published ? '📤 Unpublish' : '📣 Publish')}
                       </button>
                       <button 
                         onClick={() => handleDeleteProject(project.id)}
-                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
+                        disabled={!!cardActionLoading}
+                        className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        🗑️ Delete
+                        {cardActionLoading === `delete-project-${project.id}` ? (
+                          <span className="flex items-center gap-1"><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Deleting...</span>
+                        ) : '🗑️ Delete'}
                       </button>
                     </div>
                   </div>
@@ -4086,7 +4112,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                           <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                             <button 
                               onClick={() => handleEditQuiz(quiz)}
-                              className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 font-medium text-xs sm:text-sm flex items-center space-x-1 sm:space-x-2 shadow-md"
+                              disabled={!!cardActionLoading}
+                              className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-all duration-200 font-medium text-xs sm:text-sm flex items-center space-x-1 sm:space-x-2 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <span>✏️</span>
                               <span className="hidden sm:inline">Edit Quiz</span>
@@ -4095,18 +4122,24 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                             
                             <button
                               onClick={() => handlePublishQuiz(quiz.id, !!quiz.is_published)}
-                              disabled={!quiz.is_published && !hasQuestions}
-                              className={`px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg transition-all duration-200 font-medium text-xs sm:text-sm flex items-center space-x-1 sm:space-x-2 shadow-md ${
+                              disabled={!!cardActionLoading || (!quiz.is_published && !hasQuestions)}
+                              className={`px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-lg transition-all duration-200 font-medium text-xs sm:text-sm flex items-center space-x-1 sm:space-x-2 shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
                                 quiz.is_published
                                   ? 'bg-yellow-500 text-white hover:bg-yellow-600'
                                   : !hasQuestions
-                                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed dark:bg-slate-700 dark:text-slate-600'
+                                  ? 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-600'
                                   : 'bg-green-500 text-white hover:bg-green-600'
                               }`}
                               title={!quiz.is_published && !hasQuestions ? 'Add questions before publishing' : ''}
                             >
-                              <span>{quiz.is_published ? '📤' : '📣'}</span>
-                              <span className="hidden sm:inline">{quiz.is_published ? 'Unpublish' : 'Publish'}</span>
+                              {cardActionLoading === `publish-quiz-${quiz.id}` ? (
+                                <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                              ) : (
+                                <>
+                                  <span>{quiz.is_published ? '📤' : '📣'}</span>
+                                  <span className="hidden sm:inline">{quiz.is_published ? 'Unpublish' : 'Publish'}</span>
+                                </>
+                              )}
                             </button>
                             
                             <button 
@@ -4114,7 +4147,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                                 setEditingItem(quiz);
                                 setShowQuestionBuilder(true);
                               }}
-                              className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all duration-200 font-medium text-xs sm:text-sm flex items-center space-x-1 sm:space-x-2 shadow-md"
+                              disabled={!!cardActionLoading}
+                              className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-all duration-200 font-medium text-xs sm:text-sm flex items-center space-x-1 sm:space-x-2 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <span>➕</span>
                               <span className="hidden sm:inline">Add Questions</span>
@@ -4124,10 +4158,17 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                           
                           <button 
                             onClick={() => handleDeleteQuiz(quiz.id)}
-                            className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 font-medium text-xs sm:text-sm flex items-center justify-center space-x-1 sm:space-x-2 shadow-md"
+                            disabled={!!cardActionLoading}
+                            className="px-2.5 sm:px-4 py-1.5 sm:py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-all duration-200 font-medium text-xs sm:text-sm flex items-center justify-center space-x-1 sm:space-x-2 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <span>🗑️</span>
-                            <span className="hidden sm:inline">Delete</span>
+                            {cardActionLoading === `delete-quiz-${quiz.id}` ? (
+                              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                            ) : (
+                              <>
+                                <span>🗑️</span>
+                                <span className="hidden sm:inline">Delete</span>
+                              </>
+                            )}
                           </button>
                         </div>
 
