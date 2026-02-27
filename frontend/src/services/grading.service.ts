@@ -8,6 +8,7 @@ import { ApiErrorHandler } from '@/lib/error-handler';
 
 export interface SubmissionFilters {
   course_id?: number;
+  cohort_id?: number;  // application_window_id for cohort filtering
   module_id?: number;
   lesson_id?: number;
   assignment_id?: number;
@@ -58,6 +59,9 @@ export interface AssignmentSubmission {
   reading_time?: number;
   priority_level?: 'low' | 'medium' | 'high';
   estimated_grading_time?: number;
+  // Cohort fields
+  cohort_label?: string;
+  application_window_id?: number;
 }
 
 export interface ProjectSubmission {
@@ -95,6 +99,9 @@ export interface ProjectSubmission {
   modification_requested_at?: string;
   modification_requested_by?: number;
   can_resubmit?: boolean;
+  // Cohort fields
+  cohort_label?: string;
+  application_window_id?: number;
 }
 
 export interface SubmissionDetail extends AssignmentSubmission {
@@ -403,10 +410,14 @@ export class GradingService {
   /**
    * Get summary of grading workload and statistics
    */
-  static async getGradingSummary(courseId?: number): Promise<GradingSummary> {
+  static async getGradingSummary(courseId?: number, cohortId?: number): Promise<GradingSummary> {
     try {
-      const url = courseId
-        ? `${this.BASE_PATH}/analytics/summary?course_id=${courseId}`
+      const params = new URLSearchParams();
+      if (courseId) params.append('course_id', String(courseId));
+      if (cohortId) params.append('cohort_id', String(cohortId));
+      const queryString = params.toString();
+      const url = queryString
+        ? `${this.BASE_PATH}/analytics/summary?${queryString}`
         : `${this.BASE_PATH}/analytics/summary`;
 
       const response = await apiClient.get(url);

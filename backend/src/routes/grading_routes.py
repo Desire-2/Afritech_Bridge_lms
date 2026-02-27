@@ -52,6 +52,7 @@ def get_assignment_submissions():
         
         # Get filter parameters
         course_id = request.args.get('course_id', type=int)
+        cohort_id = request.args.get('cohort_id', type=int)  # application_window_id for cohort filtering
         module_id = request.args.get('module_id', type=int)
         lesson_id = request.args.get('lesson_id', type=int)
         assignment_id = request.args.get('assignment_id', type=int)
@@ -74,6 +75,16 @@ def get_assignment_submissions():
         # Apply filters
         if course_id:
             query = query.filter(Assignment.course_id == course_id)
+        
+        # Cohort filter: join through Enrollment to filter by application_window_id
+        if cohort_id:
+            cohort_student_ids = db.session.query(Enrollment.student_id).filter(
+                Enrollment.application_window_id == cohort_id,
+                Enrollment.status.in_(['active', 'completed'])
+            )
+            if course_id:
+                cohort_student_ids = cohort_student_ids.filter(Enrollment.course_id == course_id)
+            query = query.filter(AssignmentSubmission.student_id.in_(cohort_student_ids))
         
         if module_id:
             query = query.filter(Assignment.module_id == module_id)
@@ -225,6 +236,18 @@ def get_assignment_submissions():
             submission_dict['reading_time'] = reading_time
             submission_dict['priority_level'] = priority_level
             submission_dict['estimated_grading_time'] = estimated_time
+            
+            # Add cohort info from enrollment
+            enrollment = Enrollment.query.filter_by(
+                student_id=submission.student_id,
+                course_id=submission.assignment.course_id
+            ).first()
+            if enrollment:
+                submission_dict['cohort_label'] = enrollment.cohort_label
+                submission_dict['application_window_id'] = enrollment.application_window_id
+            else:
+                submission_dict['cohort_label'] = None
+                submission_dict['application_window_id'] = None
             
             submissions_data.append(submission_dict)
         
@@ -704,6 +727,7 @@ def get_project_submissions():
         # Get filter parameters
         # Get filter parameters
         course_id = request.args.get('course_id', type=int)
+        cohort_id = request.args.get('cohort_id', type=int)  # application_window_id for cohort filtering
         module_id = request.args.get('module_id', type=int)
         lesson_id = request.args.get('lesson_id', type=int)
         project_id = request.args.get('project_id', type=int)
@@ -721,6 +745,16 @@ def get_project_submissions():
         # Apply filters
         if course_id:
             query = query.filter(Project.course_id == course_id)
+        
+        # Cohort filter: join through Enrollment to filter by application_window_id
+        if cohort_id:
+            cohort_student_ids = db.session.query(Enrollment.student_id).filter(
+                Enrollment.application_window_id == cohort_id,
+                Enrollment.status.in_(['active', 'completed'])
+            )
+            if course_id:
+                cohort_student_ids = cohort_student_ids.filter(Enrollment.course_id == course_id)
+            query = query.filter(ProjectSubmission.student_id.in_(cohort_student_ids))
         
         if module_id:
             # Projects have module_ids as JSON array, so we need to check if module_id is in the array
@@ -821,6 +855,18 @@ def get_project_submissions():
                 submission_dict['days_late'] = 0
             
             submission_dict['student_name'] = f"{submission.student.first_name} {submission.student.last_name}"
+            
+            # Add cohort info from enrollment
+            enrollment = Enrollment.query.filter_by(
+                student_id=submission.student_id,
+                course_id=submission.project.course_id
+            ).first()
+            if enrollment:
+                submission_dict['cohort_label'] = enrollment.cohort_label
+                submission_dict['application_window_id'] = enrollment.application_window_id
+            else:
+                submission_dict['cohort_label'] = None
+                submission_dict['application_window_id'] = None
             
             submissions_data.append(submission_dict)
         
@@ -1024,6 +1070,7 @@ def get_grading_summary():
     try:
         current_user_id = int(get_jwt_identity())
         course_id = request.args.get('course_id', type=int)
+        cohort_id = request.args.get('cohort_id', type=int)  # application_window_id for cohort filtering
         
         # Get instructor's courses
         courses_query = Course.query.filter_by(instructor_id=current_user_id)
@@ -1032,27 +1079,50 @@ def get_grading_summary():
         
         course_ids = [c.id for c in courses_query.all()]
         
+        # Build cohort student subquery if cohort filter is active
+        cohort_student_filter = None
+        if cohort_id:
+            cohort_student_subq = db.session.query(Enrollment.student_id).filter(
+                Enrollment.application_window_id == cohort_id,
+                Enrollment.status.in_(['active', 'completed'])
+            )
+            if course_id:
+                cohort_student_subq = cohort_student_subq.filter(Enrollment.course_id == course_id)
+            cohort_student_filter = cohort_student_subq
+        
         # Assignment submissions stats
-        assignment_pending = db.session.query(func.count(AssignmentSubmission.id)).join(Assignment).filter(
+        assignment_pending_q = db.session.query(func.count(AssignmentSubmission.id)).join(Assignment).filter(
             Assignment.course_id.in_(course_ids),
             AssignmentSubmission.grade.is_(None)
-        ).scalar() or 0
+        )
+        if cohort_student_filter is not None:
+            assignment_pending_q = assignment_pending_q.filter(AssignmentSubmission.student_id.in_(cohort_student_filter))
+        assignment_pending = assignment_pending_q.scalar() or 0
         
-        assignment_graded = db.session.query(func.count(AssignmentSubmission.id)).join(Assignment).filter(
+        assignment_graded_q = db.session.query(func.count(AssignmentSubmission.id)).join(Assignment).filter(
             Assignment.course_id.in_(course_ids),
             AssignmentSubmission.grade.isnot(None)
-        ).scalar() or 0
+        )
+        if cohort_student_filter is not None:
+            assignment_graded_q = assignment_graded_q.filter(AssignmentSubmission.student_id.in_(cohort_student_filter))
+        assignment_graded = assignment_graded_q.scalar() or 0
         
         # Project submissions stats
-        project_pending = db.session.query(func.count(ProjectSubmission.id)).join(Project).filter(
+        project_pending_q = db.session.query(func.count(ProjectSubmission.id)).join(Project).filter(
             Project.course_id.in_(course_ids),
             ProjectSubmission.grade.is_(None)
-        ).scalar() or 0
+        )
+        if cohort_student_filter is not None:
+            project_pending_q = project_pending_q.filter(ProjectSubmission.student_id.in_(cohort_student_filter))
+        project_pending = project_pending_q.scalar() or 0
         
-        project_graded = db.session.query(func.count(ProjectSubmission.id)).join(Project).filter(
+        project_graded_q = db.session.query(func.count(ProjectSubmission.id)).join(Project).filter(
             Project.course_id.in_(course_ids),
             ProjectSubmission.grade.isnot(None)
-        ).scalar() or 0
+        )
+        if cohort_student_filter is not None:
+            project_graded_q = project_graded_q.filter(ProjectSubmission.student_id.in_(cohort_student_filter))
+        project_graded = project_graded_q.scalar() or 0
         
         # Recent grading activity (last 7 days)
         week_ago = datetime.utcnow() - timedelta(days=7)
