@@ -23,7 +23,11 @@ import {
   Lightbulb,
   Timer,
   Activity,
-  Bell
+  Bell,
+  Users,
+  GraduationCap,
+  CreditCard,
+  Sparkles
 } from 'lucide-react';
 import { StudentService, StudentDashboard } from '@/services/student.service';
 import { motion } from 'framer-motion';
@@ -131,10 +135,35 @@ const StudentDashboardOverviewPage = () => {
     achievements: 0
   };
 
-  const inProgressCourses = dashboardData?.enrolled_courses?.filter(c => c.progress > 0 && c.progress < 100) || [];
-  const completedCourses = dashboardData?.enrolled_courses?.filter(c => c.progress >= 100) || [];
+  const enrolledCourses = dashboardData?.enrolled_courses || [];
+  const inProgressCourses = enrolledCourses.filter(c => c.progress > 0 && c.progress < 100);
+  const completedCourses = enrolledCourses.filter(c => c.progress >= 100);
   const recentActivity = dashboardData?.recent_activity || [];
   const achievements = dashboardData?.achievements || [];
+
+  // Extract unique cohort info from enrolled courses
+  const cohortCourses = enrolledCourses.filter(c => c.cohort_label);
+  const uniqueCohorts = Array.from(
+    new Map(cohortCourses.map(c => [
+      `${c.id}-${c.cohort_label}`,
+      {
+        courseId: c.id,
+        courseTitle: c.title,
+        cohortLabel: c.cohort_label!,
+        startDate: c.cohort_start_date,
+        endDate: c.cohort_end_date,
+        enrollmentType: c.cohort_enrollment_type,
+        scholarshipType: c.cohort_scholarship_type,
+        scholarshipPercentage: c.cohort_scholarship_percentage,
+        effectivePrice: c.cohort_effective_price,
+        currency: c.cohort_currency,
+        paymentStatus: c.payment_status,
+        paymentVerified: c.payment_verified,
+        progress: c.progress,
+        enrollmentStatus: c.enrollment_status,
+      }
+    ])).values()
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 dark:from-gray-900 dark:to-gray-800">
@@ -370,6 +399,139 @@ const StudentDashboardOverviewPage = () => {
                 </CardContent>
               </Card>
             </motion.div>
+
+            {/* My Cohorts Section */}
+            {uniqueCohorts.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.25 }}
+              >
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center space-x-2">
+                        <Users className="w-5 h-5 text-indigo-600" />
+                        <span>My Cohorts</span>
+                      </CardTitle>
+                      <Badge variant="secondary" className="bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                        {uniqueCohorts.length} {uniqueCohorts.length === 1 ? 'Cohort' : 'Cohorts'}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {uniqueCohorts.map((cohort, index) => {
+                        const isActive = cohort.startDate && cohort.endDate
+                          ? new Date() >= new Date(cohort.startDate) && new Date() <= new Date(cohort.endDate)
+                          : false;
+                        const hasEnded = cohort.endDate ? new Date() > new Date(cohort.endDate) : false;
+                        const statusLabel = hasEnded ? 'Completed' : isActive ? 'Active' : 'Upcoming';
+                        const statusColor = hasEnded
+                          ? 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                          : isActive
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                            : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300';
+
+                        return (
+                          <motion.div
+                            key={`${cohort.courseId}-${cohort.cohortLabel}`}
+                            initial={{ opacity: 0, x: -20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            transition={{ duration: 0.3, delay: index * 0.1 }}
+                          >
+                            <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-indigo-300 dark:hover:border-indigo-600 transition-all duration-200">
+                              {/* Cohort Header */}
+                              <div className="flex items-start justify-between mb-3">
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className="font-semibold text-gray-900 dark:text-white">
+                                      {cohort.cohortLabel}
+                                    </h4>
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColor}`}>
+                                      {statusLabel}
+                                    </span>
+                                  </div>
+                                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                                    {cohort.courseTitle}
+                                  </p>
+                                </div>
+                                <div className="ml-2">
+                                  <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
+                                    <GraduationCap className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Cohort Details Grid */}
+                              <div className="grid grid-cols-2 gap-3 text-sm">
+                                {/* Dates */}
+                                {cohort.startDate && (
+                                  <div className="flex items-center text-gray-600 dark:text-gray-400">
+                                    <Calendar className="w-4 h-4 mr-2 text-indigo-500 flex-shrink-0" />
+                                    <span>
+                                      {new Date(cohort.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                      {cohort.endDate && (
+                                        <> - {new Date(cohort.endDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</>
+                                      )}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Enrollment Type */}
+                                {cohort.enrollmentType && (
+                                  <div className="flex items-center text-gray-600 dark:text-gray-400">
+                                    {cohort.enrollmentType === 'scholarship' ? (
+                                      <Sparkles className="w-4 h-4 mr-2 text-amber-500 flex-shrink-0" />
+                                    ) : cohort.enrollmentType === 'paid' ? (
+                                      <CreditCard className="w-4 h-4 mr-2 text-green-500 flex-shrink-0" />
+                                    ) : (
+                                      <Award className="w-4 h-4 mr-2 text-indigo-500 flex-shrink-0" />
+                                    )}
+                                    <span className="capitalize">
+                                      {cohort.enrollmentType === 'scholarship' && cohort.scholarshipType
+                                        ? `${cohort.scholarshipType} Scholarship`
+                                        : cohort.enrollmentType}
+                                      {cohort.enrollmentType === 'scholarship' && cohort.scholarshipPercentage
+                                        ? ` (${cohort.scholarshipPercentage}%)`
+                                        : ''}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Progress */}
+                                <div className="flex items-center text-gray-600 dark:text-gray-400">
+                                  <TrendingUp className="w-4 h-4 mr-2 text-blue-500 flex-shrink-0" />
+                                  <span>{Math.round(cohort.progress)}% Complete</span>
+                                </div>
+
+                                {/* Payment Info (if paid) */}
+                                {cohort.enrollmentType === 'paid' && cohort.effectivePrice != null && (
+                                  <div className="flex items-center text-gray-600 dark:text-gray-400">
+                                    <CreditCard className="w-4 h-4 mr-2 text-green-500 flex-shrink-0" />
+                                    <span>
+                                      {cohort.currency || 'USD'} {Number(cohort.effectivePrice).toLocaleString()}
+                                      {cohort.paymentVerified ? (
+                                        <CheckCircle className="w-3 h-3 ml-1 inline text-green-500" />
+                                      ) : null}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Progress Bar */}
+                              <div className="mt-3">
+                                <Progress value={cohort.progress} className="h-1.5" />
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
 
             {/* Recent Activity */}
             <motion.div
