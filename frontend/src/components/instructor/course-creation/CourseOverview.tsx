@@ -65,69 +65,69 @@ const CourseOverview: React.FC<CourseOverviewProps> = ({
                           (assessments?.projects?.length || 0);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Course Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/20 rounded-lg">
-              <span className="text-2xl">📚</span>
+            <div className="p-1.5 sm:p-2 bg-blue-100 dark:bg-blue-900/20 rounded-lg">
+              <span className="text-lg sm:text-2xl">📚</span>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Modules</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{totalModules}</p>
+            <div className="ml-2.5 sm:ml-4 min-w-0">
+              <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400 truncate">Modules</p>
+              <p className="text-lg sm:text-2xl font-bold text-slate-900 dark:text-white">{totalModules}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-green-100 dark:bg-green-900/20 rounded-lg">
-              <span className="text-2xl">📄</span>
+            <div className="p-1.5 sm:p-2 bg-green-100 dark:bg-green-900/20 rounded-lg">
+              <span className="text-lg sm:text-2xl">📄</span>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Lessons</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{totalLessons}</p>
+            <div className="ml-2.5 sm:ml-4 min-w-0">
+              <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400 truncate">Lessons</p>
+              <p className="text-lg sm:text-2xl font-bold text-slate-900 dark:text-white">{totalLessons}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-purple-100 dark:bg-purple-900/20 rounded-lg">
-              <span className="text-2xl">📝</span>
+            <div className="p-1.5 sm:p-2 bg-purple-100 dark:bg-purple-900/20 rounded-lg">
+              <span className="text-lg sm:text-2xl">📝</span>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Assessments</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{totalAssessments}</p>
+            <div className="ml-2.5 sm:ml-4 min-w-0">
+              <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400 truncate">Assessments</p>
+              <p className="text-lg sm:text-2xl font-bold text-slate-900 dark:text-white">{totalAssessments}</p>
             </div>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
+        <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6">
           <div className="flex items-center">
-            <div className="p-2 bg-orange-100 dark:bg-orange-900/20 rounded-lg">
-              <span className="text-2xl">👥</span>
+            <div className="p-1.5 sm:p-2 bg-orange-100 dark:bg-orange-900/20 rounded-lg">
+              <span className="text-lg sm:text-2xl">👥</span>
             </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Students</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">0</p>
+            <div className="ml-2.5 sm:ml-4 min-w-0">
+              <p className="text-xs sm:text-sm font-medium text-slate-600 dark:text-slate-400 truncate">Students</p>
+              <p className="text-lg sm:text-2xl font-bold text-slate-900 dark:text-white">0</p>
             </div>
           </div>
         </div>
       </div>
 
       {/* Course Information */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 sm:mb-6">
+          <h3 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white">
             Course Information
           </h3>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={handlePublishToggle}
               disabled={loading}
-              className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+              className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm font-medium transition-colors ${
                 course.is_published
                   ? 'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/30'
                   : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400 dark:hover:bg-green-900/30'
@@ -137,7 +137,7 @@ const CourseOverview: React.FC<CourseOverviewProps> = ({
             </button>
             <button
               onClick={() => setIsEditing(!isEditing)}
-              className="px-4 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded-lg font-medium transition-colors"
+              className="px-3 sm:px-4 py-1.5 sm:py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded-lg text-sm font-medium transition-colors"
             >
               {isEditing ? 'Cancel' : 'Edit'}
             </button>
@@ -266,27 +266,27 @@ const CourseOverview: React.FC<CourseOverviewProps> = ({
       </div>
 
       {/* Quick Actions */}
-      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
-        <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
+      <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-4 sm:p-6">
+        <h3 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white mb-3 sm:mb-4">
           Quick Actions
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
-            <div className="text-2xl mb-2">📚</div>
-            <h4 className="font-medium text-slate-900 dark:text-white">Add Module</h4>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Create a new module with lessons</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+          <button className="p-3 sm:p-4 border border-slate-200 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
+            <div className="text-xl sm:text-2xl mb-1.5 sm:mb-2">📚</div>
+            <h4 className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">Add Module</h4>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">Create a new module with lessons</p>
           </button>
           
-          <button className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
-            <div className="text-2xl mb-2">📝</div>
-            <h4 className="font-medium text-slate-900 dark:text-white">Create Assignment</h4>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Add a new assignment</p>
+          <button className="p-3 sm:p-4 border border-slate-200 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
+            <div className="text-xl sm:text-2xl mb-1.5 sm:mb-2">📝</div>
+            <h4 className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">Create Assignment</h4>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">Add a new assignment</p>
           </button>
           
-          <button className="p-4 border border-slate-200 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left">
-            <div className="text-2xl mb-2">🎯</div>
-            <h4 className="font-medium text-slate-900 dark:text-white">Create Project</h4>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Define a multi-part project</p>
+          <button className="p-3 sm:p-4 border border-slate-200 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors text-left sm:col-span-2 lg:col-span-1">
+            <div className="text-xl sm:text-2xl mb-1.5 sm:mb-2">🎯</div>
+            <h4 className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">Create Project</h4>
+            <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">Define a multi-part project</p>
           </button>
         </div>
       </div>

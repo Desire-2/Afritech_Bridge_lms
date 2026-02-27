@@ -1154,23 +1154,24 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+        <h3 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white">
           Course Modules & Lessons
         </h3>
-        <div className="flex gap-2">
+        <div className="flex gap-2 w-full sm:w-auto">
           <button
             onClick={() => setShowModuleAI(!showModuleAI)}
-            className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
+            className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-sm rounded-lg hover:from-purple-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg"
           >
             <Sparkles className="w-4 h-4" />
-            AI Assistant
+            <span className="hidden xs:inline">AI Assistant</span>
+            <span className="xs:hidden">AI</span>
           </button>
           <button
             onClick={() => setShowModuleForm(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
           >
             Add Module
           </button>
@@ -1331,58 +1332,62 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                       }`}
                     >
                       {/* Module Header */}
-                      <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3">
-                            <div {...provided.dragHandleProps} className="cursor-move text-slate-400 hover:text-slate-600">
+                      <div className="p-3 sm:p-4 border-b border-slate-200 dark:border-slate-700">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
+                          <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+                            <div {...provided.dragHandleProps} className="cursor-move text-slate-400 hover:text-slate-600 shrink-0">
                               ⋮⋮
                             </div>
                             <button
                               onClick={() => toggleModuleExpansion(module.id)}
-                              className="text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+                              className="text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 shrink-0"
                             >
                               {expandedModules.has(module.id) ? '▼' : '▶'}
                             </button>
-                            <div>
-                              <h4 className="font-semibold text-slate-900 dark:text-white">
-                                {module.title}
-                              </h4>
-                              <p className="text-sm text-slate-600 dark:text-slate-400">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="font-semibold text-sm sm:text-base text-slate-900 dark:text-white truncate">
+                                  {module.title}
+                                </h4>
+                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  module.is_published 
+                                    ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+                                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
+                                }`}>
+                                  {module.is_published ? 'Published' : 'Draft'}
+                                </span>
+                              </div>
+                              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
                                 {module.lessons?.length || 0} lessons
                               </p>
                             </div>
                           </div>
                           
-                          <div className="flex items-center space-x-2">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              module.is_published 
-                                ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                                : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-                            }`}>
-                              {module.is_published ? 'Published' : 'Draft'}
-                            </span>
+                          <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 ml-8 sm:ml-0">
                             <button
                               onClick={() => setShowLessonAI({ moduleId: module.id })}
-                              className="flex items-center gap-1 text-sm px-3 py-1 bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-700 hover:from-purple-200 hover:to-indigo-200 dark:from-purple-900/20 dark:to-indigo-900/20 dark:text-purple-400 rounded transition-colors"
+                              className="flex items-center gap-1 text-xs sm:text-sm px-2 sm:px-3 py-1 bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-700 hover:from-purple-200 hover:to-indigo-200 dark:from-purple-900/20 dark:to-indigo-900/20 dark:text-purple-400 rounded transition-colors"
                             >
                               <Sparkles className="w-3 h-3" />
-                              AI Lesson
+                              <span className="hidden sm:inline">AI Lesson</span>
+                              <span className="sm:hidden">AI</span>
                             </button>
                             <button
                               onClick={() => setShowLessonForm({ moduleId: module.id })}
-                              className="text-sm px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded transition-colors"
+                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/20 dark:text-blue-400 rounded transition-colors"
                             >
-                              Add Lesson
+                              <span className="hidden sm:inline">Add Lesson</span>
+                              <span className="sm:hidden">+ Lesson</span>
                             </button>
                             <button
                               onClick={() => startEditingModule(module)}
-                              className="text-sm px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
+                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 rounded transition-colors"
                             >
                               Edit
                             </button>
                             <button
                               onClick={() => handlePublishModule(module.id, module.is_published)}
-                              className={`text-sm px-3 py-1 rounded transition-colors ${
+                              className={`text-xs sm:text-sm px-2 sm:px-3 py-1 rounded transition-colors ${
                                 module.is_published
                                   ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200 dark:bg-yellow-900/20 dark:text-yellow-400'
                                   : 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/20 dark:text-green-400'
@@ -1392,7 +1397,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                             </button>
                             <button
                               onClick={() => handleDeleteModule(module.id)}
-                              className="text-sm px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
+                              className="text-xs sm:text-sm px-2 sm:px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/20 dark:text-red-400 rounded transition-colors"
                             >
                               Delete
                             </button>
@@ -1767,25 +1772,25 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                         <div
                                           ref={provided.innerRef}
                                           {...provided.draggableProps}
-                                          className={`p-3 border border-slate-200 dark:border-slate-600 rounded-lg ${
+                                          className={`p-2 sm:p-3 border border-slate-200 dark:border-slate-600 rounded-lg ${
                                             snapshot.isDragging ? 'shadow-lg bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'
                                           }`}
                                         >
-                                          <div className="flex items-center justify-between">
-                                            <div className="flex items-center space-x-3">
-                                              <div {...provided.dragHandleProps} className="cursor-move text-slate-400 hover:text-slate-600">
+                                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                            <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
+                                              <div {...provided.dragHandleProps} className="cursor-move text-slate-400 hover:text-slate-600 shrink-0">
                                                 ⋮⋮
                                               </div>
-                                              <div>
-                                                <h5 className="font-medium text-slate-900 dark:text-white">
+                                              <div className="min-w-0">
+                                                <h5 className="font-medium text-sm sm:text-base text-slate-900 dark:text-white truncate">
                                                   {lesson.title}
                                                 </h5>
-                                                <div className="flex items-center space-x-3 text-sm text-slate-600 dark:text-slate-400">
+                                                <div className="flex items-center flex-wrap gap-1.5 sm:gap-3 text-xs sm:text-sm text-slate-600 dark:text-slate-400">
                                                   <span className="capitalize">{(lesson as EnhancedLesson).content_type || 'text'}</span>
                                                   {(lesson as EnhancedLesson).duration_minutes && (
                                                     <span>{(lesson as EnhancedLesson).duration_minutes} min</span>
                                                   )}
-                                                  <span className={`px-2 py-1 rounded-full text-xs ${
+                                                  <span className={`px-1.5 sm:px-2 py-0.5 rounded-full text-xs ${
                                                     (lesson as EnhancedLesson).is_published 
                                                       ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
                                                       : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
@@ -1796,7 +1801,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                               </div>
                                             </div>
                                             
-                                            <div className="flex items-center space-x-2">
+                                            <div className="flex items-center gap-1.5 sm:gap-2 ml-6 sm:ml-0 shrink-0">
                                               <button
                                                 onClick={() => startEditingLesson(module.id, lesson as EnhancedLesson)}
                                                 className="text-xs px-2 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-600 dark:text-slate-300 rounded"
@@ -2096,17 +2101,17 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       </DragDropContext>
 
       {modules.length === 0 && (
-        <div className="text-center py-12">
-          <div className="text-6xl mb-4">📚</div>
-          <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">
+        <div className="text-center py-8 sm:py-12 px-4">
+          <div className="text-4xl sm:text-6xl mb-3 sm:mb-4">📚</div>
+          <h3 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white mb-2">
             No modules yet
           </h3>
-          <p className="text-slate-600 dark:text-slate-400 mb-4">
+          <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 mb-4">
             Start building your course by adding your first module.
           </p>
           <button
             onClick={() => setShowModuleForm(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            className="px-4 py-2 bg-blue-600 text-white text-sm sm:text-base rounded-lg hover:bg-blue-700 transition-colors"
           >
             Add Your First Module
           </button>

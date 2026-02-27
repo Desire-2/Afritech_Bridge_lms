@@ -532,12 +532,12 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
 
       <Tabs defaultValue="cohorts" className="w-full">
         <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-          <div className="px-6 pt-5 pb-2">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-1">
-              <Settings className="h-5 w-5 text-blue-600" />
+          <div className="px-3 sm:px-6 pt-4 sm:pt-5 pb-2">
+            <h2 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2 mb-1">
+              <Settings className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
               Course Settings
             </h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mb-4">
               Manage cohorts, module releases, and default payment configuration
             </p>
             <TabsList className="grid w-full grid-cols-3 bg-slate-100 dark:bg-slate-700/60">
@@ -574,7 +574,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         <CardContent className="space-y-6">
 
           {/* Global timezone */}
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
             <div className="space-y-1 flex-1 max-w-xs">
               <Label htmlFor="application-timezone" className="text-slate-900 dark:text-white text-sm">Application Timezone</Label>
               <Input
@@ -587,7 +587,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
               />
             </div>
             <div className="flex-1">
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-6">Used to evaluate window open/close times across all cohorts.</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 sm:mt-6">Used to evaluate window open/close times across all cohorts.</p>
             </div>
           </div>
 
@@ -699,16 +699,16 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                   <div key={cohort.id} className="border rounded-lg border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 overflow-hidden">
                     {/* Cohort Header (always visible) */}
                     <div
-                      className="flex items-center justify-between p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
+                      className="flex items-center justify-between p-3 sm:p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors"
                       onClick={() => updateCohort({ expanded: !cohort.expanded })}
                     >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          {cohort.expanded ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
-                          <div className="font-semibold text-slate-900 dark:text-white truncate">{cohort.label || `Cohort ${idx + 1}`}</div>
+                      <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0 flex-wrap">
+                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                          {cohort.expanded ? <ChevronUp className="h-4 w-4 text-slate-400 shrink-0" /> : <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />}
+                          <div className="font-semibold text-sm sm:text-base text-slate-900 dark:text-white truncate">{cohort.label || `Cohort ${idx + 1}`}</div>
                         </div>
                         <Badge variant="outline" className={`text-xs ${getStatusColor()}`}>{cohort.status}</Badge>
-                        <Badge variant="outline" className={`text-xs ${getEnrollmentBadgeColor()}`}>
+                        <Badge variant="outline" className={`text-xs hidden sm:inline-flex ${getEnrollmentBadgeColor()}`}>
                           {cohort.enrollmentType === 'scholarship' ? <Gift className="h-3 w-3 mr-1" /> : 
                            cohort.enrollmentType === 'paid' ? <DollarSign className="h-3 w-3 mr-1" /> : 
                            cohort.enrollmentType === 'free' ? <BookOpen className="h-3 w-3 mr-1" /> : null}
@@ -716,7 +716,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                         </Badge>
                         {cohort.enrollmentCount > 0 && (
                           <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                            <Users className="h-3 w-3" /> {cohort.enrollmentCount} enrolled
+                            <Users className="h-3 w-3" /> {cohort.enrollmentCount}
                           </span>
                         )}
                       </div>
@@ -1174,12 +1174,12 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Enable Module Release Control */}
-          <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-            <div className="space-y-1">
-              <Label htmlFor="enable-release" className="text-base font-medium text-slate-900 dark:text-white">
+          <div className="flex items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+            <div className="space-y-1 min-w-0">
+              <Label htmlFor="enable-release" className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">
                 Enable Controlled Module Release
               </Label>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
                 When enabled, only a specified number of modules will be available to students initially
               </p>
             </div>
@@ -1325,7 +1325,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       {moduleReleaseData && moduleReleaseData.modules.length > 0 && (
         <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
           <CardHeader>
-            <CardTitle className="flex items-center justify-between text-slate-900 dark:text-white">
+            <CardTitle className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-slate-900 dark:text-white">
               <span className="flex items-center gap-2">
                 <Settings className="h-5 w-5" />
                 Module Release Status
@@ -1343,7 +1343,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
               {moduleReleaseData.modules.map((module, index) => (
                 <div 
                   key={module.id}
-                  className={`flex items-center justify-between p-4 rounded-lg border ${
+                  className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 sm:p-4 rounded-lg border ${
                     module.is_released 
                       ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
                       : 'bg-slate-50 border-slate-200 dark:bg-slate-700/50 dark:border-slate-600'
@@ -1445,12 +1445,12 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         <CardContent className="space-y-6">
 
           {/* Enable Paid Course */}
-          <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-            <div className="space-y-1">
-              <Label htmlFor="enable-payment" className="text-base font-medium text-slate-900 dark:text-white">
+          <div className="flex items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+            <div className="space-y-1 min-w-0">
+              <Label htmlFor="enable-payment" className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">
                 Enable Paid Enrollment
               </Label>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
+              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
                 Require students to pay before or after submitting their application
               </p>
             </div>
@@ -1781,8 +1781,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
               <div className="space-y-3">
                 <Label className="text-base font-semibold text-slate-900 dark:text-white">Payment Timing</Label>
 
-                <div className="flex items-center justify-between p-4 bg-amber-50 dark:bg-amber-900/10 rounded-lg border border-amber-200 dark:border-amber-800">
-                  <div className="space-y-1">
+                <div className="flex items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-amber-50 dark:bg-amber-900/10 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <div className="space-y-1 min-w-0">
                     <Label className="text-sm font-semibold text-slate-900 dark:text-white">
                       Require Payment Before Application
                     </Label>

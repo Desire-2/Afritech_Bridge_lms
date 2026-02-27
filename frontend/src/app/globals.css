@@ -98,6 +98,15 @@ body {
   .animate-spin-slow {
     animation: spin 3s linear infinite;
   }
+
+  /* Hide scrollbar for horizontal tab navigation */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 @keyframes spin {
