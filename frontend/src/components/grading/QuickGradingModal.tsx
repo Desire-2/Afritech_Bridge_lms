@@ -37,11 +37,13 @@ export const QuickGradingModal: React.FC<QuickGradingModalProps> = ({
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [showCommentBank, setShowCommentBank] = useState(false);
   const [showRubric, setShowRubric] = useState(false);
+  const [maxResubmissions, setMaxResubmissions] = useState('');
 
   useEffect(() => {
     if (submission) {
       setGrade(submission.grade?.toString() || '');
       setFeedback(submission.feedback || '');
+      setMaxResubmissions(submission.max_resubmissions?.toString() || '');
     }
   }, [submission]);
 
@@ -142,7 +144,8 @@ export const QuickGradingModal: React.FC<QuickGradingModalProps> = ({
         submission_id: submission.id,
         grade: gradeValue,
         feedback,
-        rubric_scores: Object.keys(rubricScores).length > 0 ? rubricScores : undefined
+        rubric_scores: Object.keys(rubricScores).length > 0 ? rubricScores : undefined,
+        max_resubmissions: maxResubmissions ? parseInt(maxResubmissions) : undefined
       });
 
       // Clear draft
@@ -379,6 +382,28 @@ export const QuickGradingModal: React.FC<QuickGradingModalProps> = ({
                 <span>{feedback.length} characters</span>
                 <span>
                   <kbd className="px-2 py-1 bg-slate-200 dark:bg-slate-600 rounded">Ctrl+Enter</kbd> to submit
+                </span>
+              </div>
+            </div>
+
+            {/* Resubmission Limit */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                Max Resubmissions <span className="text-xs font-normal text-slate-500">(optional)</span>
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="number"
+                  value={maxResubmissions}
+                  onChange={(e) => setMaxResubmissions(e.target.value)}
+                  min="0"
+                  max="20"
+                  step="1"
+                  className="w-32 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 text-sm"
+                  placeholder="3"
+                />
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  Increase to allow more resubmissions
                 </span>
               </div>
             </div>

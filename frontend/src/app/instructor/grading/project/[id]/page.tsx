@@ -54,6 +54,7 @@ const ProjectGradingDetail = () => {
   const [feedback, setFeedback] = useState<string>('');
   const [showTemplates, setShowTemplates] = useState(false);
   const [showModificationModal, setShowModificationModal] = useState(false);
+  const [maxResubmissions, setMaxResubmissions] = useState<string>('');
   
   // Enhanced grading features
   const [showCommentBank, setShowCommentBank] = useState(false);
@@ -79,6 +80,10 @@ const ProjectGradingDetail = () => {
       if (data.grade !== undefined && data.grade !== null) {
         setGrade(data.grade.toString());
         setFeedback(data.feedback || '');
+      }
+      // Pre-fill max resubmissions from project
+      if (data.project?.max_resubmissions !== undefined) {
+        setMaxResubmissions(data.project.max_resubmissions.toString());
       }
     } catch (err: any) {
       setError(err.message || 'Failed to load submission');
@@ -111,15 +116,18 @@ const ProjectGradingDetail = () => {
     setError(null);
 
     try {
+      const resubLimit = maxResubmissions ? parseInt(maxResubmissions) : undefined;
       if (submission.grade !== undefined) {
         await GradingService.updateProjectGrade(submissionId, {
           grade: gradeValue,
-          feedback
+          feedback,
+          max_resubmissions: resubLimit
         });
       } else {
         await GradingService.gradeProject(submissionId, {
           grade: gradeValue,
-          feedback
+          feedback,
+          max_resubmissions: resubLimit
         });
       }
       
@@ -592,6 +600,35 @@ const ProjectGradingDetail = () => {
                     />
                   </div>
                 )}
+
+                {/* Resubmission Limit */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Max Resubmissions <span className="text-xs font-normal text-slate-500">(optional)</span>
+                    </label>
+                    {submission.submission_status && (
+                      <span className="text-xs text-slate-500 dark:text-slate-400">
+                        Current: {submission.submission_status?.count || 0} / {maxResubmissions || '3'} used
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="number"
+                      value={maxResubmissions}
+                      onChange={(e) => setMaxResubmissions(e.target.value)}
+                      min="0"
+                      max="20"
+                      step="1"
+                      className="w-32 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500 text-sm"
+                      placeholder="3"
+                    />
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      Increase to allow more student resubmissions
+                    </span>
+                  </div>
+                </div>
 
                 {/* Feedback Section */}
                 <div>

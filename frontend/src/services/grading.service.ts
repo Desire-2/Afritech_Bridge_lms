@@ -132,6 +132,7 @@ export interface SubmissionDetail extends AssignmentSubmission {
 export interface GradeRequest {
   grade: number;
   feedback?: string;
+  max_resubmissions?: number;
   rubric_scores?: {
     [key: string]: {
       score: number;
@@ -753,9 +754,30 @@ export class GradingService {
     grade: number;
     feedback?: string;
     rubric_scores?: any;
+    max_resubmissions?: number;
   }): Promise<any> {
     try {
       const response = await apiClient.post(`${this.BASE_PATH}/quick-grade`, gradeData);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // =====================
+  // RESUBMISSION LIMIT
+  // =====================
+
+  /**
+   * Update max resubmissions for an assignment or project
+   */
+  static async updateResubmissionLimit(params: {
+    type: 'assignment' | 'project';
+    assessment_id: number;
+    max_resubmissions: number;
+  }): Promise<any> {
+    try {
+      const response = await apiClient.patch(`${this.BASE_PATH}/resubmission-limit`, params);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

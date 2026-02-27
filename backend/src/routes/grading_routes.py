@@ -381,6 +381,17 @@ def grade_assignment_submission(submission_id):
         submission.graded_at = datetime.utcnow()
         submission.graded_by = current_user_id
         
+        # Update max_resubmissions on the assignment if provided
+        new_max_resubmissions = data.get('max_resubmissions')
+        if new_max_resubmissions is not None:
+            try:
+                new_max = int(new_max_resubmissions)
+                if new_max >= 0:
+                    submission.assignment.max_resubmissions = new_max
+                    logger.info(f"Updated max_resubmissions for assignment {submission.assignment_id} to {new_max}")
+            except (ValueError, TypeError):
+                pass  # Ignore invalid values
+        
         # Store rubric scores if provided with better structure
         rubric_scores = data.get('rubric_scores')
         if rubric_scores and isinstance(rubric_scores, dict):
@@ -995,6 +1006,17 @@ def grade_project_submission(submission_id):
         submission.feedback = data.get('feedback', '').strip()
         submission.graded_at = datetime.utcnow()
         submission.graded_by = current_user_id
+        
+        # Update max_resubmissions on the project if provided
+        new_max_resubmissions = data.get('max_resubmissions')
+        if new_max_resubmissions is not None:
+            try:
+                new_max = int(new_max_resubmissions)
+                if new_max >= 0:
+                    submission.project.max_resubmissions = new_max
+                    logger.info(f"Updated max_resubmissions for project {submission.project_id} to {new_max}")
+            except (ValueError, TypeError):
+                pass  # Ignore invalid values
         
         # Store rubric scores if provided with better structure
         rubric_scores = data.get('rubric_scores')
@@ -1704,6 +1726,20 @@ def quick_grade():
             submission.graded_at = datetime.utcnow()
             submission.graded_by = current_user_id
         
+        # Update max_resubmissions if provided
+        new_max_resubmissions = data.get('max_resubmissions')
+        if new_max_resubmissions is not None:
+            try:
+                new_max = int(new_max_resubmissions)
+                if new_max >= 0:
+                    if submission_type == 'assignment':
+                        submission.assignment.max_resubmissions = new_max
+                    elif submission_type == 'project':
+                        submission.project.max_resubmissions = new_max
+                    logger.info(f"Updated max_resubmissions for {submission_type} to {new_max}")
+            except (ValueError, TypeError):
+                pass
+        
         db.session.commit()
         
         return jsonify({
@@ -1715,6 +1751,73 @@ def quick_grade():
         db.session.rollback()
         logger.error(f"Error in quick grading: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to grade", "error": str(e)}), 500
+
+
+# =====================
+# UPDATE RESUBMISSION LIMIT
+# =====================
+
+@grading_bp.route("/resubmission-limit", methods=["PATCH"])
+@instructor_required
+def update_resubmission_limit():
+    """
+    Update max_resubmissions for an assignment or project.
+    Body: { type: 'assignment'|'project', assessment_id: int, max_resubmissions: int }
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json()
+        
+        assessment_type = data.get('type')  # 'assignment' or 'project'
+        assessment_id = data.get('assessment_id')
+        new_max = data.get('max_resubmissions')
+        
+        if not assessment_type or not assessment_id or new_max is None:
+            return jsonify({"message": "type, assessment_id, and max_resubmissions are required"}), 400
+        
+        try:
+            new_max = int(new_max)
+            if new_max < 0:
+                return jsonify({"message": "max_resubmissions must be >= 0"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"message": "Invalid max_resubmissions value"}), 400
+        
+        if assessment_type == 'assignment':
+            assessment = Assignment.query.get(assessment_id)
+            if not assessment:
+                return jsonify({"message": "Assignment not found"}), 404
+            if assessment.course.instructor_id != current_user_id:
+                return jsonify({"message": "Access denied"}), 403
+            old_max = assessment.max_resubmissions
+            assessment.max_resubmissions = new_max
+            db.session.commit()
+            logger.info(f"Instructor {current_user_id} updated max_resubmissions for assignment {assessment_id}: {old_max} -> {new_max}")
+            return jsonify({
+                "message": f"Resubmission limit updated to {new_max}",
+                "assessment": assessment.to_dict()
+            }), 200
+            
+        elif assessment_type == 'project':
+            assessment = Project.query.get(assessment_id)
+            if not assessment:
+                return jsonify({"message": "Project not found"}), 404
+            if assessment.course.instructor_id != current_user_id:
+                return jsonify({"message": "Access denied"}), 403
+            old_max = assessment.max_resubmissions
+            assessment.max_resubmissions = new_max
+            db.session.commit()
+            logger.info(f"Instructor {current_user_id} updated max_resubmissions for project {assessment_id}: {old_max} -> {new_max}")
+            return jsonify({
+                "message": f"Resubmission limit updated to {new_max}",
+                "assessment": assessment.to_dict()
+            }), 200
+        else:
+            return jsonify({"message": "Invalid type. Must be 'assignment' or 'project'"}), 400
+            
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating resubmission limit: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to update resubmission limit", "error": str(e)}), 500
 
 
 # =====================
