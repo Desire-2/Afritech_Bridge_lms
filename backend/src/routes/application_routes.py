@@ -196,6 +196,7 @@ def check_duplicate_application():
     except ValueError:
         return jsonify({"error": "Invalid course_id"}), 400
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
@@ -275,7 +276,8 @@ def apply_for_course():
                 "status": existing_id[1] if existing_id else "unknown"
             }), 409
     except Exception as e:
-        # If duplicate check fails, log and continue (better to allow duplicate than block legitimate application)
+        # If duplicate check fails, rollback the poisoned transaction and continue
+        db.session.rollback()
         print(f"Duplicate check error: {e}")
     
     # Validate and set default for excel_skill_level if empty
@@ -342,6 +344,7 @@ def apply_for_course():
             resolved_cohort_start = open_window.cohort_start or resolved_cohort_start
             resolved_cohort_end = open_window.cohort_end or resolved_cohort_end
     except Exception as e:
+        db.session.rollback()
         logger.warning(f"Failed to resolve application window: {e}")
 
     # Create application with all fields
@@ -562,6 +565,7 @@ def save_application_draft():
             resolved_cohort_start = open_window.cohort_start or resolved_cohort_start
             resolved_cohort_end = open_window.cohort_end or resolved_cohort_end
     except Exception as e:
+        db.session.rollback()
         logger.warning(f"save-draft: Failed to resolve application window: {e}")
 
     email_norm = data.get("email", "").lower().strip()
@@ -575,7 +579,7 @@ def save_application_draft():
             is_draft=True,
         ).first()
     except Exception:
-        pass
+        db.session.rollback()
 
     try:
         if existing_draft:
@@ -591,7 +595,7 @@ def save_application_draft():
                     is_draft=False,
                 ).count()
             except Exception:
-                pass
+                db.session.rollback()
             if submitted_count > 0:
                 return jsonify({
                     "error": "You have already submitted an application for this course",
