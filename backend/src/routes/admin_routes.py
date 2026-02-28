@@ -1598,3 +1598,451 @@ def run_background_task():
             "error": str(e)
         }), 500
 
+
+# ═══════════════════════════════════════════════════════════════
+# Comprehensive Admin Analytics Dashboard API
+# ═══════════════════════════════════════════════════════════════
+
+@admin_bp.route("/analytics/dashboard", methods=["GET"])
+@admin_required
+def get_analytics_dashboard():
+    """
+    Get comprehensive analytics dashboard data.
+    Query params:
+      - period: '7days' | '30days' | '90days' | '1year' | 'all' (default: '30days')
+    Returns KPIs, user growth, enrollment trends, course popularity,
+    completion rates, user demographics, engagement metrics, and recent activity.
+    """
+    try:
+        period = request.args.get('period', '30days')
+        now = datetime.utcnow()
+
+        # Determine date boundaries
+        period_map = {
+            '7days': timedelta(days=7),
+            '30days': timedelta(days=30),
+            '90days': timedelta(days=90),
+            '1year': timedelta(days=365),
+        }
+        delta = period_map.get(period)
+        start_date = (now - delta) if delta else None  # None = all time
+        prev_start = (start_date - delta) if (delta and start_date) else None
+
+        # ── Helper: count with date filter ──
+        def _count(model, date_col, after=None):
+            q = model.query
+            if after and date_col:
+                q = q.filter(date_col >= after)
+            return q.count()
+
+        # ══════════ 1. KPI Cards ══════════
+        total_users = User.query.count()
+        total_enrollments = Enrollment.query.count()
+        total_courses = Course.query.count()
+        active_users = User.query.filter_by(is_active=True).count() if hasattr(User, 'is_active') else total_users
+        published_courses = Course.query.filter_by(is_published=True).count() if hasattr(Course, 'is_published') else total_courses
+
+        # Period-specific counts
+        period_users = _count(User, User.created_at, start_date)
+        period_enrollments = _count(Enrollment, Enrollment.enrollment_date, start_date)
+
+        # Previous period counts for change %
+        prev_users = _count(User, User.created_at, prev_start) - period_users if prev_start else 0
+        prev_enrollments = _count(Enrollment, Enrollment.enrollment_date, prev_start) - period_enrollments if prev_start else 0
+
+        def _pct_change(current, previous):
+            if previous and previous > 0:
+                return round(((current - previous) / previous) * 100, 1)
+            return 0.0
+
+        # Completion rate (enrollments with completed status or completed_at set)
+        completed_enrollments = Enrollment.query.filter(
+            or_(
+                Enrollment.status == 'completed',
+                Enrollment.completed_at.isnot(None)
+            )
+        ).count()
+        completion_rate = round((completed_enrollments / total_enrollments * 100), 1) if total_enrollments > 0 else 0
+
+        # Active enrollments (in-progress)
+        active_enrollments = Enrollment.query.filter(
+            Enrollment.status == 'active',
+            Enrollment.completed_at.is_(None)
+        ).count()
+
+        # Terminated / dropped
+        terminated_enrollments = Enrollment.query.filter(
+            Enrollment.status.in_(['terminated', 'suspended'])
+        ).count()
+
+        kpi = {
+            "total_users": total_users,
+            "active_users": active_users,
+            "total_enrollments": total_enrollments,
+            "total_courses": total_courses,
+            "published_courses": published_courses,
+            "completion_rate": completion_rate,
+            "period_new_users": period_users,
+            "period_new_enrollments": period_enrollments,
+            "user_change_pct": _pct_change(period_users, prev_users),
+            "enrollment_change_pct": _pct_change(period_enrollments, prev_enrollments),
+        }
+
+        # ══════════ 2. User Growth (monthly time series) ══════════
+        # Get user registrations grouped by month
+        months_back = 12 if period in ('1year', 'all') else (6 if period == '90days' else 5)
+        user_growth = []
+        for i in range(months_back - 1, -1, -1):
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i * 30)
+            month_end = month_start + timedelta(days=30)
+            total_by_month = User.query.filter(
+                User.created_at < month_end
+            ).count()
+            active_by_month = User.query.filter(
+                User.created_at < month_end,
+                User.is_active == True
+            ).count() if hasattr(User, 'is_active') else total_by_month
+            user_growth.append({
+                "month": month_start.strftime('%b %Y'),
+                "users": total_by_month,
+                "active": active_by_month,
+                "new": User.query.filter(
+                    User.created_at >= month_start,
+                    User.created_at < month_end
+                ).count()
+            })
+
+        # ══════════ 3. Enrollment Trends (monthly) ══════════
+        enrollment_trends = []
+        for i in range(months_back - 1, -1, -1):
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i * 30)
+            month_end = month_start + timedelta(days=30)
+            new_enrollments = Enrollment.query.filter(
+                Enrollment.enrollment_date >= month_start,
+                Enrollment.enrollment_date < month_end
+            ).count()
+            completions = Enrollment.query.filter(
+                Enrollment.completed_at >= month_start,
+                Enrollment.completed_at < month_end
+            ).count()
+            enrollment_trends.append({
+                "month": month_start.strftime('%b %Y'),
+                "enrollments": new_enrollments,
+                "completions": completions,
+            })
+
+        # ══════════ 4. Course Popularity ══════════
+        course_popularity_query = db.session.query(
+            Course.id,
+            Course.title,
+            Course.is_published,
+            Course.enrollment_type,
+            Course.price,
+            Course.currency,
+            func.count(Enrollment.id).label('enrollment_count')
+        ).outerjoin(Enrollment, Course.id == Enrollment.course_id
+        ).group_by(Course.id, Course.title, Course.is_published, Course.enrollment_type, Course.price, Course.currency
+        ).order_by(desc(func.count(Enrollment.id))
+        ).limit(10).all()
+
+        course_popularity = []
+        for c in course_popularity_query:
+            # Calculate completion rate per course
+            course_total = Enrollment.query.filter_by(course_id=c.id).count()
+            course_completed = Enrollment.query.filter(
+                Enrollment.course_id == c.id,
+                or_(
+                    Enrollment.status == 'completed',
+                    Enrollment.completed_at.isnot(None)
+                )
+            ).count()
+            course_completion_rate = round((course_completed / course_total * 100), 1) if course_total > 0 else 0
+
+            course_popularity.append({
+                "id": c.id,
+                "title": c.title,
+                "enrollments": c.enrollment_count,
+                "is_published": c.is_published,
+                "enrollment_type": c.enrollment_type,
+                "price": c.price,
+                "currency": c.currency or 'USD',
+                "completion_rate": course_completion_rate,
+                "completed": course_completed,
+            })
+
+        # ══════════ 5. Enrollment Status Breakdown (completion rates) ══════════
+        completion_rates = [
+            {"name": "Completed", "value": completed_enrollments, "color": "#10b981"},
+            {"name": "In Progress", "value": active_enrollments, "color": "#3b82f6"},
+            {"name": "Not Started", "value": max(0, total_enrollments - completed_enrollments - active_enrollments - terminated_enrollments), "color": "#f59e0b"},
+            {"name": "Terminated", "value": terminated_enrollments, "color": "#ef4444"},
+        ]
+
+        # ══════════ 6. User Demographics (by role) ══════════
+        role_colors = {
+            'student': '#3b82f6',
+            'instructor': '#10b981',
+            'admin': '#8b5cf6',
+        }
+        users_by_role = db.session.query(
+            Role.name,
+            func.count(User.id)
+        ).join(User).group_by(Role.name).all()
+
+        user_demographics = [
+            {
+                "name": role_name.capitalize(),
+                "value": count,
+                "color": role_colors.get(role_name.lower(), '#6b7280')
+            }
+            for role_name, count in users_by_role
+        ]
+
+        # ══════════ 7. Engagement Metrics (weekly lesson activity) ══════════
+        engagement_metrics = []
+        weeks = 8 if period in ('90days', '1year', 'all') else 4
+        for i in range(weeks - 1, -1, -1):
+            week_start = now - timedelta(weeks=i + 1)
+            week_end = now - timedelta(weeks=i)
+
+            # Number of lesson completions in the week
+            lessons_completed = LessonCompletion.query.filter(
+                LessonCompletion.completed_at >= week_start,
+                LessonCompletion.completed_at < week_end,
+                LessonCompletion.completed == True
+            ).count()
+
+            # Number of unique active students in the week
+            active_students = db.session.query(
+                func.count(func.distinct(LessonCompletion.student_id))
+            ).filter(
+                LessonCompletion.completed_at >= week_start,
+                LessonCompletion.completed_at < week_end
+            ).scalar() or 0
+
+            # Retention: students active this week who were also active the prior week
+            prior_week_start = week_start - timedelta(weeks=1)
+            prior_active = db.session.query(
+                LessonCompletion.student_id
+            ).filter(
+                LessonCompletion.completed_at >= prior_week_start,
+                LessonCompletion.completed_at < week_start
+            ).distinct().subquery()
+
+            retained = db.session.query(
+                func.count(func.distinct(LessonCompletion.student_id))
+            ).filter(
+                LessonCompletion.completed_at >= week_start,
+                LessonCompletion.completed_at < week_end,
+                LessonCompletion.student_id.in_(db.session.query(prior_active))
+            ).scalar() or 0
+
+            prior_count = db.session.query(func.count()).select_from(prior_active).scalar() or 0
+            retention_rate = round((retained / prior_count * 100), 1) if prior_count > 0 else 0
+
+            engagement_metrics.append({
+                "week": f"Week {weeks - i}",
+                "week_label": week_start.strftime('%b %d'),
+                "lessons_completed": lessons_completed,
+                "active_students": active_students,
+                "retention_rate": retention_rate,
+            })
+
+        # ══════════ 8. Recent Activity ══════════
+        recent_activity = []
+        recent_users = User.query.order_by(User.created_at.desc()).limit(5).all()
+        for user in recent_users:
+            recent_activity.append({
+                "type": "user_registration",
+                "description": f"New user registered: {user.username}",
+                "timestamp": user.created_at.isoformat() if user.created_at else None,
+                "user": user.username,
+                "role": user.role.name if user.role else 'unknown',
+            })
+
+        recent_enrollments_list = Enrollment.query.order_by(Enrollment.enrollment_date.desc()).limit(5).all()
+        for enrollment in recent_enrollments_list:
+            recent_activity.append({
+                "type": "enrollment",
+                "description": f"{enrollment.student.username} enrolled in {enrollment.course.title}",
+                "timestamp": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                "user": enrollment.student.username,
+                "course": enrollment.course.title,
+            })
+
+        recent_completions_list = Enrollment.query.filter(
+            Enrollment.completed_at.isnot(None)
+        ).order_by(Enrollment.completed_at.desc()).limit(5).all()
+        for enrollment in recent_completions_list:
+            recent_activity.append({
+                "type": "course_completion",
+                "description": f"{enrollment.student.username} completed {enrollment.course.title}",
+                "timestamp": enrollment.completed_at.isoformat() if enrollment.completed_at else None,
+                "user": enrollment.student.username,
+                "course": enrollment.course.title,
+            })
+
+        recent_activity.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+        recent_activity = recent_activity[:15]
+
+        # ══════════ 9. Payment Overview ══════════
+        payment_stats = {
+            "paid_courses": Course.query.filter_by(enrollment_type='paid').count(),
+            "free_courses": Course.query.filter(
+                or_(Course.enrollment_type == 'free', Course.enrollment_type.is_(None))
+            ).count(),
+            "pending_payments": Enrollment.query.filter_by(payment_status='pending').count(),
+            "completed_payments": Enrollment.query.filter_by(payment_status='completed').count(),
+            "waived_payments": Enrollment.query.filter_by(payment_status='waived').count(),
+        }
+
+        # ══════════ 10. Course Status Distribution ══════════
+        course_status = {
+            "published": published_courses,
+            "draft": total_courses - published_courses,
+            "paid": Course.query.filter_by(enrollment_type='paid').count(),
+            "free": Course.query.filter(
+                or_(Course.enrollment_type == 'free', Course.enrollment_type.is_(None))
+            ).count(),
+        }
+
+        # ══════════ 11. Top Active Students ══════════
+        top_students_query = db.session.query(
+            User.id,
+            User.username,
+            User.first_name,
+            User.last_name,
+            func.count(LessonCompletion.id).label('completions')
+        ).join(
+            LessonCompletion, User.id == LessonCompletion.student_id
+        ).filter(
+            LessonCompletion.completed == True
+        )
+        if start_date:
+            top_students_query = top_students_query.filter(
+                LessonCompletion.completed_at >= start_date
+            )
+        top_students = top_students_query.group_by(
+            User.id, User.username, User.first_name, User.last_name
+        ).order_by(desc(func.count(LessonCompletion.id))).limit(10).all()
+
+        top_active_students = [
+            {
+                "id": s.id,
+                "username": s.username,
+                "name": f"{s.first_name or ''} {s.last_name or ''}".strip() or s.username,
+                "lessons_completed": s.completions,
+            }
+            for s in top_students
+        ]
+
+        return jsonify({
+            "success": True,
+            "period": period,
+            "generated_at": now.isoformat(),
+            "kpi": kpi,
+            "user_growth": user_growth,
+            "enrollment_trends": enrollment_trends,
+            "course_popularity": course_popularity,
+            "completion_rates": completion_rates,
+            "user_demographics": user_demographics,
+            "engagement_metrics": engagement_metrics,
+            "recent_activity": recent_activity,
+            "payment_stats": payment_stats,
+            "course_status": course_status,
+            "top_active_students": top_active_students,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting analytics dashboard: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": "Failed to retrieve analytics dashboard data"
+        }), 500
+
+
+@admin_bp.route("/analytics/export", methods=["GET"])
+@admin_required
+def export_analytics_csv():
+    """
+    Export analytics data as CSV.
+    Query params:
+      - type: 'users' | 'enrollments' | 'courses' (default: 'enrollments')
+      - period: '7days' | '30days' | '90days' | '1year' | 'all' (default: '30days')
+    """
+    try:
+        export_type = request.args.get('type', 'enrollments')
+        period = request.args.get('period', '30days')
+        now = datetime.utcnow()
+
+        period_map = {
+            '7days': timedelta(days=7),
+            '30days': timedelta(days=30),
+            '90days': timedelta(days=90),
+            '1year': timedelta(days=365),
+        }
+        delta = period_map.get(period)
+        start_date = (now - delta) if delta else None
+
+        output = StringIO()
+        writer = csv.writer(output)
+
+        if export_type == 'users':
+            writer.writerow(['ID', 'Username', 'Email', 'Role', 'Active', 'Created At', 'Last Login'])
+            query = User.query
+            if start_date:
+                query = query.filter(User.created_at >= start_date)
+            for user in query.order_by(User.created_at.desc()).all():
+                writer.writerow([
+                    user.id, user.username, user.email,
+                    user.role.name if user.role else '',
+                    user.is_active if hasattr(user, 'is_active') else True,
+                    user.created_at.isoformat() if user.created_at else '',
+                    user.last_login.isoformat() if hasattr(user, 'last_login') and user.last_login else '',
+                ])
+
+        elif export_type == 'courses':
+            writer.writerow(['ID', 'Title', 'Instructor', 'Published', 'Type', 'Price', 'Enrollments', 'Completion Rate'])
+            for course in Course.query.all():
+                enr_count = Enrollment.query.filter_by(course_id=course.id).count()
+                completed_count = Enrollment.query.filter(
+                    Enrollment.course_id == course.id,
+                    or_(Enrollment.status == 'completed', Enrollment.completed_at.isnot(None))
+                ).count()
+                rate = round((completed_count / enr_count * 100), 1) if enr_count > 0 else 0
+                writer.writerow([
+                    course.id, course.title,
+                    course.instructor.username if course.instructor else '',
+                    course.is_published, course.enrollment_type,
+                    course.price or 0, enr_count, f"{rate}%"
+                ])
+
+        else:  # enrollments
+            writer.writerow(['ID', 'Student', 'Course', 'Status', 'Enrolled At', 'Completed At', 'Payment Status', 'Cohort'])
+            query = Enrollment.query
+            if start_date:
+                query = query.filter(Enrollment.enrollment_date >= start_date)
+            for enr in query.order_by(Enrollment.enrollment_date.desc()).all():
+                writer.writerow([
+                    enr.id,
+                    enr.student.username if enr.student else '',
+                    enr.course.title if enr.course else '',
+                    enr.status or 'active',
+                    enr.enrollment_date.isoformat() if enr.enrollment_date else '',
+                    enr.completed_at.isoformat() if enr.completed_at else '',
+                    enr.payment_status or '',
+                    enr.cohort_label or '',
+                ])
+
+        output.seek(0)
+        response = make_response(output.getvalue())
+        response.headers['Content-Type'] = 'text/csv'
+        response.headers['Content-Disposition'] = f'attachment; filename=analytics_{export_type}_{period}.csv'
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting analytics: {str(e)}")
+        return jsonify({"error": "Failed to export analytics data"}), 500
+
