@@ -1,6 +1,60 @@
 import apiClient from '@/lib/api-client';
 import { ApiErrorHandler } from '@/lib/error-handler';
-import { User, PaginatedResponse, UserListResponse } from '@/types/api';
+import { User, PaginatedResponse, UserListResponse, Course } from '@/types/api';
+
+export interface CourseListParams {
+  search?: string;
+  status?: 'all' | 'published' | 'unpublished';
+  enrollment_type?: string;
+  instructor_id?: number;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+}
+
+export interface CourseFormData {
+  title: string;
+  description: string;
+  learning_objectives?: string;
+  target_audience?: string;
+  estimated_duration?: string;
+  instructor_id: number | string;
+  is_published?: boolean;
+  enrollment_type?: 'free' | 'paid' | 'scholarship';
+  price?: number | null;
+  currency?: string;
+  payment_mode?: 'full' | 'partial';
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  require_payment_before_application?: boolean;
+  paypal_enabled?: boolean;
+  mobile_money_enabled?: boolean;
+  bank_transfer_enabled?: boolean;
+  kpay_enabled?: boolean;
+  flutterwave_enabled?: boolean;
+  bank_transfer_details?: string | null;
+  installment_enabled?: boolean;
+  installment_count?: number | null;
+  installment_interval_days?: number | null;
+  payment_deadline_days?: number | null;
+  application_start_date?: string | null;
+  application_end_date?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  cohort_label?: string | null;
+  application_timezone?: string;
+  start_date?: string | null;
+  module_release_count?: number | null;
+  module_release_interval?: string | null;
+  module_release_interval_days?: number | null;
+}
+
+export interface InstructorOption {
+  id: number;
+  first_name: string;
+  last_name: string;
+  username: string;
+  email: string;
+}
 
 export interface UserListParams {
   page?: number;
@@ -237,6 +291,99 @@ export class AdminService {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/analytics/courses`);
       return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // ==========================================
+  // Course Management CRUD
+  // ==========================================
+
+  /** List all courses (admin) */
+  static async getCourses(): Promise<Course[]> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/courses`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Get single course by ID (uses the general /courses/:id which admin can access) */
+  static async getCourse(courseId: number): Promise<Course> {
+    try {
+      const response = await apiClient.get(`/courses/${courseId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Create a new course (admin) */
+  static async createCourse(data: CourseFormData): Promise<{ message: string; course: Course }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/courses`, data);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Update a course (uses the general /courses/:id which admin can access) */
+  static async updateCourse(courseId: number, data: Partial<CourseFormData>): Promise<Course> {
+    try {
+      const response = await apiClient.put(`/courses/${courseId}`, data);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Delete a course (admin) */
+  static async deleteCourse(courseId: number): Promise<{ message: string }> {
+    try {
+      const response = await apiClient.delete(`${this.BASE_PATH}/courses/${courseId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Publish a course */
+  static async publishCourse(courseId: number): Promise<{ message: string; course: Course }> {
+    try {
+      const response = await apiClient.post(`/courses/${courseId}/publish`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Unpublish a course */
+  static async unpublishCourse(courseId: number): Promise<{ message: string; course: Course }> {
+    try {
+      const response = await apiClient.post(`/courses/${courseId}/unpublish`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Get list of instructors for course assignment */
+  static async getInstructors(): Promise<InstructorOption[]> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/users?role=instructor&per_page=100`);
+      const data = response.data;
+      // The users endpoint might return paginated or raw data
+      const users = data.users || data.items || data;
+      return (Array.isArray(users) ? users : []).map((u: any) => ({
+        id: u.id,
+        first_name: u.first_name || '',
+        last_name: u.last_name || '',
+        username: u.username || '',
+        email: u.email || '',
+      }));
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }

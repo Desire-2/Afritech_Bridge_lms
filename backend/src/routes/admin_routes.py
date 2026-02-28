@@ -931,11 +931,125 @@ def update_course_admin(course_id):
 @admin_bp.route("/courses/<int:course_id>", methods=["DELETE"])
 @admin_required
 def delete_course_admin(course_id):
+    """Delete a course and all its dependent records safely."""
     course = Course.query.get_or_404(course_id)
-    # Consider implications: enrollments, content, etc. Maybe soft delete or archive.
-    db.session.delete(course)
-    db.session.commit()
-    return jsonify({"message": "Course deleted successfully"}), 200
+    course_title = course.title
+
+    try:
+        # Collect enrollment IDs for this course (needed for child-of-enrollment cleanup)
+        enrollment_ids = [e.id for e in Enrollment.query.filter_by(course_id=course_id).all()]
+
+        # ── 1. Delete records that reference enrollments of this course ──
+        if enrollment_ids:
+            from ..models.student_models import (
+                Certificate, ModuleProgress, StudentSuspension,
+                AssessmentAttempt
+            )
+
+            Certificate.query.filter(Certificate.enrollment_id.in_(enrollment_ids)).delete(synchronize_session=False)
+            ModuleProgress.query.filter(ModuleProgress.enrollment_id.in_(enrollment_ids)).delete(synchronize_session=False)
+            StudentSuspension.query.filter(StudentSuspension.enrollment_id.in_(enrollment_ids)).delete(synchronize_session=False)
+
+            # AssessmentAttempt may reference enrollment_id
+            if hasattr(AssessmentAttempt, 'enrollment_id'):
+                AssessmentAttempt.query.filter(AssessmentAttempt.enrollment_id.in_(enrollment_ids)).delete(synchronize_session=False)
+
+        # ── 2. Delete records that reference course_id directly ──
+        from ..models.student_models import (
+            UserProgress, StudentBookmark, StudentNote,
+            CourseEnrollmentApplication, LearningAnalytics,
+            StudentTranscript
+        )
+        from ..models.course_application import CourseApplication
+
+        UserProgress.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+        StudentBookmark.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+        LearningAnalytics.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+
+        # Models where course_id might not exist as a column – guard with hasattr
+        if hasattr(StudentNote, 'course_id'):
+            StudentNote.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+        if hasattr(CourseEnrollmentApplication, 'course_id'):
+            CourseEnrollmentApplication.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+        if hasattr(StudentTranscript, 'course_id'):
+            StudentTranscript.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+
+        try:
+            CourseApplication.query.filter_by(course_id=course_id).delete(synchronize_session=False)
+        except Exception:
+            pass  # Table may not exist
+
+        # Forums (course_id is nullable, so set to NULL)
+        from ..models.student_models import StudentForum
+        StudentForum.query.filter_by(course_id=course_id).update(
+            {"course_id": None}, synchronize_session=False
+        )
+
+        # Achievements referencing course (nullable FKs – set to NULL)
+        try:
+            from ..models.achievement_models import UserAchievement, Milestone, Leaderboard
+            if hasattr(UserAchievement, 'earned_during_course_id'):
+                UserAchievement.query.filter_by(earned_during_course_id=course_id).update(
+                    {"earned_during_course_id": None}, synchronize_session=False
+                )
+            if hasattr(Milestone, 'course_id'):
+                Milestone.query.filter_by(course_id=course_id).update(
+                    {"course_id": None}, synchronize_session=False
+                )
+            if hasattr(Leaderboard, 'course_id'):
+                Leaderboard.query.filter_by(course_id=course_id).update(
+                    {"course_id": None}, synchronize_session=False
+                )
+        except Exception:
+            pass  # Achievement models may not be fully migrated
+
+        # Notifications (nullable FK – set to NULL)
+        try:
+            from ..models.notification_models import Notification
+            Notification.query.filter_by(course_id=course_id).update(
+                {"course_id": None}, synchronize_session=False
+            )
+        except Exception:
+            pass
+
+        # Quiz attempts referencing quizzes of this course
+        try:
+            from ..models.quiz_progress_models import QuizAttempt
+            quiz_ids = [q.id for q in Quiz.query.filter_by(course_id=course_id).all()] if hasattr(Quiz, 'course_id') else []
+            if not quiz_ids:
+                # Quizzes may be linked through modules → lessons
+                from ..models.course_models import Module, Lesson
+                module_ids = [m.id for m in Module.query.filter_by(course_id=course_id).all()]
+                if module_ids:
+                    lesson_ids = [l.id for l in Lesson.query.filter(Lesson.module_id.in_(module_ids)).all()]
+                    if lesson_ids:
+                        quiz_ids = [q.id for q in Quiz.query.filter(Quiz.lesson_id.in_(lesson_ids)).all()]
+            if quiz_ids:
+                QuizAttempt.query.filter(QuizAttempt.quiz_id.in_(quiz_ids)).delete(synchronize_session=False)
+        except Exception:
+            pass
+
+        # LessonCompletion records for lessons in this course
+        from ..models.course_models import Module, Lesson
+        module_ids = [m.id for m in Module.query.filter_by(course_id=course_id).all()]
+        if module_ids:
+            lesson_ids = [l.id for l in Lesson.query.filter(Lesson.module_id.in_(module_ids)).all()]
+            if lesson_ids:
+                LessonCompletion.query.filter(LessonCompletion.lesson_id.in_(lesson_ids)).delete(synchronize_session=False)
+
+        # ── 3. Delete the course itself (cascades: enrollments, modules, app windows) ──
+        db.session.delete(course)
+        db.session.commit()
+
+        logger.info(f"Course '{course_title}' (ID {course_id}) deleted successfully with all related records")
+        return jsonify({"message": f"Course '{course_title}' deleted successfully"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting course {course_id}: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({"error": f"Failed to delete course: {str(e)}"}), 500
 
 # --- Opportunity Management API Routes (Admin-Specific) ---
 @admin_bp.route("/opportunities", methods=["GET"])
