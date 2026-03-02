@@ -124,13 +124,14 @@ class ExcelGradingService:
                     'status': 'failed',
                 }
 
-            # Step 7: Parse assignment requirements
-            requirements = self._parse_requirements(assignment_or_project)
+            # Step 7: Parse assignment requirements (module-aware)
+            module = self._load_module(assignment_or_project)
+            requirements = self._parse_requirements(assignment_or_project, module)
 
             # Step 8: Get instructor rubric (if exists)
             instructor_rubric = self._get_instructor_rubric(assignment_or_project, course)
 
-            # Step 9: Run the analysis pipeline
+            # Step 9: Run the analysis pipeline (only relevant analyzers)
             grading_result = self._run_pipeline(
                 file_bytes=file_bytes,
                 file_name=file_info.get('original_filename') or file_info.get('filename', 'file.xlsx'),
@@ -268,6 +269,14 @@ class ExcelGradingService:
             return None, None, None
 
         return submission, parent, course
+
+    def _load_module(self, assignment_or_project) -> Optional[Any]:
+        """Load the module associated with an assignment or project."""
+        from src.models.course_models import Module
+        module_id = getattr(assignment_or_project, 'module_id', None)
+        if module_id:
+            return Module.query.get(module_id)
+        return None
 
     def _is_excel_course(self, course) -> bool:
         """Check if the course is an MS Excel course."""
@@ -502,15 +511,35 @@ class ExcelGradingService:
     # Internal: Requirement parsing
     # ------------------------------------------------------------------
 
-    def _parse_requirements(self, assignment_or_project) -> Dict[str, Any]:
-        """Parse assignment description/instructions into machine-checkable requirements."""
+    def _parse_requirements(self, assignment_or_project, module=None) -> Dict[str, Any]:
+        """
+        Parse assignment description/instructions + module context into
+        machine-checkable requirements.  Now also determines the *scope*
+        — which rubric categories are relevant for this specific assignment.
+        """
         desc = (getattr(assignment_or_project, 'description', '') or '').lower()
         instructions = (getattr(assignment_or_project, 'instructions', '') or '').lower()
-        combined = f"{desc} {instructions}"
+        title = (getattr(assignment_or_project, 'title', '') or '').lower()
+
+        # Include module context if available
+        module_title = ''
+        module_desc = ''
+        module_objectives = ''
+        if module:
+            module_title = (getattr(module, 'title', '') or '').lower()
+            module_desc = (getattr(module, 'description', '') or '').lower()
+            module_objectives = (getattr(module, 'learning_objectives', '') or '').lower()
+
+        # Assignment-level text (primary)
+        assignment_text = f"{title} {desc} {instructions}"
+        # Module-level text (secondary context)
+        module_text = f"{module_title} {module_desc} {module_objectives}"
+        # Combined for broad keyword matching
+        combined = f"{assignment_text} {module_text}"
 
         requirements: Dict[str, Any] = {}
 
-        # Required functions detection
+        # ── Required functions detection ──────────────────────────────
         function_keywords = {
             'vlookup': 'VLOOKUP',
             'xlookup': 'XLOOKUP',
@@ -534,6 +563,11 @@ class ExcelGradingService:
             'unique function': 'UNIQUE',
             'let function': 'LET',
             'lambda': 'LAMBDA',
+            'sum ': 'SUM',
+            'average': 'AVERAGE',
+            'min ': 'MIN',
+            'max ': 'MAX',
+            'count': 'COUNT',
         }
 
         required_functions = []
@@ -545,24 +579,57 @@ class ExcelGradingService:
         if required_functions:
             requirements['required_functions'] = required_functions
 
-        # Feature requirements
-        requirements['require_pivots'] = any(
-            kw in combined for kw in ['pivot table', 'pivottable', 'pivot']
-        )
-        requirements['require_charts'] = any(
-            kw in combined for kw in ['chart', 'graph', 'visualization']
-        )
-        requirements['require_vba'] = any(
-            kw in combined for kw in ['vba', 'macro', 'automate', 'automation']
-        )
-        requirements['require_power_query'] = any(
-            kw in combined for kw in ['power query', 'get & transform', 'm language', 'query editor']
-        )
-        requirements['require_conditional_formatting'] = any(
-            kw in combined for kw in ['conditional format', 'highlight cells', 'data bars']
-        )
+        # ── Feature scope detection ───────────────────────────────────
+        # Determine what features are *relevant* for this assignment.
+        # Only features explicitly mentioned in assignment instructions
+        # or module context should be graded.  Everything else gets 0 weight.
 
-        # Required sheets
+        # Pivots: only if mentioned in assignment or module
+        pivot_mentioned = any(
+            kw in combined for kw in ['pivot table', 'pivottable', 'pivot chart', 'pivotchart']
+        )
+        requirements['require_pivots'] = pivot_mentioned
+        requirements['scope_pivots'] = pivot_mentioned
+
+        # Charts: only if mentioned
+        chart_mentioned = any(
+            kw in combined for kw in ['chart', 'graph', 'visualization', 'dashboard']
+        )
+        requirements['require_charts'] = chart_mentioned
+        requirements['scope_charts'] = chart_mentioned
+
+        # VBA: only if mentioned
+        vba_mentioned = any(
+            kw in combined for kw in ['vba', 'macro', 'automate', 'automation', 'programming']
+        )
+        requirements['require_vba'] = vba_mentioned
+        requirements['scope_vba'] = vba_mentioned
+
+        # Power Query: only if mentioned
+        pq_mentioned = any(
+            kw in combined for kw in ['power query', 'get & transform', 'm language', 'query editor', 'etl']
+        )
+        requirements['require_power_query'] = pq_mentioned
+        requirements['scope_power_query'] = pq_mentioned
+
+        # Conditional formatting
+        cf_mentioned = any(
+            kw in combined for kw in ['conditional format', 'highlight cells', 'data bars', 'color scale']
+        )
+        requirements['require_conditional_formatting'] = cf_mentioned
+
+        # Data validation
+        dv_mentioned = any(
+            kw in combined for kw in ['data validation', 'dropdown', 'drop-down', 'validation rule']
+        )
+        requirements['require_data_validation'] = dv_mentioned
+
+        # Formulas are ALWAYS in scope for Excel assignments
+        requirements['scope_formulas'] = True
+        # Formatting is always in scope (basic formatting matters)
+        requirements['scope_formatting'] = True
+
+        # ── Required sheets ───────────────────────────────────────────
         sheet_pattern = re.compile(
             r'(?:sheet|worksheet|tab)\s+(?:named?|called?|titled?)?\s*["\']?(\w[\w\s]*\w)["\']?',
             re.IGNORECASE
@@ -570,6 +637,17 @@ class ExcelGradingService:
         sheets = sheet_pattern.findall(combined)
         if sheets:
             requirements['required_sheets'] = [s.strip() for s in sheets]
+
+        # ── Store raw context for feedback generator ──────────────────
+        requirements['_assignment_title'] = getattr(assignment_or_project, 'title', '')
+        requirements['_assignment_instructions'] = getattr(assignment_or_project, 'instructions', '') or ''
+        requirements['_module_title'] = getattr(module, 'title', '') if module else ''
+
+        logger.info(
+            f"Parsed requirements for '{requirements.get('_assignment_title', '?')}': "
+            f"formulas={bool(required_functions)}, pivots={pivot_mentioned}, "
+            f"charts={chart_mentioned}, vba={vba_mentioned}, pq={pq_mentioned}"
+        )
 
         return requirements
 
@@ -608,7 +686,14 @@ class ExcelGradingService:
         instructor_rubric: Optional[Dict[str, Any]],
         grading_only: bool = True,
     ) -> Dict[str, Any]:
-        """Run the full analysis and grading pipeline."""
+        """
+        Run the analysis and grading pipeline.
+
+        Only runs analyzers that are in scope for the current assignment
+        (determined by ``requirements['scope_*']`` flags).  Out-of-scope
+        analysers are skipped and an empty/default result is used instead,
+        so the GradingEngine will assign 0 pts for those categories.
+        """
         from .excel_analyzer import ExcelAnalyzer
         from .formula_analyzer import FormulaAnalyzer
         from .chart_analyzer import ChartAnalyzer
@@ -619,33 +704,64 @@ class ExcelGradingService:
         from .grading_engine import GradingEngine
         from .feedback_generator import FeedbackGenerator
 
-        # 1. Workbook structure analysis
+        # Scope flags (default True for backward compat if flag is absent)
+        scope_formulas = requirements.get('scope_formulas', True)
+        scope_pivots = requirements.get('scope_pivots', False)
+        scope_charts = requirements.get('scope_charts', False)
+        scope_vba = requirements.get('scope_vba', False)
+        scope_pq = requirements.get('scope_power_query', False)
+        scope_formatting = requirements.get('scope_formatting', True)
+
+        # 1. Workbook structure analysis — ALWAYS runs (needed by many others)
         wb_analyzer = ExcelAnalyzer(file_bytes, file_name)
         wb_analysis = wb_analyzer.analyze()
 
-        # 2. Formula analysis
-        formula_analyzer = FormulaAnalyzer(wb_analysis)
-        formula_analysis = formula_analyzer.analyze()
+        # 2. Formula analysis — always (formulas always in scope)
+        if scope_formulas:
+            formula_analyzer = FormulaAnalyzer(wb_analysis)
+            formula_analysis = formula_analyzer.analyze()
+        else:
+            formula_analysis = {'formula_count': 0, 'complexity_score': 0}
 
-        # 3. Chart analysis
-        chart_analyzer = ChartAnalyzer(wb_analysis)
-        chart_analysis = chart_analyzer.analyze()
+        # 3. Chart analysis — only if in scope
+        if scope_charts:
+            chart_analyzer = ChartAnalyzer(wb_analysis)
+            chart_analysis = chart_analyzer.analyze()
+        else:
+            chart_analysis = {'chart_count': 0, 'chart_types': [], 'issues': []}
 
-        # 4. Pivot Table analysis
-        pivot_analyzer = PivotAnalyzer(file_bytes, wb_analysis)
-        pivot_analysis = pivot_analyzer.analyze()
+        # 4. Pivot Table analysis — only if in scope
+        if scope_pivots:
+            pivot_analyzer = PivotAnalyzer(file_bytes, wb_analysis)
+            pivot_analysis = pivot_analyzer.analyze()
+        else:
+            pivot_analysis = {'pivot_count': 0, 'has_slicers': False, 'has_calculated_fields': False, 'pivots': []}
 
-        # 5. VBA analysis
-        vba_analyzer = VBAAnalyzer(file_bytes, wb_analysis)
-        vba_analysis = vba_analyzer.analyze()
+        # 5. VBA analysis — only if in scope
+        if scope_vba:
+            vba_analyzer = VBAAnalyzer(file_bytes, wb_analysis)
+            vba_analysis = vba_analyzer.analyze()
+        else:
+            vba_analysis = {'has_vba': False, 'module_count': 0, 'total_procedures': 0, 'total_lines': 0, 'security': {}, 'code_quality': {}, 'automation_patterns': []}
 
-        # 6. Power Query analysis
-        pq_analyzer = PowerQueryAnalyzer(file_bytes, wb_analysis)
-        pq_analysis = pq_analyzer.analyze()
+        # 6. Power Query analysis — only if in scope
+        if scope_pq:
+            pq_analyzer = PowerQueryAnalyzer(file_bytes, wb_analysis)
+            pq_analysis = pq_analyzer.analyze()
+        else:
+            pq_analysis = {'has_power_query': False, 'query_count': 0, 'all_transformations': [], 'total_steps': 0, 'queries': []}
 
-        # 7. Formatting analysis
-        fmt_analyzer = FormattingAnalyzer(wb_analysis)
-        fmt_analysis = fmt_analyzer.analyze()
+        # 7. Formatting analysis — always (basic formatting matters)
+        if scope_formatting:
+            fmt_analyzer = FormattingAnalyzer(wb_analysis)
+            fmt_analysis = fmt_analyzer.analyze()
+        else:
+            fmt_analysis = {'score': 0}
+
+        logger.info(
+            f"Pipeline ran analyzers: formulas={scope_formulas}, pivots={scope_pivots}, "
+            f"charts={scope_charts}, vba={scope_vba}, pq={scope_pq}, fmt={scope_formatting}"
+        )
 
         # 8. Grading
         engine = GradingEngine(
@@ -671,7 +787,9 @@ class ExcelGradingService:
             vba_analysis=vba_analysis,
             pq_analysis=pq_analysis,
             formatting_analysis=fmt_analysis,
-            assignment_title=file_name,
+            assignment_title=requirements.get('_assignment_title', file_name),
+            module_title=requirements.get('_module_title', ''),
+            assignment_instructions=requirements.get('_assignment_instructions', ''),
         )
         feedback = fb_gen.generate()
         grading_result['feedback'] = feedback

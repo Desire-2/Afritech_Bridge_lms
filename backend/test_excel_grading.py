@@ -456,7 +456,12 @@ class TestGradingEngine:
 
         analyses = self._make_analyses()
         engine = GradingEngine(
-            requirements={'require_pivots': True, 'require_charts': True},
+            requirements={
+                'require_pivots': True, 'require_charts': True,
+                'scope_formulas': True, 'scope_pivots': True,
+                'scope_charts': True, 'scope_vba': True,
+                'scope_power_query': True, 'scope_formatting': True,
+            },
             instructor_rubric=None,
             **analyses,
         )
@@ -479,22 +484,38 @@ class TestGradingEngine:
         assert compute_grade_letter(50) == 'F'
 
     def test_no_requirement_features_full_marks(self):
-        """VBA and Power Query should get full marks when not required."""
+        """
+        Out-of-scope categories (VBA, Power Query) should get max=0, weight=0
+        so they don't affect the total score either positively or negatively.
+        """
         from src.services.excel_grading.grading_engine import GradingEngine
 
         analyses = self._make_analyses()
         engine = GradingEngine(
-            requirements={'require_vba': False, 'require_power_query': False},
+            requirements={
+                'require_vba': False, 'require_power_query': False,
+                'scope_formulas': True, 'scope_pivots': False,
+                'scope_charts': False, 'scope_vba': False,
+                'scope_power_query': False, 'scope_formatting': True,
+            },
             instructor_rubric=None,
             **analyses,
         )
         result = engine.grade()
 
         bd = result['rubric_breakdown']
-        if 'VBA' in bd:
-            assert bd['VBA']['score'] == bd['VBA']['max']
-        if 'PowerQuery_M' in bd:
-            assert bd['PowerQuery_M']['score'] == bd['PowerQuery_M']['max']
+        # VBA and PQ should have 0 max (out of scope)
+        assert bd['VBA']['max'] == 0
+        assert bd['VBA']['score'] == 0
+        assert bd['PowerQuery_M']['max'] == 0
+        assert bd['PowerQuery_M']['score'] == 0
+        # PivotTables and Charts also out of scope
+        assert bd['PivotTables']['max'] == 0
+        assert bd['Charts']['max'] == 0
+        # Formulas, Formatting, Completeness still in scope
+        assert bd['Formulas']['max'] > 0
+        assert bd['Formatting']['max'] > 0
+        assert bd['Completeness']['max'] > 0
 
 
 # ===========================================================================
@@ -607,6 +628,98 @@ class TestRequirementParser:
         reqs = svc._parse_requirements(FakeAssignment())
         assert reqs.get('require_vba') is False
         assert reqs.get('require_power_query') is False
+
+    def test_parse_requirements_with_module_context(self):
+        """Module title and objectives should influence scope detection."""
+        from src.services.excel_grading.excel_grading_service import ExcelGradingService
+
+        svc = ExcelGradingService()
+
+        class FakeAssignment:
+            title = "Create Your First Spreadsheet"
+            description = "Practice basic formulas."
+            instructions = "Use SUM and AVERAGE functions."
+
+        class FakeModule:
+            title = "Advanced Functions"
+            description = "Learn lookup and math functions in Excel."
+            learning_objectives = "Master VLOOKUP, SUMIF, and conditional formulas."
+
+        reqs = svc._parse_requirements(FakeAssignment(), module=FakeModule())
+
+        # Formulas should be in scope
+        assert reqs['scope_formulas'] is True
+        # VBA, PivotTables, Power Query should NOT be in scope
+        assert reqs['scope_vba'] is False
+        assert reqs['scope_pivots'] is False
+        assert reqs['scope_power_query'] is False
+        # SUM and AVERAGE detected from instructions
+        assert 'SUM' in reqs.get('required_functions', [])
+        assert 'AVERAGE' in reqs.get('required_functions', [])
+        # Module context preserved
+        assert reqs['_module_title'] == 'Advanced Functions'
+
+    def test_parse_requirements_pivot_module(self):
+        """Module about PivotTables should set pivots and charts in scope."""
+        from src.services.excel_grading.excel_grading_service import ExcelGradingService
+
+        svc = ExcelGradingService()
+
+        class FakeAssignment:
+            title = "Sales Dashboard"
+            description = "Create a dashboard to analyze sales data."
+            instructions = "Build pivot tables and charts from the sales dataset."
+
+        class FakeModule:
+            title = "PivotTables and PivotCharts"
+            description = "Master data summarization with pivot tables."
+            learning_objectives = "Create PivotTables, PivotCharts, slicers, and dashboards."
+
+        reqs = svc._parse_requirements(FakeAssignment(), module=FakeModule())
+
+        assert reqs['scope_pivots'] is True
+        assert reqs['scope_charts'] is True       # "dashboard" / "charts" mentioned
+        assert reqs['scope_vba'] is False
+        assert reqs['scope_power_query'] is False
+
+    def test_dynamic_rubric_formulas_only(self):
+        """When only formulas are in scope, rubric should redistribute all weight to formulas + formatting + completeness."""
+        from src.services.excel_grading.grading_engine import GradingEngine
+
+        analyses = {
+            'workbook_analysis': {'sheet_count': 1, 'total_data_cells': 50, 'total_formulas': 10, 'sheet_names': ['Sheet1']},
+            'formula_analysis': {'formula_count': 10, 'complexity_score': 60, 'advanced_function_count': 2, 'function_categories': {'Math': 5, 'Lookup': 3}, 'error_handling': {}, 'issues': [], 'advanced_functions_used': ['VLOOKUP', 'SUMIF']},
+            'chart_analysis': {'chart_count': 0, 'chart_types': [], 'issues': []},
+            'pivot_analysis': {'pivot_count': 0, 'has_slicers': False, 'has_calculated_fields': False, 'pivots': []},
+            'vba_analysis': {'has_vba': False, 'module_count': 0, 'total_procedures': 0, 'total_lines': 0, 'security': {}, 'code_quality': {}, 'automation_patterns': []},
+            'pq_analysis': {'has_power_query': False, 'query_count': 0, 'all_transformations': [], 'total_steps': 0, 'queries': []},
+            'formatting_analysis': {'score': 70, 'has_conditional_formatting': False, 'has_data_validation': False, 'has_named_ranges': False, 'issues': []},
+        }
+
+        engine = GradingEngine(
+            requirements={
+                'scope_formulas': True, 'scope_pivots': False,
+                'scope_charts': False, 'scope_vba': False,
+                'scope_power_query': False, 'scope_formatting': True,
+            },
+            instructor_rubric=None,
+            **analyses,
+        )
+        result = engine.grade()
+        bd = result['rubric_breakdown']
+
+        # Out-of-scope categories should have 0 max
+        assert bd['PivotTables']['max'] == 0
+        assert bd['Charts']['max'] == 0
+        assert bd['VBA']['max'] == 0
+        assert bd['PowerQuery_M']['max'] == 0
+
+        # In-scope categories should have redistributed weight
+        total_max = sum(c['max'] for c in bd.values())
+        assert total_max > 0
+        # Score should be non-trivial (formulas have data, formatting has 70%)
+        assert result['total_score'] > 0
+        assert result['percentage'] > 0
 
 
 # ===========================================================================

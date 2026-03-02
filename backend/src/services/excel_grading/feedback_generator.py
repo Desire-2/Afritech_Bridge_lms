@@ -34,6 +34,8 @@ class FeedbackGenerator:
         formatting_analysis: Dict[str, Any],
         assignment_title: str = '',
         student_name: str = '',
+        module_title: str = '',
+        assignment_instructions: str = '',
     ):
         self.result = grading_result
         self.wb = workbook_analysis
@@ -45,6 +47,8 @@ class FeedbackGenerator:
         self.formatting = formatting_analysis
         self.title = assignment_title
         self.student = student_name
+        self.module_title = module_title
+        self.assignment_instructions = assignment_instructions
 
     # ------------------------------------------------------------------
     # Public API
@@ -118,10 +122,13 @@ class FeedbackGenerator:
                      "satisfactory work" if pct >= 60 else \
                      "work that needs improvement"
 
+        module_note = f" (Module: {self.module_title})" if self.module_title else ''
+
         return (
             f"{greeting}\n\n"
             f"Thank you for submitting your assignment"
-            f"{f' \"{self.title}\"' if self.title else ''}. "
+            f"{f' \"{self.title}\"' if self.title else ''}"
+            f"{module_note}. "
             f"Below is your detailed feedback.\n\n"
             f"**Overall Score: {total}/{max_score} ({pct}%) — Grade: {grade}**\n\n"
             f"This represents {level_text}. "

@@ -12,15 +12,39 @@ from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Default rubric weights (used when no instructor rubric is provided)
+# Base rubric weights (used as a starting template).
+# The GradingEngine dynamically zeroes out categories that are NOT in
+# scope for the current assignment and redistributes weights.
+BASE_RUBRIC_WEIGHTS = {
+    'Formulas':      {'base_weight': 25},
+    'PivotTables':   {'base_weight': 15},
+    'Charts':        {'base_weight': 10},
+    'PowerQuery_M':  {'base_weight': 15},
+    'VBA':           {'base_weight': 15},
+    'Formatting':    {'base_weight': 10},
+    'Completeness':  {'base_weight': 10},
+}
+
+# Mapping from scope flag name → rubric category
+_SCOPE_TO_CATEGORY = {
+    'scope_formulas':    'Formulas',
+    'scope_pivots':      'PivotTables',
+    'scope_charts':      'Charts',
+    'scope_power_query': 'PowerQuery_M',
+    'scope_vba':         'VBA',
+    'scope_formatting':  'Formatting',
+    # Completeness is always in scope
+}
+
+# Keep a fully-weighted fallback for backward compatibility
 DEFAULT_RUBRIC = {
-    'Formulas': {'max': 25, 'weight': 0.25},
-    'PivotTables': {'max': 15, 'weight': 0.15},
-    'Charts': {'max': 10, 'weight': 0.10},
-    'PowerQuery_M': {'max': 15, 'weight': 0.15},
-    'VBA': {'max': 15, 'weight': 0.15},
-    'Formatting': {'max': 10, 'weight': 0.10},
-    'Completeness': {'max': 10, 'weight': 0.10},
+    'Formulas':      {'max': 25, 'weight': 0.25},
+    'PivotTables':   {'max': 15, 'weight': 0.15},
+    'Charts':        {'max': 10, 'weight': 0.10},
+    'PowerQuery_M':  {'max': 15, 'weight': 0.15},
+    'VBA':           {'max': 15, 'weight': 0.15},
+    'Formatting':    {'max': 10, 'weight': 0.10},
+    'Completeness':  {'max': 10, 'weight': 0.10},
 }
 
 # Grade letter mapping
@@ -143,57 +167,112 @@ class GradingEngine:
     # ------------------------------------------------------------------
 
     def _build_rubric(self) -> Dict[str, Dict]:
-        """Build rubric from instructor rubric or defaults."""
+        """
+        Build rubric from instructor rubric, or dynamically from assignment
+        scope flags in ``self.requirements``.
+
+        When no instructor rubric is provided, the scope flags
+        (``scope_formulas``, ``scope_pivots``, …) determine which categories
+        get points.  Out-of-scope categories receive ``max: 0, weight: 0``
+        so they never inflate or deflate the total.
+        """
+        # ── 1) Instructor rubric takes priority ──────────────────────
         if self.instructor_rubric and self.instructor_rubric.get('criteria'):
-            # Map instructor rubric criteria to our categories
-            rubric = {}
-            criteria = self.instructor_rubric['criteria']
-            total_pts = self.instructor_rubric.get('total_points', 100)
+            return self._build_rubric_from_instructor()
 
-            # Try to map instructor criteria to our categories
-            category_keywords = {
-                'Formulas': ['formula', 'function', 'calculation', 'excel function'],
-                'PivotTables': ['pivot', 'pivottable', 'data model'],
-                'Charts': ['chart', 'graph', 'visualization', 'visual'],
-                'PowerQuery_M': ['power query', 'query', 'm language', 'etl', 'transform'],
-                'VBA': ['vba', 'macro', 'code', 'programming', 'automation'],
-                'Formatting': ['format', 'presentation', 'layout', 'design', 'usability'],
-                'Completeness': ['complete', 'requirement', 'structure', 'overall'],
-            }
+        # ── 2) Build dynamic rubric from scope flags ─────────────────
+        # Determine which categories are in scope
+        in_scope: Dict[str, float] = {}
+        for flag, category in _SCOPE_TO_CATEGORY.items():
+            if self.requirements.get(flag, False):
+                in_scope[category] = BASE_RUBRIC_WEIGHTS[category]['base_weight']
 
-            for criterion in criteria:
-                crit_name = criterion.get('name', '').lower()
-                crit_desc = criterion.get('description', '').lower()
-                crit_max = criterion.get('max_points', 0)
-                combined = f"{crit_name} {crit_desc}"
+        # Completeness is always in scope
+        in_scope['Completeness'] = BASE_RUBRIC_WEIGHTS['Completeness']['base_weight']
 
-                matched = False
-                for cat, keywords in category_keywords.items():
-                    if any(kw in combined for kw in keywords):
-                        if cat not in rubric:
-                            rubric[cat] = {'max': crit_max, 'weight': crit_max / max(total_pts, 1)}
-                        else:
-                            rubric[cat]['max'] += crit_max
-                            rubric[cat]['weight'] = rubric[cat]['max'] / max(total_pts, 1)
-                        matched = True
-                        break
+        # Formulas always in scope for Excel assignments (safety net)
+        in_scope.setdefault('Formulas', BASE_RUBRIC_WEIGHTS['Formulas']['base_weight'])
+        # Formatting always in scope (basic formatting matters)
+        in_scope.setdefault('Formatting', BASE_RUBRIC_WEIGHTS['Formatting']['base_weight'])
 
-                if not matched:
-                    # Assign unmatched criteria to Completeness
-                    if 'Completeness' not in rubric:
-                        rubric['Completeness'] = {'max': crit_max, 'weight': crit_max / max(total_pts, 1)}
+        # If somehow nothing specific is in scope, fall back to full rubric
+        if len(in_scope) <= 3:  # only the always-on categories
+            # Check if ANY scope flag was set at all — if not, use full rubric
+            any_scope_set = any(
+                self.requirements.get(flag) is not None
+                for flag in _SCOPE_TO_CATEGORY
+            )
+            if not any_scope_set:
+                return dict(DEFAULT_RUBRIC)
+
+        # Redistribute weights proportionally so they sum to 1.0 / 100 pts
+        total_base = sum(in_scope.values())
+        rubric: Dict[str, Dict] = {}
+        for category in BASE_RUBRIC_WEIGHTS:
+            if category in in_scope:
+                weight = in_scope[category] / max(total_base, 1)
+                max_pts = round(in_scope[category] * (100 / max(total_base, 1)), 1)
+                rubric[category] = {'max': max_pts, 'weight': round(weight, 4)}
+            else:
+                rubric[category] = {'max': 0, 'weight': 0}
+
+        weight_summary = ', '.join(
+            f'{k}: {v["weight"]}' for k, v in rubric.items() if v['weight'] > 0
+        )
+        logger.info(
+            f"Dynamic rubric — in-scope: {list(in_scope.keys())}, "
+            f"weights: {{{weight_summary}}}"
+        )
+        return rubric
+
+    def _build_rubric_from_instructor(self) -> Dict[str, Dict]:
+        """Build rubric from instructor-defined criteria."""
+        rubric = {}
+        criteria = self.instructor_rubric['criteria']
+        total_pts = self.instructor_rubric.get('total_points', 100)
+
+        # Try to map instructor criteria to our categories
+        category_keywords = {
+            'Formulas': ['formula', 'function', 'calculation', 'excel function'],
+            'PivotTables': ['pivot', 'pivottable', 'data model'],
+            'Charts': ['chart', 'graph', 'visualization', 'visual'],
+            'PowerQuery_M': ['power query', 'query', 'm language', 'etl', 'transform'],
+            'VBA': ['vba', 'macro', 'code', 'programming', 'automation'],
+            'Formatting': ['format', 'presentation', 'layout', 'design', 'usability'],
+            'Completeness': ['complete', 'requirement', 'structure', 'overall'],
+        }
+
+        for criterion in criteria:
+            crit_name = criterion.get('name', '').lower()
+            crit_desc = criterion.get('description', '').lower()
+            crit_max = criterion.get('max_points', 0)
+            combined = f"{crit_name} {crit_desc}"
+
+            matched = False
+            for cat, keywords in category_keywords.items():
+                if any(kw in combined for kw in keywords):
+                    if cat not in rubric:
+                        rubric[cat] = {'max': crit_max, 'weight': crit_max / max(total_pts, 1)}
                     else:
-                        rubric['Completeness']['max'] += crit_max
-                        rubric['Completeness']['weight'] = rubric['Completeness']['max'] / max(total_pts, 1)
+                        rubric[cat]['max'] += crit_max
+                        rubric[cat]['weight'] = rubric[cat]['max'] / max(total_pts, 1)
+                    matched = True
+                    break
 
-            # Fill in missing categories with 0
-            for cat in DEFAULT_RUBRIC:
-                if cat not in rubric:
-                    rubric[cat] = {'max': 0, 'weight': 0}
+            if not matched:
+                # Assign unmatched criteria to Completeness
+                if 'Completeness' not in rubric:
+                    rubric['Completeness'] = {'max': crit_max, 'weight': crit_max / max(total_pts, 1)}
+                else:
+                    rubric['Completeness']['max'] += crit_max
+                    rubric['Completeness']['weight'] = rubric['Completeness']['max'] / max(total_pts, 1)
 
-            return rubric
+        # Fill in missing categories with 0
+        for cat in DEFAULT_RUBRIC:
+            if cat not in rubric:
+                rubric[cat] = {'max': 0, 'weight': 0}
 
-        return dict(DEFAULT_RUBRIC)
+        return rubric
 
     # ------------------------------------------------------------------
     # Per-criterion grading
@@ -284,13 +363,15 @@ class GradingEngine:
         comments = []
 
         # Check if pivots were required
-        req_pivots = self.requirements.get('require_pivots', True)
-        if not req_pivots and pivot_count == 0:
-            return {'score': max_pts, 'max': max_pts, 'comment': 'PivotTables not required for this assignment.'}
-
+        req_pivots = self.requirements.get('require_pivots', False)
         if pivot_count == 0:
-            comments.append("No PivotTables found.")
-            return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
+            if not req_pivots:
+                # Not required and not present — category should have 0 weight
+                # (handled by dynamic rubric), but be safe:
+                return {'score': 0, 'max': max_pts, 'comment': 'PivotTables not present (not required for this assignment).'}
+            else:
+                comments.append("No PivotTables found (required by assignment).")
+                return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
 
         # Base presence (60% of max)
         score += 0.6 * max_pts
@@ -331,13 +412,13 @@ class GradingEngine:
         score = 0
         comments = []
 
-        req_charts = self.requirements.get('require_charts', True)
-        if not req_charts and chart_count == 0:
-            return {'score': max_pts, 'max': max_pts, 'comment': 'Charts not required for this assignment.'}
-
+        req_charts = self.requirements.get('require_charts', False)
         if chart_count == 0:
-            comments.append("No charts found.")
-            return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
+            if not req_charts:
+                return {'score': 0, 'max': max_pts, 'comment': 'Charts not present (not required for this assignment).'}
+            else:
+                comments.append("No charts found (required by assignment).")
+                return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
 
         # Presence (50% of max)
         score += 0.5 * max_pts
@@ -379,14 +460,11 @@ class GradingEngine:
         comments = []
 
         req_pq = self.requirements.get('require_power_query', False)
-        if not req_pq and not has_pq:
-            return {'score': max_pts, 'max': max_pts, 'comment': 'Power Query not required for this assignment. Full marks awarded.'}
-
         if not has_pq:
             if req_pq:
                 comments.append("Power Query was required but not found.")
                 return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
-            return {'score': max_pts, 'max': max_pts, 'comment': 'Power Query not used (not required).'}
+            return {'score': 0, 'max': max_pts, 'comment': 'Power Query not present (not required for this assignment).'}
 
         # Presence (30% of max)
         score += 0.3 * max_pts
@@ -441,14 +519,11 @@ class GradingEngine:
         comments = []
 
         req_vba = self.requirements.get('require_vba', False)
-        if not req_vba and not has_vba:
-            return {'score': max_pts, 'max': max_pts, 'comment': 'VBA not required for this assignment. Full marks awarded.'}
-
         if not has_vba:
             if req_vba:
                 comments.append("VBA macros were required but not found.")
                 return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
-            return {'score': max_pts, 'max': max_pts, 'comment': 'VBA not used (not required).'}
+            return {'score': 0, 'max': max_pts, 'comment': 'VBA not present (not required for this assignment).'}
 
         # Security check first - deduct heavily for dangerous code
         if security.get('risk_level') == 'high':
