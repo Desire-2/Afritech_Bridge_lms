@@ -180,11 +180,21 @@ class Course(db.Model):
         
         return released_count
 
-    def get_released_modules(self):
+    def get_released_modules(self, cohort_id=None):
         """
         Get the list of modules that should be visible to students.
         Takes into account publication status, release settings and manually released modules.
+        
+        If cohort_id is provided, uses cohort-specific release settings and manual overrides.
+        Otherwise, falls back to course-level settings (backward compatible).
         """
+        # If a cohort is specified, delegate to the cohort's method
+        if cohort_id is not None:
+            cohort = ApplicationWindow.query.get(cohort_id)
+            if cohort and cohort.course_id == self.id:
+                return cohort.get_released_modules_for_cohort()
+        
+        # Fallback: course-level logic (no cohort context)
         # First filter for published modules only
         published_modules = list(self.modules.filter_by(is_published=True).order_by(Module.order).all())
         released_count = self.get_released_module_count()
@@ -288,7 +298,7 @@ class Course(db.Model):
                 return win
         return windows[0]
 
-    def to_dict(self, include_modules=False, include_announcements=False, for_student=False):
+    def to_dict(self, include_modules=False, include_announcements=False, for_student=False, cohort_id=None):
         data = {
             'id': self.id,
             'title': self.title,
@@ -339,7 +349,7 @@ class Course(db.Model):
         if include_modules:
             # For students, only show released modules; for instructors, show all
             if for_student:
-                released_modules = self.get_released_modules()
+                released_modules = self.get_released_modules(cohort_id=cohort_id)
                 all_published_modules = list(self.modules.filter_by(is_published=True).order_by('order').all())
                 data['modules'] = [module.to_dict(include_lessons=True) for module in released_modules]
                 data['total_module_count'] = len(all_published_modules)
@@ -372,6 +382,12 @@ class ApplicationWindow(db.Model):
     cohort_end = db.Column(db.DateTime, nullable=True)
     status_override = db.Column(db.String(20), nullable=True)  # manual override: 'open', 'closed', 'upcoming'
     max_students = db.Column(db.Integer, nullable=True)  # Capacity limit for this cohort
+
+    # ── Cohort-level module release overrides ──
+    # NULL values mean "inherit from course". Non-NULL = override for this cohort.
+    module_release_count = db.Column(db.Integer, nullable=True)  # Initial modules to release (NULL=inherit from course)
+    module_release_interval = db.Column(db.String(50), nullable=True)  # 'weekly', 'bi-weekly', 'monthly', 'custom', NULL=inherit
+    module_release_interval_days = db.Column(db.Integer, nullable=True)  # Custom interval in days (NULL=inherit)
 
     # ── Cohort-level payment overrides ──
     # NULL values mean "inherit from course". Non-NULL = override for this cohort.
@@ -471,6 +487,114 @@ class ApplicationWindow(db.Model):
         return self.enrollments.filter(
             Enrollment.status.in_(['active', 'completed'])
         ).count()
+
+    # ── Cohort-aware module release methods ──
+
+    def get_effective_module_release_count(self):
+        """Return the module release count, falling back to course setting."""
+        if self.module_release_count is not None:
+            return self.module_release_count
+        return self.course.module_release_count if self.course else None
+
+    def get_effective_module_release_interval(self):
+        """Return the module release interval, falling back to course setting."""
+        if self.module_release_interval is not None:
+            return self.module_release_interval
+        return self.course.module_release_interval if self.course else None
+
+    def get_effective_module_release_interval_days(self):
+        """Return the module release interval in days, falling back to course setting."""
+        if self.module_release_interval_days is not None:
+            return self.module_release_interval_days
+        return self.course.module_release_interval_days if self.course else None
+
+    def get_cohort_start_date_for_release(self):
+        """Return the effective start date for module release calculations.
+        Uses cohort_start if available, then falls back to course.start_date, then course.created_at.
+        """
+        if self.cohort_start:
+            return self.cohort_start
+        if self.course:
+            return self.course.start_date or self.course.created_at
+        return None
+
+    def get_released_module_count_for_cohort(self):
+        """
+        Calculate how many modules should be released for THIS cohort based on
+        cohort-level settings (or inherited course settings) and the cohort start date.
+        Returns None if all modules should be released.
+        """
+        release_count = self.get_effective_module_release_count()
+
+        # If no release count set, all modules are released
+        if release_count is None:
+            return None
+
+        start_date = self.get_cohort_start_date_for_release()
+        if not start_date:
+            return None
+
+        now = datetime.utcnow()
+
+        # If cohort hasn't started yet, return 0
+        # Make both datetimes naive for comparison
+        start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
+        if now < start_naive:
+            return 0
+
+        released = release_count
+
+        interval_days = self.get_effective_module_release_interval_days()
+        if interval_days and interval_days > 0:
+            days_since_start = (now - start_naive).days
+            additional = days_since_start // interval_days
+            released += additional
+
+        return released
+
+    def get_released_modules_for_cohort(self):
+        """
+        Get the list of modules that should be visible to students in THIS cohort.
+        Takes into account publication status, cohort-level release settings,
+        per-cohort manual releases, and global manual releases.
+        """
+        if not self.course:
+            return []
+
+        published_modules = list(
+            self.course.modules.filter_by(is_published=True).order_by(Module.order).all()
+        )
+        released_count = self.get_released_module_count_for_cohort()
+
+        # Build set of cohort-specific manually released module IDs
+        cohort_manual_ids = set()
+        cohort_manual_releases = CohortModuleRelease.query.filter_by(
+            cohort_id=self.id, is_released=True
+        ).all()
+        for cmr in cohort_manual_releases:
+            cohort_manual_ids.add(cmr.module_id)
+
+        # If no limit, return all published modules
+        if released_count is None:
+            return published_modules
+
+        released_modules = []
+        auto_released_count = 0
+
+        for module in published_modules:
+            # Module is released if:
+            # 1. It has a global manual release (module.is_released) OR
+            # 2. It has a cohort-specific manual release OR
+            # 3. It falls within the auto-release count
+            is_global_released = module.is_released
+            is_cohort_released = module.id in cohort_manual_ids
+
+            if is_global_released or is_cohort_released or auto_released_count < released_count:
+                released_modules.append(module)
+                if not is_global_released and not is_cohort_released:
+                    auto_released_count += 1
+
+        return released_modules
 
     def get_payment_summary(self):
         """Return a cohort-specific payment summary, inheriting from course where not overridden."""
@@ -574,6 +698,15 @@ class ApplicationWindow(db.Model):
             "effective_price": self.get_effective_price(),
             "effective_currency": self.get_effective_currency(),
             "payment_summary": self.get_payment_summary(),
+            # Module release overrides (NULL = inheriting from course)
+            "module_release_count": self.module_release_count,
+            "module_release_interval": self.module_release_interval,
+            "module_release_interval_days": self.module_release_interval_days,
+            # Computed effective module release values
+            "effective_module_release_count": self.get_effective_module_release_count(),
+            "effective_module_release_interval": self.get_effective_module_release_interval(),
+            "effective_module_release_interval_days": self.get_effective_module_release_interval_days(),
+            "cohort_released_module_count": len(self.get_released_modules_for_cohort()) if self.course else 0,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -616,6 +749,48 @@ class Module(db.Model):
             # Use string 'order' column name for ordering to avoid forward reference issues
             data['lessons'] = [lesson.to_dict() for lesson in self.lessons.order_by('order')]
         return data
+
+
+class CohortModuleRelease(db.Model):
+    """
+    Per-cohort manual module release overrides.
+    Allows instructors to manually release/unrelease specific modules
+    for specific cohorts independently of the global module.is_released flag.
+    """
+    __tablename__ = 'cohort_module_releases'
+
+    id = db.Column(db.Integer, primary_key=True)
+    cohort_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=False)
+    module_id = db.Column(db.Integer, db.ForeignKey('modules.id'), nullable=False)
+    is_released = db.Column(db.Boolean, default=True, nullable=False)
+    released_at = db.Column(db.DateTime, nullable=True)
+    released_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    cohort = db.relationship('ApplicationWindow', backref=db.backref('module_releases', lazy='dynamic'))
+    module = db.relationship('Module', backref=db.backref('cohort_releases', lazy='dynamic'))
+    releaser = db.relationship('User', foreign_keys=[released_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('cohort_id', 'module_id', name='_cohort_module_release_uc'),
+    )
+
+    def __repr__(self):
+        return f'<CohortModuleRelease cohort={self.cohort_id} module={self.module_id} released={self.is_released}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'cohort_id': self.cohort_id,
+            'module_id': self.module_id,
+            'is_released': self.is_released,
+            'released_at': self.released_at.isoformat() if self.released_at else None,
+            'released_by': self.released_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 
 class Lesson(db.Model):
     __tablename__ = 'lessons'

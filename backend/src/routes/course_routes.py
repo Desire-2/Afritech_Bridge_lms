@@ -6,7 +6,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role # For role checking
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, ApplicationWindow
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, ApplicationWindow, CohortModuleRelease
 from ..utils.email_notifications import send_announcement_notification
 
 # Helper for role checking (decorator)
@@ -138,6 +138,11 @@ def _sync_application_windows(course, windows_data):
             max_students = _int_or_none(win.get("max_students"))
             description = win.get("description") or None
 
+            # Module release override fields
+            mod_release_count = _int_or_none(win.get("module_release_count"))
+            mod_release_interval = win.get("module_release_interval") or None
+            mod_release_interval_days = _int_or_none(win.get("module_release_interval_days"))
+
             if existing:
                 # UPDATE existing window in place (preserves FK references)
                 existing.cohort_label = label
@@ -162,6 +167,9 @@ def _sync_application_windows(course, windows_data):
                 existing.installment_enabled = inst_enabled
                 existing.installment_count = inst_count
                 existing.installment_interval_days = inst_interval
+                existing.module_release_count = mod_release_count
+                existing.module_release_interval = mod_release_interval
+                existing.module_release_interval_days = mod_release_interval_days
             else:
                 # CREATE new window
                 new_win = ApplicationWindow(
@@ -188,6 +196,9 @@ def _sync_application_windows(course, windows_data):
                     installment_enabled=inst_enabled,
                     installment_count=inst_count,
                     installment_interval_days=inst_interval,
+                    module_release_count=mod_release_count,
+                    module_release_interval=mod_release_interval,
+                    module_release_interval_days=mod_release_interval_days,
                 )
                 db.session.add(new_win)
         except ValueError as exc:
@@ -333,6 +344,16 @@ def update_cohort(course_id, cohort_id):
         if "installment_interval_days" in data:
             val = data.get("installment_interval_days")
             window.installment_interval_days = int(val) if val is not None else None
+
+        # Module release override fields
+        if "module_release_count" in data:
+            val = data.get("module_release_count")
+            window.module_release_count = int(val) if val is not None else None
+        if "module_release_interval" in data:
+            window.module_release_interval = data.get("module_release_interval") or None
+        if "module_release_interval_days" in data:
+            val = data.get("module_release_interval_days")
+            window.module_release_interval_days = int(val) if val is not None else None
 
         db.session.commit()
         return jsonify(window.to_dict()), 200
@@ -523,7 +544,22 @@ def get_course(course_id):
         return jsonify({"message": "Course not found or not published"}), 404
 
     # For students, filter modules based on release settings; instructors see all
-    return jsonify(course.to_dict(include_modules=True, for_student=not is_instructor_or_admin)), 200
+    if is_instructor_or_admin:
+        return jsonify(course.to_dict(include_modules=True, for_student=False)), 200
+    else:
+        # Determine the student's cohort for cohort-aware module release
+        cohort_id = None
+        try:
+            current_user_id = get_user_id()
+            if current_user_id:
+                enrollment = Enrollment.query.filter_by(
+                    student_id=current_user_id, course_id=course_id
+                ).first()
+                if enrollment:
+                    cohort_id = enrollment.application_window_id
+        except Exception:
+            pass
+        return jsonify(course.to_dict(include_modules=True, for_student=True, cohort_id=cohort_id)), 200
 
 @course_bp.route("/<int:course_id>", methods=["PUT"])
 @role_required(["admin", "instructor"])
@@ -824,6 +860,167 @@ def update_module_release_settings(course_id):
         db.session.rollback()
         return jsonify({"message": "Could not update settings", "error": str(e)}), 500
 
+
+@course_bp.route("/<int:course_id>/cohorts/<int:cohort_id>/module-release-status", methods=["GET"])
+@role_required(["admin", "instructor"])
+def get_cohort_module_release_status(course_id, cohort_id):
+    """Get per-cohort module release status for the instructor dashboard."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "Not authorized"}), 403
+
+    cohort = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course_id).first_or_404()
+
+    all_modules = list(course.modules.order_by(Module.order).all())
+    released_modules = cohort.get_released_modules_for_cohort()
+    released_module_ids = [m.id for m in released_modules]
+
+    # Get cohort-specific manual releases
+    cohort_manual_releases = {
+        cmr.module_id: cmr
+        for cmr in CohortModuleRelease.query.filter_by(cohort_id=cohort_id, is_released=True).all()
+    }
+
+    modules_status = []
+    for module in all_modules:
+        is_in_released = module.id in released_module_ids
+        is_global_manual = module.is_released
+        is_cohort_manual = module.id in cohort_manual_releases
+        cmr = cohort_manual_releases.get(module.id)
+
+        modules_status.append({
+            'id': module.id,
+            'title': module.title,
+            'order': module.order,
+            'is_published': module.is_published,
+            'is_released': is_in_released,
+            'is_globally_released': is_global_manual,
+            'is_cohort_released': is_cohort_manual,
+            'is_auto_released': is_in_released and not is_global_manual and not is_cohort_manual,
+            'released_at': (cmr.released_at.isoformat() if cmr and cmr.released_at else
+                          module.released_at.isoformat() if module.released_at else None),
+            'lesson_count': module.lessons.count()
+        })
+
+    return jsonify({
+        'course_id': course_id,
+        'cohort_id': cohort_id,
+        'cohort_label': cohort.cohort_label,
+        'cohort_start': cohort.cohort_start.isoformat() if cohort.cohort_start else None,
+        # Cohort-level settings (may be NULL = inherited)
+        'module_release_count': cohort.module_release_count,
+        'module_release_interval': cohort.module_release_interval,
+        'module_release_interval_days': cohort.module_release_interval_days,
+        # Effective values (after inheritance)
+        'effective_module_release_count': cohort.get_effective_module_release_count(),
+        'effective_module_release_interval': cohort.get_effective_module_release_interval(),
+        'effective_module_release_interval_days': cohort.get_effective_module_release_interval_days(),
+        'effective_start_date': cohort.get_cohort_start_date_for_release().isoformat() if cohort.get_cohort_start_date_for_release() else None,
+        # Course-level defaults (for reference)
+        'course_module_release_count': course.module_release_count,
+        'course_module_release_interval': course.module_release_interval,
+        'course_module_release_interval_days': course.module_release_interval_days,
+        'course_start_date': course.start_date.isoformat() if course.start_date else None,
+        'total_modules': len(all_modules),
+        'released_modules_count': len(released_modules),
+        'modules': modules_status
+    }), 200
+
+
+@course_bp.route("/<int:course_id>/cohorts/<int:cohort_id>/module-release-settings", methods=["PUT", "PATCH"])
+@role_required(["admin", "instructor"])
+def update_cohort_module_release_settings(course_id, cohort_id):
+    """Update module release settings for a specific cohort."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "Not authorized"}), 403
+
+    cohort = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course_id).first_or_404()
+    data = request.get_json()
+
+    try:
+        if "module_release_count" in data:
+            val = data.get("module_release_count")
+            cohort.module_release_count = int(val) if val is not None else None
+
+        if "module_release_interval" in data:
+            cohort.module_release_interval = data.get("module_release_interval") or None
+
+        if "module_release_interval_days" in data:
+            val = data.get("module_release_interval_days")
+            cohort.module_release_interval_days = int(val) if val is not None else None
+
+        db.session.commit()
+        logger.info(f"Cohort {cohort_id} module release settings updated by user {current_user_id}")
+        return jsonify({
+            "message": "Cohort module release settings updated",
+            "cohort": cohort.to_dict()
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not update cohort module release settings", "error": str(e)}), 500
+
+
+@course_bp.route("/<int:course_id>/cohorts/<int:cohort_id>/modules/<int:module_id>/release", methods=["POST", "PATCH"])
+@role_required(["admin", "instructor"])
+def toggle_cohort_module_release(course_id, cohort_id, module_id):
+    """Toggle (release/unrelease) a specific module for a specific cohort."""
+    course = Course.query.get_or_404(course_id)
+    current_user_id = get_user_id()
+    user = User.query.get(current_user_id)
+
+    if user.role.name == "instructor" and course.instructor_id != current_user_id:
+        return jsonify({"message": "Not authorized"}), 403
+
+    cohort = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course_id).first_or_404()
+    module = Module.query.filter_by(id=module_id, course_id=course_id).first_or_404()
+
+    data = request.get_json() or {}
+    action = data.get("action", "release")  # 'release' or 'unrelease'
+
+    try:
+        existing = CohortModuleRelease.query.filter_by(
+            cohort_id=cohort_id, module_id=module_id
+        ).first()
+
+        if action == "release":
+            if existing:
+                existing.is_released = True
+                existing.released_at = datetime.utcnow()
+                existing.released_by = current_user_id
+            else:
+                cmr = CohortModuleRelease(
+                    cohort_id=cohort_id,
+                    module_id=module_id,
+                    is_released=True,
+                    released_at=datetime.utcnow(),
+                    released_by=current_user_id
+                )
+                db.session.add(cmr)
+            db.session.commit()
+            logger.info(f"Module {module_id} released for cohort {cohort_id} by user {current_user_id}")
+            return jsonify({"message": f"Module '{module.title}' released for cohort '{cohort.cohort_label}'"}), 200
+        else:
+            # Unrelease
+            if existing:
+                existing.is_released = False
+                existing.released_at = None
+                existing.released_by = None
+                db.session.commit()
+            logger.info(f"Module {module_id} unreleased for cohort {cohort_id} by user {current_user_id}")
+            return jsonify({"message": f"Module '{module.title}' unreleased for cohort '{cohort.cohort_label}'"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Could not toggle module release", "error": str(e)}), 500
+
+
 @course_bp.route("/<int:course_id>/instructor-details", methods=["GET"])
 @role_required(["admin", "instructor"])
 def get_course_instructor_details(course_id):
@@ -904,7 +1101,19 @@ def get_modules_for_course(course_id):
     if is_instructor_or_admin:
         modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
     else:
-        modules = course.get_released_modules()
+        # Determine the student's cohort for cohort-aware module release
+        cohort_id = None
+        try:
+            current_user_id = get_user_id()
+            if current_user_id:
+                enrollment = Enrollment.query.filter_by(
+                    student_id=current_user_id, course_id=course_id
+                ).first()
+                if enrollment:
+                    cohort_id = enrollment.application_window_id
+        except Exception:
+            pass
+        modules = course.get_released_modules(cohort_id=cohort_id)
     
     result = [module.to_dict() for module in modules]
     
@@ -939,7 +1148,19 @@ def get_module(module_id):
     
     # For students, check if this module is released
     if not is_instructor_or_admin:
-        released_modules = course.get_released_modules()
+        # Determine the student's cohort for cohort-aware release check
+        cohort_id = None
+        try:
+            current_user_id = get_user_id()
+            if current_user_id:
+                enrollment = Enrollment.query.filter_by(
+                    student_id=current_user_id, course_id=course.id
+                ).first()
+                if enrollment:
+                    cohort_id = enrollment.application_window_id
+        except Exception:
+            pass
+        released_modules = course.get_released_modules(cohort_id=cohort_id)
         released_module_ids = [m.id for m in released_modules]
         if module.id not in released_module_ids:
             return jsonify({"message": "This module is not available yet"}), 403

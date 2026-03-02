@@ -43,9 +43,12 @@ interface ModuleReleaseStatus {
   id: number;
   title: string;
   order: number;
+  is_published?: boolean;
   is_released: boolean;
   is_manually_released: boolean;
   is_auto_released: boolean;
+  is_globally_released?: boolean;
+  is_cohort_released?: boolean;
   released_at: string | null;
   lesson_count: number;
 }
@@ -77,6 +80,27 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [moduleReleaseData, setModuleReleaseData] = useState<ModuleReleaseData | null>(null);
   const [savingApplication, setSavingApplication] = useState(false);
   const [releasingModuleId, setReleasingModuleId] = useState<number | null>(null);
+  const [selectedCohortForRelease, setSelectedCohortForRelease] = useState<string>('course'); // 'course' or cohort id
+  const [cohortModuleReleaseData, setCohortModuleReleaseData] = useState<(ModuleReleaseData & {
+    cohort_id?: number;
+    cohort_label?: string;
+    cohort_start?: string | null;
+    effective_module_release_count?: number | null;
+    effective_module_release_interval?: string | null;
+    effective_module_release_interval_days?: number | null;
+    effective_start_date?: string | null;
+    course_module_release_count?: number | null;
+    course_module_release_interval?: string | null;
+    course_module_release_interval_days?: number | null;
+    course_start_date?: string | null;
+  }) | null>(null);
+
+  // Cohort-specific module release editing state
+  const [cohortReleaseOverride, setCohortReleaseOverride] = useState(false);
+  const [cohortReleaseCount, setCohortReleaseCount] = useState<number>(1);
+  const [cohortReleaseInterval, setCohortReleaseInterval] = useState<string>('manual');
+  const [cohortReleaseIntervalDays, setCohortReleaseIntervalDays] = useState<number>(7);
+  const [savingCohortRelease, setSavingCohortRelease] = useState(false);
   
   // Form state
   const [enableModuleRelease, setEnableModuleRelease] = useState(false);
@@ -118,6 +142,11 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     installmentEnabled: boolean;
     installmentCount: number;
     installmentIntervalDays: number;
+    // Module release overrides
+    moduleReleaseOverride: boolean; // true = override course settings, false = inherit
+    moduleReleaseCount: number | null;
+    moduleReleaseInterval: string | null;
+    moduleReleaseIntervalDays: number | null;
     // UI state
     expanded: boolean;
     paymentExpanded: boolean;
@@ -177,6 +206,133 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
       setError(err.message || 'Failed to load settings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Fetch cohort-specific module release status
+  const fetchCohortModuleReleaseStatus = async (cohortId: string) => {
+    if (!token || cohortId === 'course') {
+      setCohortModuleReleaseData(null);
+      return;
+    }
+    try {
+      const response = await fetch(`${API_URL}/courses/${course.id}/cohorts/${cohortId}/module-release-status`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (!response.ok) throw new Error('Failed to fetch cohort module release status');
+      const data = await response.json();
+      setCohortModuleReleaseData(data as ModuleReleaseData & {
+        cohort_id?: number;
+        cohort_label?: string;
+        cohort_start?: string | null;
+        effective_module_release_count?: number | null;
+        effective_module_release_interval?: string | null;
+        effective_module_release_interval_days?: number | null;
+        module_release_count?: number | null;
+        module_release_interval?: string | null;
+        module_release_interval_days?: number | null;
+        effective_start_date?: string | null;
+        course_start_date?: string | null;
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to load cohort module release status');
+    }
+  };
+
+  // Toggle module release for a specific cohort
+  const handleToggleCohortModuleRelease = async (cohortId: string, moduleId: number, currentlyReleased: boolean) => {
+    if (!token) return;
+    setReleasingModuleId(moduleId);
+    try {
+      const response = await fetch(
+        `${API_URL}/courses/${course.id}/cohorts/${cohortId}/modules/${moduleId}/release`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ action: currentlyReleased ? 'unrelease' : 'release' })
+        }
+      );
+      if (!response.ok) throw new Error(`Failed to ${currentlyReleased ? 'unrelease' : 'release'} module`);
+      await fetchCohortModuleReleaseStatus(cohortId);
+      setSuccess(`Module ${currentlyReleased ? 'unreleased' : 'released'} for cohort successfully`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to update module');
+    } finally {
+      setReleasingModuleId(null);
+    }
+  };
+
+  // Save cohort-specific module release settings via dedicated endpoint
+  const handleSaveCohortModuleReleaseSettings = async (cohortId: string) => {
+    if (!token) return;
+    setSavingCohortRelease(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const payload = cohortReleaseOverride
+        ? {
+            module_release_count: cohortReleaseCount,
+            module_release_interval: cohortReleaseInterval !== 'manual' ? cohortReleaseInterval : null,
+            module_release_interval_days: cohortReleaseInterval === 'custom' ? cohortReleaseIntervalDays : null,
+          }
+        : {
+            module_release_count: null,
+            module_release_interval: null,
+            module_release_interval_days: null,
+          };
+
+      const response = await fetch(
+        `${API_URL}/courses/${course.id}/cohorts/${cohortId}/module-release-settings`,
+        {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!response.ok) throw new Error('Failed to save cohort module release settings');
+      setSuccess('Cohort module release settings saved successfully');
+
+      // Also update the local additionalCohorts state to keep UI in sync
+      setAdditionalCohorts(prev =>
+        prev.map(c =>
+          c.id === cohortId
+            ? {
+                ...c,
+                moduleReleaseOverride: cohortReleaseOverride,
+                moduleReleaseCount: cohortReleaseOverride ? cohortReleaseCount : null,
+                moduleReleaseInterval: cohortReleaseOverride ? cohortReleaseInterval : null,
+                moduleReleaseIntervalDays: cohortReleaseOverride && cohortReleaseInterval === 'custom' ? cohortReleaseIntervalDays : null,
+              }
+            : c
+        )
+      );
+
+      // Refresh cohort module release status
+      await fetchCohortModuleReleaseStatus(cohortId);
+    } catch (err: any) {
+      setError(err.message || 'Failed to save cohort module release settings');
+    } finally {
+      setSavingCohortRelease(false);
+    }
+  };
+
+  // Sync cohort editing form state when switching cohorts
+  const syncCohortReleaseForm = (cohortId: string) => {
+    const cohort = additionalCohorts.find(c => c.id === cohortId);
+    if (cohort) {
+      setCohortReleaseOverride(cohort.moduleReleaseOverride);
+      setCohortReleaseCount(cohort.moduleReleaseCount ?? 1);
+      setCohortReleaseInterval(cohort.moduleReleaseInterval ?? 'manual');
+      setCohortReleaseIntervalDays(cohort.moduleReleaseIntervalDays ?? 7);
     }
   };
 
@@ -253,6 +409,10 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
             installmentEnabled: w.installment_enabled ?? false,
             installmentCount: w.installment_count ?? 3,
             installmentIntervalDays: w.installment_interval_days ?? 30,
+            moduleReleaseOverride: w.module_release_count !== null && w.module_release_count !== undefined,
+            moduleReleaseCount: w.module_release_count ?? null,
+            moduleReleaseInterval: w.module_release_interval ?? null,
+            moduleReleaseIntervalDays: w.module_release_interval_days ?? null,
             expanded: false,
             paymentExpanded: false,
           };
@@ -291,6 +451,10 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           installment_interval_days: c.enrollmentType === 'paid' && c.installmentEnabled ? c.installmentIntervalDays : null,
           max_students: c.maxStudents,
           description: c.description || null,
+          // Module release overrides
+          module_release_count: c.moduleReleaseOverride ? c.moduleReleaseCount : null,
+          module_release_interval: c.moduleReleaseOverride ? c.moduleReleaseInterval : null,
+          module_release_interval_days: c.moduleReleaseOverride ? c.moduleReleaseIntervalDays : null,
         };
       };
 
@@ -652,6 +816,10 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                   installmentEnabled: false,
                   installmentCount: 3,
                   installmentIntervalDays: 30,
+                  moduleReleaseOverride: false,
+                  moduleReleaseCount: null,
+                  moduleReleaseInterval: null,
+                  moduleReleaseIntervalDays: null,
                   expanded: true,
                   paymentExpanded: false,
                 }])}
@@ -1129,6 +1297,114 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                             </div>
                           )}
                         </div>
+
+                        <Separator />
+
+                        {/* Module Release Settings for this Cohort */}
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <Layers className="h-4 w-4 text-slate-500" />
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">Module Release Settings</p>
+                            <Badge variant="outline" className={`text-xs ${cohort.moduleReleaseOverride 
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                              : 'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300'
+                            }`}>
+                              {cohort.moduleReleaseOverride ? 'Custom' : 'Inherits Course Settings'}
+                            </Badge>
+                          </div>
+
+                          <div className="flex items-start sm:items-center justify-between gap-3 p-3 bg-slate-50 dark:bg-slate-700/30 rounded-lg border border-slate-200 dark:border-slate-600">
+                            <div className="space-y-1 min-w-0">
+                              <Label className="text-sm font-medium text-slate-900 dark:text-white">
+                                Override Course Module Release
+                              </Label>
+                              <p className="text-xs text-slate-600 dark:text-slate-400">
+                                When enabled, this cohort will have its own module release schedule instead of inheriting from the course
+                              </p>
+                            </div>
+                            <Switch
+                              checked={cohort.moduleReleaseOverride}
+                              onCheckedChange={(v) => updateCohort({ 
+                                moduleReleaseOverride: v,
+                                moduleReleaseCount: v ? (course.module_release_count ?? 1) : null,
+                                moduleReleaseInterval: v ? (course.module_release_interval ?? 'manual') : null,
+                                moduleReleaseIntervalDays: v ? (course.module_release_interval_days ?? 7) : null,
+                              })}
+                            />
+                          </div>
+
+                          {cohort.moduleReleaseOverride && (
+                            <div className="space-y-4 p-4 bg-blue-50/50 dark:bg-blue-900/10 rounded-lg border border-blue-200 dark:border-blue-800">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                  <Label className="text-sm font-medium">Initial Modules to Release</Label>
+                                  <Input
+                                    type="number"
+                                    min={0}
+                                    value={cohort.moduleReleaseCount ?? ''}
+                                    onChange={(e) => updateCohort({ moduleReleaseCount: e.target.value ? parseInt(e.target.value) : null })}
+                                    placeholder="e.g., 1"
+                                    className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                                  />
+                                  <p className="text-xs text-slate-500">Modules available when this cohort starts</p>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-sm font-medium">Release Schedule</Label>
+                                  <Select
+                                    value={cohort.moduleReleaseInterval || 'manual'}
+                                    onValueChange={(v) => {
+                                      const interval = v === 'manual' ? null : v;
+                                      let days: number | null = null;
+                                      if (v === 'weekly') days = 7;
+                                      else if (v === 'bi-weekly') days = 14;
+                                      else if (v === 'monthly') days = 28;
+                                      else if (v === 'custom') days = cohort.moduleReleaseIntervalDays || 7;
+                                      updateCohort({ moduleReleaseInterval: interval, moduleReleaseIntervalDays: days });
+                                    }}
+                                  >
+                                    <SelectTrigger className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                                      <SelectValue placeholder="Select schedule" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="manual">Manual Release Only</SelectItem>
+                                      <SelectItem value="weekly">Weekly (every 7 days)</SelectItem>
+                                      <SelectItem value="bi-weekly">Bi-Weekly (every 14 days)</SelectItem>
+                                      <SelectItem value="monthly">Monthly (every 28 days)</SelectItem>
+                                      <SelectItem value="custom">Custom Interval</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+
+                              {(cohort.moduleReleaseInterval === 'custom') && (
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                                    Release 1 module every
+                                  </Label>
+                                  <Input
+                                    type="number"
+                                    min={1}
+                                    value={cohort.moduleReleaseIntervalDays ?? 7}
+                                    onChange={(e) => updateCohort({ moduleReleaseIntervalDays: parseInt(e.target.value) || 7 })}
+                                    className="w-20 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                                  />
+                                  <span className="text-sm text-slate-600 dark:text-slate-400">days</span>
+                                </div>
+                              )}
+
+                              <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-md border border-blue-200 dark:border-blue-700">
+                                <p className="text-xs text-blue-800 dark:text-blue-300">
+                                  <strong>Summary:</strong>{' '}
+                                  {cohort.moduleReleaseCount ?? 0} module(s) on cohort start
+                                  {cohort.moduleReleaseInterval && cohort.moduleReleaseInterval !== 'manual'
+                                    ? `, then 1 more every ${cohort.moduleReleaseIntervalDays ?? '?'} days`
+                                    : ', additional modules released manually'}
+                                  . Start date: {cohort.startDate || 'cohort start date'}.
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1164,271 +1440,579 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
             TAB 2 — MODULE RELEASE
            ═══════════════════════════════════════════════════════════════════════ */}
         <TabsContent value="modules" className="mt-4 space-y-6">
-      {/* Module Release Settings Card */}
+
+      {/* ── Scope Selector ── */}
+      <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+        <CardContent className="pt-6 pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+              Configure modules for:
+            </Label>
+            <Select
+              value={selectedCohortForRelease}
+              onValueChange={(v) => {
+                setSelectedCohortForRelease(v);
+                if (v !== 'course') {
+                  syncCohortReleaseForm(v);
+                  fetchCohortModuleReleaseStatus(v);
+                } else {
+                  setCohortModuleReleaseData(null);
+                }
+              }}
+            >
+              <SelectTrigger className="max-w-sm bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                <SelectValue placeholder="Select scope" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="course">
+                  <span className="flex items-center gap-2">
+                    <Layers className="h-4 w-4 text-blue-500" />
+                    Course Default (Global)
+                  </span>
+                </SelectItem>
+                {additionalCohorts.filter(c => /^\d+$/.test(c.id)).map(c => (
+                  <SelectItem key={c.id} value={c.id}>
+                    <span className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-indigo-500" />
+                      {c.label || `Cohort ${c.id}`}
+                      {c.moduleReleaseOverride && (
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1 bg-indigo-50 text-indigo-600 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300">
+                          Custom
+                        </Badge>
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedCohortForRelease !== 'course' && (
+              <Badge variant="secondary" className="text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                {(() => {
+                  const c = additionalCohorts.find(c => c.id === selectedCohortForRelease);
+                  return c?.moduleReleaseOverride ? 'Custom settings' : 'Inheriting from course';
+                })()}
+              </Badge>
+            )}
+          </div>
+          {additionalCohorts.length === 0 && (
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              No cohorts configured. Create cohorts in the Cohorts tab to set per-cohort module release schedules.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Settings Card — changes based on course vs cohort ── */}
       <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
         <CardHeader className="pb-4">
           <CardTitle className="flex items-center gap-2 text-slate-900 dark:text-white">
-            <Layers className="h-5 w-5" />
-            Module Release Settings
+            <Settings className="h-5 w-5" />
+            {selectedCohortForRelease === 'course'
+              ? 'Course-Level Module Release Settings'
+              : `Module Release Settings — ${additionalCohorts.find(c => c.id === selectedCohortForRelease)?.label || 'Cohort'}`
+            }
           </CardTitle>
           <CardDescription className="text-slate-600 dark:text-slate-400">
-            Control when and how modules become available to students
+            {selectedCohortForRelease === 'course'
+              ? 'Set the default module release schedule. Cohorts inherit these unless overridden.'
+              : 'Override module release settings for this cohort, or inherit from course defaults.'
+            }
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Enable Module Release Control */}
-          <div className="flex items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
-            <div className="space-y-1 min-w-0">
-              <Label htmlFor="enable-release" className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">
-                Enable Controlled Module Release
-              </Label>
-              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
-                When enabled, only a specified number of modules will be available to students initially
-              </p>
-            </div>
-            <Switch
-              id="enable-release"
-              checked={enableModuleRelease}
-              onCheckedChange={setEnableModuleRelease}
-            />
-          </div>
 
-          {enableModuleRelease && (
+          {/* ── COURSE DEFAULT VIEW ── */}
+          {selectedCohortForRelease === 'course' && (
             <>
-              <Separator />
-              
-              {/* Course Start Date */}
-              <div className="space-y-2">
-                <Label htmlFor="start-date" className="flex items-center gap-2 text-slate-900 dark:text-white">
-                  <Calendar className="h-4 w-4" />
-                  Course Start Date
-                </Label>
-                <Input
-                  id="start-date"
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="max-w-xs bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
-                />
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Module release calculations begin from this date. If not set, the course creation date is used.
-                </p>
-              </div>
-
-              {/* Initial Module Count */}
-              <div className="space-y-2">
-                <Label htmlFor="module-count" className="flex items-center gap-2 text-slate-900 dark:text-white">
-                  <Layers className="h-4 w-4" />
-                  Initial Modules to Release
-                </Label>
-                <div className="flex items-center gap-4">
-                  <Input
-                    id="module-count"
-                    type="number"
-                    min={1}
-                    max={moduleReleaseData?.total_modules || 100}
-                    value={moduleReleaseCount}
-                    onChange={(e) => setModuleReleaseCount(parseInt(e.target.value) || 1)}
-                    className="w-24 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
-                  />
-                  <span className="text-sm text-slate-600 dark:text-slate-400">
-                    of {moduleReleaseData?.total_modules || 0} total modules
-                  </span>
+              {/* Enable Module Release Control */}
+              <div className="flex items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg">
+                <div className="space-y-1 min-w-0">
+                  <Label htmlFor="enable-release" className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">
+                    Enable Controlled Module Release
+                  </Label>
+                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+                    When enabled, only a specified number of modules will be available initially
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  The first N modules will be available when the course starts
-                </p>
+                <Switch
+                  id="enable-release"
+                  checked={enableModuleRelease}
+                  onCheckedChange={setEnableModuleRelease}
+                />
               </div>
 
-              {/* Release Interval (Future Enhancement) */}
-              <div className="space-y-2">
-                <Label htmlFor="release-interval" className="flex items-center gap-2 text-slate-900 dark:text-white">
-                  <Clock className="h-4 w-4" />
-                  Release Schedule
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger>
-                        <Info className="h-4 w-4 text-slate-400" />
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>How additional modules are released over time</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </Label>
-                <Select value={releaseInterval} onValueChange={setReleaseInterval}>
-                  <SelectTrigger className="max-w-xs bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
-                    <SelectValue placeholder="Select schedule" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="manual">Manual Release Only</SelectItem>
-                    <SelectItem value="weekly">Weekly (1 module per week)</SelectItem>
-                    <SelectItem value="bi-weekly">Bi-Weekly (1 module every 2 weeks)</SelectItem>
-                    <SelectItem value="monthly">Monthly (1 module per month)</SelectItem>
-                    <SelectItem value="custom">Custom Interval</SelectItem>
-                  </SelectContent>
-                </Select>
-                
-                {releaseInterval === 'custom' && (
-                  <div className="flex items-center gap-2 mt-2">
-                    <Label htmlFor="custom-days" className="text-sm text-slate-600 dark:text-slate-400">
-                      Release 1 module every
+              {enableModuleRelease && (
+                <>
+                  <Separator />
+                  {/* Course Start Date */}
+                  <div className="space-y-2">
+                    <Label htmlFor="start-date" className="flex items-center gap-2 text-slate-900 dark:text-white">
+                      <Calendar className="h-4 w-4" />
+                      Course Start Date
                     </Label>
                     <Input
-                      id="custom-days"
-                      type="number"
-                      min={1}
-                      value={customIntervalDays}
-                      onChange={(e) => setCustomIntervalDays(parseInt(e.target.value) || 7)}
-                      className="w-20 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      id="start-date"
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="max-w-xs bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
                     />
-                    <span className="text-sm text-slate-600 dark:text-slate-400">days</span>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Module release calculations begin from this date. Cohorts use their own start date if set.
+                    </p>
                   </div>
-                )}
-              </div>
 
-              <Separator />
+                  {/* Initial Module Count */}
+                  <div className="space-y-2">
+                    <Label htmlFor="module-count" className="flex items-center gap-2 text-slate-900 dark:text-white">
+                      <Layers className="h-4 w-4" />
+                      Initial Modules to Release
+                    </Label>
+                    <div className="flex items-center gap-4">
+                      <Input
+                        id="module-count"
+                        type="number"
+                        min={1}
+                        max={moduleReleaseData?.total_modules || 100}
+                        value={moduleReleaseCount}
+                        onChange={(e) => setModuleReleaseCount(parseInt(e.target.value) || 1)}
+                        className="w-24 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                      <span className="text-sm text-slate-600 dark:text-slate-400">
+                        of {moduleReleaseData?.total_modules || 0} total modules
+                      </span>
+                    </div>
+                  </div>
 
-              {/* Summary */}
-              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                <h4 className="font-medium text-blue-800 dark:text-blue-300 mb-2">Current Configuration</h4>
-                <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
-                  <li>• {moduleReleaseCount} module(s) available on course start</li>
-                  <li>• Additional modules: {releaseInterval === 'manual' ? 'Manual release by instructor' : `Released every ${getIntervalLabel(releaseInterval)}`}</li>
-                  <li>• Start date: {startDate || 'Course creation date'}</li>
-                </ul>
+                  {/* Release Schedule */}
+                  <div className="space-y-2">
+                    <Label htmlFor="release-interval" className="flex items-center gap-2 text-slate-900 dark:text-white">
+                      <Clock className="h-4 w-4" />
+                      Release Schedule
+                    </Label>
+                    <Select value={releaseInterval} onValueChange={setReleaseInterval}>
+                      <SelectTrigger className="max-w-xs bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                        <SelectValue placeholder="Select schedule" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Manual Release Only</SelectItem>
+                        <SelectItem value="weekly">Weekly (1 module per week)</SelectItem>
+                        <SelectItem value="bi-weekly">Bi-Weekly (1 module every 2 weeks)</SelectItem>
+                        <SelectItem value="monthly">Monthly (1 module per month)</SelectItem>
+                        <SelectItem value="custom">Custom Interval</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {releaseInterval === 'custom' && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <Label htmlFor="custom-days" className="text-sm text-slate-600 dark:text-slate-400">Release 1 module every</Label>
+                        <Input id="custom-days" type="number" min={1} value={customIntervalDays}
+                          onChange={(e) => setCustomIntervalDays(parseInt(e.target.value) || 7)}
+                          className="w-20 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600" />
+                        <span className="text-sm text-slate-600 dark:text-slate-400">days</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  {/* Summary */}
+                  <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <h4 className="font-medium text-blue-800 dark:text-blue-300 mb-2">Current Configuration</h4>
+                    <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
+                      <li>• {moduleReleaseCount} module(s) on start</li>
+                      <li>• Additional: {releaseInterval === 'manual' ? 'Manual release by instructor' : `Every ${getIntervalLabel(releaseInterval)}`}</li>
+                      <li>• Start date: {startDate || 'Course creation date'}</li>
+                    </ul>
+                  </div>
+
+                  {/* Cohort Overrides Summary */}
+                  {additionalCohorts.length > 0 && (
+                    <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                      <h4 className="font-medium text-indigo-800 dark:text-indigo-300 mb-2 flex items-center gap-2">
+                        <Users className="h-4 w-4" />
+                        Per-Cohort Status
+                      </h4>
+                      <div className="space-y-1.5">
+                        {additionalCohorts.filter(c => /^\d+$/.test(c.id)).map(c => (
+                          <div key={c.id} className="flex items-center justify-between text-sm">
+                            <button
+                              type="button"
+                              className="text-indigo-700 dark:text-indigo-400 font-medium hover:underline cursor-pointer"
+                              onClick={() => {
+                                setSelectedCohortForRelease(c.id);
+                                syncCohortReleaseForm(c.id);
+                                fetchCohortModuleReleaseStatus(c.id);
+                              }}
+                            >
+                              {c.label || `Cohort ${c.id}`} →
+                            </button>
+                            <Badge variant="outline" className={`text-xs ${c.moduleReleaseOverride
+                              ? 'bg-indigo-100 text-indigo-700 border-indigo-300 dark:bg-indigo-900/30 dark:text-indigo-300'
+                              : 'bg-slate-100 text-slate-600 border-slate-300 dark:bg-slate-700 dark:text-slate-400'
+                            }`}>
+                              {c.moduleReleaseOverride
+                                ? `Custom: ${c.moduleReleaseCount || 1} initial`
+                                : 'Inheriting'}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Save Course-Level Button */}
+              <div className="flex justify-end pt-2">
+                <Button onClick={handleSaveSettings} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white">
+                  {saving ? (
+                    <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Saving...</>
+                  ) : (
+                    <><Save className="h-4 w-4 mr-2" />Save Course Defaults</>
+                  )}
+                </Button>
               </div>
             </>
           )}
 
-          {/* Save Button */}
-          <div className="flex justify-end pt-4">
-            <Button 
-              onClick={handleSaveSettings} 
-              disabled={saving}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              {saving ? (
+          {/* ── COHORT-SPECIFIC VIEW ── */}
+          {selectedCohortForRelease !== 'course' && (
+            <>
+              {/* Override toggle */}
+              <div className="flex items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-700">
+                <div className="space-y-1 min-w-0">
+                  <Label htmlFor="cohort-override-release" className="text-sm sm:text-base font-medium text-slate-900 dark:text-white">
+                    Override Course Defaults
+                  </Label>
+                  <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+                    When off, this cohort uses the course-level settings above.
+                    When on, you can set a custom schedule for this cohort.
+                  </p>
+                </div>
+                <Switch
+                  id="cohort-override-release"
+                  checked={cohortReleaseOverride}
+                  onCheckedChange={setCohortReleaseOverride}
+                />
+              </div>
+
+              {/* Inherited preview (when not overriding) */}
+              {!cohortReleaseOverride && (
+                <div className="p-4 bg-slate-50 dark:bg-slate-700/50 rounded-lg border border-slate-200 dark:border-slate-600">
+                  <h4 className="font-medium text-slate-700 dark:text-slate-300 mb-2">Inherited from Course</h4>
+                  <ul className="text-sm text-slate-600 dark:text-slate-400 space-y-1">
+                    <li>• Initial modules: {enableModuleRelease ? moduleReleaseCount : 'All (no release control)'}</li>
+                    {enableModuleRelease && (
+                      <>
+                        <li>• Schedule: {releaseInterval === 'manual' ? 'Manual' : `Every ${getIntervalLabel(releaseInterval)}`}</li>
+                        <li>• Start date: {(() => {
+                          const cohort = additionalCohorts.find(c => c.id === selectedCohortForRelease);
+                          return cohort?.startDate
+                            ? `${new Date(cohort.startDate).toLocaleDateString()} (cohort start)`
+                            : startDate || 'Course creation date';
+                        })()}</li>
+                      </>
+                    )}
+                  </ul>
+                </div>
+              )}
+
+              {/* Custom settings (when overriding) */}
+              {cohortReleaseOverride && (
                 <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4 mr-2" />
-                  Save Settings
+                  <Separator />
+                  {/* Initial Module Count */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2 text-slate-900 dark:text-white">
+                      <Layers className="h-4 w-4" />
+                      Initial Modules to Release
+                    </Label>
+                    <div className="flex items-center gap-4">
+                      <Input
+                        type="number" min={1}
+                        max={moduleReleaseData?.total_modules || 100}
+                        value={cohortReleaseCount}
+                        onChange={(e) => setCohortReleaseCount(parseInt(e.target.value) || 1)}
+                        className="w-24 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                      />
+                      <span className="text-sm text-slate-600 dark:text-slate-400">
+                        of {moduleReleaseData?.total_modules || 0} total modules
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Release Schedule */}
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2 text-slate-900 dark:text-white">
+                      <Clock className="h-4 w-4" />
+                      Release Schedule
+                    </Label>
+                    <Select value={cohortReleaseInterval} onValueChange={setCohortReleaseInterval}>
+                      <SelectTrigger className="max-w-xs bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600">
+                        <SelectValue placeholder="Select schedule" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="manual">Manual Release Only</SelectItem>
+                        <SelectItem value="weekly">Weekly (1 module per week)</SelectItem>
+                        <SelectItem value="bi-weekly">Bi-Weekly (1 module every 2 weeks)</SelectItem>
+                        <SelectItem value="monthly">Monthly (1 module per month)</SelectItem>
+                        <SelectItem value="custom">Custom Interval</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {cohortReleaseInterval === 'custom' && (
+                      <div className="flex items-center gap-2 mt-2">
+                        <Label className="text-sm text-slate-600 dark:text-slate-400">Release 1 module every</Label>
+                        <Input type="number" min={1} value={cohortReleaseIntervalDays}
+                          onChange={(e) => setCohortReleaseIntervalDays(parseInt(e.target.value) || 7)}
+                          className="w-20 bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600" />
+                        <span className="text-sm text-slate-600 dark:text-slate-400">days</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <Separator />
+
+                  {/* Summary */}
+                  <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
+                    <h4 className="font-medium text-indigo-800 dark:text-indigo-300 mb-2">Cohort Configuration</h4>
+                    <ul className="text-sm text-indigo-700 dark:text-indigo-400 space-y-1">
+                      <li>• {cohortReleaseCount} module(s) on cohort start</li>
+                      <li>• Additional: {cohortReleaseInterval === 'manual' ? 'Manual release by instructor' : `Every ${(() => {
+                        switch (cohortReleaseInterval) {
+                          case 'weekly': return '1 week';
+                          case 'bi-weekly': return '2 weeks';
+                          case 'monthly': return '4 weeks';
+                          case 'custom': return `${cohortReleaseIntervalDays} days`;
+                          default: return 'Manual';
+                        }
+                      })()}`}</li>
+                      <li>• Start date: {(() => {
+                        const cohort = additionalCohorts.find(c => c.id === selectedCohortForRelease);
+                        return cohort?.startDate
+                          ? new Date(cohort.startDate).toLocaleDateString()
+                          : startDate || 'Course creation date';
+                      })()}</li>
+                    </ul>
+                  </div>
                 </>
               )}
-            </Button>
-          </div>
+
+              {/* Save Cohort Button */}
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  className="text-sm text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                  onClick={() => {
+                    setSelectedCohortForRelease('course');
+                    setCohortModuleReleaseData(null);
+                  }}
+                >
+                  ← Back to Course Defaults
+                </button>
+                <Button
+                  onClick={() => handleSaveCohortModuleReleaseSettings(selectedCohortForRelease)}
+                  disabled={savingCohortRelease}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  {savingCohortRelease ? (
+                    <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Saving...</>
+                  ) : (
+                    <><Save className="h-4 w-4 mr-2" />Save Cohort Settings</>
+                  )}
+                </Button>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 
-      {/* Module Release Status Card */}
+      {/* ── Module Release Status ── */}
       {moduleReleaseData && moduleReleaseData.modules.length > 0 && (
         <Card className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-          <CardHeader>
+          <CardHeader className="pb-3">
             <CardTitle className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-slate-900 dark:text-white">
               <span className="flex items-center gap-2">
-                <Settings className="h-5 w-5" />
-                Module Release Status
+                {selectedCohortForRelease === 'course' ? (
+                  <><Layers className="h-5 w-5 text-blue-500" />Module Release Status</>
+                ) : (
+                  <><Users className="h-5 w-5 text-indigo-500" />
+                    Module Status — {additionalCohorts.find(c => c.id === selectedCohortForRelease)?.label || 'Cohort'}
+                  </>
+                )}
               </span>
               <Badge variant="secondary" className="bg-slate-100 dark:bg-slate-700">
-                {moduleReleaseData.released_modules_count} of {moduleReleaseData.total_modules} released
+                {selectedCohortForRelease === 'course'
+                  ? `${moduleReleaseData.released_modules_count} of ${moduleReleaseData.total_modules} released`
+                  : cohortModuleReleaseData
+                    ? `${cohortModuleReleaseData.released_modules_count} of ${cohortModuleReleaseData.total_modules} released`
+                    : 'Loading...'
+                }
               </Badge>
             </CardTitle>
-            <CardDescription className="text-slate-600 dark:text-slate-400">
-              View and manually control which modules are available to students
-            </CardDescription>
+            {selectedCohortForRelease !== 'course' && cohortModuleReleaseData && (
+              <div className="mt-1 p-2.5 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-700 text-xs text-indigo-800 dark:text-indigo-300">
+                <strong>Effective settings:</strong>{' '}
+                {cohortModuleReleaseData.effective_module_release_count !== null
+                  ? `${cohortModuleReleaseData.effective_module_release_count} initial`
+                  : 'All modules released'}
+                {cohortModuleReleaseData.effective_module_release_interval_days
+                  ? `, +1 every ${cohortModuleReleaseData.effective_module_release_interval_days} days`
+                  : ''}
+                {' | Start: '}
+                {cohortModuleReleaseData.effective_start_date
+                  ? new Date(cohortModuleReleaseData.effective_start_date).toLocaleDateString()
+                  : 'Not set'}
+                {cohortModuleReleaseData.module_release_count === null && (
+                  <span className="ml-1 text-slate-500">(inherited)</span>
+                )}
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {moduleReleaseData.modules.map((module, index) => (
-                <div 
-                  key={module.id}
-                  className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 sm:p-4 rounded-lg border ${
-                    module.is_released 
-                      ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
-                      : 'bg-slate-50 border-slate-200 dark:bg-slate-700/50 dark:border-slate-600'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-full ${
-                      module.is_released 
-                        ? 'bg-green-100 dark:bg-green-900/40'
-                        : 'bg-slate-200 dark:bg-slate-600'
-                    }`}>
-                      {module.is_released ? (
-                        <Unlock className="h-4 w-4 text-green-600 dark:text-green-400" />
-                      ) : (
-                        <Lock className="h-4 w-4 text-slate-500 dark:text-slate-400" />
-                      )}
+              {(() => {
+                const modules = selectedCohortForRelease === 'course'
+                  ? moduleReleaseData.modules
+                  : (cohortModuleReleaseData?.modules || []);
+                const isCohortView = selectedCohortForRelease !== 'course';
+
+                if (isCohortView && !cohortModuleReleaseData) {
+                  return (
+                    <div className="flex items-center justify-center py-8">
+                      <RefreshCw className="h-5 w-5 animate-spin text-indigo-500 mr-2" />
+                      <span className="text-sm text-slate-500">Loading cohort modules...</span>
                     </div>
-                    <div>
-                      <p className="font-medium text-slate-900 dark:text-white">
-                        Module {index + 1}: {module.title}
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                        <span>{module.lesson_count} lessons</span>
-                        {module.is_released && (
-                          <>
-                            <span>•</span>
-                            {module.is_manually_released ? (
-                              <Badge variant="outline" className="text-xs px-1.5 py-0 bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700">
-                                Manually Released
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-xs px-1.5 py-0 bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700">
-                                Auto Released
-                              </Badge>
-                            )}
-                          </>
+                  );
+                }
+
+                return modules.map((module, index) => (
+                  <div 
+                    key={module.id}
+                    className={`flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-3 sm:p-4 rounded-lg border ${
+                      module.is_released 
+                        ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
+                        : 'bg-slate-50 border-slate-200 dark:bg-slate-700/50 dark:border-slate-600'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-full ${
+                        module.is_released 
+                          ? 'bg-green-100 dark:bg-green-900/40'
+                          : 'bg-slate-200 dark:bg-slate-600'
+                      }`}>
+                        {module.is_released ? (
+                          <Unlock className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        ) : (
+                          <Lock className="h-4 w-4 text-slate-500 dark:text-slate-400" />
                         )}
                       </div>
-                    </div>
-                  </div>
-                  
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant={module.is_manually_released ? "outline" : "default"}
-                          size="sm"
-                          onClick={() => handleToggleModuleRelease(module.id, module.is_manually_released)}
-                          disabled={releasingModuleId === module.id}
-                          className={`disabled:opacity-50 disabled:cursor-not-allowed ${module.is_manually_released 
-                            ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-900/20"
-                            : "bg-green-600 hover:bg-green-700 text-white"
-                          }`}
-                        >
-                          {releasingModuleId === module.id ? (
+                      <div>
+                        <p className="font-medium text-slate-900 dark:text-white">
+                          Module {index + 1}: {module.title}
+                        </p>
+                        <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
+                          <span>{module.lesson_count} lessons</span>
+                          {module.is_released && (
                             <>
-                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                              {module.is_manually_released ? 'Revoking...' : 'Releasing...'}
-                            </>
-                          ) : module.is_manually_released ? (
-                            <>
-                              <Lock className="h-3 w-3 mr-1" />
-                              Revoke
-                            </>
-                          ) : (
-                            <>
-                              <Unlock className="h-3 w-3 mr-1" />
-                              Release
+                              <span>·</span>
+                              {isCohortView ? (
+                                module.is_globally_released ? (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700">
+                                    Global
+                                  </Badge>
+                                ) : module.is_cohort_released ? (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-700">
+                                    Cohort
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700">
+                                    Auto
+                                  </Badge>
+                                )
+                              ) : (
+                                module.is_manually_released ? (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700">
+                                    Manual
+                                  </Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700">
+                                    Auto
+                                  </Badge>
+                                )
+                              )}
                             </>
                           )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        {module.is_manually_released 
-                          ? "Revoke manual release (module will follow automatic schedule)"
-                          : "Manually release this module to students now"
-                        }
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              ))}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {isCohortView ? (
+                            <Button
+                              variant={module.is_cohort_released ? "outline" : "default"}
+                              size="sm"
+                              onClick={() => handleToggleCohortModuleRelease(
+                                selectedCohortForRelease, module.id, !!module.is_cohort_released
+                              )}
+                              disabled={releasingModuleId === module.id || !!module.is_globally_released}
+                              className={`disabled:opacity-50 disabled:cursor-not-allowed ${
+                                module.is_globally_released
+                                  ? "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                                  : module.is_cohort_released
+                                    ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
+                                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                              }`}
+                            >
+                              {releasingModuleId === module.id ? (
+                                <><RefreshCw className="h-3 w-3 mr-1 animate-spin" />{module.is_cohort_released ? 'Revoking...' : 'Releasing...'}</>
+                              ) : module.is_globally_released ? (
+                                <><CheckCircle className="h-3 w-3 mr-1" />Global</>
+                              ) : module.is_cohort_released ? (
+                                <><Lock className="h-3 w-3 mr-1" />Revoke</>
+                              ) : (
+                                <><Unlock className="h-3 w-3 mr-1" />Release</>
+                              )}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant={module.is_manually_released ? "outline" : "default"}
+                              size="sm"
+                              onClick={() => handleToggleModuleRelease(module.id, module.is_manually_released)}
+                              disabled={releasingModuleId === module.id}
+                              className={`disabled:opacity-50 disabled:cursor-not-allowed ${module.is_manually_released
+                                ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
+                                : "bg-green-600 hover:bg-green-700 text-white"
+                              }`}
+                            >
+                              {releasingModuleId === module.id ? (
+                                <><RefreshCw className="h-3 w-3 mr-1 animate-spin" />{module.is_manually_released ? 'Revoking...' : 'Releasing...'}</>
+                              ) : module.is_manually_released ? (
+                                <><Lock className="h-3 w-3 mr-1" />Revoke</>
+                              ) : (
+                                <><Unlock className="h-3 w-3 mr-1" />Release</>
+                              )}
+                            </Button>
+                          )}
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          {isCohortView
+                            ? module.is_globally_released
+                              ? "Globally released — manage from Course Default view"
+                              : module.is_cohort_released
+                                ? "Revoke cohort-specific release"
+                                : "Release this module for this cohort only"
+                            : module.is_manually_released
+                              ? "Revoke manual release (follows auto schedule)"
+                              : "Manually release this module now"
+                          }
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                ));
+              })()}
             </div>
           </CardContent>
         </Card>

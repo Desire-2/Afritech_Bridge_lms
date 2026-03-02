@@ -86,6 +86,15 @@ export interface ApplicationWindowData {
   effective_enrollment_type?: string;
   effective_price?: number | null;
   effective_currency?: string;
+  // Module release overrides (null = inherit from course)
+  module_release_count?: number | null;
+  module_release_interval?: string | null;
+  module_release_interval_days?: number | null;
+  // Computed effective module release values
+  effective_module_release_count?: number | null;
+  effective_module_release_interval?: string | null;
+  effective_module_release_interval_days?: number | null;
+  cohort_released_module_count?: number;
   payment_summary?: {
     required: boolean;
     enrollment_type?: string;
@@ -207,6 +216,9 @@ export interface CreateCourseRequest {
     cohort_start?: string | null;
     cohort_end?: string | null;
     status?: string;
+    module_release_count?: number | null;
+    module_release_interval?: string | null;
+    module_release_interval_days?: number | null;
   }>;
 }
 
