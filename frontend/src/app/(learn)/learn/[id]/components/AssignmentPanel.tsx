@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
+import StudentExcelGradingResult from '@/components/grading/StudentExcelGradingResult';
 import FileUploadService, { UploadedFile, FileUploadProgress, StagedFile } from '@/services/file-upload.service';
 import { toast } from 'sonner';
 
@@ -981,6 +982,14 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   {feedback}
                 </div>
               </div>
+            )}
+
+            {/* AI Excel Grading Result */}
+            {(assignment.submission_status?.id || submissionResult?.submission?.id) && (
+              <StudentExcelGradingResult
+                submissionId={assignment.submission_status?.id || submissionResult?.submission?.id}
+                submissionType="assignment"
+              />
             )}
             
             <div className="flex flex-col sm:flex-row gap-3">

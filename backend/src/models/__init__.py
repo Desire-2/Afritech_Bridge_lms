@@ -68,6 +68,12 @@ try:
 except ImportError:
     pass  # Achievement models optional
 
+# Excel AI Grading Models
+try:
+    from .excel_grading_models import ExcelGradingResult
+except ImportError:
+    pass  # Excel grading models optional
+
 __all__ = [
     # Course Models
     'Course',
@@ -103,7 +109,10 @@ __all__ = [
     # User Models
     'db',
     'User',
-    'Role'
+    'Role',
+    
+    # Excel AI Grading
+    'ExcelGradingResult',
 ]
 
 print("✅ Models package loaded - Quiz consolidation complete")

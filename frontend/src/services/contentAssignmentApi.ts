@@ -72,6 +72,7 @@ export interface ContentAssignment {
   created_at: string;
   updated_at: string;
   submission_status?: {
+    id?: number;
     submitted: boolean;
     status: 'not_submitted' | 'submitted' | 'graded' | 'late';
     grade?: number;

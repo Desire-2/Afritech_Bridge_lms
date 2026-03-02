@@ -14,6 +14,7 @@ import { parseFileInfo } from '@/utils/fileUtils';
 import { RequestModificationModal } from '@/components/grading/RequestModificationModal';
 import { CommentBankPanel } from '@/components/grading/CommentBankPanel';
 import { RubricGradingPanel } from '@/components/grading/RubricGradingPanel';
+import ExcelAIGradingButton from '@/components/grading/ExcelAIGradingButton';
 import { 
   FileText, 
   User, 
@@ -925,6 +926,32 @@ const AssignmentGradingDetail = () => {
               </div>
             </div>
           )}
+
+          {/* AI Excel Grading */}
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-3 sm:px-6 sm:py-4">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                <h3 className="text-base sm:text-lg font-bold text-white">AI Excel Grading</h3>
+              </div>
+              <p className="text-purple-100 text-xs mt-1">Automated analysis for Excel submissions</p>
+            </div>
+            <div className="p-4 sm:p-6">
+              <ExcelAIGradingButton
+                submissionId={submissionId}
+                submissionType="assignment"
+                onGradingComplete={(aiResult) => {
+                  // Auto-fill grade and feedback from AI result
+                  if (aiResult.total_score != null && !grade) {
+                    setGrade(aiResult.total_score.toString());
+                  }
+                  if (aiResult.overall_feedback && !feedback) {
+                    setFeedback(aiResult.overall_feedback);
+                  }
+                }}
+              />
+            </div>
+          </div>
 
           {/* Current Grade */}
           {submission.grade !== undefined && submission.grade !== null && submission.assignment_points && (

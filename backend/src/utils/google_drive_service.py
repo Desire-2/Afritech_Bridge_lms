@@ -446,6 +446,48 @@ class GoogleDriveService:
             logger.error(f"Unexpected error listing assignment files: {e}")
             return []
     
+    def download_file_content(self, file_id: str) -> Optional[bytes]:
+        """
+        Download file content from Google Drive as bytes.
+        
+        Args:
+            file_id: Google Drive file ID
+            
+        Returns:
+            bytes: File content, or None if download fails
+        """
+        if not self.is_configured:
+            logger.warning("Google Drive service is not configured")
+            return None
+            
+        try:
+            from googleapiclient.http import MediaIoBaseDownload
+            
+            request = self.service.files().get_media(fileId=file_id)
+            buffer = BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request)
+            
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                if status:
+                    logger.debug(f"Download progress: {int(status.progress() * 100)}%")
+            
+            buffer.seek(0)
+            content = buffer.read()
+            logger.info(f"Successfully downloaded file {file_id} ({len(content)} bytes)")
+            return content
+            
+        except HttpError as e:
+            if e.resp.status == 404:
+                logger.warning(f"File not found for download: {file_id}")
+            else:
+                logger.error(f"HTTP error downloading file {file_id}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error downloading file {file_id}: {e}")
+            return None
+
     def test_connection(self) -> bool:
         """
         Test the Google Drive connection
