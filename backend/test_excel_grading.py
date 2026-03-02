@@ -736,20 +736,47 @@ class TestFileDownload:
         assert result is None
 
     def test_fallback_to_download_url(self):
-        """Should try download_url when primary url is a relative path."""
+        """Should try frontend origins for relative paths, then download_url as fallback."""
         from src.services.excel_grading.excel_grading_service import ExcelGradingService
         svc = ExcelGradingService()
 
         fake_content = b'PK\x03\x04fallback-file'
+
+        # When frontend origin URLs all fail (return None), it should fall back to download_url
+        def side_effect(url):
+            if url == 'https://cdn.example.com/file.xlsx':
+                return fake_content
+            return None  # Frontend origins fail
+
         with patch.object(
-            ExcelGradingService, '_download_from_url', return_value=fake_content
+            ExcelGradingService, '_download_from_url', side_effect=side_effect
         ) as mock_http:
             result = svc._download_file({
                 'url': '/uploads/assignments/file.xlsx',
                 'download_url': 'https://cdn.example.com/file.xlsx',
             })
             assert result == fake_content
-            mock_http.assert_called_once_with('https://cdn.example.com/file.xlsx')
+            # Should have tried frontend origins first, then download_url
+            assert mock_http.call_count >= 2
+            mock_http.assert_any_call('https://cdn.example.com/file.xlsx')
+
+    def test_relative_path_resolved_via_frontend(self):
+        """Should resolve relative /uploads/ paths via frontend origin URLs."""
+        from src.services.excel_grading.excel_grading_service import ExcelGradingService
+        svc = ExcelGradingService()
+
+        fake_content = b'PK\x03\x04resolved-file'
+        with patch.object(
+            ExcelGradingService, '_download_from_url', return_value=fake_content
+        ) as mock_http:
+            result = svc._download_file({
+                'url': '/uploads/assignments/file.xlsx',
+            })
+            assert result == fake_content
+            # First call should be a frontend origin + the relative path
+            first_call_url = mock_http.call_args_list[0][0][0]
+            assert first_call_url.endswith('/uploads/assignments/file.xlsx')
+            assert first_call_url.startswith('http')
 
     def test_is_google_drive_url_helper(self):
         """Test the Google Drive URL detection helper."""

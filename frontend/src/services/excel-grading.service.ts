@@ -151,11 +151,15 @@ export class ExcelGradingService {
   static async gradeSubmission(
     submissionId: number,
     options: GradeSubmissionRequest = {},
-  ): Promise<ExcelGradingResult & { status: string; error?: string }> {
+  ): Promise<ExcelGradingResult & { status: string; error?: string; message?: string; reason?: string }> {
     try {
       const response = await apiClient.post(`${BASE}/grade/${submissionId}`, options);
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
+      // Extract backend response data for 4xx errors so caller can read reason/message
+      if (error?.response?.data && error.response.status >= 400 && error.response.status < 500) {
+        return error.response.data;
+      }
       throw ApiErrorHandler.handleError(error);
     }
   }

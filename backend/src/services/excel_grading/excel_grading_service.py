@@ -72,12 +72,17 @@ class ExcelGradingService:
                 submission_id, submission_type
             )
             if not submission:
-                return {'error': 'Submission not found', 'status': 'failed'}
+                return {
+                    'message': 'Submission not found',
+                    'reason': 'submission_not_found',
+                    'status': 'failed',
+                }
 
             # Step 2: Validate course is MS Excel
             if not self._is_excel_course(course):
                 return {
-                    'error': f'Course "{course.title}" is not an MS Excel course. AI grading only supports MS Excel.',
+                    'message': f'Course "{course.title}" is not an MS Excel course. AI grading only supports MS Excel courses.',
+                    'reason': 'not_excel_course',
                     'status': 'skipped',
                 }
 
@@ -94,24 +99,28 @@ class ExcelGradingService:
             files = self._extract_files(submission, submission_type)
             if not files:
                 return {
-                    'error': 'No files found in submission.',
+                    'message': 'This submission does not contain any files. AI grading requires an uploaded Excel file to analyze.',
+                    'reason': 'no_files',
                     'status': 'failed',
                 }
 
             # Step 5: Filter to Excel files only
             excel_files = self._filter_excel_files(files)
             if not excel_files:
+                file_names = [f.get('filename', '?') for f in files]
                 return {
-                    'error': f'No Excel files found. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}',
+                    'message': f'No Excel files found in submission (found: {" ,".join(file_names)}). Supported types: {" ,".join(ALLOWED_EXTENSIONS)}',
+                    'reason': 'no_excel_files',
                     'status': 'failed',
                 }
 
-            # Step 6: Download file content from Google Drive
+            # Step 6: Download file content
             file_info = excel_files[0]  # Grade the first Excel file
             file_bytes = self._download_file(file_info)
             if not file_bytes:
                 return {
-                    'error': f'Could not download file: {file_info.get("filename", "unknown")}',
+                    'message': f'Could not download file "{file_info.get("filename", "unknown")}". The file may have been deleted or is inaccessible.',
+                    'reason': 'download_failed',
                     'status': 'failed',
                 }
 
@@ -156,7 +165,8 @@ class ExcelGradingService:
             logger.error(f"Excel grading failed for {submission_type} {submission_id}: {e}")
             logger.exception(e)
             return {
-                'error': str(e),
+                'message': f'An unexpected error occurred during AI grading: {str(e)}',
+                'reason': 'internal_error',
                 'status': 'failed',
                 'processing_time': round(time.time() - start_time, 2),
             }
@@ -357,7 +367,20 @@ class ExcelGradingService:
                 return content
 
         # ----------------------------------------------------------
-        # 4. Relative path (e.g. /uploads/...) — try via download_url
+        # 4. Relative path (e.g. /uploads/...) — resolve against
+        #    the frontend origin or known deployment URLs
+        # ----------------------------------------------------------
+        if url and url.startswith('/'):
+            frontend_origins = self._get_frontend_origins()
+            for origin in frontend_origins:
+                full_url = origin.rstrip('/') + url
+                logger.info(f"Trying relative path via frontend: {full_url[:120]}")
+                content = self._download_from_url(full_url)
+                if content:
+                    return content
+
+        # ----------------------------------------------------------
+        # 5. Explicit download_url / downloadUrl field
         # ----------------------------------------------------------
         download_url = file_info.get('download_url') or file_info.get('downloadUrl')
         if download_url and (download_url.startswith('http://') or download_url.startswith('https://')):
@@ -367,6 +390,35 @@ class ExcelGradingService:
 
         logger.warning(f"Could not download file from any provider: {file_info}")
         return None
+
+    @staticmethod
+    def _get_frontend_origins() -> List[str]:
+        """
+        Return a list of frontend origins to try when resolving relative URLs.
+        Reads ALLOWED_ORIGINS, FRONTEND_URL env vars, plus common defaults.
+        """
+        import os
+        origins: List[str] = []
+
+        # Explicit frontend URL (highest priority)
+        frontend_url = os.environ.get('FRONTEND_URL', '').strip()
+        if frontend_url:
+            origins.append(frontend_url)
+
+        # ALLOWED_ORIGINS (comma-separated, used for CORS)
+        allowed = os.environ.get('ALLOWED_ORIGINS', '').strip()
+        if allowed:
+            for o in allowed.split(','):
+                o = o.strip()
+                if o and o not in origins:
+                    origins.append(o)
+
+        # Common development defaults
+        for default in ['http://localhost:3000', 'http://localhost:3001']:
+            if default not in origins:
+                origins.append(default)
+
+        return origins
 
     # ---- download helpers ----
 

@@ -95,14 +95,14 @@ def grade_submission(submission_id):
             'completed': 200,
             'already_graded': 200,
             'skipped': 200,
-            'failed': 400,
+            'failed': 422,
         }.get(result.get('status'), 500)
 
         return jsonify(result), status_code
 
     except Exception as e:
         logger.exception(f"Grade submission error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"message": str(e)}), 500
 
 
 # ==============================================================

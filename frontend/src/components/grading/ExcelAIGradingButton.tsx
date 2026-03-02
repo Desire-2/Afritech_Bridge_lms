@@ -15,11 +15,23 @@ import {
   AlertCircle,
   RefreshCw,
   Zap,
+  FileX,
+  FileWarning,
+  Info,
 } from "lucide-react";
 import ExcelGradingService, {
   ExcelGradingResult,
 } from "@/services/excel-grading.service";
 import ExcelGradingResultPanel from "./ExcelGradingResultPanel";
+
+// Map backend reason codes to user-friendly messages and icons
+const ERROR_DISPLAY: Record<string, { icon: React.ElementType; className: string }> = {
+  no_files:        { icon: FileX,       className: "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700" },
+  no_excel_files:  { icon: FileWarning, className: "bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700" },
+  not_excel_course:{ icon: Info,        className: "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700" },
+  download_failed: { icon: AlertCircle, className: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700" },
+  default:         { icon: AlertCircle, className: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700" },
+};
 
 interface Props {
   submissionId: number;
@@ -38,6 +50,7 @@ export default function ExcelAIGradingButton({
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const [result, setResult] = useState<ExcelGradingResult | null>(null);
   const [existingResult, setExistingResult] =
     useState<ExcelGradingResult | null>(null);
@@ -69,19 +82,16 @@ export default function ExcelAIGradingButton({
   const handleGrade = async (force = false) => {
     setLoading(true);
     setError(null);
+    setErrorReason(null);
     try {
       const response = await ExcelGradingService.gradeSubmission(submissionId, {
         submission_type: submissionType,
         force,
       });
 
-      if (response.status === "failed") {
-        setError(response.error || "AI grading failed");
-        return;
-      }
-
-      if (response.status === "skipped") {
-        setError(response.error || "This submission is not eligible for AI grading");
+      if (response.status === "failed" || response.status === "skipped") {
+        setError(response.message || response.error || "AI grading failed");
+        setErrorReason(response.reason || null);
         return;
       }
 
@@ -165,12 +175,22 @@ export default function ExcelAIGradingButton({
       </div>
 
       {/* ── Error ──────────────────────────────── */}
-      {error && (
-        <div className="flex items-start gap-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-700">
-          <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
-          <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
-        </div>
-      )}
+      {error && (() => {
+        const display = ERROR_DISPLAY[errorReason || 'default'] || ERROR_DISPLAY.default;
+        const Icon = display.icon;
+        const textColor = errorReason === 'no_files' || errorReason === 'no_excel_files' || errorReason === 'not_excel_course'
+          ? 'text-amber-700 dark:text-amber-300'
+          : 'text-red-700 dark:text-red-300';
+        const iconColor = errorReason === 'no_files' || errorReason === 'no_excel_files' || errorReason === 'not_excel_course'
+          ? 'text-amber-600 dark:text-amber-400'
+          : 'text-red-600 dark:text-red-400';
+        return (
+          <div className={`flex items-start gap-2 p-3 rounded-lg border ${display.className}`}>
+            <Icon className={`h-4 w-4 ${iconColor} mt-0.5 flex-shrink-0`} />
+            <p className={`text-sm ${textColor}`}>{error}</p>
+          </div>
+        );
+      })()}
 
       {/* ── Result Panel ───────────────────────── */}
       {!compact && result && result.id && (
