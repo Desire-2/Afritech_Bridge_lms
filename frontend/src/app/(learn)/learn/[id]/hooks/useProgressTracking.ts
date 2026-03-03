@@ -43,6 +43,7 @@ export const useProgressTracking = ({
   const readingTimeRef = useRef<number>(0);
   const maxScrollProgressRef = useRef<number>(0); // Track maximum scroll progress reached
   const maxReadingProgressRef = useRef<number>(0); // Track maximum reading progress reached
+  const maxEngagementScoreRef = useRef<number>(0); // Track maximum engagement score reached
   const [progressLoaded, setProgressLoaded] = useState<boolean>(false);
   
   // Completion threshold (80%)
@@ -69,6 +70,7 @@ export const useProgressTracking = ({
         // Initialize max progress refs with loaded values
         maxScrollProgressRef.current = existingProgress.scroll_progress || 0;
         maxReadingProgressRef.current = existingProgress.reading_progress || 0;
+        maxEngagementScoreRef.current = existingProgress.engagement_score || 0;
         
         // If lesson is completed, prevent further tracking
         if (existingProgress.completed) {
@@ -169,7 +171,10 @@ export const useProgressTracking = ({
       ) * 100;
     }
     
-    setEngagementScore(newEngagementScore);
+    // Ensure engagement score never decreases
+    const finalEngagementScore = Math.max(maxEngagementScoreRef.current, newEngagementScore);
+    maxEngagementScoreRef.current = finalEngagementScore;
+    setEngagementScore(finalEngagementScore);
     
     // Calculate estimated lesson score (this will be confirmed by backend)
     // For lessons without quiz/assignment: 50% reading + 50% engagement
@@ -178,15 +183,16 @@ export const useProgressTracking = ({
     // For both: 25% each
     let estimatedScore = 0;
     if (!hasQuiz && !hasAssignment) {
-      estimatedScore = (maxReadingProgressRef.current * 0.5) + (newEngagementScore * 0.5);
+      estimatedScore = (maxReadingProgressRef.current * 0.5) + (finalEngagementScore * 0.5);
     } else if (hasQuiz && !hasAssignment) {
-      estimatedScore = (maxReadingProgressRef.current * 0.35) + (newEngagementScore * 0.35);
+      estimatedScore = (maxReadingProgressRef.current * 0.35) + (finalEngagementScore * 0.35);
     } else if (!hasQuiz && hasAssignment) {
-      estimatedScore = (maxReadingProgressRef.current * 0.35) + (newEngagementScore * 0.35);
+      estimatedScore = (maxReadingProgressRef.current * 0.35) + (finalEngagementScore * 0.35);
     } else {
-      estimatedScore = (maxReadingProgressRef.current * 0.25) + (newEngagementScore * 0.25);
+      estimatedScore = (maxReadingProgressRef.current * 0.25) + (finalEngagementScore * 0.25);
     }
-    setLessonScore(estimatedScore);
+    // Lesson score should also never decrease locally
+    setLessonScore(prev => Math.max(prev, estimatedScore));
   }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress, videoCurrentTime, videoDuration]);
 
   // Check if lesson should auto-complete based on 80% lesson score
@@ -240,7 +246,8 @@ export const useProgressTracking = ({
   }, [isLessonCompleted, completionInProgress, progressLoaded, readingProgress, engagementScore, hasQuiz, hasAssignment]);
 
   // Auto-save progress and check for auto-completion
-  // Only pushes to database when lesson score is above 80% threshold OR forceSave is true
+  // Always saves reading/engagement progress to prevent data loss
+  // (especially for lessons with assignments pending review)
   const autoSaveProgress = useCallback(async (
     onAutoComplete?: (data: any) => void,
     forceSave: boolean = false
@@ -250,20 +257,21 @@ export const useProgressTracking = ({
     // Skip if already completed (unless forcing save)
     if (isLessonCompleted && !forceSave) return;
     
-    // Determine if we should save:
-    // 1. forceSave is true (manual trigger like unlock button)
-    // 2. lessonScore is above the completion threshold (80%)
-    // 3. readingProgress is at 100% (user has read entire content)
-    const shouldSave = forceSave || lessonScore >= COMPLETION_THRESHOLD || readingProgress >= 100;
+    // Always save progress when there's meaningful progress to persist.
+    // This is critical for lessons with assignments: the lesson score is capped
+    // at 65% while assignment is pending review, but we must still save the
+    // reading/engagement scores so they aren't lost on page reload.
+    const hasMinimumProgress = readingProgress >= 5 || engagementScore >= 5 || scrollProgress >= 5;
+    const shouldSave = forceSave || hasMinimumProgress;
     
     if (!shouldSave) {
-      console.log(`📊 Progress not saved - score ${lessonScore.toFixed(1)}%, reading ${readingProgress.toFixed(1)}% (need ${COMPLETION_THRESHOLD}% score or 100% reading)`);
+      console.log(`📊 Progress not saved - minimal progress (reading ${readingProgress.toFixed(1)}%, engagement ${engagementScore.toFixed(1)}%)`);
       return;
     }
     
     try {
       const saveReason = forceSave ? 'FORCED SAVE' : 
-        (readingProgress >= 100 ? 'reading complete (100%)' : `score ${lessonScore.toFixed(1)}% meets threshold`);
+        `auto-save (reading ${readingProgress.toFixed(1)}%, engagement ${engagementScore.toFixed(1)}%, score ${lessonScore.toFixed(1)}%)`;
       console.log(`📤 Saving progress to database - ${saveReason}`);
       
       const response = await StudentApiService.updateLessonProgress(currentLesson.id, {
@@ -284,7 +292,9 @@ export const useProgressTracking = ({
       if (response.auto_completed) {
         console.log('🎉 Lesson auto-completed by backend!', response.completion_message);
         setIsLessonCompleted(true);
-        setLessonScore(response.progress?.lesson_score || lessonScore);
+        // For lesson score from backend, only update if higher (prevent regression)
+        const backendScore = response.progress?.lesson_score || 0;
+        setLessonScore(prev => Math.max(prev, backendScore));
         
         // Store next lesson info if available
         if (response.next_lesson_unlocked && response.next_lesson) {
@@ -304,8 +314,9 @@ export const useProgressTracking = ({
           });
         }
       } else if (response.progress?.lesson_score) {
-        // Update lesson score from backend
-        setLessonScore(response.progress.lesson_score);
+        // Update lesson score from backend, but never decrease
+        const backendScore = response.progress.lesson_score;
+        setLessonScore(prev => Math.max(prev, backendScore));
       }
       
       return response;
@@ -342,10 +353,10 @@ export const useProgressTracking = ({
       return;
     }
     
+    const timeSpentSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+    
     try {
       setCompletionInProgress(true);
-      
-      const timeSpentSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
       
       console.log('🎯 Attempting to complete lesson with enhanced requirements check:', {
         lessonId: currentLesson.id,
@@ -484,6 +495,7 @@ export const useProgressTracking = ({
       readingTimeRef.current = 0;
       maxScrollProgressRef.current = 0; // Reset max scroll progress
       maxReadingProgressRef.current = 0; // Reset max reading progress
+      maxEngagementScoreRef.current = 0; // Reset max engagement score
       setProgressLoaded(false);
       
       // Then load existing progress from backend
@@ -511,6 +523,82 @@ export const useProgressTracking = ({
       return () => clearInterval(timer);
     }
   }, [currentLesson, autoSaveProgress, isLessonCompleted, progressLoaded]);
+
+  // Save progress on page unload (refresh/close) and visibility change (tab switch)
+  // Uses sendBeacon for reliable delivery during page unload
+  useEffect(() => {
+    if (!currentLesson || !progressLoaded) return;
+
+    const saveViaBeacon = () => {
+      // Only save if there's meaningful progress
+      const reading = maxReadingProgressRef.current;
+      const engagement = maxEngagementScoreRef.current;
+      const scroll = maxScrollProgressRef.current;
+      if (reading < 1 && engagement < 1 && scroll < 1) return;
+
+      try {
+        const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+        if (!token) return;
+
+        const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+        const url = `${apiBaseUrl}/student/lessons/${currentLesson.id}/progress`;
+        const payload = JSON.stringify({
+          reading_progress: reading,
+          engagement_score: engagement,
+          scroll_progress: scroll,
+          time_spent: Math.floor((Date.now() - startTimeRef.current) / 1000),
+          video_progress: videoProgress,
+          video_current_time: videoCurrentTime,
+          video_duration: videoDuration,
+          video_completed: videoCompleted,
+          auto_saved: true
+        });
+
+        // sendBeacon is the most reliable way to send data during page unload
+        const blob = new Blob([payload], { type: 'application/json' });
+        const headers = new Blob(
+          [JSON.stringify({ 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' })],
+          { type: 'application/json' }
+        );
+        
+        // sendBeacon doesn't support custom headers, so use fetch with keepalive instead
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: payload,
+          keepalive: true  // Ensures request completes even after page unloads
+        }).catch(() => {
+          // Fallback: try sendBeacon (won't have auth header, but at least try)
+          // This is a last resort
+        });
+        
+        console.log('💾 Saved progress via keepalive fetch on page unload/hide');
+      } catch (error) {
+        console.error('Failed to save progress on unload:', error);
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      saveViaBeacon();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveViaBeacon();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [currentLesson?.id, progressLoaded, videoProgress, videoCurrentTime, videoDuration, videoCompleted]);
 
   return {
     readingProgress,

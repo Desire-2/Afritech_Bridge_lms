@@ -126,6 +126,7 @@ class LessonCompletion(db.Model):
         # Get assignment score if assignment exists (with passing requirement)
         assignment_score = 0.0
         assignment_passed = True  # Default for lessons without assignment
+        assignment_pending_review = False  # Track if assignment is submitted but not yet graded
         if has_assignment:
             best_submission = AssignmentSubmission.query.filter_by(
                 student_id=self.student_id,
@@ -141,8 +142,12 @@ class LessonCompletion(db.Model):
                 
                 # Only use assignment score if passed, otherwise 0
                 assignment_score = raw_assignment_score if assignment_passed else 0.0
+            elif best_submission:
+                # Assignment submitted but not yet graded - pending review
+                assignment_passed = False
+                assignment_pending_review = True
             else:
-                assignment_passed = False  # No graded submission means not passed
+                assignment_passed = False  # No submission means not passed
         
         # Apply reading and engagement penalties for poor performance
         reading_penalty = 1.0
@@ -156,12 +161,19 @@ class LessonCompletion(db.Model):
             engagement_penalty = 0.7 + (engagement / 60.0) * 0.3  # Scale from 0.7 to 1.0
         
         # Calculate weighted score based on available assessments
+        # NOTE: When assignment is pending review, we calculate full reading/engagement
+        # contribution so progress isn't lost - but still prevent auto-completion (capped below 80%)
         if has_quiz and has_assignment:
             # Full assessment: 25% each component
-            # If any assessment not passed, significant score reduction
             if not quiz_passed or not assignment_passed:
-                # Cap score at 60% if assessments not passed
-                base_score = min(60.0, (reading * 0.5) + (engagement * 0.5))
+                if assignment_pending_review:
+                    # Assignment pending review: show reading/engagement contribution (up to 70%)
+                    # This preserves progress visibility while preventing premature auto-completion
+                    reading_engagement_score = (reading * 0.5) + (engagement * 0.5)
+                    base_score = min(70.0, reading_engagement_score) if quiz_passed else min(60.0, reading_engagement_score)
+                else:
+                    # Assessment failed: cap score at 60%
+                    base_score = min(60.0, (reading * 0.5) + (engagement * 0.5))
             else:
                 base_score = (
                     (reading * 0.25) +
@@ -183,8 +195,13 @@ class LessonCompletion(db.Model):
         elif has_assignment:
             # Assignment only: Reading 35%, Engagement 35%, Assignment 30%
             if not assignment_passed:
-                # Cap score at 65% if assignment not passed
-                base_score = min(65.0, (reading * 0.5) + (engagement * 0.5))
+                if assignment_pending_review:
+                    # Assignment pending review: show reading/engagement contribution (up to 70%)
+                    # Keeps progress visible while waiting for instructor review
+                    base_score = min(70.0, (reading * 0.5) + (engagement * 0.5))
+                else:
+                    # Assignment not submitted or failed: cap at 65%
+                    base_score = min(65.0, (reading * 0.5) + (engagement * 0.5))
             else:
                 base_score = (
                     (reading * 0.35) +
@@ -394,6 +411,7 @@ class LessonCompletion(db.Model):
                     
         # Calculate assignment component score
         assignment_component = 0.0
+        assignment_pending_review = False
         if has_assignment:
             best_submission = AssignmentSubmission.query.filter_by(
                 student_id=self.student_id,
@@ -410,13 +428,25 @@ class LessonCompletion(db.Model):
                     assignment_component = assignment_percentage
                 else:
                     assignment_component = 0.0  # Failed assignment contributes 0
+            elif best_submission:
+                # Assignment submitted but not yet graded - pending review
+                assignment_pending_review = True
         
         # Calculate overall lesson score with dynamic weights
+        # When assignment is pending review, allow higher cap to preserve progress visibility
         if has_quiz and has_assignment:
             # Full assessment: 25% each component
             if quiz_component == 0 or assignment_component == 0:
-                # If any assessment failed, cap score at 60%
-                lesson_score = min(60.0, (reading_component * 0.5) + (engagement_component * 0.5))
+                reading_engagement = (reading_component * 0.5) + (engagement_component * 0.5)
+                if assignment_pending_review and quiz_component > 0:
+                    # Assignment pending review but quiz passed: cap at 70%
+                    lesson_score = min(70.0, reading_engagement)
+                elif assignment_pending_review:
+                    # Assignment pending review, quiz not passed: cap at 60%
+                    lesson_score = min(60.0, reading_engagement)
+                else:
+                    # Assessment failed: cap at 60%
+                    lesson_score = min(60.0, reading_engagement)
             else:
                 lesson_score = (
                     (reading_component * 0.25) +
@@ -437,7 +467,11 @@ class LessonCompletion(db.Model):
         elif has_assignment:
             # Assignment only: Reading 35%, Engagement 35%, Assignment 30%
             if assignment_component == 0:
-                lesson_score = min(65.0, (reading_component * 0.5) + (engagement_component * 0.5))
+                if assignment_pending_review:
+                    # Pending review: cap at 70% to preserve progress visibility
+                    lesson_score = min(70.0, (reading_component * 0.5) + (engagement_component * 0.5))
+                else:
+                    lesson_score = min(65.0, (reading_component * 0.5) + (engagement_component * 0.5))
             else:
                 lesson_score = (
                     (reading_component * 0.35) +

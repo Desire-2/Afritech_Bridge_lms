@@ -299,24 +299,29 @@ def update_lesson_progress(lesson_id):
         )
         db.session.add(lesson_completion)
     
-    # Update progress fields
+    # Update progress fields - NEVER allow regression (only increase, never decrease)
     reading_or_engagement_updated = False
     if 'reading_progress' in data:
         old_reading = lesson_completion.reading_progress or 0.0
-        lesson_completion.reading_progress = data['reading_progress']
-        if old_reading != data['reading_progress']:
+        new_reading = max(old_reading, float(data['reading_progress']))
+        if new_reading != old_reading:
+            lesson_completion.reading_progress = new_reading
             reading_or_engagement_updated = True
     if 'engagement_score' in data:
         old_engagement = lesson_completion.engagement_score or 0.0
-        lesson_completion.engagement_score = data['engagement_score']
-        if old_engagement != data['engagement_score']:
+        new_engagement = max(old_engagement, float(data['engagement_score']))
+        if new_engagement != old_engagement:
+            lesson_completion.engagement_score = new_engagement
             reading_or_engagement_updated = True
     if 'scroll_progress' in data:
-        lesson_completion.scroll_progress = data['scroll_progress']
+        old_scroll = lesson_completion.scroll_progress or 0.0
+        lesson_completion.scroll_progress = max(old_scroll, float(data['scroll_progress']))
     if 'video_progress' in data:
-        lesson_completion.video_progress = data['video_progress']
+        old_video = lesson_completion.video_progress or 0.0
+        lesson_completion.video_progress = max(old_video, float(data['video_progress']))
     if 'time_spent' in data:
-        lesson_completion.time_spent = data['time_spent']
+        old_time = lesson_completion.time_spent or 0
+        lesson_completion.time_spent = max(old_time, int(data['time_spent']))
     
     # Enhanced video tracking fields
     if 'video_current_time' in data:
