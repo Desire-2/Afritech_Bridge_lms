@@ -118,3 +118,115 @@ class ExcelGradingResult(db.Model):
             'confidence': self.confidence,
             'manual_review_required': self.manual_review_required,
         }
+
+
+class GradingExperience(db.Model):
+    """
+    Records instructor review outcomes so the AI can learn from experience.
+
+    Each row = one grading result that was reviewed by an instructor.
+    The ``score_delta`` (instructor_score - ai_score) is the key learning
+    signal used for calibration.
+    """
+    __tablename__ = 'grading_experiences'
+
+    id = Column(Integer, primary_key=True)
+
+    grading_result_id = Column(Integer, ForeignKey('excel_grading_results.id'), nullable=False)
+    assignment_id = Column(Integer, nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey('courses.id'), nullable=False, index=True)
+    module_id = Column(Integer, nullable=True, index=True)
+
+    # AI grading output
+    ai_score = Column(Float, nullable=False)
+    ai_max_score = Column(Float, default=100.0)
+
+    # Instructor review
+    instructor_action = Column(String(30), nullable=False)  # 'approve' | 'override'
+    instructor_score = Column(Float, nullable=True)  # only set on override
+    score_delta = Column(Float, default=0.0)  # instructor_score - ai_score
+    instructor_notes = Column(Text, nullable=True)
+
+    # Snapshots of what was used (for debugging / retraining)
+    rubric_snapshot = Column(JSON, nullable=True)
+    requirements_snapshot = Column(JSON, nullable=True)
+    analysis_summary = Column(JSON, nullable=True)
+
+    recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Relationships
+    grading_result = relationship('ExcelGradingResult', backref=db.backref('experiences', lazy='dynamic'))
+    course = relationship('Course', foreign_keys=[course_id])
+
+    def __repr__(self):
+        return f'<GradingExperience {self.id} delta={self.score_delta:+.1f}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'grading_result_id': self.grading_result_id,
+            'assignment_id': self.assignment_id,
+            'course_id': self.course_id,
+            'module_id': self.module_id,
+            'ai_score': self.ai_score,
+            'ai_max_score': self.ai_max_score,
+            'instructor_action': self.instructor_action,
+            'instructor_score': self.instructor_score,
+            'score_delta': self.score_delta,
+            'instructor_notes': self.instructor_notes,
+            'recorded_at': self.recorded_at.isoformat() if self.recorded_at else None,
+        }
+
+
+class GeneratedRubric(db.Model):
+    """
+    Caches AI-generated rubrics so they can be reused and improved.
+
+    When an instructor approves a grade that used a generated rubric,
+    the rubric is marked as ``approved`` and trusted for future use.
+    """
+    __tablename__ = 'generated_rubrics'
+
+    id = Column(Integer, primary_key=True)
+
+    assignment_id = Column(Integer, nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey('courses.id'), nullable=False)
+    module_id = Column(Integer, nullable=True)
+
+    # The generated rubric data (criteria, weights, scope, etc.)
+    rubric_data = Column(JSON, nullable=False)
+
+    # Hash of the assignment instructions — if instructions change, regenerate
+    instructions_hash = Column(String(64), nullable=True, index=True)
+    generation_method = Column(String(50), default='instruction_analysis')
+
+    # Usage tracking
+    times_used = Column(Integer, default=0)
+    last_used_at = Column(DateTime, nullable=True)
+
+    # Approval (implicit: instructor approved a grade using this rubric)
+    approved = Column(Boolean, default=False)
+    approved_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+
+    course = relationship('Course', foreign_keys=[course_id])
+
+    def __repr__(self):
+        return f'<GeneratedRubric {self.id} assignment={self.assignment_id} approved={self.approved}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'assignment_id': self.assignment_id,
+            'course_id': self.course_id,
+            'module_id': self.module_id,
+            'rubric_data': self.rubric_data,
+            'instructions_hash': self.instructions_hash,
+            'generation_method': self.generation_method,
+            'times_used': self.times_used,
+            'approved': self.approved,
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

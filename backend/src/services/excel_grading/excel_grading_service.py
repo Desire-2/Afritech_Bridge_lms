@@ -128,10 +128,30 @@ class ExcelGradingService:
             module = self._load_module(assignment_or_project)
             requirements = self._parse_requirements(assignment_or_project, module)
 
-            # Step 8: Get instructor rubric (if exists)
+            # Step 8: Get rubric — instructor → cached generated → generate new
             instructor_rubric = self._get_instructor_rubric(assignment_or_project, course)
+            generated_rubric = None
 
-            # Step 9: Run the analysis pipeline (only relevant analyzers)
+            if not instructor_rubric:
+                # Try to build / reuse a rubric from assignment instructions
+                generated_rubric = self._get_or_generate_rubric(
+                    assignment_or_project, course, module, requirements,
+                )
+                if generated_rubric:
+                    # Merge generated rubric scope into requirements
+                    gen_scope = generated_rubric.get('scope', {})
+                    for key, val in gen_scope.items():
+                        if val:  # only upgrade scope, never downgrade
+                            requirements[key] = True
+                    # Use the generated rubric as the instructor rubric
+                    instructor_rubric = generated_rubric
+
+            # Step 9: Get learning insights from past grading experience
+            learning_insights = self._get_learning_insights(
+                assignment_or_project, course, module,
+            )
+
+            # Step 10: Run the analysis pipeline (only relevant analyzers)
             grading_result = self._run_pipeline(
                 file_bytes=file_bytes,
                 file_name=file_info.get('original_filename') or file_info.get('filename', 'file.xlsx'),
@@ -139,10 +159,16 @@ class ExcelGradingService:
                 instructor_rubric=instructor_rubric,
             )
 
-            # Step 10: Generate feedback
+            # Step 11: Apply experience-based calibration
+            if learning_insights and learning_insights.get('sample_size', 0) >= 3:
+                grading_result = self._apply_learning_calibration(
+                    grading_result, learning_insights,
+                )
+
+            # Step 12: Generate feedback
             feedback = grading_result.pop('feedback', '')
 
-            # Step 11: Save to database
+            # Step 13: Save to database
             processing_time = time.time() - start_time
             db_result = self._save_result(
                 submission_id=submission_id,
@@ -154,6 +180,12 @@ class ExcelGradingService:
                 feedback=feedback,
                 processing_time=processing_time,
             )
+
+            # Step 14: Save generated rubric for future reuse
+            if generated_rubric and db_result:
+                self._cache_generated_rubric(
+                    assignment_or_project, course, module, generated_rubric,
+                )
 
             return {
                 'status': 'completed',
@@ -673,6 +705,128 @@ class ExcelGradingService:
             logger.debug(f"Could not load instructor rubric: {e}")
 
         return None
+
+    # ------------------------------------------------------------------
+    # Internal: Rubric generation & learning
+    # ------------------------------------------------------------------
+
+    def _get_or_generate_rubric(
+        self,
+        assignment_or_project,
+        course,
+        module,
+        requirements: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Try to get a cached rubric or generate a new one from instructions.
+
+        Priority:
+          1. Cached generated rubric (if instructions haven't changed)
+          2. Freshly generated rubric from assignment instructions
+          3. None (fall back to default scope-based rubric)
+        """
+        import hashlib
+        from .rubric_generator import RubricGenerator
+        from .learning_engine import LearningEngine
+
+        title = getattr(assignment_or_project, 'title', '') or ''
+        desc = getattr(assignment_or_project, 'description', '') or ''
+        instructions = getattr(assignment_or_project, 'instructions', '') or ''
+        assignment_id = getattr(assignment_or_project, 'id', 0)
+        points = getattr(assignment_or_project, 'points_possible', 100) or 100
+
+        # Short-circuit: if there are no meaningful instructions, skip
+        if len(instructions.strip()) < 20 and len(desc.strip()) < 20:
+            return None
+
+        # Hash instructions to detect changes
+        hash_input = f"{title}|{desc}|{instructions}".encode('utf-8')
+        instructions_hash = hashlib.sha256(hash_input).hexdigest()[:16]
+
+        # 1) Try cached rubric
+        try:
+            learning = LearningEngine()
+            cached = learning.get_cached_rubric(assignment_id, instructions_hash)
+            if cached:
+                logger.info(f"Using cached generated rubric for assignment #{assignment_id}")
+                return cached
+        except Exception as e:
+            logger.debug(f"Cache lookup failed: {e}")
+
+        # 2) Generate fresh rubric from instructions
+        try:
+            generator = RubricGenerator(max_points=points)
+            rubric = generator.generate(
+                assignment_title=title,
+                assignment_description=desc,
+                assignment_instructions=instructions,
+                module_title=getattr(module, 'title', '') if module else '',
+                module_description=getattr(module, 'description', '') if module else '',
+                module_objectives=getattr(module, 'learning_objectives', '') if module else '',
+                points_possible=points,
+            )
+
+            if rubric and rubric.get('criteria'):
+                rubric['_instructions_hash'] = instructions_hash
+                logger.info(
+                    f"Generated rubric for '{title}': "
+                    f"{len(rubric['criteria'])} criteria, "
+                    f"{rubric.get('task_count', 0)} tasks detected"
+                )
+                return rubric
+        except Exception as e:
+            logger.warning(f"Rubric generation failed: {e}")
+
+        return None
+
+    def _cache_generated_rubric(
+        self,
+        assignment_or_project,
+        course,
+        module,
+        rubric: Dict[str, Any],
+    ):
+        """Save a generated rubric to the database for future reuse."""
+        try:
+            from .learning_engine import LearningEngine
+            learning = LearningEngine()
+            learning.save_generated_rubric(
+                assignment_id=getattr(assignment_or_project, 'id', 0),
+                course_id=course.id,
+                module_id=getattr(module, 'id', None) if module else None,
+                rubric_data=rubric,
+                instructions_hash=rubric.get('_instructions_hash', ''),
+            )
+        except Exception as e:
+            logger.debug(f"Could not cache generated rubric: {e}")
+
+    def _get_learning_insights(self, assignment_or_project, course, module) -> Optional[Dict]:
+        """Retrieve learning insights from past grading experiences."""
+        try:
+            from .learning_engine import LearningEngine
+            learning = LearningEngine()
+            return learning.get_insights(
+                assignment_id=getattr(assignment_or_project, 'id', 0),
+                course_id=course.id,
+                module_id=getattr(module, 'id', None) if module else None,
+            )
+        except Exception as e:
+            logger.debug(f"Could not get learning insights: {e}")
+            return None
+
+    def _apply_learning_calibration(
+        self,
+        grading_result: Dict[str, Any],
+        insights: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Apply experience-based calibration to grading result."""
+        try:
+            from .learning_engine import LearningEngine
+            learning = LearningEngine()
+            return learning.apply_calibration(grading_result, insights)
+        except Exception as e:
+            logger.debug(f"Could not apply calibration: {e}")
+            return grading_result
 
     # ------------------------------------------------------------------
     # Internal: Analysis pipeline

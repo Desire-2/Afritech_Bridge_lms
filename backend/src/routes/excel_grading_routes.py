@@ -32,8 +32,10 @@ from ..models.course_models import (
     Project, ProjectSubmission, Enrollment,
 )
 from ..models.excel_grading_models import ExcelGradingResult
+from ..services.excel_grading.learning_engine import LearningEngine
 
 logger = logging.getLogger(__name__)
+_learning_engine = LearningEngine()
 
 # ------------------------------------------------------------------
 # Role guards
@@ -228,6 +230,48 @@ def review_result(result_id):
             _apply_grade_to_submission(result)
 
         db.session.commit()
+
+        # ---- Learning: record this review as experience ----
+        try:
+            assignment_id = None
+            module_id = None
+            if result.assignment_submission:
+                assignment_id = result.assignment_submission.assignment_id
+                assignment = Assignment.query.get(assignment_id)
+                if assignment:
+                    module_id = assignment.module_id
+
+            if assignment_id:
+                final_score = (
+                    float(data.get('adjusted_score'))
+                    if action == 'override' and data.get('adjusted_score') is not None
+                    else result.total_score
+                )
+                _learning_engine.record_grading_outcome(
+                    grading_result_id=result.id,
+                    assignment_id=assignment_id,
+                    course_id=result.course_id,
+                    module_id=module_id,
+                    ai_score=result.total_score,
+                    ai_max_score=result.max_score,
+                    instructor_action=action,
+                    instructor_score=final_score if action == 'override' else None,
+                    instructor_notes=data.get('instructor_notes', ''),
+                    rubric_used=result.rubric_breakdown,
+                    analysis_summary=result.analysis_data,
+                )
+
+                # When instructor approves, mark the generated rubric as trusted
+                if action == 'approve':
+                    _learning_engine.mark_rubric_approved(assignment_id)
+
+                logger.info(
+                    f"Learning: recorded instructor {action} for result #{result.id}"
+                )
+        except Exception as learn_err:
+            # Learning is non-critical — never block the review response
+            logger.warning(f"Learning recording failed (non-critical): {learn_err}")
+
         return jsonify({
             "message": f"Grading result {action}d successfully",
             "result": result.to_dict(),
@@ -578,6 +622,69 @@ def preview_analysis():
     except Exception as e:
         logger.exception(f"Preview error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ==============================================================
+# GET /learning/stats  — AI learning statistics for a course
+# ==============================================================
+@excel_grading_bp.route("/learning/stats", methods=["GET"])
+@instructor_or_admin_required
+def learning_stats():
+    """
+    Return AI learning statistics: calibration accuracy, number of
+    reviews recorded, rubrics generated/approved, pattern insights.
+
+    Query params:
+        course_id  (required)
+    """
+    course_id = request.args.get('course_id', type=int)
+    if not course_id:
+        return jsonify({"message": "course_id is required"}), 400
+
+    try:
+        stats = _learning_engine.get_learning_stats(course_id)
+        return jsonify(stats), 200
+    except Exception as e:
+        logger.exception(f"Learning stats error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ==============================================================
+# GET /learning/rubric/<assignment_id>  — Generated rubric for an assignment
+# ==============================================================
+@excel_grading_bp.route("/learning/rubric/<int:assignment_id>", methods=["GET"])
+@instructor_or_admin_required
+def get_generated_rubric(assignment_id):
+    """
+    Retrieve the AI-generated rubric for a specific assignment.
+
+    This lets instructors inspect what the AI built from the instructions
+    and optionally approve it for future grading sessions.
+    """
+    from ..models.excel_grading_models import GeneratedRubric
+
+    rubric = GeneratedRubric.query.filter_by(
+        assignment_id=assignment_id,
+    ).order_by(GeneratedRubric.created_at.desc()).first()
+
+    if not rubric:
+        return jsonify({"message": "No generated rubric found for this assignment"}), 404
+
+    return jsonify(rubric.to_dict()), 200
+
+
+# ==============================================================
+# POST /learning/rubric/<assignment_id>/approve  — Approve generated rubric
+# ==============================================================
+@excel_grading_bp.route("/learning/rubric/<int:assignment_id>/approve", methods=["POST"])
+@instructor_or_admin_required
+def approve_generated_rubric(assignment_id):
+    """
+    Explicitly approve a generated rubric so the AI uses it with
+    higher confidence in future grading runs.
+    """
+    _learning_engine.mark_rubric_approved(assignment_id)
+    return jsonify({"message": "Rubric approved successfully"}), 200
 
 
 # ==============================================================

@@ -938,6 +938,241 @@ class TestFileDownload:
 
 
 # ===========================================================================
+# Rubric Generator Tests
+# ===========================================================================
+
+class TestRubricGenerator:
+    """Tests for the instruction-aware rubric generator."""
+
+    # The sample PivotTable assignment text used throughout tests
+    SAMPLE_INSTRUCTIONS = """
+Part 1: Calculated Item Implementation (Variance Analysis)
+1. Using the Sales Data table, create a PivotTable that shows total sales by product category
+   and region. Add a Calculated Item under the Region field to compute the "Variance"
+   between East and West regions.
+2. Explain why you chose a Calculated Item instead of a Calculated Field for this analysis.
+   What is the key difference in how each operates within the PivotTable?
+
+Part 2: Data Model and Relationship Setup
+3. Import the Customers table and Orders table from the provided workbook into the Data Model.
+4. Create a One-to-Many relationship between Customers (lookup) and Orders (fact table).
+5. Verify the relationship in Diagram View and take a screenshot.
+6. Build a PivotTable from the Data Model that shows total revenue by Customer City.
+
+Part 3: Report Construction and Analysis
+7. Design a PivotTable report that combines data from both tables (Sales Data and Orders)
+   showing quarterly revenue trends. Apply the Tabular report layout and set
+   Repeat All Item Labels.
+8. Write a short reflection (150-200 words) explaining how the Data Model approach
+   differs from VLOOKUP-based merging.
+"""
+
+    def _make_generator(self):
+        from src.services.excel_grading.rubric_generator import RubricGenerator
+        return RubricGenerator()
+
+    def test_generate_returns_valid_rubric(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Advanced Report',
+            assignment_description='Advanced PivotTable assignment',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+            points_possible=100,
+        )
+        assert isinstance(rubric, dict)
+        assert 'criteria' in rubric
+        assert 'total_points' in rubric
+        assert 'scope' in rubric
+        assert rubric['generation_method'] == 'instruction_analysis'
+        assert len(rubric['criteria']) > 0
+        assert rubric['total_points'] > 0
+
+    def test_detect_parts(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        assert 'parts' in rubric
+        assert len(rubric['parts']) == 3, f"Expected 3 parts, got {len(rubric['parts'])}"
+        part_titles = [p.get('title', '').lower() for p in rubric['parts']]
+        assert any('calculated item' in t for t in part_titles), f"Part about calculated items not found: {part_titles}"
+        assert any('data model' in t for t in part_titles), f"Part about data model not found: {part_titles}"
+
+    def test_detect_tasks(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        assert rubric['task_count'] >= 7, f"Expected ≥7 tasks, got {rubric['task_count']}"
+
+    def test_extract_concepts(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        assert rubric['concept_count'] >= 3, f"Expected ≥3 concepts, got {rubric['concept_count']}"
+
+    def test_scope_includes_pivots(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        scope = rubric['scope']
+        assert scope.get('scope_pivots') is True, f"Pivots expected in scope: {scope}"
+
+    def test_scope_excludes_vba(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        scope = rubric['scope']
+        assert scope.get('scope_vba') is not True, f"VBA not expected in scope: {scope}"
+
+    def test_scope_excludes_power_query(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        scope = rubric['scope']
+        assert scope.get('scope_pq') is not True, f"PQ not expected in scope: {scope}"
+
+    def test_empty_instructions_returns_empty(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='',
+            assignment_description='',
+            assignment_instructions='',
+        )
+        # Should return a valid rubric dict even if empty
+        assert isinstance(rubric, dict)
+
+    def test_simple_instruction_no_parts(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='Basic Charts',
+            assignment_description='Create a bar chart and a pie chart showing monthly sales data',
+            assignment_instructions='1. Create a bar chart for Q1-Q4 sales\n2. Create a pie chart for market share',
+            points_possible=50,
+        )
+        assert rubric['total_points'] > 0
+        scope = rubric['scope']
+        assert scope.get('scope_charts') is True
+
+    def test_vba_instructions_scope(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='VBA Automation',
+            assignment_description='Write a VBA macro to automate data entry',
+            assignment_instructions='Create a UserForm with input fields and a macro that logs entries to a worksheet.',
+            points_possible=100,
+        )
+        scope = rubric['scope']
+        assert scope.get('scope_vba') is True
+
+    def test_criteria_have_required_fields(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+        )
+        for criterion in rubric['criteria']:
+            assert 'name' in criterion, f"Criterion missing 'name': {criterion}"
+            assert 'max_points' in criterion, f"Criterion missing 'max_points': {criterion}"
+            assert criterion['max_points'] >= 0, f"Negative max_points: {criterion}"
+
+    def test_weights_sum_to_max_points(self):
+        gen = self._make_generator()
+        rubric = gen.generate(
+            assignment_title='PivotTable Report',
+            assignment_description='',
+            assignment_instructions=self.SAMPLE_INSTRUCTIONS,
+            points_possible=100,
+        )
+        total = sum(c['max_points'] for c in rubric['criteria'])
+        assert 95 <= total <= 105, f"Weights don't sum near 100: {total}"
+
+
+# ===========================================================================
+# Learning Engine Tests
+# ===========================================================================
+
+class TestLearningEngine:
+    """Tests for the experience learning engine (no DB required)."""
+
+    def _make_engine(self):
+        from src.services.excel_grading.learning_engine import LearningEngine
+        return LearningEngine()
+
+    def test_engine_instantiation(self):
+        engine = self._make_engine()
+        assert engine is not None
+
+    def test_apply_calibration_no_offset(self):
+        """When calibration_offset is near zero, result should be unchanged."""
+        engine = self._make_engine()
+        result = {'total_score': 75.0, 'max_score': 100.0, 'percentage': 75.0, 'grade': 'C'}
+        insights = {'calibration_offset': 0.0, 'sample_size': 5, 'confidence_hint': 'no_data'}
+        out = engine.apply_calibration(result, insights)
+        assert out['total_score'] == 75.0
+
+    def test_apply_calibration_positive_offset(self):
+        """Positive offset (AI scored too low) should increase score."""
+        engine = self._make_engine()
+        result = {'total_score': 70.0, 'max_score': 100.0, 'percentage': 70.0, 'grade': 'C'}
+        insights = {'calibration_offset': 10.0, 'sample_size': 5, 'confidence_hint': 'calibrated'}
+        out = engine.apply_calibration(result, insights)
+        assert out['total_score'] == 80.0  # +10 offset
+        assert 'calibration_applied' in out
+
+    def test_apply_calibration_negative_offset(self):
+        """Negative offset (AI scored too high) should decrease score."""
+        engine = self._make_engine()
+        result = {'total_score': 80.0, 'max_score': 100.0, 'percentage': 80.0, 'grade': 'B'}
+        insights = {'calibration_offset': -8.0, 'sample_size': 4, 'confidence_hint': 'calibrated'}
+        out = engine.apply_calibration(result, insights)
+        assert out['total_score'] == 72.0  # -8 offset
+        assert out['calibration_applied']['offset'] == -8.0
+
+    def test_apply_calibration_clamps_to_zero(self):
+        """Calibrated score should never go below 0."""
+        engine = self._make_engine()
+        result = {'total_score': 5.0, 'max_score': 100.0, 'percentage': 5.0, 'grade': 'F'}
+        insights = {'calibration_offset': -200.0, 'sample_size': 10, 'confidence_hint': 'calibrated'}
+        out = engine.apply_calibration(result, insights)
+        assert out['total_score'] >= 0, f"Score went below 0: {out['total_score']}"
+
+    def test_apply_calibration_clamps_to_max(self):
+        """Calibrated score should never exceed max_score."""
+        engine = self._make_engine()
+        result = {'total_score': 95.0, 'max_score': 100.0, 'percentage': 95.0, 'grade': 'A'}
+        insights = {'calibration_offset': 200.0, 'sample_size': 10, 'confidence_hint': 'calibrated'}
+        out = engine.apply_calibration(result, insights)
+        assert out['total_score'] <= 100.0, f"Score exceeded max: {out['total_score']}"
+
+    def test_apply_calibration_tiny_offset_ignored(self):
+        """Offset < 0.5 should be ignored."""
+        engine = self._make_engine()
+        result = {'total_score': 70.0, 'max_score': 100.0, 'percentage': 70.0, 'grade': 'C'}
+        insights = {'calibration_offset': 0.3, 'sample_size': 10, 'confidence_hint': 'calibrated'}
+        out = engine.apply_calibration(result, insights)
+        assert out['total_score'] == 70.0
+        assert 'calibration_applied' not in out
+
+
+# ===========================================================================
 # CLI runner
 # ===========================================================================
 
@@ -960,6 +1195,8 @@ def run_all():
         TestCourseValidation,
         TestFileIdExtraction,
         TestFileDownload,
+        TestRubricGenerator,
+        TestLearningEngine,
     ]
 
     total = 0
