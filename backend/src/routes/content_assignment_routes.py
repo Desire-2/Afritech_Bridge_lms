@@ -168,17 +168,25 @@ def get_lesson_quiz(lesson_id):
             # Include questions with answers (for student display, answers without is_correct)
             quiz_data = quiz.to_dict(include_questions=True)
             
-            # Get student's best attempt for this quiz
-            best_attempt = QuizAttempt.query.filter_by(
+            # Get ALL attempts for this quiz (needed for violation check)
+            all_attempts = QuizAttempt.query.filter_by(
                 user_id=current_user_id,
                 quiz_id=quiz.id
-            ).order_by(QuizAttempt.score_percentage.desc()).first()
+            ).all()
             
-            # Count total attempts
-            attempts_count = QuizAttempt.query.filter_by(
-                user_id=current_user_id,
-                quiz_id=quiz.id
-            ).count()
+            # Get student's best attempt for this quiz
+            best_attempt = max(
+                (a for a in all_attempts if a.score_percentage is not None),
+                key=lambda a: a.score_percentage,
+                default=None
+            )
+            
+            attempts_count = len(all_attempts)
+            
+            # Check if student is blocked due to a security violation
+            has_violation = any(
+                getattr(a, 'security_violation', False) for a in all_attempts
+            )
             
             # Add enriched fields for frontend
             if best_attempt:
@@ -195,6 +203,9 @@ def get_lesson_quiz(lesson_id):
                 quiz_data['attempts_used'] = 0
                 quiz_data['quiz_id'] = quiz.id
                 quiz_data['quiz_title'] = quiz.title
+            
+            # Always include violation status
+            quiz_data['blocked_due_to_violation'] = has_violation
             
             enriched_quizzes.append(quiz_data)
             

@@ -29,6 +29,7 @@ export interface ContentQuiz {
   shuffle_questions?: boolean;
   shuffle_answers?: boolean;
   show_correct_answers?: boolean;
+  blocked_due_to_violation?: boolean;
 }
 
 export interface QuizQuestion {
@@ -240,14 +241,38 @@ class ContentAssignmentService extends BaseApiService {
   /**
    * Submit quiz answers
    */
-  async submitQuiz(quizId: number, answers: Record<number, string>): Promise<{
+  async submitQuiz(quizId: number, answers: Record<number, string>, options?: {
+    security_violation?: boolean;
+    violation_reason?: string;
+  }): Promise<{
     message: string;
     score: number;
     passed: boolean;
     attempt_number: number;
     remaining_attempts: number;
+    blocked_due_to_violation?: boolean;
   }> {
-    return this.post(`/student/quizzes/${quizId}/submit`, { answers });
+    return this.post(`/student/quizzes/${quizId}/submit`, { 
+      answers,
+      ...(options?.security_violation && {
+        security_violation: true,
+        violation_reason: options.violation_reason || 'Security policy violation'
+      })
+    });
+  }
+
+  /**
+   * Report a security violation during a quiz (blocks all remaining attempts)
+   */
+  async reportQuizViolation(quizId: number, reason: string, violationCount: number): Promise<{
+    message: string;
+    blocked: boolean;
+    violation_reason: string;
+  }> {
+    return this.post(`/student/quizzes/${quizId}/report-violation`, {
+      reason,
+      violation_count: violationCount
+    });
   }
 
   // ==================== ASSIGNMENT MANAGEMENT ====================

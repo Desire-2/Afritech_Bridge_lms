@@ -17,6 +17,7 @@ from ..models.course_models import (
     Assignment, AssignmentSubmission, Project, ProjectSubmission, 
     Submission
 )
+from ..models.quiz_progress_models import QuizAttempt
 
 # Helper for role checking
 from functools import wraps
@@ -1454,3 +1455,159 @@ def get_assessments_overview(course_id):
     except Exception as e:
         logger.error(f"[OVERVIEW] Failed to fetch assessments for course {course_id}: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to fetch assessments overview", "error": str(e)}), 500
+
+
+# =====================
+# QUIZ SECURITY VIOLATIONS
+# =====================
+
+@instructor_assessment_bp.route("/quizzes/<int:quiz_id>/violations", methods=["GET"])
+@instructor_required
+def get_quiz_violations(quiz_id):
+    """Get all security violation reports for a quiz"""
+    try:
+        current_user_id = get_user_id()
+        quiz = Quiz.query.get_or_404(quiz_id)
+        
+        # Verify instructor owns the course
+        course = Course.query.get(quiz.course_id)
+        if not course or course.instructor_id != current_user_id:
+            # Also allow admin access
+            user = User.query.get(current_user_id)
+            if not user or not user.role or user.role.name != 'admin':
+                return jsonify({"message": "Unauthorized access to this quiz"}), 403
+        
+        # Get all attempts with violations for this quiz
+        violation_attempts = QuizAttempt.query.filter_by(
+            quiz_id=quiz_id,
+            security_violation=True
+        ).all()
+        
+        violations_data = []
+        for attempt in violation_attempts:
+            student = User.query.get(attempt.user_id)
+            
+            # Check if this student is still blocked (any violation attempt exists)
+            is_currently_blocked = True  # If we found a violation record, they're blocked
+            
+            violations_data.append({
+                'attempt_id': attempt.id,
+                'user_id': attempt.user_id,
+                'student_name': f"{student.first_name} {student.last_name}" if student else 'Unknown Student',
+                'student_email': student.email if student else 'unknown',
+                'attempt_number': attempt.attempt_number,
+                'violation_reason': attempt.violation_reason or 'Security policy violation',
+                'score': attempt.score_percentage or attempt.score or 0,
+                'violated_at': attempt.end_time.isoformat() if attempt.end_time else attempt.created_at.isoformat(),
+                'is_blocked': is_currently_blocked
+            })
+        
+        return jsonify({
+            'quiz_id': quiz_id,
+            'quiz_title': quiz.title,
+            'total_violations': len(violations_data),
+            'violations': violations_data
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch violations for quiz {quiz_id}: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch violation reports", "error": str(e)}), 500
+
+
+@instructor_assessment_bp.route("/quizzes/<int:quiz_id>/unblock-student/<int:student_id>", methods=["POST"])
+@instructor_required
+def unblock_quiz_student(quiz_id, student_id):
+    """Unblock a student who was blocked due to a security violation, giving them another chance"""
+    try:
+        current_user_id = get_user_id()
+        data = request.get_json() or {}
+        quiz = Quiz.query.get_or_404(quiz_id)
+        
+        # Verify instructor owns the course
+        course = Course.query.get(quiz.course_id)
+        if not course or course.instructor_id != current_user_id:
+            user = User.query.get(current_user_id)
+            if not user or not user.role or user.role.name != 'admin':
+                return jsonify({"message": "Unauthorized access to this quiz"}), 403
+        
+        # Find all violation attempts for this student on this quiz
+        violation_attempts = QuizAttempt.query.filter_by(
+            quiz_id=quiz_id,
+            user_id=student_id,
+            security_violation=True
+        ).all()
+        
+        if not violation_attempts:
+            return jsonify({"message": "No security violations found for this student on this quiz"}), 404
+        
+        # Clear the security_violation flag on all violation attempts
+        for attempt in violation_attempts:
+            attempt.security_violation = False
+            attempt.violation_reason = (
+                f"[CLEARED by instructor {current_user_id}] "
+                f"{attempt.violation_reason or 'Security violation'} — "
+                f"Reason for unblock: {data.get('reason', 'Instructor granted additional chance')}"
+            )
+        
+        db.session.commit()
+        
+        student = User.query.get(student_id)
+        student_name = f"{student.first_name} {student.last_name}" if student else 'Unknown Student'
+        
+        logger.info(
+            f"✅ Instructor {current_user_id} unblocked student {student_id} ({student_name}) "
+            f"on quiz {quiz_id} ({quiz.title}). Reason: {data.get('reason', 'No reason provided')}"
+        )
+        
+        return jsonify({
+            "message": f"Student {student_name} has been unblocked and can now reattempt the quiz.",
+            "student_id": student_id,
+            "student_name": student_name,
+            "quiz_id": quiz_id,
+            "unblocked": True
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to unblock student {student_id} on quiz {quiz_id}: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to unblock student", "error": str(e)}), 500
+
+
+@instructor_assessment_bp.route("/quizzes/violation-counts", methods=["GET"])
+@instructor_required
+def get_all_quiz_violation_counts():
+    """Get violation counts for all quizzes owned by the current instructor"""
+    try:
+        current_user_id = get_user_id()
+        
+        # Get all courses owned by this instructor
+        instructor_courses = Course.query.filter_by(instructor_id=current_user_id).all()
+        course_ids = [c.id for c in instructor_courses]
+        
+        if not course_ids:
+            return jsonify({"violation_counts": {}}), 200
+        
+        # Get all quizzes for these courses
+        quizzes = Quiz.query.filter(Quiz.course_id.in_(course_ids)).all()
+        quiz_ids = [q.id for q in quizzes]
+        
+        if not quiz_ids:
+            return jsonify({"violation_counts": {}}), 200
+        
+        # Count violations per quiz
+        from sqlalchemy import func
+        violation_counts = db.session.query(
+            QuizAttempt.quiz_id,
+            func.count(QuizAttempt.id)
+        ).filter(
+            QuizAttempt.quiz_id.in_(quiz_ids),
+            QuizAttempt.security_violation == True
+        ).group_by(QuizAttempt.quiz_id).all()
+        
+        counts_dict = {str(quiz_id): count for quiz_id, count in violation_counts}
+        
+        return jsonify({"violation_counts": counts_dict}), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch violation counts: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch violation counts", "error": str(e)}), 500

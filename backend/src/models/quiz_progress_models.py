@@ -64,6 +64,8 @@ class QuizAttempt(db.Model):
     score = db.Column(db.Float, nullable=True)
     score_percentage = db.Column(db.Float, nullable=True)  # ✅ Added for compatibility with progression_service
     status = db.Column(db.Enum(QuizAttemptStatus), nullable=False, default=QuizAttemptStatus.IN_PROGRESS)
+    security_violation = db.Column(db.Boolean, default=False, nullable=False)  # ✅ Security violation flag
+    violation_reason = db.Column(db.String(500), nullable=True)  # ✅ Reason for violation (tab switch, fullscreen exit, etc.)
     feedback_viewed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

@@ -250,7 +250,18 @@ def start_quiz_attempt(quiz_id):
         return jsonify({"error": "Quiz is not published"}), 403
 
     # Check attempt limits
-    existing_attempts_count = QuizAttempt.query.filter_by(user_id=user_id, quiz_id=quiz_id).count()
+    existing_attempts = QuizAttempt.query.filter_by(user_id=user_id, quiz_id=quiz_id).all()
+    existing_attempts_count = len(existing_attempts)
+    
+    # Check if student is blocked due to a security violation
+    has_violation = any(
+        getattr(a, 'security_violation', False) for a in existing_attempts
+    )
+    if has_violation:
+        return jsonify({
+            "error": "Your quiz attempts have been blocked due to a security violation. Please contact your instructor."
+        }), 403
+    
     if quiz.attempts_allowed is not None and existing_attempts_count >= quiz.attempts_allowed:
         return jsonify({"error": "Maximum attempts reached"}), 403
 

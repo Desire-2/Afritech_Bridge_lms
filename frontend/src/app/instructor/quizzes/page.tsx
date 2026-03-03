@@ -18,6 +18,21 @@ import {
 import { Badge } from '@/components/ui/badge';
 
 // =====================================
+// VIOLATION TYPES
+// =====================================
+interface ViolationRecord {
+  attempt_id: number;
+  user_id: number;
+  student_name: string;
+  student_email: string;
+  attempt_number: number;
+  violation_reason: string;
+  score: number;
+  violated_at: string;
+  is_blocked: boolean;
+}
+
+// =====================================
 // VIEW QUIZ MODAL COMPONENT
 // =====================================
 interface ViewQuizModalProps {
@@ -25,11 +40,19 @@ interface ViewQuizModalProps {
   isOpen: boolean;
   onClose: () => void;
   courses: Course[];
+  onViolationCountLoaded?: (quizId: number, count: number) => void;
 }
 
-const ViewQuizModal: React.FC<ViewQuizModalProps> = ({ quiz, isOpen, onClose, courses }) => {
+const ViewQuizModal: React.FC<ViewQuizModalProps> = ({ quiz, isOpen, onClose, courses, onViolationCountLoaded }) => {
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [quizDetails, setQuizDetails] = useState<Quiz | null>(null);
+  const [activeTab, setActiveTab] = useState<'details' | 'violations'>('details');
+  const [violations, setViolations] = useState<ViolationRecord[]>([]);
+  const [loadingViolations, setLoadingViolations] = useState(false);
+  const [unblockingStudent, setUnblockingStudent] = useState<number | null>(null);
+  const [unblockReason, setUnblockReason] = useState('');
+  const [showUnblockDialog, setShowUnblockDialog] = useState<ViolationRecord | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     const fetchQuizDetails = async () => {
@@ -50,6 +73,65 @@ const ViewQuizModal: React.FC<ViewQuizModalProps> = ({ quiz, isOpen, onClose, co
     fetchQuizDetails();
   }, [quiz?.id, isOpen]);
 
+  // Fetch violations when the violations tab is shown
+  useEffect(() => {
+    const fetchViolations = async () => {
+      if (!quiz?.id || !isOpen) return;
+      
+      setLoadingViolations(true);
+      try {
+        const data = await InstructorAssessmentService.getQuizViolations(quiz.id);
+        setViolations(data.violations || []);
+        onViolationCountLoaded?.(quiz.id, data.total_violations || 0);
+      } catch (error) {
+        console.error('Failed to fetch violations:', error);
+        setViolations([]);
+      } finally {
+        setLoadingViolations(false);
+      }
+    };
+
+    fetchViolations();
+  }, [quiz?.id, isOpen, activeTab]);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setActiveTab('details');
+      setActionMessage(null);
+      setShowUnblockDialog(null);
+      setUnblockReason('');
+    }
+  }, [isOpen]);
+
+  const handleUnblockStudent = async () => {
+    if (!showUnblockDialog || !quiz?.id) return;
+    
+    setUnblockingStudent(showUnblockDialog.user_id);
+    setActionMessage(null);
+    try {
+      const result = await InstructorAssessmentService.unblockStudent(
+        quiz.id,
+        showUnblockDialog.user_id,
+        unblockReason || 'Instructor granted additional chance'
+      );
+      setActionMessage({ type: 'success', text: result.message });
+      // Refresh violations list
+      const data = await InstructorAssessmentService.getQuizViolations(quiz.id);
+      setViolations(data.violations || []);
+      onViolationCountLoaded?.(quiz.id, data.total_violations || 0);
+      setShowUnblockDialog(null);
+      setUnblockReason('');
+    } catch (error: any) {
+      setActionMessage({ 
+        type: 'error', 
+        text: error.message || 'Failed to unblock student' 
+      });
+    } finally {
+      setUnblockingStudent(null);
+    }
+  };
+
   if (!quiz) return null;
 
   const courseName = quiz.course_title || courses.find(c => c.id === quiz.course_id)?.title || 'Unknown Course';
@@ -66,10 +148,52 @@ const ViewQuizModal: React.FC<ViewQuizModalProps> = ({ quiz, isOpen, onClose, co
             </Badge>
           </DialogTitle>
           <DialogDescription>
-            Quiz details and questions overview
+            Quiz details, questions, and security violation reports
           </DialogDescription>
         </DialogHeader>
 
+        {/* Tab Navigation */}
+        <div className="flex border-b border-slate-200 dark:border-slate-700">
+          <button
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'details'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+            }`}
+            onClick={() => setActiveTab('details')}
+          >
+            Quiz Details
+          </button>
+          <button
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${
+              activeTab === 'violations'
+                ? 'border-red-600 text-red-600 dark:text-red-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+            }`}
+            onClick={() => setActiveTab('violations')}
+          >
+            Security Violations
+            {violations.length > 0 && (
+              <span className="inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-600 rounded-full">
+                {violations.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* Action Message */}
+        {actionMessage && (
+          <div className={`p-3 rounded-lg text-sm ${
+            actionMessage.type === 'success' 
+              ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' 
+              : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'
+          }`}>
+            {actionMessage.text}
+          </div>
+        )}
+
+        {/* Details Tab */}
+        {activeTab === 'details' && (
         <div className="space-y-6 py-4">
           {/* Quiz Information */}
           <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
@@ -158,6 +282,141 @@ const ViewQuizModal: React.FC<ViewQuizModalProps> = ({ quiz, isOpen, onClose, co
             )}
           </div>
         </div>
+        )}
+
+        {/* Violations Tab */}
+        {activeTab === 'violations' && (
+          <div className="space-y-4 py-4">
+            {loadingViolations ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-red-500"></div>
+                <span className="ml-3 text-slate-600 dark:text-slate-300">Loading violation reports...</span>
+              </div>
+            ) : violations.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                <div className="w-14 h-14 mx-auto mb-4 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center">
+                  <svg className="w-7 h-7 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <p className="text-slate-700 dark:text-slate-300 font-medium">No Security Violations</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">No students have been flagged for security violations on this quiz.</p>
+              </div>
+            ) : (
+              <>
+                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                  <p className="text-sm text-red-700 dark:text-red-300">
+                    <span className="font-bold">{violations.length} student{violations.length > 1 ? 's' : ''}</span> flagged for security violations.
+                    Blocked students cannot reattempt this quiz unless you unblock them.
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {violations.map((violation) => (
+                    <div
+                      key={violation.attempt_id}
+                      className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 bg-white dark:bg-slate-800"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-semibold text-slate-900 dark:text-white truncate">
+                              {violation.student_name}
+                            </p>
+                            {violation.is_blocked && (
+                              <Badge variant="destructive" className="text-xs flex-shrink-0">Blocked</Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-slate-500 dark:text-slate-400">{violation.student_email}</p>
+                          <div className="mt-2 space-y-1">
+                            <p className="text-sm text-slate-600 dark:text-slate-300">
+                              <span className="font-medium">Reason:</span> {violation.violation_reason}
+                            </p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                              <span className="font-medium">Attempt:</span> #{violation.attempt_number} &middot;{' '}
+                              <span className="font-medium">Score:</span> {Math.round(violation.score)}% &middot;{' '}
+                              <span className="font-medium">Date:</span> {new Date(violation.violated_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex-shrink-0">
+                          {violation.is_blocked && (
+                            <button
+                              onClick={() => {
+                                setShowUnblockDialog(violation);
+                                setUnblockReason('');
+                                setActionMessage(null);
+                              }}
+                              disabled={unblockingStudent === violation.user_id}
+                              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-orange-700 dark:text-orange-300 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors disabled:opacity-50"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                              </svg>
+                              Unblock
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Unblock Confirmation Dialog */}
+        {showUnblockDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 border border-slate-200 dark:border-slate-700">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
+                Unblock Student
+              </h3>
+              <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+                This will allow <span className="font-semibold">{showUnblockDialog.student_name}</span> to reattempt the quiz.
+                They will regain all remaining attempts.
+              </p>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                  Reason for unblocking <span className="text-slate-400">(optional)</span>
+                </label>
+                <textarea
+                  value={unblockReason}
+                  onChange={(e) => setUnblockReason(e.target.value)}
+                  placeholder="e.g., Student explained they accidentally switched tabs due to a notification..."
+                  className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 dark:bg-slate-700 dark:text-white resize-none"
+                  rows={3}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowUnblockDialog(null)}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-700 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUnblockStudent}
+                  disabled={unblockingStudent !== null}
+                  className="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50 inline-flex items-center gap-2"
+                >
+                  {unblockingStudent !== null ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Unblocking...
+                    </>
+                  ) : (
+                    'Confirm Unblock'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <DialogFooter className="flex gap-2 sm:gap-0">
           <Link
@@ -350,9 +609,10 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({
 interface QuizStatsProps {
   quizzes: Quiz[];
   courses: Course[];
+  totalViolations?: number;
 }
 
-const QuizStats: React.FC<QuizStatsProps> = ({ quizzes }) => {
+const QuizStats: React.FC<QuizStatsProps> = ({ quizzes, totalViolations }) => {
   const totalQuizzes = quizzes.length;
   const publishedQuizzes = quizzes.filter(q => q.is_published).length;
   const draftQuizzes = totalQuizzes - publishedQuizzes;
@@ -363,10 +623,13 @@ const QuizStats: React.FC<QuizStatsProps> = ({ quizzes }) => {
     { label: 'Published', value: publishedQuizzes, color: 'bg-green-100 dark:bg-green-900/20 text-green-600 dark:text-green-400' },
     { label: 'Drafts', value: draftQuizzes, color: 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400' },
     { label: 'Total Questions', value: totalQuestions, color: 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' },
+    ...(totalViolations !== undefined && totalViolations > 0 ? [
+      { label: 'Violations', value: totalViolations, color: 'bg-red-100 dark:bg-red-900/20 text-red-600 dark:text-red-400' }
+    ] : []),
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div className={`grid grid-cols-2 ${stats.length > 4 ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 mb-6`}>
       {stats.map((stat) => (
         <div key={stat.label} className={`rounded-lg p-4 ${stat.color}`}>
           <p className="text-2xl font-bold">{stat.value}</p>
@@ -385,9 +648,10 @@ interface QuizCardProps {
   courses: Course[];
   onView: (quiz: Quiz) => void;
   onDelete: (quiz: Quiz) => void;
+  violationCount?: number;
 }
 
-const QuizCard: React.FC<QuizCardProps> = ({ quiz, courses, onView, onDelete }) => {
+const QuizCard: React.FC<QuizCardProps> = ({ quiz, courses, onView, onDelete, violationCount }) => {
   const courseName = quiz.course_title || courses.find(c => c.id === quiz.course_id)?.title || 'Unknown';
   
   return (
@@ -397,9 +661,19 @@ const QuizCard: React.FC<QuizCardProps> = ({ quiz, courses, onView, onDelete }) 
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white line-clamp-2">
             {quiz.title}
           </h3>
-          <Badge variant={quiz.is_published ? "default" : "secondary"} className="ml-2 flex-shrink-0">
-            {quiz.is_published ? 'Published' : 'Draft'}
-          </Badge>
+          <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+            {violationCount !== undefined && violationCount > 0 && (
+              <Badge variant="destructive" className="text-xs">
+                <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                {violationCount}
+              </Badge>
+            )}
+            <Badge variant={quiz.is_published ? "default" : "secondary"}>
+              {quiz.is_published ? 'Published' : 'Draft'}
+            </Badge>
+          </div>
         </div>
         
         <div className="space-y-2 mb-4">
@@ -518,6 +792,16 @@ const QuizzesPage = () => {
   const [viewQuiz, setViewQuiz] = useState<Quiz | null>(null);
   const [deleteQuiz, setDeleteQuiz] = useState<Quiz | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  
+  // Violation counts per quiz (loaded lazily when modals open)
+  const [violationCounts, setViolationCounts] = useState<Record<number, number>>({});
+
+  const handleViolationCountLoaded = useCallback((quizId: number, count: number) => {
+    setViolationCounts(prev => {
+      if (prev[quizId] === count) return prev;
+      return { ...prev, [quizId]: count };
+    });
+  }, []);
 
   useEffect(() => {
     setIsClient(true);
@@ -536,6 +820,11 @@ const QuizzesPage = () => {
       
       setCourses(Array.isArray(coursesData) ? coursesData : []);
       setQuizzes(Array.isArray(quizzesData) ? quizzesData : []);
+      
+      // Fetch violation counts in the background
+      InstructorAssessmentService.getQuizViolationCounts().then(counts => {
+        setViolationCounts(counts);
+      });
     } catch (err: any) {
       console.error('Quizzes fetch error:', err);
       setError(err.message || 'Failed to load quizzes');
@@ -626,7 +915,13 @@ const QuizzesPage = () => {
       </div>
 
       {/* Stats */}
-      {quizzes.length > 0 && <QuizStats quizzes={quizzes} courses={courses} />}
+      {quizzes.length > 0 && (
+        <QuizStats 
+          quizzes={quizzes} 
+          courses={courses} 
+          totalViolations={Object.values(violationCounts).reduce((a, b) => a + b, 0)} 
+        />
+      )}
 
       {/* Filters */}
       <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 p-6">
@@ -711,6 +1006,7 @@ const QuizzesPage = () => {
               courses={courses}
               onView={handleViewQuiz}
               onDelete={handleDeleteClick}
+              violationCount={violationCounts[quiz.id]}
             />
           ))}
         </div>
@@ -722,6 +1018,7 @@ const QuizzesPage = () => {
         isOpen={!!viewQuiz}
         onClose={() => setViewQuiz(null)}
         courses={courses}
+        onViolationCountLoaded={handleViolationCountLoaded}
       />
 
       {/* Delete Confirmation Modal */}

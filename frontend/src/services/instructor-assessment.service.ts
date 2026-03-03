@@ -229,6 +229,76 @@ export class InstructorAssessmentService {
       throw ApiErrorHandler.handleError(error);
     }
   }
+
+  // =====================
+  // QUIZ SECURITY VIOLATIONS
+  // =====================
+
+  /**
+   * Get all security violation reports for a specific quiz
+   */
+  static async getQuizViolations(quizId: number): Promise<{
+    quiz_id: number;
+    quiz_title: string;
+    total_violations: number;
+    violations: Array<{
+      attempt_id: number;
+      user_id: number;
+      student_name: string;
+      student_email: string;
+      attempt_number: number;
+      violation_reason: string;
+      score: number;
+      violated_at: string;
+      is_blocked: boolean;
+    }>;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/quizzes/${quizId}/violations`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Unblock a student who was blocked due to a security violation
+   */
+  static async unblockStudent(quizId: number, studentId: number, reason: string): Promise<{
+    message: string;
+    student_id: number;
+    student_name: string;
+    quiz_id: number;
+    unblocked: boolean;
+  }> {
+    try {
+      const response = await apiClient.post(
+        `${this.BASE_PATH}/quizzes/${quizId}/unblock-student/${studentId}`,
+        { reason }
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Get violation counts for all quizzes (batch endpoint for badges)
+   */
+  static async getQuizViolationCounts(): Promise<Record<number, number>> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/quizzes/violation-counts`);
+      const counts: Record<number, number> = {};
+      const data = response.data.violation_counts || {};
+      for (const [quizId, count] of Object.entries(data)) {
+        counts[Number(quizId)] = count as number;
+      }
+      return counts;
+    } catch (error) {
+      console.error('Failed to fetch violation counts:', error);
+      return {};
+    }
+  }
 }
 
 export default InstructorAssessmentService;

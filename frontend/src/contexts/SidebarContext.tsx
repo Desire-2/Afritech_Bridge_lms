@@ -12,7 +12,7 @@ interface SidebarContextType {
   toggleCollapse: () => void;
 }
 
-const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
+export const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
 
 export const useSidebar = () => {
   const context = useContext(SidebarContext);
@@ -20,6 +20,11 @@ export const useSidebar = () => {
     throw new Error('useSidebar must be used within a SidebarProvider');
   }
   return context;
+};
+
+/** Safe version of useSidebar - returns undefined if no SidebarProvider is present */
+export const useSidebarSafe = () => {
+  return useContext(SidebarContext);
 };
 
 export const SidebarProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {

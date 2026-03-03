@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,7 +27,7 @@ import {
 import type { ContentQuiz, QuizQuestion } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
 import { toast } from 'sonner';
-import { useSidebar } from '@/contexts/SidebarContext';
+import { useSidebarSafe } from '@/contexts/SidebarContext';
 
 interface ExtendedQuiz extends ContentQuiz {
   time_limit?: number;
@@ -37,6 +38,7 @@ interface ExtendedQuiz extends ContentQuiz {
   show_correct_answers?: boolean;
   attempts_used?: number;
   best_score?: number;
+  blocked_due_to_violation?: boolean;
 }
 
 interface QuizAttemptTrackerProps {
@@ -70,15 +72,9 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   onSubmitQuiz,
   onQuizComplete
 }) => {
-  // Optional sidebar context - may not be available in all routes
-  let closeSidebar: (() => void) | undefined;
-  try {
-    const sidebar = useSidebar();
-    closeSidebar = sidebar.closeSidebar;
-  } catch (error) {
-    // SidebarProvider not available in this route
-    closeSidebar = undefined;
-  }
+  // Safe sidebar access - returns undefined if no SidebarProvider wraps this component
+  const sidebarContext = useSidebarSafe();
+  const closeSidebar = sidebarContext?.closeSidebar;
   
   const [quizState, setQuizState] = useState<QuizState>({
     status: 'not-started',
@@ -98,6 +94,24 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   const [securityViolation, setSecurityViolation] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
   const [isQuizActive, setIsQuizActive] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isContentHidden, setIsContentHidden] = useState(false); // Blur overlay for screenshot protection
+  
+  // Refs for values used in closures to prevent stale state
+  const securityViolationRef = useRef(false);
+  const submittingRef = useRef(false);
+  const isQuizActiveRef = useRef(false);
+  const quizStateRef = useRef(quizState);
+  const timeElapsedRef = useRef(0);
+  const securityGraceRef = useRef(false); // grace period after fullscreen entry
+  const isContentHiddenRef = useRef(false);
+  
+  // Keep refs in sync with state
+  useEffect(() => { securityViolationRef.current = securityViolation; }, [securityViolation]);
+  useEffect(() => { submittingRef.current = submitting; }, [submitting]);
+  useEffect(() => { isQuizActiveRef.current = isQuizActive; }, [isQuizActive]);
+  useEffect(() => { quizStateRef.current = quizState; }, [quizState]);
+  useEffect(() => { timeElapsedRef.current = timeElapsed; }, [timeElapsed]);
   
   // Shuffle utility function
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -142,184 +156,347 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   }, [quiz.questions, quiz.shuffle_questions, quiz.shuffle_answers]);
 
   // Timer effect with countdown and auto-submit
+  // Uses functional state updates to avoid stale closure on timeElapsed
   useEffect(() => {
     if (quizState.status === 'in-progress') {
       const interval = setInterval(() => {
-        setTimeElapsed(prev => prev + 1);
-        
-        // Update countdown timer
-        if (quiz.time_limit) {
-          const remaining = (quiz.time_limit * 60) - timeElapsed - 1;
-          setTimeRemaining(remaining);
+        setTimeElapsed(prev => {
+          const newElapsed = prev + 1;
+          timeElapsedRef.current = newElapsed;
           
-          // Auto-submit when time expires
-          if (remaining <= 0) {
-            clearInterval(interval);
-            toast.error('Time Expired!', {
-              description: 'Your quiz has been automatically submitted.',
-              duration: 5000
-            });
-            // Auto-submit without validation - submit current answers
-            handleTimeExpiredSubmit();
+          // Update countdown timer
+          if (quiz.time_limit) {
+            const remaining = (quiz.time_limit * 60) - newElapsed;
+            setTimeRemaining(remaining);
+            
+            // Auto-submit when time expires
+            if (remaining <= 0) {
+              clearInterval(interval);
+              toast.error('Time Expired!', {
+                description: 'Your quiz has been automatically submitted.',
+                duration: 5000
+              });
+              handleTimeExpiredSubmit();
+            }
+            
+            // Warning at 1 minute remaining
+            if (remaining === 60) {
+              toast.warning('1 Minute Remaining!', {
+                description: 'Please complete your quiz soon.',
+                duration: 5000
+              });
+            }
           }
           
-          // Warning at 1 minute remaining
-          if (remaining === 60) {
-            toast.warning('1 Minute Remaining!', {
-              description: 'Please complete your quiz soon.',
-              duration: 5000
-            });
-          }
-        }
+          return newElapsed;
+        });
       }, 1000);
       
       return () => clearInterval(interval);
     }
-  }, [quizState.status, timeElapsed]);
+  }, [quizState.status]); // Only depend on status, not timeElapsed
 
   // Security monitoring: tab switching, screenshots, content selection
+  // Works on both desktop and mobile devices
   useEffect(() => {
-    if (quizState.status === 'in-progress' && !submitting) {
-      // Detect tab/window switching
-      const handleVisibilityChange = () => {
-        if (document.hidden) {
-          setTabSwitchCount(prev => {
-            const newCount = prev + 1;
-            
-            toast.error(`Tab Switch Detected (${newCount}/3)`, {
-              description: 'Switching tabs during the quiz is not allowed. 3 violations will result in automatic submission with 0 score.',
+    if (quizState.status === 'in-progress') {
+      // Grace period: ignore events briefly after fullscreen entry to avoid false positives
+      securityGraceRef.current = true;
+      const graceTimer = setTimeout(() => {
+        securityGraceRef.current = false;
+      }, 2000); // 2 second grace period
+
+      // === VIOLATION TRACKING HELPER ===
+      const recordViolation = (label: string, description: string) => {
+        if (securityGraceRef.current || submittingRef.current) return;
+        setTabSwitchCount(prev => {
+          const newCount = prev + 1;
+          toast.error(`${label} (${newCount}/3)`, { description, duration: 5000 });
+
+          if (newCount >= 3 && !securityViolationRef.current) {
+            setSecurityViolation(true);
+            securityViolationRef.current = true;
+            toast.error('Maximum Violations Reached', {
+              description: 'Quiz will be submitted with 0 score due to multiple security violations.',
               duration: 5000
             });
-            
-            if (newCount >= 3 && !securityViolation) {
-              setSecurityViolation(true);
-              toast.error('Maximum Violations Reached', {
-                description: 'Quiz will be submitted with 0 score due to multiple security violations.',
-                duration: 5000
-              });
-              
-              setTimeout(() => {
-                submitQuizWithViolation();
-              }, 2000);
-            }
-            
-            return newCount;
-          });
-        }
-      };
-
-      // Detect window blur (switching windows)
-      const handleWindowBlur = () => {
-        if (!document.hidden) {
-          setTabSwitchCount(prev => {
-            const newCount = prev + 1;
-            
-            toast.error(`Window Change Detected (${newCount}/3)`, {
-              description: 'Changing windows during the quiz is not allowed.',
-              duration: 5000
-            });
-            
-            if (newCount >= 3 && !securityViolation) {
-              setSecurityViolation(true);
-              
-              setTimeout(() => {
-                submitQuizWithViolation();
-              }, 2000);
-            }
-            
-            return newCount;
-          });
-        }
-      };
-
-      // Prevent screenshots
-      const handleKeyDown = (e: KeyboardEvent) => {
-        // Prevent PrintScreen, Ctrl+P, Cmd+Shift+3/4/5 (Mac screenshots)
-        if (
-          e.key === 'PrintScreen' ||
-          (e.ctrlKey && e.key === 'p') ||
-          (e.metaKey && e.shiftKey && ['3', '4', '5'].includes(e.key))
-        ) {
-          e.preventDefault();
-          toast.warning('Screenshots Disabled', {
-            description: 'Taking screenshots during the quiz is not allowed.',
-            duration: 3000
-          });
-        }
-      };
-
-      // Prevent right-click context menu
-      const handleContextMenu = (e: MouseEvent) => {
-        e.preventDefault();
-        toast.warning('Right-click Disabled', {
-          description: 'Right-click is disabled during the quiz.',
-          duration: 2000
+            setTimeout(() => { submitQuizWithViolation(); }, 2000);
+          }
+          return newCount;
         });
       };
 
-      // Disable text selection
+      // === CONTENT BLUR HELPER (hides quiz content during screenshot attempts) ===
+      const hideContent = () => {
+        if (!isContentHiddenRef.current) {
+          isContentHiddenRef.current = true;
+          setIsContentHidden(true);
+        }
+      };
+      const showContent = () => {
+        if (isContentHiddenRef.current) {
+          isContentHiddenRef.current = false;
+          setIsContentHidden(false);
+        }
+      };
+
+      // === 1. VISIBILITY CHANGE (tab switch — works on all browsers/devices) ===
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          hideContent(); // blur quiz immediately
+          recordViolation('Tab Switch Detected', 'Switching tabs during the quiz is not allowed. 3 violations = automatic 0 score.');
+        } else {
+          // Small delay before showing content again (defeats rapid tab-back screenshot)
+          setTimeout(showContent, 600);
+        }
+      };
+
+      // === 2. WINDOW BLUR (switching apps — desktop + mobile) ===
+      const handleWindowBlur = () => {
+        if (!document.hidden) {
+          hideContent();
+          recordViolation('Window Change Detected', 'Changing windows during the quiz is not allowed.');
+        }
+      };
+      const handleWindowFocus = () => {
+        setTimeout(showContent, 600);
+      };
+
+      // === 3. SCREENSHOT KEY PREVENTION (desktop) ===
+      const handleKeyDown = (e: KeyboardEvent) => {
+        // PrintScreen
+        if (e.key === 'PrintScreen') {
+          e.preventDefault();
+          // Clear clipboard to remove any captured screenshot
+          navigator.clipboard?.writeText?.('')?.catch(() => {});
+          hideContent();
+          toast.warning('Screenshot Blocked', {
+            description: 'Screenshots are not allowed during the quiz.',
+            duration: 3000
+          });
+          setTimeout(showContent, 1500);
+          return;
+        }
+        // Ctrl/Cmd + P (print)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+          e.preventDefault();
+          toast.warning('Printing Disabled', { description: 'Printing is disabled during the quiz.', duration: 3000 });
+          return;
+        }
+        // Cmd+Shift+3/4/5 (Mac screenshots)
+        if (e.metaKey && e.shiftKey && ['3', '4', '5'].includes(e.key)) {
+          e.preventDefault();
+          hideContent();
+          toast.warning('Screenshot Blocked', { description: 'Screenshots are not allowed during the quiz.', duration: 3000 });
+          setTimeout(showContent, 1500);
+          return;
+        }
+        // Ctrl+Shift+I / F12 (DevTools)
+        if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'i') || e.key === 'F12') {
+          e.preventDefault();
+          toast.warning('Developer Tools Disabled', { description: 'Developer tools cannot be used during the quiz.', duration: 3000 });
+          return;
+        }
+        // Ctrl+Shift+S (save screenshot in some browsers)
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          return;
+        }
+        // Ctrl+S (save page)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          return;
+        }
+        // Ctrl+U (view source)
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'u') {
+          e.preventDefault();
+          return;
+        }
+      };
+
+      // === 4. CLIPBOARD PREVENTION (copy, cut, paste) ===
+      const handleCopy = (e: ClipboardEvent) => {
+        e.preventDefault();
+        toast.warning('Copy Disabled', { description: 'Copying content is not allowed during the quiz.', duration: 2000 });
+      };
+      const handleCut = (e: ClipboardEvent) => {
+        e.preventDefault();
+      };
+
+      // === 5. CONTEXT MENU PREVENTION (right-click & long-press on mobile) ===
+      const handleContextMenu = (e: Event) => {
+        e.preventDefault();
+        toast.warning('Menu Disabled', { description: 'Context menu is disabled during the quiz.', duration: 2000 });
+      };
+
+      // === 6. DRAG PREVENTION (prevents dragging images/text on desktop & mobile) ===
+      const handleDragStart = (e: DragEvent) => {
+        e.preventDefault();
+      };
+
+      // === 7. MOBILE-SPECIFIC: Multi-touch detection (3+ fingers can trigger screenshots on some devices) ===
+      const handleTouchStart = (e: TouchEvent) => {
+        if (e.touches.length >= 3) {
+          hideContent();
+          toast.warning('Multi-touch Detected', { description: 'Multi-touch gestures are not allowed during the quiz.', duration: 3000 });
+          setTimeout(showContent, 1500);
+        }
+      };
+
+      // === 8. MOBILE-SPECIFIC: iOS screenshot detection via window resize ===
+      // On iOS, taking a screenshot briefly resizes the window
+      let lastWindowHeight = window.innerHeight;
+      const handleResize = () => {
+        const currentHeight = window.innerHeight;
+        const heightDiff = Math.abs(currentHeight - lastWindowHeight);
+        // Ignore small resizes (keyboard show/hide) but detect screenshot-like flickers
+        // iOS screenshots cause a very brief height change that reverts
+        lastWindowHeight = currentHeight;
+        // If focus is lost simultaneously with resize, it's suspicious
+        if (document.hidden && heightDiff > 0 && heightDiff < 50) {
+          hideContent();
+        }
+      };
+
+      // === 9. SCREEN CAPTURE API DETECTION ===
+      // Detect if screen recording/sharing starts
+      let displayMediaCleanup: (() => void) | null = null;
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+        // Override getDisplayMedia to detect screen capture attempts
+        const originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia;
+        if (originalGetDisplayMedia) {
+          navigator.mediaDevices.getDisplayMedia = async function(...args) {
+            recordViolation('Screen Capture Detected', 'Screen recording/sharing is not allowed during the quiz.');
+            throw new DOMException('Screen capture is not allowed during quiz', 'NotAllowedError');
+          };
+          displayMediaCleanup = () => {
+            navigator.mediaDevices.getDisplayMedia = originalGetDisplayMedia;
+          };
+        }
+      }
+
+      // === 10. CSS-BASED PROTECTION ===
       const disableSelection = () => {
         document.body.style.userSelect = 'none';
         document.body.style.webkitUserSelect = 'none';
+        // Prevent iOS callout menu on long-press
+        (document.body.style as any).webkitTouchCallout = 'none';
       };
-
       const enableSelection = () => {
         document.body.style.userSelect = '';
         document.body.style.webkitUserSelect = '';
+        (document.body.style as any).webkitTouchCallout = '';
       };
 
-      // Monitor fullscreen exit as a violation
+      // === 11. PRINT PREVENTION ===
+      const printStyle = document.createElement('style');
+      printStyle.id = 'quiz-print-block';
+      printStyle.textContent = `
+        @media print {
+          body * { display: none !important; }
+          body::after {
+            content: 'Printing is not allowed during the quiz.';
+            display: block !important;
+            font-size: 24px;
+            text-align: center;
+            padding: 100px;
+            color: red;
+          }
+        }
+      `;
+      document.head.appendChild(printStyle);
+
+      // === 12. BEFORE PRINT / AFTER PRINT (native print dialog) ===
+      const handleBeforePrint = () => {
+        hideContent();
+        recordViolation('Print Attempt Detected', 'Printing the quiz is not allowed.');
+      };
+      const handleAfterPrint = () => {
+        setTimeout(showContent, 1000);
+      };
+
+      // === 13. FULLSCREEN EXIT MONITORING ===
       const handleFullscreenChange = () => {
-        if (!document.fullscreenElement && isQuizActive && !securityViolation) {
+        if (!document.fullscreenElement && isQuizActiveRef.current && !securityViolationRef.current && !securityGraceRef.current) {
+          setIsFullscreen(false);
           setTabSwitchCount(prev => {
             const newCount = prev + 1;
-            
             toast.error(`Fullscreen Exit Detected (${newCount}/3)`, {
               description: 'Exiting fullscreen during the quiz is not allowed.',
               duration: 5000
             });
-            
-            if (newCount >= 3 && !securityViolation) {
+            if (newCount >= 3 && !securityViolationRef.current) {
               setSecurityViolation(true);
+              securityViolationRef.current = true;
               toast.error('Maximum Violations Reached', {
                 description: 'Quiz will be submitted with 0 score due to multiple security violations.',
                 duration: 5000
               });
-              
-              setTimeout(() => {
-                submitQuizWithViolation();
-              }, 2000);
+              setTimeout(() => { submitQuizWithViolation(); }, 2000);
             } else {
-              // Try to re-enter fullscreen
               enterFullscreen();
             }
-            
             return newCount;
           });
+        } else if (document.fullscreenElement) {
+          setIsFullscreen(true);
         }
       };
 
-      // Add event listeners
+      // === REGISTER ALL EVENT LISTENERS ===
       document.addEventListener('visibilitychange', handleVisibilityChange);
       window.addEventListener('blur', handleWindowBlur);
-      document.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('focus', handleWindowFocus);
+      document.addEventListener('keydown', handleKeyDown, true); // capture phase
+      document.addEventListener('keyup', (e) => {
+        if (e.key === 'PrintScreen') { navigator.clipboard?.writeText?.('')?.catch(() => {}); }
+      }, true);
+      document.addEventListener('copy', handleCopy, true);
+      document.addEventListener('cut', handleCut, true);
       document.addEventListener('contextmenu', handleContextMenu);
+      document.addEventListener('dragstart', handleDragStart);
+      document.addEventListener('touchstart', handleTouchStart, { passive: true });
       document.addEventListener('fullscreenchange', handleFullscreenChange);
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('beforeprint', handleBeforePrint);
+      window.addEventListener('afterprint', handleAfterPrint);
       disableSelection();
 
       // Cleanup
       return () => {
+        clearTimeout(graceTimer);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('blur', handleWindowBlur);
-        document.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('focus', handleWindowFocus);
+        document.removeEventListener('keydown', handleKeyDown, true);
+        document.removeEventListener('copy', handleCopy, true);
+        document.removeEventListener('cut', handleCut, true);
         document.removeEventListener('contextmenu', handleContextMenu);
+        document.removeEventListener('dragstart', handleDragStart);
+        document.removeEventListener('touchstart', handleTouchStart);
         document.removeEventListener('fullscreenchange', handleFullscreenChange);
+        window.removeEventListener('resize', handleResize);
+        window.removeEventListener('beforeprint', handleBeforePrint);
+        window.removeEventListener('afterprint', handleAfterPrint);
         enableSelection();
+        showContent();
+        if (displayMediaCleanup) displayMediaCleanup();
+        const pStyle = document.getElementById('quiz-print-block');
+        if (pStyle) pStyle.remove();
       };
     }
-  }, [quizState.status, isQuizActive, securityViolation]);
+  }, [quizState.status]); // Minimal dependencies - use refs for mutable values
 
   const startQuiz = () => {
+    // Double-check violation status before starting
+    if (quiz.blocked_due_to_violation) {
+      toast.error('Quiz Blocked', {
+        description: 'Your attempts have been blocked due to a security violation. Contact your instructor.',
+        duration: 5000
+      });
+      return;
+    }
+    
     setQuizState({
       ...quizState,
       status: 'in-progress',
@@ -327,9 +504,12 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       answers: {}
     });
     setTimeElapsed(0);
+    timeElapsedRef.current = 0;
     setTabSwitchCount(0);
     setSecurityViolation(false);
+    securityViolationRef.current = false;
     setIsQuizActive(true);
+    isQuizActiveRef.current = true;
     
     // Initialize countdown timer
     if (quiz.time_limit) {
@@ -356,8 +536,12 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   const enterFullscreen = () => {
     const elem = document.documentElement;
     if (elem.requestFullscreen) {
-      elem.requestFullscreen().catch(err => {
+      elem.requestFullscreen().then(() => {
+        setIsFullscreen(true);
+      }).catch(err => {
         console.error('Error attempting to enable fullscreen:', err);
+        // Still show quiz even if fullscreen fails
+        setIsFullscreen(false);
         toast.warning('Fullscreen Not Available', {
           description: 'Please manually enter fullscreen mode (F11) for better focus.',
           duration: 5000
@@ -367,6 +551,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   };
 
   const exitFullscreen = () => {
+    setIsFullscreen(false);
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(err => {
         console.error('Error attempting to exit fullscreen:', err);
@@ -399,36 +584,63 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     }
   };
 
-  // Submit quiz with 0 score due to security violation
+  // Submit quiz with 0 score due to security violation and block all remaining attempts
   const submitQuizWithViolation = async () => {
-    if (submitting || quizState.status !== 'in-progress') return;
+    if (submittingRef.current || quizStateRef.current.status !== 'in-progress') return;
     
     setSubmitting(true);
+    submittingRef.current = true;
     setError(null);
     setIsQuizActive(false);
+    isQuizActiveRef.current = false;
     exitFullscreen();
 
     try {
-      // Submit with empty answers to get 0 score
+      // Report the violation to block all remaining attempts
+      try {
+        await ContentAssignmentService.reportQuizViolation(
+          quiz.id,
+          'Multiple security policy violations detected (tab switching / fullscreen exit)',
+          tabSwitchCount
+        );
+      } catch (reportErr) {
+        console.warn('Failed to report violation (non-critical):', reportErr);
+      }
+
+      // Submit with empty answers and mark as violation
       const emptyAnswers = questions.reduce((acc, q) => {
         acc[q.id] = '';
         return acc;
       }, {} as Record<number, string>);
       
-      const result = await ContentAssignmentService.submitQuiz(quiz.id, emptyAnswers);
+      const result = await ContentAssignmentService.submitQuiz(quiz.id, emptyAnswers, {
+        security_violation: true,
+        violation_reason: `Security violation: ${tabSwitchCount} violations detected (tab switch / fullscreen exit)`
+      });
       
-      setQuizState({
-        ...quizState,
+      const scoreRounded = Math.round(result.score ?? 0);
+      
+      setQuizState(prev => ({
+        ...prev,
         status: 'completed',
         score: 0,
-        feedback: 'Quiz submitted due to security violation. Score: 0%'
+        feedback: 'Quiz submitted due to security violation. Score: 0%. All remaining attempts have been blocked.'
+      }));
+      setSubmissionResult({
+        score: scoreRounded,
+        passed: false,
+        attempt_number: result.attempt_number || 1,
+        total_attempts: result.total_attempts || result.attempt_number || 1,
+        remaining_attempts: 0  // All attempts blocked
       });
-      setSubmissionResult(result);
-      onQuizComplete(result);
+      
+      if (onQuizComplete) {
+        onQuizComplete(0, false);
+      }
       
       toast.error('Quiz Submitted - Security Violation', {
-        description: 'Your quiz has been submitted with a score of 0% due to security policy violation.',
-        duration: 10000
+        description: 'Your quiz has been submitted with a score of 0%. All remaining attempts have been blocked due to security policy violation. Contact your instructor for assistance.',
+        duration: 15000
       });
     } catch (err: any) {
       console.error('Error submitting quiz with violation:', err);
@@ -439,21 +651,24 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       });
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 
   const handleTimeExpiredSubmit = async () => {
     // Guard against duplicate submissions
-    if (submitting || quizState.status !== 'in-progress') return;
+    if (submittingRef.current || quizStateRef.current.status !== 'in-progress') return;
     
     setSubmitting(true);
+    submittingRef.current = true;
     setError(null);
     setIsQuizActive(false);
+    isQuizActiveRef.current = false;
     exitFullscreen();
 
     try {
       console.log('Time expired - auto-submitting quiz with current answers');
-      const result = await ContentAssignmentService.submitQuiz(quiz.id, quizState.answers);
+      const result = await ContentAssignmentService.submitQuiz(quiz.id, quizStateRef.current.answers);
       
       const scoreRounded = Math.round(result.score);
       
@@ -478,7 +693,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         duration: 5000
       });
 
-      onQuizComplete?.(scoreRounded);
+      // Fix: call with correct (score, passed) arguments
+      onQuizComplete?.(scoreRounded, result.passed);
     } catch (err: any) {
       console.error('Time expired submission error:', err);
       setError(err.response?.data?.message || 'Failed to submit quiz');
@@ -488,12 +704,13 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       });
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 
   const submitQuiz = async () => {
-    // Guard against duplicate submissions
-    if (submitting || quizState.status !== 'in-progress') return;
+    // Guard against duplicate submissions using refs to avoid stale closures
+    if (submittingRef.current || quizStateRef.current.status !== 'in-progress') return;
     
     // Validate all questions are answered
     if (!allQuestionsAnswered) {
@@ -511,13 +728,16 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     }
 
     setSubmitting(true);
+    submittingRef.current = true;
     setError(null);
     setIsQuizActive(false);
+    isQuizActiveRef.current = false;
     exitFullscreen();
 
     try {
-      console.log('Submitting quiz:', { quizId: quiz.id, answersCount: answeredCount, answers: quizState.answers });
-      const result = await ContentAssignmentService.submitQuiz(quiz.id, quizState.answers);
+      const currentAnswers = quizStateRef.current.answers;
+      console.log('Submitting quiz:', { quizId: quiz.id, answersCount: answeredCount, answers: currentAnswers });
+      const result = await ContentAssignmentService.submitQuiz(quiz.id, currentAnswers);
       
       console.log('Quiz submission result:', result);
       
@@ -533,17 +753,17 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       };
       setSubmissionResult(submissionData);
       
-      setQuizState({
-        ...quizState,
+      setQuizState(prev => ({
+        ...prev,
         status: 'completed',
         score: result.score,
         feedback: result.passed 
           ? `Congratulations! You passed with a score of ${scoreRounded}%` 
           : `You scored ${scoreRounded}%. Passing score is ${quiz.passing_score || 70}%`
-      });
+      }));
 
       // Call parent callbacks
-      onSubmitQuiz(quizState.answers);
+      onSubmitQuiz(currentAnswers);
       if (onQuizComplete) {
         onQuizComplete(result.score, result.passed);
       }
@@ -571,6 +791,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       });
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 
@@ -598,7 +819,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   // Check if max attempts reached
   const attemptsUsed = quiz.attempts_used || 0;
   const maxAttempts = quiz.max_attempts || -1;
-  const canAttempt = maxAttempts === -1 || attemptsUsed < maxAttempts;
+  const isBlockedByViolation = quiz.blocked_due_to_violation === true;
+  const canAttempt = !isBlockedByViolation && (maxAttempts === -1 || attemptsUsed < maxAttempts);
 
   // Handle empty quiz
   if (!questions || questions.length === 0) {
@@ -617,7 +839,24 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   if (quizState.status === 'not-started') {
     return (
       <div className="space-y-6">
-        {!canAttempt && (
+        {isBlockedByViolation && (
+          <Alert className="border-red-700 bg-red-900/30">
+            <XCircle className="h-5 w-5 text-red-400" />
+            <AlertTitle className="text-red-300 text-lg font-bold">Quiz Blocked - Security Violation</AlertTitle>
+            <AlertDescription className="text-red-200">
+              <p className="mb-2">
+                All remaining attempts for this quiz have been permanently blocked due to a security policy violation
+                detected during a previous attempt.
+              </p>
+              <p className="text-red-300 text-sm">
+                Violations include: switching tabs, exiting fullscreen, or opening other applications during the quiz.
+                Please contact your instructor if you believe this was an error.
+              </p>
+            </AlertDescription>
+          </Alert>
+        )}
+        
+        {!canAttempt && !isBlockedByViolation && (
           <Alert className="border-red-700 bg-red-900/30">
             <AlertCircle className="h-4 w-4 text-red-400" />
             <AlertTitle className="text-red-300">Maximum Attempts Reached</AlertTitle>
@@ -795,11 +1034,13 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               <AlertDescription className="text-orange-800 dark:text-orange-300">
                 <p className="mb-2 font-semibold">This quiz is monitored for academic integrity:</p>
                 <ul className="list-disc ml-5 space-y-1 text-sm">
-                  <li><strong>No tab switching</strong> - Stay on this page</li>
-                  <li><strong>No window changes</strong> - Keep this window active</li>
-                  <li><strong>Screenshots disabled</strong> - Cannot capture quiz content</li>
-                  <li><strong>Content selection disabled</strong> - Cannot copy text</li>
-                  <li className="text-red-700 dark:text-red-400 font-bold">⚠️ Any violation = Automatic 0 score and submission</li>
+                  <li><strong>No tab switching</strong> — Stay on this page at all times</li>
+                  <li><strong>No window changes</strong> — Keep this window active &amp; focused</li>
+                  <li><strong>Screenshots &amp; screen recording blocked</strong> — Content is hidden when you leave</li>
+                  <li><strong>Printing disabled</strong> — Cannot print quiz content</li>
+                  <li><strong>Copy / paste disabled</strong> — Cannot copy text or images</li>
+                  <li><strong>Works on mobile &amp; desktop</strong> — All devices are monitored equally</li>
+                  <li className="text-red-700 dark:text-red-400 font-bold">⚠️ 3 violations = Automatic 0 score &amp; all remaining attempts blocked</li>
                 </ul>
               </AlertDescription>
             </Alert>
@@ -902,7 +1143,8 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                     <AlertDescription className="text-yellow-800 dark:text-yellow-300">
                       You scored below the passing threshold of {quiz.passing_score || 70}%.
                       {canAttempt && ' You still have attempts remaining to retake this quiz!'}
-                      {!canAttempt && ' Unfortunately, you\'ve used all available attempts.'}
+                      {!canAttempt && isBlockedByViolation && ' Your remaining attempts have been blocked due to a security violation.'}
+                      {!canAttempt && !isBlockedByViolation && ' Unfortunately, you\'ve used all available attempts.'}
                     </AlertDescription>
                   </Alert>
 
@@ -1000,10 +1242,36 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
     );
   }
 
-  // In Progress State
+  // In Progress State - Render as a fullscreen overlay via portal to escape tab container constraints
   if (quizState.status === 'in-progress' && currentQuestion) {
-    return (
-      <div className="space-y-6">
+    const quizContent = (
+      <div
+        className="fixed inset-0 z-[9999] bg-gray-900 overflow-y-auto"
+        style={{
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          WebkitTouchCallout: 'none' as any,
+        }}
+      >
+        {/* Screenshot protection: blur overlay when focus is lost or screenshot detected */}
+        {isContentHidden && (
+          <div className="fixed inset-0 z-[99999] bg-gray-900 flex items-center justify-center" style={{ backdropFilter: 'blur(30px)' }}>
+            <div className="text-center p-8">
+              <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-900/50 flex items-center justify-center">
+                <XCircle className="h-10 w-10 text-red-400" />
+              </div>
+              <h2 className="text-2xl font-bold text-red-400 mb-3">Quiz Content Protected</h2>
+              <p className="text-gray-300 text-sm max-w-md">
+                Quiz content is hidden because a potential screenshot or screen capture was detected.
+                Return to this window to continue your quiz.
+              </p>
+              <p className="text-gray-500 text-xs mt-4">
+                This action has been recorded as a security event.
+              </p>
+            </div>
+          </div>
+        )}
+        <div className="min-h-screen p-3 sm:p-4 md:p-6 lg:p-8 max-w-5xl mx-auto space-y-6">
         {/* Error Alert */}
         {error && (
           <Alert className="border-red-700 bg-red-900/30">
@@ -1022,9 +1290,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
           <AlertDescription className="text-orange-800 dark:text-orange-300 text-sm">
             <ul className="list-disc ml-5 space-y-1">
               <li>Tab switching and window changes are being monitored</li>
-              <li>Screenshots and content copying are disabled</li>
-              <li>Any violation will result in automatic submission with 0 score</li>
-              <li>Stay focused on this page until quiz completion</li>
+              <li>Screenshots, screen recording, and printing are blocked</li>
+              <li>Content copying and right-click are disabled</li>
+              <li>Quiz content is hidden when you leave this window</li>
+              <li><strong className="text-red-600 dark:text-red-400">3 violations = automatic 0 score &amp; all attempts blocked</strong></li>
             </ul>
           </AlertDescription>
         </Alert>
@@ -1305,16 +1574,33 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
           </CardContent>
         </Card>
       </div>
+      </div>
     );
+    
+    // Render as portal to escape parent container constraints (tab content height/scroll)
+    return typeof document !== 'undefined'
+      ? createPortal(quizContent, document.body)
+      : quizContent;
   }
 
   // Completed State
   if (quizState.status === 'completed') {
     const passed = quizState.score && quizState.score >= (quiz.passing_score || 80);
-    const hasRemainingAttempts = submissionResult && (submissionResult.remaining_attempts === -1 || submissionResult.remaining_attempts > 0);
+    const hasRemainingAttempts = submissionResult && !securityViolation && !isBlockedByViolation && (submissionResult.remaining_attempts === -1 || submissionResult.remaining_attempts > 0);
     
     return (
       <div className="space-y-6">
+        {securityViolation && (
+          <Alert className="border-red-700 bg-red-900/30 mb-4">
+            <XCircle className="h-5 w-5 text-red-400" />
+            <AlertTitle className="text-red-300 text-lg font-bold">Security Violation - All Attempts Blocked</AlertTitle>
+            <AlertDescription className="text-red-200">
+              This quiz was auto-submitted with a score of 0% due to security policy violations.
+              All remaining attempts have been permanently blocked. Contact your instructor for assistance.
+            </AlertDescription>
+          </Alert>
+        )}
+        
         <Card className={`border-2 shadow-2xl ${passed ? 'border-green-300 dark:border-green-700 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 dark:from-green-950 dark:via-emerald-950 dark:to-teal-950' : 'border-yellow-300 dark:border-yellow-700 bg-gradient-to-br from-yellow-50 via-orange-50 to-amber-50 dark:from-yellow-950 dark:via-orange-950 dark:to-amber-950'}`}>
           <CardContent className="p-6 sm:p-10 text-center">
             <div className="mb-8">

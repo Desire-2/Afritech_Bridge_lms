@@ -1875,6 +1875,11 @@ def get_quiz(quiz_id):
             quiz_id=quiz_id
         ).all()
         
+        # Check if student is blocked from quiz due to security violation
+        has_violation = any(
+            getattr(a, 'security_violation', False) for a in attempts
+        )
+        
         # Get quiz questions with answers
         questions_list = []
         if quiz.questions:
@@ -1923,6 +1928,7 @@ def get_quiz(quiz_id):
             'shuffle_questions': quiz.shuffle_questions,
             'shuffle_answers': quiz.shuffle_answers,
             'show_correct_answers': quiz.show_correct_answers,
+            'blocked_due_to_violation': has_violation,
             'questions': questions_list
         }
         
@@ -1930,6 +1936,51 @@ def get_quiz(quiz_id):
         
     except Exception as e:
         return jsonify({"message": "Error fetching quiz", "error": str(e)}), 500
+
+@student_bp.route("/quizzes/<int:quiz_id>/report-violation", methods=["POST"])
+@student_required
+def report_quiz_violation(quiz_id):
+    """Report a security violation during a quiz attempt and block all remaining attempts"""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    
+    try:
+        quiz = Quiz.query.get_or_404(quiz_id)
+        violation_reason = data.get('reason', 'Security policy violation detected')
+        violation_count = data.get('violation_count', 0)
+        
+        # Find the most recent in-progress or latest attempt
+        latest_attempt = QuizAttempt.query.filter_by(
+            user_id=current_user_id,
+            quiz_id=quiz_id
+        ).order_by(QuizAttempt.created_at.desc()).first()
+        
+        if latest_attempt:
+            latest_attempt.security_violation = True
+            latest_attempt.violation_reason = f"{violation_reason} (violations: {violation_count})"
+            latest_attempt.end_time = datetime.utcnow()
+            # Mark score as 0 if not already graded
+            if latest_attempt.score is None or latest_attempt.score_percentage is None:
+                latest_attempt.score = 0
+                latest_attempt.score_percentage = 0
+        
+        db.session.commit()
+        
+        logger.warning(
+            f"⚠️ Security violation reported for user {current_user_id} on quiz {quiz_id}: "
+            f"{violation_reason} (count: {violation_count})"
+        )
+        
+        return jsonify({
+            "message": "Security violation recorded. All remaining attempts have been blocked.",
+            "blocked": True,
+            "violation_reason": violation_reason
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error reporting quiz violation: {str(e)}")
+        return jsonify({"message": "Error reporting violation", "error": str(e)}), 500
 
 @student_bp.route("/quizzes/<int:quiz_id>/submit", methods=["POST"])
 @student_required
@@ -1952,10 +2003,24 @@ def submit_quiz(quiz_id):
             return jsonify({"message": "Not enrolled in this course"}), 403
         
         # Check attempt limit
-        existing_attempts = QuizAttempt.query.filter_by(
+        existing_attempts_list = QuizAttempt.query.filter_by(
             user_id=current_user_id,
             quiz_id=quiz_id
-        ).count()
+        ).all()
+        existing_attempts = len(existing_attempts_list)
+        
+        # Check if student is blocked due to a security violation
+        has_violation = any(
+            getattr(a, 'security_violation', False) for a in existing_attempts_list
+        )
+        is_violation_submission = data.get('security_violation', False)
+        
+        # Block new attempts if there's a prior violation (but allow the violation submission itself)
+        if has_violation and not is_violation_submission:
+            return jsonify({
+                "message": "Your quiz attempts have been blocked due to a security violation. Please contact your instructor.",
+                "blocked": True
+            }), 403
         
         # Check if max attempts is set and exceeded (None or -1 means unlimited)
         if quiz.max_attempts and quiz.max_attempts > 0 and existing_attempts >= quiz.max_attempts:
@@ -2012,7 +2077,9 @@ def submit_quiz(quiz_id):
             score=earned_points,
             score_percentage=score_percentage,
             start_time=datetime.utcnow(),
-            end_time=datetime.utcnow()
+            end_time=datetime.utcnow(),
+            security_violation=is_violation_submission,
+            violation_reason=data.get('violation_reason') if is_violation_submission else None
         )
         
         db.session.add(attempt)
@@ -2100,19 +2167,22 @@ def submit_quiz(quiz_id):
                 # Don't fail the whole request, just log the error
         # ===== END ENHANCED FIX =====
         
-        # Calculate remaining attempts
-        if quiz.max_attempts and quiz.max_attempts > 0:
+        # Calculate remaining attempts — 0 if violation, otherwise normal calculation
+        if is_violation_submission:
+            remaining = 0
+        elif quiz.max_attempts and quiz.max_attempts > 0:
             remaining = quiz.max_attempts - attempt_number
         else:
             remaining = -1  # Unlimited
         
         return jsonify({
-            "message": "Quiz submitted successfully",
+            "message": "Quiz submitted due to security violation. All remaining attempts are blocked." if is_violation_submission else "Quiz submitted successfully",
             "score": score_percentage,
             "passed": score_percentage >= quiz.passing_score,
             "attempt_number": attempt_number,
             "total_attempts": attempt_number,
-            "remaining_attempts": remaining
+            "remaining_attempts": remaining,
+            "blocked_due_to_violation": is_violation_submission
         }), 200
         
     except Exception as e:
