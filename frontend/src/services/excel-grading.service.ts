@@ -97,6 +97,23 @@ export interface GradingStats {
   lowest_score: number;
 }
 
+export interface LearningStats {
+  course_id: number;
+  total_reviews: number;
+  approval_rate: number;
+  average_override_delta: number;
+  generated_rubrics: number;
+  approved_rubrics: number;
+  confidence_trend: string;
+  recent_overrides: Array<{
+    assignment_id: number;
+    ai_score: number;
+    instructor_score: number;
+    delta: number;
+    date: string;
+  }>;
+}
+
 export interface GradeableSubmission {
   submission_id: number;
   assignment_id: number;
@@ -291,6 +308,20 @@ export class ExcelGradingService {
       const response = await apiClient.post(`${BASE}/preview`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000,
+      });
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Get AI learning stats for a course (shows calibration, rubric generation, etc.).
+   */
+  static async getLearningStats(courseId: number): Promise<LearningStats> {
+    try {
+      const response = await apiClient.get(`${BASE}/learning/stats`, {
+        params: { course_id: courseId },
       });
       return response.data;
     } catch (error) {
