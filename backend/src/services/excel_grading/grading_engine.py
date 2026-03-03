@@ -92,6 +92,7 @@ class GradingEngine:
         formatting_analysis: Dict[str, Any],
         requirements: Optional[Dict[str, Any]] = None,
         instructor_rubric: Optional[Dict[str, Any]] = None,
+        mastery_level: Optional[Dict[str, Any]] = None,
     ):
         self.wb = workbook_analysis
         self.formulas = formula_analysis
@@ -102,6 +103,11 @@ class GradingEngine:
         self.formatting = formatting_analysis
         self.requirements = requirements or {}
         self.instructor_rubric = instructor_rubric
+
+        # Mastery level context (from detect_mastery_level())
+        self.mastery_level = mastery_level or {}
+        self.level_id = self.mastery_level.get('level_id', 'intermediate')
+        self.level_expectations = self.mastery_level.get('scoring_expectations', {})
 
         # Use instructor rubric weights if available, otherwise defaults
         self.rubric = self._build_rubric()
@@ -160,6 +166,12 @@ class GradingEngine:
             'confidence': confidence,
             'flagged_issues': flagged,
             'manual_review_required': manual_review,
+            'mastery_level': {
+                'level_id': self.level_id,
+                'level_name': self.mastery_level.get('level_name', 'Intermediate'),
+                'level_number': self.mastery_level.get('level_number', 2),
+                'confidence': self.mastery_level.get('confidence', 'medium'),
+            },
         }
 
     # ------------------------------------------------------------------
@@ -279,7 +291,7 @@ class GradingEngine:
     # ------------------------------------------------------------------
 
     def _grade_formulas(self) -> Dict[str, Any]:
-        """Grade the Formulas criterion."""
+        """Grade the Formulas criterion — level-aware scoring."""
         max_pts = self.rubric['Formulas']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'Formulas not in rubric.'}
@@ -287,7 +299,8 @@ class GradingEngine:
         formula_count = self.formulas.get('formula_count', 0)
         complexity = self.formulas.get('complexity_score', 0)
         advanced = self.formulas.get('advanced_function_count', 0)
-        categories_used = len(self.formulas.get('function_categories', {}))
+        expert = self.formulas.get('expert_function_count', 0)
+        categories_used = self.formulas.get('category_count', len(self.formulas.get('function_categories', {})))
         error_handling = self.formulas.get('error_handling', {})
         issues = self.formulas.get('issues', [])
 
@@ -298,25 +311,48 @@ class GradingEngine:
             comments.append("No formulas found in the workbook.")
             return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
 
-        # Base score from formula presence (0-30% of max)
-        presence_pct = min(1.0, formula_count / 10)
-        score += presence_pct * 0.3 * max_pts
+        # Get level-specific scoring parameters
+        lvl = self.level_expectations.get('Formulas', {})
+        min_formulas = lvl.get('min_formulas', 10)
+        min_categories = lvl.get('min_categories', 3)
+        min_advanced = lvl.get('min_advanced', 2)
 
-        # Complexity score (0-30% of max)
-        score += (complexity / 100) * 0.3 * max_pts
+        # Dynamic weights based on mastery level
+        w_presence = lvl.get('presence_weight', 0.3)
+        w_complexity = lvl.get('complexity_weight', 0.25)
+        w_diversity = lvl.get('diversity_weight', 0.15)
+        w_advanced = lvl.get('advanced_weight', 0.2)
+        w_error = lvl.get('error_handling_weight', 0.1)
 
-        # Advanced functions (0-20% of max)
-        advanced_pct = min(1.0, advanced / 5)
-        score += advanced_pct * 0.2 * max_pts
+        # Base score from formula presence
+        presence_pct = min(1.0, formula_count / max(min_formulas, 1))
+        score += presence_pct * w_presence * max_pts
 
-        # Category diversity (0-10% of max)
-        diversity_pct = min(1.0, categories_used / 4)
-        score += diversity_pct * 0.1 * max_pts
+        # Complexity score
+        score += (complexity / 100) * w_complexity * max_pts
 
-        # Error handling (0-10% of max)
+        # Advanced functions
+        if min_advanced > 0:
+            advanced_pct = min(1.0, advanced / max(min_advanced, 1))
+        else:
+            # Foundation level: any advanced function is a bonus
+            advanced_pct = min(1.0, advanced / 3) if advanced > 0 else 0
+        score += advanced_pct * w_advanced * max_pts
+
+        # Category diversity
+        diversity_pct = min(1.0, categories_used / max(min_categories, 1))
+        score += diversity_pct * w_diversity * max_pts
+
+        # Error handling
         if error_handling.get('has_error_handling'):
-            score += 0.1 * max_pts
+            score += w_error * max_pts
             comments.append("Good use of error handling functions.")
+
+        # Bonus for expert-tier functions (LAMBDA, LET, MAP, etc.)
+        if expert > 0 and self.level_id in ('advanced', 'expert'):
+            bonus = min(3, expert) * 0.5  # up to 1.5 bonus points
+            score += bonus
+            comments.append(f"Impressive use of {expert} expert-tier function(s): {', '.join(self.formulas.get('expert_functions_used', [])[:3])}.")
 
         # Deductions for issues
         for issue in issues:
@@ -350,7 +386,7 @@ class GradingEngine:
         }
 
     def _grade_pivots(self) -> Dict[str, Any]:
-        """Grade the PivotTables criterion."""
+        """Grade the PivotTables criterion — level-aware scoring."""
         max_pts = self.rubric['PivotTables']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'PivotTables not in rubric.'}
@@ -362,36 +398,68 @@ class GradingEngine:
         score = 0
         comments = []
 
+        # Get level expectations
+        lvl = self.level_expectations.get('PivotTables', {})
+        pivot_expected = lvl.get('expected', True)
+        min_pivots = lvl.get('min_pivots', 1)
+        slicers_expected = lvl.get('slicers_expected', False)
+        calc_fields_expected = lvl.get('calc_fields_expected', False)
+
         # Check if pivots were required
         req_pivots = self.requirements.get('require_pivots', False)
         if pivot_count == 0:
-            if not req_pivots:
-                # Not required and not present — category should have 0 weight
-                # (handled by dynamic rubric), but be safe:
+            if not req_pivots and not pivot_expected:
                 return {'score': 0, 'max': max_pts, 'comment': 'PivotTables not present (not required for this assignment).'}
-            else:
-                comments.append("No PivotTables found (required by assignment).")
+            elif req_pivots or pivot_expected:
+                comments.append("No PivotTables found (expected for this assignment level).")
                 return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
+            else:
+                return {'score': 0, 'max': max_pts, 'comment': 'PivotTables not present (not required for this assignment).'}
 
-        # Base presence (60% of max)
-        score += 0.6 * max_pts
-        comments.append(f"Found {pivot_count} PivotTable(s).")
+        # Pivot presence — scaled by level expectations
+        if self.level_id == 'foundation':
+            # Foundation: any pivot is great — bonus territory
+            score += 0.8 * max_pts
+            comments.append(f"Excellent! Found {pivot_count} PivotTable(s) — above expectations for this level.")
+        elif self.level_id == 'intermediate':
+            # Intermediate: basic pivot expected
+            base_pct = min(1.0, pivot_count / max(min_pivots, 1))
+            score += base_pct * 0.6 * max_pts
+            comments.append(f"Found {pivot_count} PivotTable(s).")
+            # Slicers and calc fields are bonus
+            if has_slicers:
+                score += 0.2 * max_pts
+                comments.append("Slicers detected — excellent for this level!")
+            if has_calc_fields:
+                score += 0.2 * max_pts
+                comments.append("Calculated fields present — above expectations!")
+        else:
+            # Advanced/Expert: expect sophistication
+            base_pct = min(1.0, pivot_count / max(min_pivots, 1))
+            score += base_pct * 0.4 * max_pts
+            comments.append(f"Found {pivot_count} PivotTable(s).")
 
-        # Slicers (20% of max)
-        if has_slicers:
-            score += 0.2 * max_pts
-            comments.append("Slicers detected.")
+            if has_slicers:
+                score += 0.2 * max_pts
+                comments.append("Slicers detected.")
+            elif slicers_expected:
+                comments.append("Slicers expected at this level but not found.")
 
-        # Calculated fields (20% of max)
-        if has_calc_fields:
-            score += 0.2 * max_pts
-            comments.append("Calculated fields present.")
+            if has_calc_fields:
+                score += 0.2 * max_pts
+                comments.append("Calculated fields present.")
+            elif calc_fields_expected:
+                comments.append("Calculated fields expected at this level but not found.")
 
-        # Data fields analysis
-        pivots_data = self.pivots.get('pivots', [])
-        total_data_fields = sum(p.get('data_field_count', 0) for p in pivots_data)
-        if total_data_fields > 0:
-            comments.append(f"{total_data_fields} data field(s) configured.")
+            # Data field diversity
+            pivots_data = self.pivots.get('pivots', [])
+            total_data_fields = sum(p.get('data_field_count', 0) for p in pivots_data)
+            if total_data_fields >= 3:
+                score += 0.2 * max_pts
+                comments.append(f"{total_data_fields} data field(s) — good analytical depth.")
+            elif total_data_fields > 0:
+                score += 0.1 * max_pts
+                comments.append(f"{total_data_fields} data field(s) configured.")
 
         return {
             'score': round(min(max_pts, score), 1),
@@ -400,7 +468,7 @@ class GradingEngine:
         }
 
     def _grade_charts(self) -> Dict[str, Any]:
-        """Grade the Charts criterion."""
+        """Grade the Charts criterion — level-aware scoring."""
         max_pts = self.rubric['Charts']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'Charts not in rubric.'}
@@ -412,32 +480,58 @@ class GradingEngine:
         score = 0
         comments = []
 
+        # Level expectations
+        lvl = self.level_expectations.get('Charts', {})
+        chart_expected = lvl.get('expected', True)
+        min_charts = lvl.get('min_charts', 1)
+        require_titles = lvl.get('require_titles', True)
+        diversity_weight = lvl.get('diversity_weight', 0.25)
+
         req_charts = self.requirements.get('require_charts', False)
         if chart_count == 0:
-            if not req_charts:
+            if not req_charts and not chart_expected:
                 return {'score': 0, 'max': max_pts, 'comment': 'Charts not present (not required for this assignment).'}
-            else:
-                comments.append("No charts found (required by assignment).")
-                return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
+            elif req_charts or chart_expected:
+                return {'score': 0, 'max': max_pts, 'comment': 'No charts found (expected for this assignment level).'}
+            return {'score': 0, 'max': max_pts, 'comment': 'Charts not present (not required for this assignment).'}
 
-        # Presence (50% of max)
-        score += 0.5 * max_pts
+        # Presence — scaled by level
+        presence_pct = min(1.0, chart_count / max(min_charts, 1))
+        presence_weight = 0.5 - (diversity_weight - 0.25)  # balance with diversity
+        score += presence_pct * max(0.3, presence_weight) * max_pts
         comments.append(f"Found {chart_count} chart(s) of type(s): {', '.join(chart_types)}.")
 
-        # Type diversity (25% of max)
-        diversity_pct = min(1.0, len(chart_types) / 3)
-        score += diversity_pct * 0.25 * max_pts
-
-        # Titles and labels (25% of max)
-        untitled = sum(1 for i in issues if i.get('type') == 'missing_chart_title')
-        if untitled == 0:
-            score += 0.25 * max_pts
-            comments.append("All charts have titles.")
+        # Type diversity — weighted by level
+        if self.level_id == 'foundation':
+            # Foundation: any chart type is fine
+            diversity_pct = min(1.0, len(chart_types) / 2)
+        elif self.level_id == 'intermediate':
+            diversity_pct = min(1.0, len(chart_types) / 3)
         else:
-            # Partial credit
+            # Advanced/Expert: expect more chart type variety
+            diversity_pct = min(1.0, len(chart_types) / 4)
+            # Bonus for advanced chart types
+            advanced_types = {'combo', 'waterfall', 'treemap', 'sunburst', 'histogram', 'box_whisker', 'funnel', 'map'}
+            found_advanced = set(t.lower() for t in chart_types) & advanced_types
+            if found_advanced:
+                score += 0.1 * max_pts
+                comments.append(f"Advanced chart type(s): {', '.join(found_advanced)}.")
+        score += diversity_pct * diversity_weight * max_pts
+
+        # Titles and labels
+        untitled = sum(1 for i in issues if i.get('type') == 'missing_chart_title')
+        title_weight = 1.0 - max(0.3, presence_weight) - diversity_weight
+        title_weight = max(0.15, title_weight)  # at least 15%
+        if untitled == 0:
+            score += title_weight * max_pts
+            if require_titles:
+                comments.append("All charts have titles.")
+        else:
             titled_pct = (chart_count - untitled) / max(chart_count, 1)
-            score += titled_pct * 0.25 * max_pts
+            score += titled_pct * title_weight * max_pts
             comments.append(f"{untitled} chart(s) missing titles.")
+            if require_titles and self.level_id in ('advanced', 'expert'):
+                comments.append("Chart titles are expected at this level.")
 
         return {
             'score': round(min(max_pts, score), 1),
@@ -446,7 +540,7 @@ class GradingEngine:
         }
 
     def _grade_power_query(self) -> Dict[str, Any]:
-        """Grade the Power Query / M criterion."""
+        """Grade the Power Query / M criterion — level-aware scoring."""
         max_pts = self.rubric['PowerQuery_M']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'Power Query not in rubric.'}
@@ -459,41 +553,86 @@ class GradingEngine:
         score = 0
         comments = []
 
+        # Level expectations
+        lvl = self.level_expectations.get('PowerQuery_M', {})
+        pq_expected = lvl.get('expected', False)
+        min_queries = lvl.get('min_queries', 1)
+        merge_expected = lvl.get('merge_expected', False)
+
         req_pq = self.requirements.get('require_power_query', False)
         if not has_pq:
-            if req_pq:
-                comments.append("Power Query was required but not found.")
-                return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
+            if req_pq or pq_expected:
+                return {'score': 0, 'max': max_pts, 'comment': 'Power Query was expected but not found.'}
             return {'score': 0, 'max': max_pts, 'comment': 'Power Query not present (not required for this assignment).'}
 
-        # Presence (30% of max)
-        score += 0.3 * max_pts
-        comments.append(f"Found {query_count} Power Query query(ies) with {total_steps} step(s).")
-
-        # Transformation diversity (30% of max)
-        trans_pct = min(1.0, len(all_trans) / 5)
-        score += trans_pct * 0.3 * max_pts
-        if all_trans:
-            comments.append(f"Transformations: {', '.join(all_trans[:5])}.")
-
-        # Complexity (20% of max)
-        max_complexity = max(
-            (q.get('complexity_score', 0) for q in self.pq.get('queries', [])),
-            default=0
-        )
-        score += (max_complexity / 100) * 0.2 * max_pts
-
-        # Advanced features: merge, group by (20% of max)
         queries = self.pq.get('queries', [])
         has_merge = any(q.get('has_merge') for q in queries)
         has_group = any(q.get('has_group_by') for q in queries)
-        advanced_bonus = (0.1 * max_pts if has_merge else 0) + (0.1 * max_pts if has_group else 0)
-        score += advanced_bonus
 
-        if has_merge:
-            comments.append("Merge (join) operations detected.")
-        if has_group:
-            comments.append("Group-by operations detected.")
+        if self.level_id == 'foundation':
+            # Foundation: PQ is bonus territory — generous scoring
+            score += 0.7 * max_pts
+            comments.append(f"Excellent! Found {query_count} Power Query query(ies) — impressive for this level.")
+            if all_trans:
+                score += 0.3 * max_pts
+                comments.append(f"Transformations: {', '.join(all_trans[:5])}.")
+        elif self.level_id == 'intermediate':
+            # Intermediate: basic PQ presence valued
+            query_pct = min(1.0, query_count / max(min_queries, 1))
+            score += query_pct * 0.4 * max_pts
+            comments.append(f"Found {query_count} Power Query query(ies) with {total_steps} step(s).")
+
+            trans_pct = min(1.0, len(all_trans) / 4)
+            score += trans_pct * 0.3 * max_pts
+            if all_trans:
+                comments.append(f"Transformations: {', '.join(all_trans[:5])}.")
+
+            # Merge/group are bonus
+            if has_merge:
+                score += 0.15 * max_pts
+                comments.append("Merge operations detected — above expectations!")
+            if has_group:
+                score += 0.15 * max_pts
+                comments.append("Group-by operations detected.")
+        else:
+            # Advanced/Expert: expect sophisticated ETL
+            query_pct = min(1.0, query_count / max(min_queries, 1))
+            score += query_pct * 0.25 * max_pts
+            comments.append(f"Found {query_count} Power Query query(ies) with {total_steps} step(s).")
+
+            # Transformation diversity
+            trans_pct = min(1.0, len(all_trans) / 6)
+            score += trans_pct * 0.25 * max_pts
+            if all_trans:
+                comments.append(f"Transformations: {', '.join(all_trans[:5])}.")
+
+            # Complexity
+            max_complexity = max(
+                (q.get('complexity_score', 0) for q in queries), default=0
+            )
+            score += (max_complexity / 100) * 0.15 * max_pts
+
+            # Advanced features
+            if has_merge:
+                score += 0.15 * max_pts
+                comments.append("Merge (join) operations detected.")
+            elif merge_expected:
+                comments.append("Merge operations expected at this level but not found.")
+
+            if has_group:
+                score += 0.1 * max_pts
+                comments.append("Group-by operations detected.")
+
+            # Expert: custom functions, error handling in M
+            if self.level_id == 'expert':
+                has_custom = any(q.get('has_custom_function') for q in queries)
+                has_error_handling = any(q.get('has_error_handling') for q in queries)
+                if has_custom:
+                    score += 0.05 * max_pts
+                    comments.append("Custom M functions detected.")
+                if has_error_handling:
+                    score += 0.05 * max_pts
+                    comments.append("Error handling in M code detected.")
 
         return {
             'score': round(min(max_pts, score), 1),
@@ -502,7 +641,7 @@ class GradingEngine:
         }
 
     def _grade_vba(self) -> Dict[str, Any]:
-        """Grade the VBA criterion."""
+        """Grade the VBA criterion — level-aware scoring."""
         max_pts = self.rubric['VBA']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'VBA not in rubric.'}
@@ -518,48 +657,81 @@ class GradingEngine:
         score = 0
         comments = []
 
+        # Level expectations
+        lvl = self.level_expectations.get('VBA', {})
+        vba_expected = lvl.get('expected', False)
+        min_modules = lvl.get('min_modules', 1)
+        min_procedures = lvl.get('min_procedures', 2)
+        error_handling_expected = lvl.get('error_handling_expected', False)
+
         req_vba = self.requirements.get('require_vba', False)
         if not has_vba:
-            if req_vba:
-                comments.append("VBA macros were required but not found.")
-                return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
+            if req_vba or vba_expected:
+                return {'score': 0, 'max': max_pts, 'comment': 'VBA macros were expected but not found.'}
             return {'score': 0, 'max': max_pts, 'comment': 'VBA not present (not required for this assignment).'}
 
         # Security check first - deduct heavily for dangerous code
         if security.get('risk_level') == 'high':
             comments.append("⚠️ HIGH SECURITY RISK: Potentially dangerous VBA code detected. Manual review required.")
-            return {
-                'score': 0,
-                'max': max_pts,
-                'comment': ' '.join(comments),
-            }
+            return {'score': 0, 'max': max_pts, 'comment': ' '.join(comments)}
 
-        # Presence & structure (30% of max)
-        score += 0.3 * max_pts
-        comments.append(f"Found {module_count} VBA module(s) with {total_procs} procedure(s), {total_lines} lines.")
+        if self.level_id in ('foundation', 'intermediate'):
+            # Foundation/Intermediate: VBA is bonus territory — generous scoring
+            score += 0.5 * max_pts
+            comments.append(f"Found {module_count} VBA module(s) with {total_procs} procedure(s), {total_lines} lines.")
 
-        # Code quality (30% of max)
-        quality_score = quality.get('score', 0)
-        score += (quality_score / 100) * 0.3 * max_pts
-        if quality.get('practices_found'):
-            comments.append(f"Quality practices: {', '.join(quality['practices_found'][:3])}.")
+            # Quality is bonus
+            quality_score = quality.get('score', 0)
+            score += (quality_score / 100) * 0.3 * max_pts
 
-        # Automation patterns (20% of max)
-        auto_pct = min(1.0, len(automation) / 4)
-        score += auto_pct * 0.2 * max_pts
-        if automation:
-            comments.append(f"Automation: {', '.join(a['pattern'] for a in automation[:3])}.")
+            # Automation is bonus
+            if automation:
+                score += 0.2 * max_pts
+                comments.append(f"Automation: {', '.join(a['pattern'] for a in automation[:3])}.")
 
-        # Modularity (20% of max)
-        modularity = quality.get('modularity', {})
-        if modularity.get('total_procedures', 0) >= 2:
-            score += 0.1 * max_pts
-        if modularity.get('module_count', 0) >= 2:
-            score += 0.1 * max_pts
+            if self.level_id == 'foundation':
+                comments.append("Impressive VBA work for this level!")
+        else:
+            # Advanced/Expert: expect structured, quality code
+            # Structure (25%)
+            mod_pct = min(1.0, module_count / max(min_modules, 1))
+            proc_pct = min(1.0, total_procs / max(min_procedures, 1))
+            score += ((mod_pct + proc_pct) / 2) * 0.25 * max_pts
+            comments.append(f"Found {module_count} VBA module(s) with {total_procs} procedure(s), {total_lines} lines.")
 
-        # Deductions
+            # Code quality (25%)
+            quality_score = quality.get('score', 0)
+            score += (quality_score / 100) * 0.25 * max_pts
+            if quality.get('practices_found'):
+                comments.append(f"Quality practices: {', '.join(quality['practices_found'][:3])}.")
+
+            # Automation patterns (20%)
+            auto_pct = min(1.0, len(automation) / 4)
+            score += auto_pct * 0.2 * max_pts
+            if automation:
+                comments.append(f"Automation: {', '.join(a['pattern'] for a in automation[:3])}.")
+
+            # Modularity (15%)
+            modularity = quality.get('modularity', {})
+            if modularity.get('total_procedures', 0) >= 2:
+                score += 0.075 * max_pts
+            if modularity.get('module_count', 0) >= 2:
+                score += 0.075 * max_pts
+
+            # Error handling (15%)
+            has_err_handling = quality.get('has_error_handling', False)
+            if has_err_handling:
+                score += 0.15 * max_pts
+                comments.append("Error handling implemented.")
+            elif error_handling_expected:
+                comments.append("Error handling expected at this level but not found.")
+
+        # Deductions (apply to all levels)
         if quality.get('naming_issues'):
-            score -= min(3, len(quality['naming_issues']))
+            deduction = min(3, len(quality['naming_issues']))
+            if self.level_id in ('foundation', 'intermediate'):
+                deduction = min(1, deduction)  # lighter deductions for lower levels
+            score -= deduction
             comments.append(f"{len(quality['naming_issues'])} naming convention issue(s).")
 
         if security.get('risk_level') == 'medium':
@@ -573,7 +745,7 @@ class GradingEngine:
         }
 
     def _grade_formatting(self) -> Dict[str, Any]:
-        """Grade the Formatting criterion."""
+        """Grade the Formatting criterion — level-aware scoring."""
         max_pts = self.rubric['Formatting']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'Formatting not in rubric.'}
@@ -584,19 +756,77 @@ class GradingEngine:
         has_nr = self.formatting.get('has_named_ranges', False)
         issues = self.formatting.get('issues', [])
 
-        # Map formatting score (0-100) to points
-        score = (fmt_score / 100) * max_pts
+        score = 0
         comments = []
 
-        if has_cf:
-            comments.append("Conditional formatting applied.")
-        if has_dv:
-            comments.append("Data validation rules present.")
-        if has_nr:
-            comments.append(f"{self.formatting.get('named_range_count', 0)} named range(s) defined.")
+        # Level expectations
+        lvl = self.level_expectations.get('Formatting', {})
+        min_score = lvl.get('min_score', 30)
+        cf_expected = lvl.get('cf_expected', False)
+        dv_expected = lvl.get('dv_expected', False)
 
+        if self.level_id == 'foundation':
+            # Foundation: basic formatting is sufficient
+            # Map base score generously
+            base_pct = min(1.0, fmt_score / max(min_score, 1))
+            score += base_pct * 0.7 * max_pts
+            if has_cf:
+                score += 0.15 * max_pts
+                comments.append("Conditional formatting applied — excellent for this level!")
+            if has_dv:
+                score += 0.15 * max_pts
+                comments.append("Data validation rules present — above expectations!")
+            if has_nr:
+                comments.append(f"{self.formatting.get('named_range_count', 0)} named range(s) defined.")
+        elif self.level_id == 'intermediate':
+            # Intermediate: expect decent formatting, CF/DV are valued
+            base_pct = min(1.0, fmt_score / 60)
+            score += base_pct * 0.5 * max_pts
+            if has_cf:
+                score += 0.2 * max_pts
+                comments.append("Conditional formatting applied.")
+            elif cf_expected:
+                comments.append("Conditional formatting would enhance this work.")
+            if has_dv:
+                score += 0.2 * max_pts
+                comments.append("Data validation rules present.")
+            if has_nr:
+                score += 0.1 * max_pts
+                comments.append(f"{self.formatting.get('named_range_count', 0)} named range(s) defined.")
+        else:
+            # Advanced/Expert: expect professional formatting
+            base_pct = min(1.0, fmt_score / 80)
+            score += base_pct * 0.4 * max_pts
+
+            if has_cf:
+                score += 0.2 * max_pts
+                comments.append("Conditional formatting applied.")
+            elif cf_expected:
+                comments.append("Conditional formatting expected at this level but not found.")
+
+            if has_dv:
+                score += 0.2 * max_pts
+                comments.append("Data validation rules present.")
+            elif dv_expected:
+                comments.append("Data validation expected at this level but not found.")
+
+            if has_nr:
+                nr_count = self.formatting.get('named_range_count', 0)
+                score += min(0.1, nr_count * 0.02) * max_pts
+                comments.append(f"{nr_count} named range(s) defined.")
+
+            # Expert: protection, page layout
+            if self.level_id == 'expert':
+                has_protection = self.formatting.get('has_protection', False)
+                if has_protection:
+                    score += 0.1 * max_pts
+                    comments.append("Sheet/workbook protection configured.")
+
+        # Deductions for errors (lighter at lower levels)
         error_issues = [i for i in issues if i.get('severity') == 'error']
         if error_issues:
+            deduction_per = 1 if self.level_id in ('advanced', 'expert') else 0.5
+            score -= min(3, len(error_issues) * deduction_per)
             comments.append(f"{len(error_issues)} formatting error(s) found.")
 
         if not comments:

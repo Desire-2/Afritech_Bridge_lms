@@ -6,11 +6,16 @@ sheets, formulas, VBA modules, and Power Query queries.
 
 Uses AI (OpenRouter/Gemini) for enhanced natural-language feedback when
 available; falls back to template-based generation.
+
+Level-aware: adjusts tone, expectations, and suggestions based on the
+detected mastery level (foundation → expert).
 """
 
 import logging
 import json
 from typing import Dict, Any, List, Optional
+
+from .excel_mastery_levels import LEVEL_FEEDBACK_TEMPLATES
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +25,7 @@ class FeedbackGenerator:
     Generates structured, actionable feedback from grading results.
     
     Output tone: Professional, instructor-like, educational, clear.
+    Adapts language and suggestions to the student's mastery level.
     """
 
     def __init__(
@@ -36,6 +42,7 @@ class FeedbackGenerator:
         student_name: str = '',
         module_title: str = '',
         assignment_instructions: str = '',
+        mastery_level: Optional[Dict[str, Any]] = None,
     ):
         self.result = grading_result
         self.wb = workbook_analysis
@@ -49,6 +56,11 @@ class FeedbackGenerator:
         self.student = student_name
         self.module_title = module_title
         self.assignment_instructions = assignment_instructions
+
+        # Level-aware context
+        self.mastery_level = mastery_level or {}
+        self.level_id = self.mastery_level.get('level_id', 'intermediate')
+        self.level_templates = LEVEL_FEEDBACK_TEMPLATES.get(self.level_id, LEVEL_FEEDBACK_TEMPLATES.get('intermediate', {}))
 
     # ------------------------------------------------------------------
     # Public API
@@ -109,7 +121,7 @@ class FeedbackGenerator:
     # ------------------------------------------------------------------
 
     def _opening(self) -> str:
-        """Build the opening section."""
+        """Build the opening section — level-aware tone."""
         pct = self.result.get('percentage', 0)
         grade = self.result.get('grade', '')
         total = self.result.get('total_score', 0)
@@ -117,21 +129,28 @@ class FeedbackGenerator:
 
         greeting = f"Dear {self.student}," if self.student else "Dear Student,"
 
-        level_text = "excellent work" if pct >= 90 else \
-                     "good effort" if pct >= 75 else \
-                     "satisfactory work" if pct >= 60 else \
-                     "work that needs improvement"
+        # Level-specific opening message
+        if pct >= 80:
+            level_text = self.level_templates.get('opening_excellent', 'Excellent work!')
+        elif pct >= 60:
+            level_text = self.level_templates.get('opening_good', 'Good effort!')
+        else:
+            level_text = self.level_templates.get('opening_needs_work', 'Your work needs improvement.')
 
         module_note = f" (Module: {self.module_title})" if self.module_title else ''
+
+        # Level badge
+        level_name = self.mastery_level.get('level_name', 'Intermediate')
+        level_badge = f"📊 **Assessment Level: {level_name}**\n\n" if self.mastery_level else ''
 
         return (
             f"{greeting}\n\n"
             f"Thank you for submitting your assignment"
             f"{f' \"{self.title}\"' if self.title else ''}"
-            f"{module_note}. "
-            f"Below is your detailed feedback.\n\n"
+            f"{module_note}.\n\n"
+            f"{level_badge}"
             f"**Overall Score: {total}/{max_score} ({pct}%) — Grade: {grade}**\n\n"
-            f"This represents {level_text}. "
+            f"{level_text} "
             f"Please review the detailed feedback below for each evaluation area."
         )
 
@@ -159,11 +178,19 @@ class FeedbackGenerator:
         return '\n'.join(output)
 
     def _improvement_suggestion(self, criterion: str, pct: int, data: Dict) -> str:
-        """Generate improvement suggestion based on criterion performance."""
+        """Generate improvement suggestion based on criterion performance and mastery level."""
         if pct >= 90:
             return ""
 
-        suggestions = {
+        # Try level-specific suggestions from templates first
+        level_suggestions = self.level_templates.get('criterion_suggestions', {}).get(criterion, {})
+        if level_suggestions:
+            for threshold in sorted(level_suggestions.keys()):
+                if pct <= threshold + 30:
+                    return level_suggestions[threshold]
+
+        # Fallback: generic suggestions (not level-specific)
+        fallback = {
             'Formulas': {
                 0: "Start by adding basic formulas (SUM, AVERAGE, COUNT). Then try lookup functions like VLOOKUP or INDEX/MATCH.",
                 30: "You have some formulas but need more variety. Try using SUMIFS/COUNTIFS for conditional calculations, and IFERROR for error handling.",
@@ -201,7 +228,7 @@ class FeedbackGenerator:
             },
         }
 
-        crit_suggestions = suggestions.get(criterion, {})
+        crit_suggestions = fallback.get(criterion, {})
         for threshold in sorted(crit_suggestions.keys()):
             if pct <= threshold + 30:
                 return crit_suggestions[threshold]
@@ -290,13 +317,19 @@ class FeedbackGenerator:
 
     def _build_ai_prompt(self, base_feedback: str) -> str:
         """Build prompt for AI-enhanced feedback generation."""
+        level_name = self.mastery_level.get('level_name', 'Intermediate')
         return f"""You are a senior MS Excel instructor providing feedback on a student's assignment.
+
+The student is at the **{level_name}** level. Tailor your language, expectations, 
+and suggestions to this skill level. Be encouraging for beginners, technically precise 
+for advanced students.
 
 Based on the following automated analysis and grading, rewrite the feedback to be more natural,
 educational, and instructor-like. Keep all specific references (cells, formulas, modules, queries).
 Maintain a professional, encouraging tone. Be specific about what's good and what needs improvement.
 
 Assignment: {self.title}
+Level: {level_name}
 Score: {self.result.get('total_score')}/{self.result.get('max_score')} ({self.result.get('percentage')}%)
 
 Automated Feedback:

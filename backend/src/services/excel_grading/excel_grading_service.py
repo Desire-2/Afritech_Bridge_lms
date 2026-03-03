@@ -674,6 +674,7 @@ class ExcelGradingService:
         requirements['_assignment_title'] = getattr(assignment_or_project, 'title', '')
         requirements['_assignment_instructions'] = getattr(assignment_or_project, 'instructions', '') or ''
         requirements['_module_title'] = getattr(module, 'title', '') if module else ''
+        requirements['_module_order'] = getattr(module, 'order', None) if module else None
 
         logger.info(
             f"Parsed requirements for '{requirements.get('_assignment_title', '?')}': "
@@ -857,6 +858,7 @@ class ExcelGradingService:
         from .formatting_analyzer import FormattingAnalyzer
         from .grading_engine import GradingEngine
         from .feedback_generator import FeedbackGenerator
+        from .excel_mastery_levels import detect_mastery_level
 
         # Scope flags (default True for backward compat if flag is absent)
         scope_formulas = requirements.get('scope_formulas', True)
@@ -917,6 +919,19 @@ class ExcelGradingService:
             f"charts={scope_charts}, vba={scope_vba}, pq={scope_pq}, fmt={scope_formatting}"
         )
 
+        # 7b. Detect mastery level from module/assignment metadata
+        mastery_level = detect_mastery_level(
+            module_title=requirements.get('_module_title', ''),
+            assignment_title=requirements.get('_assignment_title', ''),
+            assignment_instructions=requirements.get('_assignment_instructions', ''),
+            module_order=requirements.get('_module_order'),
+        )
+        logger.info(
+            f"Mastery level detected: {mastery_level['level_id']} "
+            f"(confidence={mastery_level['confidence']}, "
+            f"score={mastery_level.get('match_score', 0)})"
+        )
+
         # 8. Grading
         engine = GradingEngine(
             workbook_analysis=wb_analysis,
@@ -928,6 +943,7 @@ class ExcelGradingService:
             formatting_analysis=fmt_analysis,
             requirements=requirements,
             instructor_rubric=instructor_rubric,
+            mastery_level=mastery_level,
         )
         grading_result = engine.grade()
 
@@ -944,6 +960,7 @@ class ExcelGradingService:
             assignment_title=requirements.get('_assignment_title', file_name),
             module_title=requirements.get('_module_title', ''),
             assignment_instructions=requirements.get('_assignment_instructions', ''),
+            mastery_level=mastery_level,
         )
         feedback = fb_gen.generate()
         grading_result['feedback'] = feedback
@@ -993,6 +1010,14 @@ class ExcelGradingService:
                 'has_cf': fmt_analysis.get('has_conditional_formatting', False),
                 'has_dv': fmt_analysis.get('has_data_validation', False),
                 'has_named_ranges': fmt_analysis.get('has_named_ranges', False),
+            },
+            'mastery_level': {
+                'level_id': mastery_level.get('level_id', 'intermediate'),
+                'level_name': mastery_level.get('level_name', 'Intermediate'),
+                'level_number': mastery_level.get('level_number', 2),
+                'confidence': mastery_level.get('confidence', 'medium'),
+                'match_score': mastery_level.get('match_score', 0),
+                'matched_keywords': mastery_level.get('matched_keywords', []),
             },
         }
 
