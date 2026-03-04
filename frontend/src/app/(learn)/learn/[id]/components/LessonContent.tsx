@@ -199,6 +199,99 @@ export const LessonContent: React.FC<LessonContentProps> = ({
     });
   }
   
+  // ── Dedicated Assignment View ──────────────────────────────────────────
+  // When the assignments tab is active, render a clean, focused view with
+  // only the assignment panel(s) and a back button — no lesson header,
+  // progress bars, score display, or footer navigation.
+  if (currentViewMode === 'assignments') {
+    return (
+      <div
+        ref={contentRef}
+        className="flex-1 w-full h-[calc(100vh-4rem)] overflow-y-auto"
+        onClick={() => onTrackInteraction('content_click')}
+      >
+        <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 max-w-[1600px] mx-auto">
+          <div className="space-y-6">
+            {/* Back to lesson content */}
+            <div className="flex items-center justify-between">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentViewMode('content')}
+                className="flex items-center gap-2 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span className="hidden sm:inline">Back to Lesson</span>
+                <span className="sm:hidden">Back</span>
+              </Button>
+
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <Clipboard className="h-4 w-4 text-green-400" />
+                <span className="hidden sm:inline font-medium">{currentLesson.title}</span>
+              </div>
+            </div>
+
+            {/* Assignment content */}
+            {contentLoading && lessonAssignments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16">
+                <Loader2 className="h-10 w-10 animate-spin text-green-400 mb-3" />
+                <span className="text-gray-300 text-sm">Loading assignments...</span>
+              </div>
+            ) : lessonAssignments && lessonAssignments.length > 0 ? (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl sm:text-2xl font-bold text-white">Lesson Assignments</h3>
+                    <p className="text-gray-400 mt-1 text-sm sm:text-base">
+                      Complete these assignments to apply what you&apos;ve learned
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="bg-green-900/30 text-green-300 border-green-700">
+                    <Clipboard className="h-3 w-3 mr-1" />
+                    {lessonAssignments.length} Assignment{lessonAssignments.length > 1 ? 's' : ''}
+                  </Badge>
+                </div>
+
+                {lessonAssignments.map((assignment) => (
+                  <AssignmentPanel
+                    key={assignment.id}
+                    assignment={assignment}
+                    onSubmit={(submission) => {
+                      onTrackInteraction('assignment_submitted', {
+                        assignmentId: assignment.id,
+                        hasText: !!submission.text,
+                        fileCount: submission.files?.length || 0
+                      });
+                    }}
+                    onSubmitComplete={() => {
+                      onTrackInteraction('assignment_completed', {
+                        assignmentId: assignment.id
+                      });
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-16">
+                <Clipboard className="h-14 w-14 text-gray-600 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-white mb-2">No Assignments</h3>
+                <p className="text-gray-400 mb-6">This lesson doesn&apos;t have any assignments yet.</p>
+                <Button
+                  variant="outline"
+                  onClick={() => setCurrentViewMode('content')}
+                  className="border-gray-700 text-gray-300 hover:bg-gray-700"
+                >
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Return to Lesson Content
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div 
       ref={contentRef}
