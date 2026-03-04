@@ -9,10 +9,14 @@ function PaymentCancelContent() {
   const courseId = searchParams.get('course_id');
 
   useEffect(() => {
-    // Clean up payment order references but keep the form data
+    // Clean up all payment order references but keep the form data
     // so the user doesn't have to re-fill the application
     localStorage.removeItem('paypal_order_id');
     localStorage.removeItem('stripe_session_id');
+    localStorage.removeItem('kpay_reference');
+    localStorage.removeItem('kpay_tid');
+    localStorage.removeItem('flutterwave_charge_id');
+    localStorage.removeItem('flutterwave_reference');
   }, []);
 
   return (

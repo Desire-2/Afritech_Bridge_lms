@@ -3819,14 +3819,17 @@ def initiate_payment():
 
     # Validate that the requested method is enabled for this course
     enabled_methods = course._get_payment_methods() if course.enrollment_type == "paid" else []
-    # paypal / mobile_money / bank_transfer / stripe / kpay
-    if course.enrollment_type == "paid" and payment_method not in enabled_methods + ["paypal", "mobile_money", "bank_transfer", "stripe", "kpay"]:
+    # All recognized gateway names
+    ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave"}
+    if payment_method not in ALL_KNOWN_METHODS:
+        return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
+    if course.enrollment_type == "paid" and payment_method not in enabled_methods:
         return jsonify({"error": f"Payment method '{payment_method}' is not enabled for this course"}), 400
 
     try:
         if payment_method == "paypal":
             # Import supported currencies; validate before calling PayPal
-            from src.services.payment_service import PAYPAL_SUPPORTED_CURRENCIES
+            from ..services.payment_service import PAYPAL_SUPPORTED_CURRENCIES
             if currency not in PAYPAL_SUPPORTED_CURRENCIES:
                 return jsonify({
                     "error": f"Currency '{currency}' is not supported by PayPal. "
@@ -4218,7 +4221,7 @@ def verify_payment():
                     "currency": capture["amount"]["currency_code"] if capture else None,
                 }), 200
 
-            elif paypal_status in ("APPROVED", "PAYER_ACTION_REQUIRED"):
+            elif paypal_status == "APPROVED":
                 # Payer has approved – now capture the funds
                 try:
                     result = paypal_capture_order(reference)
@@ -4232,6 +4235,10 @@ def verify_payment():
                 except Exception as cap_err:
                     logger.error(f"PayPal capture failed for {reference}: {cap_err}")
                     return jsonify({"status": "failed", "error": "Capture failed after approval.", "order_id": reference}), 200
+
+            elif paypal_status == "PAYER_ACTION_REQUIRED":
+                # Payer still needs to complete an action (e.g. 3DS) – do NOT capture yet
+                return jsonify({"status": "pending", "order_id": reference, "message": "Payer needs to complete additional verification."}), 200
 
             elif paypal_status == "CREATED":
                 # Payer has not yet approved payment

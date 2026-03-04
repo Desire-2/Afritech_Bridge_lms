@@ -7,6 +7,8 @@ import os
 import json
 import logging
 import base64
+import time
+import threading
 import requests
 from datetime import datetime, timezone
 
@@ -27,9 +29,21 @@ PAYPAL_BASE = (
     else 'https://api-m.paypal.com'
 )
 
+# ── PayPal access-token cache (thread-safe) ──────────────────────────────
+_paypal_token_lock = threading.Lock()
+_paypal_cached_token: str | None = None
+_paypal_token_expires_at: float = 0  # epoch seconds
+
 
 def _paypal_get_access_token() -> str:
-    """Obtain a PayPal OAuth2 access token."""
+    """Obtain (or return cached) PayPal OAuth2 access token."""
+    global _paypal_cached_token, _paypal_token_expires_at
+
+    # Return cached token if still valid (with 60 s safety margin)
+    with _paypal_token_lock:
+        if _paypal_cached_token and time.time() < _paypal_token_expires_at - 60:
+            return _paypal_cached_token
+
     if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
         raise ValueError("PayPal credentials not configured (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET)")
 
@@ -46,8 +60,23 @@ def _paypal_get_access_token() -> str:
         data={"grant_type": "client_credentials"},
         timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+    if not resp.ok:
+        try:
+            error_body = resp.json()
+        except Exception:
+            error_body = resp.text
+        logger.error("PayPal token request failed (%s): %s", resp.status_code, error_body)
+        resp.raise_for_status()
+
+    data = resp.json()
+    token = data["access_token"]
+    expires_in = data.get("expires_in", 3600)  # default 1 h if missing
+
+    with _paypal_token_lock:
+        _paypal_cached_token = token
+        _paypal_token_expires_at = time.time() + expires_in
+
+    return token
 
 
 # Currencies supported by PayPal Checkout (ISO 4217)
@@ -142,7 +171,33 @@ def paypal_capture_order(order_id: str) -> dict:
         },
         timeout=15,
     )
-    resp.raise_for_status()
+
+    if not resp.ok:
+        try:
+            error_body = resp.json()
+        except Exception:
+            error_body = resp.text
+        logger.error("PayPal capture failed for order %s (%s): %s", order_id, resp.status_code, error_body)
+
+        # Return structured failure instead of raising for known PayPal errors
+        if resp.status_code == 422:
+            # Common: ORDER_NOT_APPROVED, ORDER_ALREADY_CAPTURED, etc.
+            issue = ""
+            if isinstance(error_body, dict):
+                details = error_body.get("details", [])
+                if details:
+                    issue = details[0].get("issue", "")
+            return {
+                "status": "failed",
+                "order_id": order_id,
+                "transaction_id": None,
+                "amount": None,
+                "currency": None,
+                "paypal_status": "CAPTURE_FAILED",
+                "error": issue or "Order cannot be captured in its current state.",
+            }
+        resp.raise_for_status()
+
     data = resp.json()
 
     # Extract first capture
@@ -172,7 +227,13 @@ def paypal_get_order(order_id: str) -> dict:
         headers={"Authorization": f"Bearer {token}"},
         timeout=15,
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        try:
+            error_body = resp.json()
+        except Exception:
+            error_body = resp.text
+        logger.error("PayPal get_order failed for %s (%s): %s", order_id, resp.status_code, error_body)
+        resp.raise_for_status()
     return resp.json()
 
 
