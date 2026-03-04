@@ -69,6 +69,7 @@ export interface ContentAssignment {
   allowed_file_types: string;
   due_date?: string;
   points_possible: number;
+  passing_score?: number;
   is_published: boolean;
   created_at: string;
   updated_at: string;

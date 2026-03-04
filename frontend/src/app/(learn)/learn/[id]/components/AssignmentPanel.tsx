@@ -699,7 +699,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                 </div>
 
                 {/* Instructor Feedback */}
-                {(assignment.submission_status?.feedback || assignment.modification_request_reason) && (
+                {assignment.submission_status?.feedback && !hasModificationRequest && (
                   <div className="bg-white dark:bg-gray-800 rounded-lg p-5 shadow-sm border border-slate-200 dark:border-gray-700 mb-4">
                     <h5 className="font-semibold text-gray-900 dark:text-white text-sm mb-3 flex items-center">
                       <div className="p-1 bg-blue-100 dark:bg-blue-900/50 rounded mr-2">
@@ -708,64 +708,79 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                       Instructor Feedback
                     </h5>
                     
-                    {/* Regular Feedback */}
-                    {assignment.submission_status?.feedback && (
-                      <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-4 border-l-4 border-blue-500 mb-3">
-                        <p className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">
-                          {assignment.submission_status.feedback}
-                        </p>
-                        {assignment.submission_status?.grader_name && (
-                          <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 font-medium">
-                            — {assignment.submission_status.grader_name}
-                          </p>
-                        )}
+                    <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-4 border-l-4 border-blue-500">
+                      <div className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
+                        <MarkdownRenderer 
+                          content={assignment.submission_status.feedback} 
+                          variant="compact" 
+                          className="prose-sm prose-blue" 
+                        />
                       </div>
-                    )}
-
-                    {/* Modification Request Feedback */}
-                    {assignment.modification_request_reason && (
-                      <div className="bg-orange-50 dark:bg-orange-950/30 rounded-lg p-4 border-l-4 border-orange-500">
-                        <div className="flex items-start gap-2 mb-2">
-                          <AlertCircle className="h-4 w-4 text-orange-600 dark:text-orange-400 mt-0.5 flex-shrink-0" />
-                          <h6 className="font-semibold text-orange-800 dark:text-orange-300 text-sm">Modification Request</h6>
-                        </div>
-                        <p className="text-gray-700 dark:text-gray-300 text-sm whitespace-pre-wrap leading-relaxed">
-                          {assignment.modification_request_reason}
+                      {assignment.submission_status?.grader_name && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-3 font-medium flex items-center gap-1">
+                          <Award className="h-3 w-3" />
+                          Graded by {assignment.submission_status.grader_name}
                         </p>
-                        {assignment.modification_request_at && (
-                          <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 font-medium">
-                            Requested on {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Modification Request Alert */}
+            {/* Modification Request Alert — rich markdown rendering */}
             {hasModificationRequest && (
-              <Alert className="border-2 border-orange-400 bg-orange-50 dark:bg-orange-950/30 shadow-md">
-                <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-                <AlertTitle className="text-orange-800 dark:text-orange-300 font-bold">
-                  Modification Requested
-                </AlertTitle>
-                <AlertDescription className="text-orange-700 dark:text-orange-200">
-                  Your instructor has requested modifications to your assignment submission.
+              <div className="rounded-xl border-2 border-orange-400 bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 dark:from-orange-950/40 dark:via-amber-950/30 dark:to-yellow-950/20 shadow-lg overflow-hidden">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-3 flex items-center gap-3">
+                  <div className="p-1.5 bg-white/20 rounded-lg">
+                    <AlertCircle className="h-5 w-5 text-white" />
+                  </div>
+                  <h4 className="text-white font-bold text-base sm:text-lg">
+                    Modification Requested
+                  </h4>
+                  {assignment.modification_request_at && (
+                    <span className="ml-auto text-xs text-white/80 font-medium hidden sm:block">
+                      {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </span>
+                  )}
+                </div>
+
+                {/* Body */}
+                <div className="p-5 sm:p-6 space-y-4">
+                  <p className="text-orange-800 dark:text-orange-200 text-sm sm:text-base font-medium">
+                    Your instructor has requested modifications to your assignment. Please review the feedback below and resubmit.
+                  </p>
+
                   {assignment.modification_request_reason && (
-                    <div className="mt-2 p-3 bg-white/50 dark:bg-gray-800/50 rounded border-l-4 border-orange-400">
-                      <strong>Reason:</strong> {assignment.modification_request_reason}
+                    <div className="bg-white dark:bg-gray-800/70 rounded-lg p-4 sm:p-5 border border-orange-200 dark:border-orange-800/50 shadow-sm">
+                      <div className="prose prose-sm dark:prose-invert max-w-none
+                        prose-headings:text-orange-900 dark:prose-headings:text-orange-200
+                        prose-strong:text-orange-900 dark:prose-strong:text-orange-200
+                        prose-em:text-orange-700 dark:prose-em:text-orange-300
+                        prose-li:text-gray-700 dark:prose-li:text-gray-300
+                        prose-p:text-gray-700 dark:prose-p:text-gray-300
+                        prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5
+                        prose-h2:text-base prose-h2:font-bold prose-h2:mt-4 prose-h2:mb-2
+                        prose-h3:text-sm prose-h3:font-semibold prose-h3:mt-3 prose-h3:mb-1">
+                        <MarkdownRenderer 
+                          content={assignment.modification_request_reason} 
+                          variant="compact" 
+                          className="leading-relaxed" 
+                        />
+                      </div>
                     </div>
                   )}
+
                   {assignment.modification_request_at && (
-                    <p className="text-sm mt-2 text-orange-600 dark:text-orange-400">
+                    <p className="text-xs text-orange-500 dark:text-orange-400 font-medium flex items-center gap-1.5 sm:hidden">
+                      <Clock className="h-3 w-3" />
                       Requested on {new Date(assignment.modification_request_at).toLocaleDateString('en-US', {
                         month: 'short',
                         day: 'numeric',
@@ -775,8 +790,8 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                       })}
                     </p>
                   )}
-                </AlertDescription>
-              </Alert>
+                </div>
+              </div>
             )}
 
             {/* Action Buttons */}
@@ -1013,9 +1028,49 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     {percentage.toFixed(1)}%
                   </p>
                 </div>
+
+                {/* Score Progress Bar */}
+                <div className="mt-4 mb-2">
+                  <div className="flex justify-between text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
+                    <span>0%</span>
+                    {assignment.passing_score && (
+                      <span className="text-orange-600 dark:text-orange-400">
+                        Pass: {assignment.passing_score}%
+                      </span>
+                    )}
+                    <span>100%</span>
+                  </div>
+                  <div className="relative h-3 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ease-out ${
+                        percentage >= (assignment.passing_score || 60) 
+                          ? 'bg-gradient-to-r from-green-500 to-emerald-500' 
+                          : 'bg-gradient-to-r from-red-500 to-orange-500'
+                      }`}
+                      style={{ width: `${Math.min(percentage, 100)}%` }}
+                    />
+                    {assignment.passing_score && (
+                      <div 
+                        className="absolute top-0 h-full w-0.5 bg-orange-500 dark:bg-orange-400"
+                        style={{ left: `${assignment.passing_score}%` }}
+                      />
+                    )}
+                  </div>
+                  {assignment.passing_score && (
+                    <p className={`text-xs font-semibold mt-1.5 text-center ${
+                      percentage >= assignment.passing_score
+                        ? 'text-green-600 dark:text-green-400'
+                        : 'text-red-600 dark:text-red-400'
+                    }`}>
+                      {percentage >= assignment.passing_score 
+                        ? '✓ Passing score met' 
+                        : `✗ Below passing score (${assignment.passing_score}%)`}
+                    </p>
+                  )}
+                </div>
                 
                 {assignment.submission_status?.graded_at && (
-                  <div className="text-center text-sm text-gray-600 dark:text-gray-400 bg-white/50 dark:bg-gray-800/50 rounded-lg py-2 px-4">
+                  <div className="text-center text-sm text-gray-600 dark:text-gray-400 bg-white/50 dark:bg-gray-800/50 rounded-lg py-2 px-4 mt-4">
                     Graded on {new Date(assignment.submission_status.graded_at).toLocaleDateString('en-US', {
                       month: 'short',
                       day: 'numeric',
@@ -1035,12 +1090,23 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
               <div className="bg-blue-50 dark:bg-blue-950/30 rounded-xl p-5 sm:p-6 mb-6 border-l-4 border-blue-500 shadow-md">
                 <h4 className="font-bold text-gray-900 dark:text-white text-base sm:text-lg mb-4 flex items-center">
                   <div className="p-1.5 bg-blue-100 dark:bg-blue-900 rounded-lg mr-3">
-                    <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                    <MessageSquare className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                   </div>
                   Instructor Feedback
                 </h4>
-                <div className="text-gray-700 dark:text-gray-300 text-sm sm:text-base whitespace-pre-wrap leading-relaxed bg-white/50 dark:bg-gray-800/50 rounded-lg p-4">
-                  {feedback}
+                <div className="bg-white/70 dark:bg-gray-800/50 rounded-lg p-4 sm:p-5 border border-blue-100 dark:border-blue-900/50">
+                  <div className="prose prose-sm dark:prose-invert max-w-none
+                    prose-headings:text-gray-900 dark:prose-headings:text-white
+                    prose-strong:text-gray-900 dark:prose-strong:text-white
+                    prose-p:text-gray-700 dark:prose-p:text-gray-300
+                    prose-li:text-gray-700 dark:prose-li:text-gray-300
+                    prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+                    <MarkdownRenderer 
+                      content={feedback} 
+                      variant="compact" 
+                      className="leading-relaxed" 
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -1098,20 +1164,35 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 
         {/* Modification Request Notice for Resubmit Mode */}
         {isResubmitMode && hasModificationRequest && (
-          <Alert className="border-2 border-orange-400 bg-orange-50 dark:bg-orange-950/30 shadow-md">
-            <AlertCircle className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-            <AlertTitle className="text-orange-800 dark:text-orange-300 font-bold">
-              Resubmitting Assignment
-            </AlertTitle>
-            <AlertDescription className="text-orange-700 dark:text-orange-200">
-              You are resubmitting this assignment based on your instructor's feedback.
+          <div className="rounded-xl border-2 border-orange-300 bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-950/30 dark:to-amber-950/20 shadow-md overflow-hidden">
+            <div className="bg-gradient-to-r from-orange-400 to-amber-400 px-4 py-2.5 flex items-center gap-2">
+              <Edit className="h-4 w-4 text-white" />
+              <h4 className="text-white font-bold text-sm sm:text-base">
+                Resubmitting Assignment
+              </h4>
+            </div>
+            <div className="p-4 sm:p-5 space-y-3">
+              <p className="text-orange-800 dark:text-orange-200 text-sm font-medium">
+                Review the feedback below and upload your revised work.
+              </p>
               {assignment.modification_request_reason && (
-                <div className="mt-2 p-3 bg-white/50 dark:bg-gray-800/50 rounded border-l-4 border-orange-400">
-                  <strong>Instructor's Request:</strong> {assignment.modification_request_reason}
+                <div className="bg-white dark:bg-gray-800/70 rounded-lg p-4 border border-orange-200 dark:border-orange-800/50 shadow-sm">
+                  <div className="prose prose-sm dark:prose-invert max-w-none
+                    prose-headings:text-orange-900 dark:prose-headings:text-orange-200
+                    prose-strong:text-orange-900 dark:prose-strong:text-orange-200
+                    prose-li:text-gray-700 dark:prose-li:text-gray-300
+                    prose-p:text-gray-700 dark:prose-p:text-gray-300
+                    prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+                    <MarkdownRenderer 
+                      content={assignment.modification_request_reason} 
+                      variant="compact" 
+                      className="leading-relaxed" 
+                    />
+                  </div>
                 </div>
               )}
-            </AlertDescription>
-          </Alert>
+            </div>
+          </div>
         )}
 
         <Card className="border-2 border-green-200 bg-gradient-to-br from-green-50 via-white to-emerald-50 dark:from-green-950 dark:via-gray-900 dark:to-emerald-950 shadow-xl">
