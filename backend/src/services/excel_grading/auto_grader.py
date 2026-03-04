@@ -115,15 +115,27 @@ def _run_grading_in_background(
             status = result.get('status', 'unknown')
 
             if status == 'completed':
+                grade_data = result.get('result', {})
+                total_score = grade_data.get('total_score', 0)
+                max_score = grade_data.get('max_score', 100)
+
                 logger.info(
                     f"✅ Auto-grading completed: {submission_type} #{submission_id} → "
-                    f"{result.get('result', {}).get('total_score', '?')}/"
-                    f"{result.get('result', {}).get('max_score', '?')} "
-                    f"({result.get('result', {}).get('grade_letter', '?')})"
+                    f"{total_score}/{max_score} "
+                    f"({grade_data.get('grade_letter', '?')})"
                 )
-                # Optionally notify student
+
+                # Check against passing score and auto-request modification
+                # if the student didn't meet the threshold
+                modification_requested = _auto_request_modification_if_needed(
+                    app, submission_id, submission_type, student_id,
+                    total_score, max_score, grade_data,
+                )
+
+                # Notify student (includes modification info if applicable)
                 _notify_student_auto_graded(
-                    app, submission_id, submission_type, student_id, result
+                    app, submission_id, submission_type, student_id, result,
+                    modification_requested=modification_requested,
                 )
 
             elif status == 'already_graded':
@@ -168,12 +180,149 @@ def _run_grading_in_background(
                 )
 
 
+def _auto_request_modification_if_needed(
+    app,
+    submission_id: int,
+    submission_type: str,
+    student_id: int,
+    total_score: float,
+    max_score: float,
+    grade_data: Dict[str, Any],
+) -> bool:
+    """
+    If the auto-graded score is below the assignment/project passing score,
+    automatically request modifications so the student can resubmit.
+
+    Returns True if a modification request was created.
+    """
+    try:
+        from src.models.course_models import (
+            Assignment, AssignmentSubmission,
+            Project, ProjectSubmission,
+        )
+        from src.models.student_models import LessonCompletion
+        from src.extensions import db
+        from datetime import datetime
+
+        # Calculate percentage score
+        score_pct = (total_score / max_score * 100) if max_score > 0 else 0
+
+        if submission_type == 'assignment':
+            submission = AssignmentSubmission.query.get(submission_id)
+            if not submission:
+                return False
+            parent = Assignment.query.get(submission.assignment_id)
+        elif submission_type == 'project':
+            submission = ProjectSubmission.query.get(submission_id)
+            if not submission:
+                return False
+            parent = Project.query.get(submission.project_id)
+        else:
+            return False
+
+        if not parent:
+            return False
+
+        passing_score = getattr(parent, 'passing_score', None) or 60.0
+
+        if score_pct >= passing_score:
+            logger.info(
+                f"✅ Score {score_pct:.1f}% meets passing threshold "
+                f"{passing_score}% — no modification request needed"
+            )
+            return False
+
+        # Check resubmission limits
+        max_resubs = getattr(parent, 'max_resubmissions', 3) or 3
+        current_resubs = getattr(parent, 'resubmission_count', 0) or 0
+        if current_resubs >= max_resubs:
+            logger.info(
+                f"⚠️ Score {score_pct:.1f}% below passing ({passing_score}%) "
+                f"but max resubmissions ({max_resubs}) already reached"
+            )
+            return False
+
+        # Build a helpful reason from AI analysis
+        weaknesses = grade_data.get('analysis_data', {}).get('weaknesses', [])
+        strengths = grade_data.get('analysis_data', {}).get('strengths', [])
+        feedback_text = grade_data.get('overall_feedback', '')
+
+        reason_parts = [
+            f"Your submission scored {total_score:.1f}/{max_score:.0f} "
+            f"({score_pct:.1f}%), which is below the passing score of "
+            f"{passing_score:.0f}%. Please review and resubmit.",
+        ]
+        if weaknesses:
+            reason_parts.append("\n\n**Areas needing improvement:**")
+            for w in weaknesses[:5]:
+                reason_parts.append(f"• {w}")
+        if strengths:
+            reason_parts.append("\n\n**What you did well:**")
+            for s in strengths[:3]:
+                reason_parts.append(f"• {s}")
+        if feedback_text:
+            # Include a trimmed version of the full feedback
+            trimmed = feedback_text[:500]
+            if len(feedback_text) > 500:
+                trimmed += "…"
+            reason_parts.append(f"\n\n**AI Feedback:**\n{trimmed}")
+
+        reason = "\n".join(reason_parts)
+
+        # Set modification request flags on the parent (assignment/project)
+        parent.modification_requested = True
+        parent.modification_request_reason = reason
+        parent.modification_requested_at = datetime.utcnow()
+        parent.modification_requested_by = None  # System/AI initiated
+        parent.can_resubmit = True
+
+        # Clear the grade on the submission so the student sees "needs_revision"
+        submission.grade = None
+        submission.feedback = f"Modification requested (auto): {reason[:200]}"
+        submission.graded_at = None
+        submission.graded_by = None
+
+        # Update lesson completion if applicable (assignments only)
+        if submission_type == 'assignment':
+            lesson_id = getattr(parent, 'lesson_id', None)
+            if lesson_id:
+                lc = LessonCompletion.query.filter_by(
+                    student_id=student_id,
+                    lesson_id=lesson_id,
+                ).first()
+                if lc:
+                    lc.assignment_graded = False
+                    lc.assignment_needs_resubmission = True
+                    lc.modification_request_reason = reason[:500]
+
+        db.session.commit()
+
+        logger.info(
+            f"🔄 Auto-modification requested: {submission_type} #{submission_id} — "
+            f"score {score_pct:.1f}% < passing {passing_score}%"
+        )
+        return True
+
+    except Exception as e:
+        logger.exception(
+            f"❌ Failed to auto-request modification for {submission_type} "
+            f"#{submission_id}: {e}"
+        )
+        try:
+            from src.extensions import db
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
+
+
 def _notify_student_auto_graded(
     app,
     submission_id: int,
     submission_type: str,
     student_id: int,
     result: Dict[str, Any],
+    modification_requested: bool = False,
 ):
     """
     Send a lightweight notification to the student that AI grading is ready.
@@ -193,11 +342,21 @@ def _notify_student_auto_graded(
         feedback = grade_data.get('overall_feedback', '')
 
         # Add a note that this is AI-generated preliminary feedback
-        ai_note = (
-            "\n\n---\n"
-            "📊 *This is an AI-generated preliminary grade. "
-            "Your instructor will review and may adjust the final score.*"
-        )
+        if modification_requested:
+            ai_note = (
+                "\n\n---\n"
+                "⚠️ *Your score is below the passing threshold. "
+                "A modification request has been created automatically. "
+                "Please review the feedback above and resubmit your work.*\n\n"
+                "📊 *This is an AI-generated preliminary grade. "
+                "Your instructor will review and may adjust the final score.*"
+            )
+        else:
+            ai_note = (
+                "\n\n---\n"
+                "📊 *This is an AI-generated preliminary grade. "
+                "Your instructor will review and may adjust the final score.*"
+            )
         feedback_with_note = (feedback + ai_note) if feedback else ai_note
 
         if submission_type == 'assignment':

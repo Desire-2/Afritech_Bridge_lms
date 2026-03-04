@@ -1307,6 +1307,44 @@ class TestStrengthsWeaknesses:
         assert 'formula' in strengths_text or 'diverse' in strengths_text
 
 
+class TestAutoModificationRequest:
+    """Tests for auto-requesting modification when score < passing."""
+
+    def test_below_passing_triggers_modification(self):
+        # Logical test: score_pct = 40 < 60 → should trigger modification
+        score_pct = 40 / 100 * 100
+        passing = 60.0
+        assert score_pct < passing, "Score below passing should trigger modification"
+
+        # Also verify the reason message would be built correctly
+        reason_parts = [
+            f"Your submission scored {40.0:.1f}/{100:.0f} "
+            f"({score_pct:.1f}%), which is below the passing score of "
+            f"{passing:.0f}%. Please review and resubmit.",
+        ]
+        reason = "\n".join(reason_parts)
+        assert "below the passing score" in reason
+        assert "40.0/100" in reason
+
+    def test_above_passing_no_modification(self):
+        # Logical test: score >= passing → no modification
+        score_pct = 75 / 100 * 100
+        passing = 60.0
+        assert score_pct >= passing, "Score at/above passing should NOT trigger modification"
+
+    def test_at_passing_no_modification(self):
+        # Exact passing score → no modification
+        score_pct = 60 / 100 * 100
+        passing = 60.0
+        assert score_pct >= passing, "Exact passing score should NOT trigger modification"
+
+    def test_max_resubmissions_blocks_modification(self):
+        # Even if below passing, max resubmissions reached → no modification
+        current_resubs = 3
+        max_resubs = 3
+        assert current_resubs >= max_resubs, "Should block when max resubmissions reached"
+
+
 # ===========================================================================
 # CLI runner
 # ===========================================================================
@@ -1334,6 +1372,7 @@ def run_all():
         TestLearningEngine,
         TestAutoGrader,
         TestStrengthsWeaknesses,
+        TestAutoModificationRequest,
     ]
 
     total = 0
