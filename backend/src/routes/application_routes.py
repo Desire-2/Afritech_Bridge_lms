@@ -3817,13 +3817,21 @@ def initiate_payment():
     if not course:
         return jsonify({"error": "Course not found"}), 404
 
-    # Validate that the requested method is enabled for this course
-    enabled_methods = course._get_payment_methods() if course.enrollment_type == "paid" else []
+    # Validate that the requested method is enabled for this course/cohort
+    # If an application_window_id is provided, use that cohort's effective methods
+    application_window_id = data.get("application_window_id")
+    if application_window_id:
+        from ..models.course_models import ApplicationWindow
+        app_window = ApplicationWindow.query.get(application_window_id)
+        enabled_methods = app_window.get_effective_payment_methods() if app_window else course._get_payment_methods()
+    else:
+        enabled_methods = course._get_payment_methods() if course.enrollment_type == "paid" else []
+
     # All recognized gateway names
     ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave"}
     if payment_method not in ALL_KNOWN_METHODS:
         return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
-    if course.enrollment_type == "paid" and payment_method not in enabled_methods:
+    if course.enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
         return jsonify({"error": f"Payment method '{payment_method}' is not enabled for this course"}), 400
 
     try:
