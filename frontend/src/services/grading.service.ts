@@ -150,6 +150,22 @@ export interface BulkGradeRequest {
   }>;
 }
 
+/**
+ * Response from grading endpoints - includes auto-modification info 
+ * when score is below passing threshold
+ */
+export interface GradeResponse {
+  message: string;
+  submission: AssignmentSubmission | ProjectSubmission;
+  grade: number;
+  percentage: number;
+  is_collaborative?: boolean;
+  // Auto-modification fields (present when score < passing threshold)
+  modification_requested?: boolean;
+  modification_reason?: string;
+  resubmissions_remaining?: number;
+}
+
 export interface GradingSummary {
   assignments: {
     pending: number;
@@ -274,11 +290,13 @@ export class GradingService {
 
   /**
    * Grade an assignment submission
+   * If the score is below passing threshold (60%), a modification request 
+   * is automatically created and the student is notified to resubmit.
    */
   static async gradeAssignment(
     submissionId: number,
     gradeData: GradeRequest
-  ): Promise<{ message: string; submission: AssignmentSubmission }> {
+  ): Promise<GradeResponse> {
     try {
       const response = await apiClient.post(
         `${this.BASE_PATH}/assignments/submissions/${submissionId}/grade`,
@@ -292,11 +310,12 @@ export class GradingService {
 
   /**
    * Update an existing grade for an assignment
+   * If the new score is below passing threshold, auto-modification is triggered.
    */
   static async updateAssignmentGrade(
     submissionId: number,
     gradeData: GradeRequest
-  ): Promise<{ message: string; submission: AssignmentSubmission }> {
+  ): Promise<GradeResponse> {
     try {
       const response = await apiClient.put(
         `${this.BASE_PATH}/assignments/submissions/${submissionId}/grade`,
@@ -370,11 +389,13 @@ export class GradingService {
 
   /**
    * Grade a project submission
+   * If the score is below passing threshold (60%), a modification request
+   * is automatically created and the student is notified to resubmit.
    */
   static async gradeProject(
     submissionId: number,
     gradeData: GradeRequest
-  ): Promise<{ message: string; submission: ProjectSubmission }> {
+  ): Promise<GradeResponse> {
     try {
       const response = await apiClient.post(
         `${this.BASE_PATH}/projects/submissions/${submissionId}/grade`,
@@ -388,11 +409,12 @@ export class GradingService {
 
   /**
    * Update an existing grade for a project
+   * If the new score is below passing threshold, auto-modification is triggered.
    */
   static async updateProjectGrade(
     submissionId: number,
     gradeData: GradeRequest
-  ): Promise<{ message: string; submission: ProjectSubmission }> {
+  ): Promise<GradeResponse> {
     try {
       const response = await apiClient.put(
         `${this.BASE_PATH}/projects/submissions/${submissionId}/grade`,

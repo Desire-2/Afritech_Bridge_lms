@@ -268,6 +268,7 @@ def create_assignment():
             allowed_file_types=data.get('allowed_file_types'),
             due_date=due_date,
             points_possible=data.get('points_possible', 100.0),
+            passing_score=data.get('passing_score', 60.0),
             is_published=data.get('is_published', False)
         )
         

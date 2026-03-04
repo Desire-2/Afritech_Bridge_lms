@@ -1109,6 +1109,7 @@ class Assignment(db.Model):
     allowed_file_types = db.Column(db.String(255), nullable=True)  # JSON string of allowed extensions
     due_date = db.Column(db.DateTime, nullable=True)
     points_possible = db.Column(db.Float, default=100.0)
+    passing_score = db.Column(db.Float, nullable=True, default=60.0)  # Passing percentage threshold set during creation
     is_published = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -1148,6 +1149,7 @@ class Assignment(db.Model):
             'allowed_file_types': self.allowed_file_types,
             'due_date': self.due_date.isoformat() if self.due_date else None,
             'points_possible': self.points_possible,
+            'passing_score': self.passing_score,
             'is_published': self.is_published,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
@@ -1332,6 +1334,7 @@ class Project(db.Model):
     module_ids = db.Column(db.Text, nullable=False)  # JSON string of module IDs that the project covers
     due_date = db.Column(db.DateTime, nullable=False)
     points_possible = db.Column(db.Float, default=100.0)
+    passing_score = db.Column(db.Float, nullable=True, default=60.0)  # Passing percentage threshold set during creation
     is_published = db.Column(db.Boolean, default=False)
     submission_format = db.Column(db.String(50), default='file_upload')  # 'file_upload', 'text_response', 'both', 'presentation'
     max_file_size_mb = db.Column(db.Integer, default=50)  # Larger for projects
@@ -1382,6 +1385,7 @@ class Project(db.Model):
             'module_ids': self.get_modules(),
             'due_date': self.due_date.isoformat(),
             'points_possible': self.points_possible,
+            'passing_score': self.passing_score,
             'is_published': self.is_published,
             'submission_format': self.submission_format,
             'max_file_size_mb': self.max_file_size_mb,

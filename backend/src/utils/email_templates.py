@@ -1166,6 +1166,161 @@ def application_waitlisted_email(application, course_title, position=None, estim
     {get_email_footer()}
     """
 
+def assignment_graded_with_modification_email(student_name, student_email, assignment_title, course_title, 
+                                                grade, points_possible, feedback, modification_reason,
+                                                instructor_name, resubmission_deadline, resubmit_url,
+                                                passing_percentage=60.0, is_project=False):
+    """Email template for graded assignment/project with automatic modification request.
+    
+    Sent when a score is below the passing threshold, combining the grade notification
+    and modification/resubmission request into a single email.
+    """
+    percentage = (grade / points_possible * 100) if points_possible > 0 else 0
+    item_type = "Project" if is_project else "Assignment"
+    item_type_lower = "project" if is_project else "assignment"
+    
+    return f"""
+    {get_email_header()}
+    <div style="background-color: white; padding: 30px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+            <div style="font-size: 50px; margin-bottom: 10px;">📝</div>
+            <h2 style="color: #dc2626; margin: 0;">{item_type} Graded — Modification Required</h2>
+        </div>
+        
+        <p style="color: #4a5568; line-height: 1.6;">
+            Dear <strong>{student_name}</strong>,
+        </p>
+        
+        <p style="color: #4a5568; line-height: 1.6;">
+            Your {item_type_lower} <strong>"{assignment_title}"</strong> for <strong>{course_title}</strong> has been graded.
+            Unfortunately, your score is below the passing threshold and a <strong>modification request</strong> has been automatically generated.
+        </p>
+        
+        <!-- Score Section -->
+        <div style="background-color: #fef2f2; border: 2px solid #dc2626; border-radius: 8px; padding: 20px; margin: 25px 0; text-align: center;">
+            <h3 style="margin: 0 0 10px 0; color: #dc2626; font-size: 18px;">Your Score</h3>
+            <div style="font-size: 48px; font-weight: bold; color: #dc2626; margin: 10px 0;">
+                {grade:.1f} / {points_possible}
+            </div>
+            <div style="font-size: 24px; color: #dc2626; margin: 5px 0;">
+                {percentage:.1f}%
+            </div>
+            <div style="background-color: white; color: #dc2626; display: inline-block; padding: 8px 20px; border-radius: 20px; margin-top: 10px; font-weight: 600;">
+                Below Passing ({passing_percentage}%)
+            </div>
+        </div>
+        
+        {f'''<div style="background-color: #f8fafc; border-left: 4px solid #667eea; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 10px 0; color: #2d3748; font-size: 16px;">💬 Instructor Feedback</h3>
+            <p style="color: #4a5568; margin: 0; line-height: 1.6; white-space: pre-wrap;">{feedback}</p>
+        </div>''' if feedback else ''}
+        
+        <!-- Modification Request Section -->
+        <div style="background-color: #fff7ed; border: 2px solid #f97316; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <h3 style="margin: 0 0 15px 0; color: #c2410c; font-size: 18px;">⚠️ Modification Required</h3>
+            <p style="color: #4a5568; line-height: 1.6; margin: 0 0 15px 0;">
+                Your instructor <strong>{instructor_name}</strong> requires you to revise and resubmit your {item_type_lower}. 
+                Please make the necessary improvements based on the feedback provided.
+            </p>
+            
+            <div style="background-color: #fff; border-radius: 6px; padding: 15px; margin: 10px 0;">
+                <table style="width: 100%; color: #4a5568;">
+                    <tr>
+                        <td style="padding: 6px 0;"><strong>📋 {item_type}:</strong></td>
+                        <td>{assignment_title}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0;"><strong>📚 Course:</strong></td>
+                        <td>{course_title}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0;"><strong>👨‍🏫 Instructor:</strong></td>
+                        <td>{instructor_name}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0;"><strong>📅 Resubmission Deadline:</strong></td>
+                        <td style="color: #dc2626; font-weight: 600;">{resubmission_deadline}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 6px 0;"><strong>🎯 Required Score:</strong></td>
+                        <td>{passing_percentage}% or higher</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Steps to Improve -->
+        <div style="background-color: #eff6ff; border-left: 4px solid #3b82f6; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 10px 0; color: #1e40af; font-size: 16px;">📖 Steps to Improve & Resubmit</h3>
+            <ol style="color: #4a5568; line-height: 2; margin: 0; padding-left: 20px;">
+                <li>Carefully review the instructor feedback above</li>
+                <li>Revisit the course materials related to this {item_type_lower}</li>
+                <li>Identify areas where you lost points and improve them</li>
+                <li>Make the necessary modifications to your work</li>
+                <li>Log into your student dashboard and resubmit before <strong>{resubmission_deadline}</strong></li>
+            </ol>
+        </div>
+        
+        <!-- Tips for Improvement -->
+        <div style="background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 10px 0; color: #b91c1c; font-size: 16px;">💡 Tips for Improvement</h3>
+            <ul style="color: #4a5568; line-height: 1.8; margin: 0; padding-left: 20px;">
+                <li>Focus on the areas highlighted in the instructor's feedback</li>
+                <li>Don't hesitate to reach out to your instructor for clarification</li>
+                <li>Take your time to produce quality work — you can do this!</li>
+                <li>Check your work carefully before resubmitting</li>
+            </ul>
+        </div>
+        
+        <!-- Assignment Details -->
+        <div style="background-color: #f1f5f9; border-radius: 8px; padding: 20px; margin: 20px 0;">
+            <h3 style="margin: 0 0 15px 0; color: #334155; font-size: 16px;">📊 {item_type} Details</h3>
+            <table style="width: 100%; color: #4a5568;">
+                <tr>
+                    <td style="padding: 8px 0;"><strong>{item_type}:</strong></td>
+                    <td>{assignment_title}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Course:</strong></td>
+                    <td>{course_title}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Points Earned:</strong></td>
+                    <td>{grade:.1f} / {points_possible}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Percentage:</strong></td>
+                    <td style="color: #dc2626; font-weight: 600;">{percentage:.1f}%</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Passing Threshold:</strong></td>
+                    <td>{passing_percentage}%</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Graded:</strong></td>
+                    <td>{datetime.now().strftime('%B %d, %Y at %I:%M %p')}</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{resubmit_url}" style="display: inline-block; background: linear-gradient(135deg, #f97316 0%, #dc2626 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                Resubmit {item_type}
+            </a>
+        </div>
+        
+        <p style="color: #4a5568; line-height: 1.6; text-align: center; font-style: italic;">
+            Don't be discouraged — this is an opportunity to learn and improve!
+        </p>
+        
+        <p style="color: #4a5568; line-height: 1.6;">
+            Best regards,<br>
+            <strong>The Afritech Bridge Team</strong>
+        </p>
+    </div>
+    {get_email_footer()}
+    """
+
 def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True):
     """Email template for graded assignment notification"""
     percentage = (grade / points_possible * 100) if points_possible > 0 else 0

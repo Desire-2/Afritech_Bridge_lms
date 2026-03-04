@@ -33,9 +33,16 @@ from ..models.course_models import (
 )
 from ..models.excel_grading_models import ExcelGradingResult
 from ..services.excel_grading.learning_engine import LearningEngine
+from ..utils.email_notifications import (
+    send_grade_notification, send_project_graded_notification,
+    send_grade_with_modification_notification
+)
 
 logger = logging.getLogger(__name__)
 _learning_engine = LearningEngine()
+
+# Passing score threshold fallback - used when assignment/project has no passing_score set
+DEFAULT_PASSING_PERCENTAGE = 60.0
 
 # ------------------------------------------------------------------
 # Role guards
@@ -272,10 +279,152 @@ def review_result(result_id):
             # Learning is non-critical — never block the review response
             logger.warning(f"Learning recording failed (non-critical): {learn_err}")
 
-        return jsonify({
+        # ===== AUTO-MODIFICATION REQUEST + NOTIFICATION on AI grade approval/override =====
+        modification_auto_requested = False
+        modification_reason = None
+        try:
+            final_score = result.total_score
+            assignment = None
+            project = None
+            submission = None
+            student = None
+            points_possible = result.max_score or 100
+            
+            # Determine if this is an assignment or project submission
+            if result.submission_type == 'assignment' and result.assignment_submission_id:
+                submission = AssignmentSubmission.query.get(result.assignment_submission_id)
+                if submission:
+                    assignment = submission.assignment
+                    student = User.query.get(submission.student_id)
+                    if assignment:
+                        points_possible = assignment.points_possible or 100
+            elif result.submission_type == 'project' and result.project_submission_id:
+                submission = ProjectSubmission.query.get(result.project_submission_id)
+                if submission:
+                    project = submission.project
+                    student = User.query.get(submission.student_id)
+                    if project:
+                        points_possible = project.points_possible or 100
+            
+            if final_score is not None and (assignment or project):
+                percentage_score = round((final_score / points_possible) * 100, 2)
+                target = assignment or project
+                
+                # Use the passing score set during creation, fallback to default
+                passing_threshold = target.passing_score if target.passing_score is not None else DEFAULT_PASSING_PERCENTAGE
+                
+                if percentage_score < passing_threshold:
+                    max_resubs = target.max_resubmissions or 3
+                    current_resubs = target.resubmission_count or 0
+                    
+                    if current_resubs < max_resubs:
+                        item_type = "project" if project else "assignment"
+                        modification_reason = (
+                            f"Your {item_type} score of {final_score:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
+                            f"passing threshold of {passing_threshold}%. "
+                            f"Please review the feedback and resubmit your work with improvements."
+                        )
+                        
+                        instructor_notes = data.get('instructor_notes', '').strip()
+                        if instructor_notes:
+                            modification_reason += f"\n\nInstructor Notes: {instructor_notes}"
+                        
+                        target.modification_requested = True
+                        target.modification_request_reason = modification_reason
+                        target.modification_requested_at = datetime.utcnow()
+                        target.modification_requested_by = instructor_id
+                        target.can_resubmit = True
+                        target.resubmission_count = current_resubs + 1
+                        
+                        db.session.commit()
+                        modification_auto_requested = True
+                        
+                        logger.info(
+                            f"🔄 AI grade {action}: auto-modification requested for {item_type} {target.id} - "
+                            f"scored {percentage_score:.1f}% (below {passing_threshold}% threshold)"
+                        )
+                    else:
+                        logger.info(
+                            f"⚠️ AI grade {action}: score below passing but max resubmissions ({max_resubs}) reached"
+                        )
+                else:
+                    # Score meets passing - clear any existing modification request
+                    if target.modification_requested:
+                        target.modification_requested = False
+                        target.modification_request_reason = None
+                        target.modification_requested_at = None
+                        target.modification_requested_by = None
+                        target.can_resubmit = False
+                        db.session.commit()
+                        logger.info(
+                            f"✅ AI grade {action}: score {percentage_score:.1f}% meets passing threshold {passing_threshold}% - "
+                            f"cleared modification request"
+                        )
+                
+                # Send email notification to student
+                if student and student.email and submission:
+                    try:
+                        instructor = User.query.get(instructor_id)
+                        instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Your Instructor"
+                        from flask import current_app
+                        frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+                        
+                        if modification_auto_requested:
+                            from datetime import timedelta
+                            resubmission_deadline = (datetime.utcnow() + timedelta(days=7)).strftime('%B %d, %Y')
+                            
+                            send_grade_with_modification_notification(
+                                submission=submission,
+                                assignment=target,
+                                student=student,
+                                grade=final_score,
+                                feedback=result.overall_feedback or data.get('instructor_notes', ''),
+                                modification_reason=modification_reason,
+                                instructor_name=instructor_name,
+                                resubmission_deadline=resubmission_deadline,
+                                frontend_url=frontend_url,
+                                passing_percentage=passing_threshold,
+                                is_project=(project is not None)
+                            )
+                            logger.info(f"📧 AI grade {action}: sent grade+modification notification to {student.email}")
+                        else:
+                            if project:
+                                send_project_graded_notification(
+                                    submission=submission,
+                                    project=project,
+                                    student=student,
+                                    grade=final_score,
+                                    feedback=result.overall_feedback or data.get('instructor_notes', '')
+                                )
+                            else:
+                                send_grade_notification(
+                                    submission=submission,
+                                    assignment=assignment,
+                                    student=student,
+                                    grade=final_score,
+                                    feedback=result.overall_feedback or data.get('instructor_notes', '')
+                                )
+                            logger.info(f"📧 AI grade {action}: sent grade notification to {student.email}")
+                    except Exception as email_err:
+                        logger.warning(f"⚠️ AI grade review: email notification failed: {email_err}")
+        except Exception as mod_error:
+            logger.error(f"❌ Error in AI grade review auto-modification: {str(mod_error)}")
+        # ===== END AUTO-MODIFICATION REQUEST =====
+
+        response_data = {
             "message": f"Grading result {action}d successfully",
             "result": result.to_dict(),
-        }), 200
+        }
+        
+        if modification_auto_requested:
+            response_data["modification_requested"] = True
+            response_data["modification_reason"] = modification_reason
+            response_data["message"] = (
+                f"Grading result {action}d successfully. Score is below passing threshold — "
+                f"modification request has been automatically sent to the student."
+            )
+
+        return jsonify(response_data), 200
 
     except Exception as e:
         db.session.rollback()

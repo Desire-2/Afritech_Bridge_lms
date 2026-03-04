@@ -905,6 +905,7 @@ def create_assignment():
             allowed_file_types=data.get('allowed_file_types', ''),
             due_date=due_date,
             points_possible=data.get('points_possible', 100.0),  # Map to model field
+            passing_score=data.get('passing_score', 60.0),  # Passing percentage threshold
             is_published=data.get('is_published', False)
             # Note: allow_late_submission and late_penalty fields don't exist in Assignment model
             # They would need to be added via database migration if needed
@@ -979,6 +980,8 @@ def update_assignment(assignment_id):
         # Support both 'max_points' and 'points_possible' field names
         if 'max_points' in data or 'points_possible' in data:
             assignment.points_possible = data.get('points_possible') or data.get('max_points')
+        if 'passing_score' in data:
+            assignment.passing_score = data['passing_score']
         if 'due_date' in data:
             assignment.due_date = datetime.fromisoformat(data['due_date']) if data['due_date'] else None
         if 'assignment_type' in data:
@@ -1234,6 +1237,7 @@ def create_project():
             module_ids=module_ids,
             due_date=due_date,
             points_possible=data.get('points_possible', 100.0),
+            passing_score=data.get('passing_score', 60.0),  # Passing percentage threshold
             is_published=data.get('is_published', False),
             submission_format=data.get('submission_format', 'file_upload'),
             max_file_size_mb=data.get('max_file_size_mb', 50),
@@ -1304,6 +1308,8 @@ def update_project(project_id):
         # Support both 'max_points' and 'points_possible' field names
         if 'max_points' in data or 'points_possible' in data:
             project.points_possible = data.get('points_possible') or data.get('max_points')
+        if 'passing_score' in data:
+            project.passing_score = data['passing_score']
         if 'due_date' in data:
             project.due_date = datetime.fromisoformat(data['due_date']) if data['due_date'] else None
         if 'objectives' in data:

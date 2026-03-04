@@ -407,6 +407,7 @@ def create_assignment():
             allowed_file_types=data.get('allowed_file_types'),
             due_date=due_date,
             points_possible=data.get('points_possible', 100.0),
+            passing_score=data.get('passing_score', 60.0),
             is_published=data.get('is_published', False)
         )
         
@@ -463,6 +464,8 @@ def update_assignment(assignment_id):
                 assignment.due_date = None
         if 'points_possible' in data:
             assignment.points_possible = data['points_possible']
+        if 'passing_score' in data:
+            assignment.passing_score = data['passing_score']
         if 'is_published' in data:
             assignment.is_published = data['is_published']
         

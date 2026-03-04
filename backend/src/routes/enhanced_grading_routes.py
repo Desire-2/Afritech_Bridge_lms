@@ -1,7 +1,7 @@
 # Enhanced Grading Routes - Advanced functionality for instructor grading
 # Includes AI-powered suggestions, bulk operations, analytics, and workflow automation
 
-from flask import Blueprint, request, jsonify, stream_template
+from flask import Blueprint, request, jsonify, stream_template, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, and_, or_, desc, text, case
 from datetime import datetime, timedelta
@@ -18,11 +18,14 @@ from ..models.course_models import (
     Project, ProjectSubmission, Quiz, Submission, Enrollment, Lesson
 )
 from ..models.student_models import AssessmentAttempt, LessonCompletion, ModuleProgress
-from ..utils.email_notifications import send_grade_notification, send_project_graded_notification
+from ..utils.email_notifications import send_grade_notification, send_project_graded_notification, send_grade_with_modification_notification
 # from ..utils.ai_grading_helper import AIGradingHelper
 # from ..utils.plagiarism_checker import PlagiarismChecker
 
 logger = logging.getLogger(__name__)
+
+# Passing score threshold fallback - used only when assignment/project has no passing_score set
+DEFAULT_PASSING_PERCENTAGE = 60.0
 
 # Helper for role checking
 from functools import wraps
@@ -428,24 +431,94 @@ def bulk_grade_enhanced():
         # Commit changes
         db.session.commit()
         
-        # Send notifications (async in production)
+        # Send notifications and handle auto-modification for below-passing scores
+        modification_count = 0
         for submission_data in graded_submissions:
             try:
                 submission = AssignmentSubmission.query.get(submission_data['id'])
-                send_grade_notification(
-                    submission.student.email,
-                    submission.assignment.title,
-                    submission_data['final_grade'],
-                    submission.feedback or "Your assignment has been graded."
-                )
+                if not submission:
+                    continue
+                
+                assignment = submission.assignment
+                student = submission.student
+                final_grade = submission_data['final_grade']
+                points_possible = assignment.points_possible or 100
+                percentage_score = round((final_grade / points_possible) * 100, 2)
+                
+                # Use the passing score set during assignment creation, fallback to default
+                passing_threshold = assignment.passing_score if assignment.passing_score is not None else DEFAULT_PASSING_PERCENTAGE
+                
+                if percentage_score < passing_threshold:
+                    # Auto-modification request for below-passing scores
+                    max_resubs = assignment.max_resubmissions or 3
+                    current_resubs = assignment.resubmission_count or 0
+                    
+                    if current_resubs < max_resubs:
+                        mod_reason = (
+                            f"Your score of {final_grade:.1f}/{points_possible} ({percentage_score:.1f}%) is below the "
+                            f"passing threshold of {passing_threshold}%. "
+                            f"Please review the instructor feedback and resubmit your work with improvements."
+                        )
+                        if submission.feedback:
+                            mod_reason += f"\n\nInstructor Feedback: {submission.feedback}"
+                        
+                        assignment.modification_requested = True
+                        assignment.modification_request_reason = mod_reason
+                        assignment.modification_requested_at = datetime.utcnow()
+                        assignment.modification_requested_by = current_user_id
+                        assignment.can_resubmit = True
+                        assignment.resubmission_count = current_resubs + 1
+                        modification_count += 1
+                        
+                        # Send combined grade + modification email
+                        if student and student.email:
+                            instructor = User.query.get(current_user_id)
+                            instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Your Instructor"
+                            frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000')
+                            resubmission_deadline = (datetime.utcnow() + timedelta(days=7)).strftime('%B %d, %Y')
+                            
+                            send_grade_with_modification_notification(
+                                submission=submission,
+                                assignment=assignment,
+                                student=student,
+                                grade=final_grade,
+                                feedback=submission.feedback or "",
+                                modification_reason=mod_reason,
+                                instructor_name=instructor_name,
+                                resubmission_deadline=resubmission_deadline,
+                                frontend_url=frontend_url,
+                                passing_percentage=passing_threshold
+                            )
+                else:
+                    # Score is at or above passing - clear any existing modification request
+                    if assignment.modification_requested:
+                        assignment.modification_requested = False
+                        assignment.modification_request_reason = None
+                        assignment.modification_requested_at = None
+                        assignment.modification_requested_by = None
+                        assignment.can_resubmit = False
+                    
+                    # Standard grade notification for passing scores
+                    if student and student.email:
+                        send_grade_notification(
+                            submission=submission,
+                            assignment=assignment,
+                            student=student,
+                            grade=final_grade,
+                            feedback=submission.feedback or "Your assignment has been graded."
+                        )
             except Exception as e:
                 logger.warning(f"Failed to send notification for submission {submission_data['id']}: {str(e)}")
+        
+        if modification_count > 0:
+            db.session.commit()
         
         return jsonify({
             'success_count': graded_count,
             'error_count': len(errors),
             'errors': errors,
-            'graded_submissions': graded_submissions
+            'graded_submissions': graded_submissions,
+            'modifications_requested': modification_count
         }), 200
         
     except Exception as e:

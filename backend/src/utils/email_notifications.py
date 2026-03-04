@@ -8,7 +8,8 @@ from ..utils.email_templates import (
     assignment_graded_email,
     quiz_graded_email,
     course_announcement_email,
-    full_credit_awarded_email
+    full_credit_awarded_email,
+    assignment_graded_with_modification_email
 )
 
 # Import brevo service with error handling for missing dependencies
@@ -71,6 +72,80 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
         return True
     except Exception as e:
         logger.error(f"❌ Failed to send grade notification: {str(e)}")
+        return False
+
+
+def send_grade_with_modification_notification(submission, assignment, student, grade, feedback,
+                                                modification_reason, instructor_name, 
+                                                resubmission_deadline, frontend_url,
+                                                passing_percentage=60.0, is_project=False):
+    """
+    Send combined email notification when an assignment/project is graded below passing score
+    and a modification request is automatically generated.
+    
+    Args:
+        submission: AssignmentSubmission or ProjectSubmission object
+        assignment: Assignment or Project object
+        student: User object (student)
+        grade: float - grade received
+        feedback: str - instructor feedback
+        modification_reason: str - reason for modification request
+        instructor_name: str - name of the grading instructor
+        resubmission_deadline: str - formatted deadline for resubmission
+        frontend_url: str - frontend base URL for generating links
+        passing_percentage: float - the passing threshold percentage
+        is_project: bool - whether this is a project (vs assignment)
+    """
+    try:
+        item_type = "project" if is_project else "assignment"
+        points_possible = assignment.points_possible or 100
+        percentage = (grade / points_possible * 100) if points_possible > 0 else 0
+        
+        student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        
+        # Safely get course title
+        course_title = "Your Course"
+        try:
+            if hasattr(assignment, 'course') and assignment.course:
+                course_title = assignment.course.title
+        except (AttributeError, TypeError):
+            pass
+        
+        # Generate resubmission URL
+        assignment_id = assignment.id if assignment else None
+        resubmit_url = f"{frontend_url}/student/{item_type}s/{assignment_id}/resubmit" if frontend_url and assignment_id else "#"
+        
+        email_html = assignment_graded_with_modification_email(
+            student_name=student_name,
+            student_email=student.email,
+            assignment_title=f"Project: {assignment.title}" if is_project else assignment.title,
+            course_title=course_title,
+            grade=grade,
+            points_possible=points_possible,
+            feedback=feedback or "",
+            modification_reason=modification_reason,
+            instructor_name=instructor_name,
+            resubmission_deadline=resubmission_deadline,
+            resubmit_url=resubmit_url,
+            passing_percentage=passing_percentage,
+            is_project=is_project
+        )
+        
+        # Check if brevo service is available
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send grade + modification notification")
+            return False
+        
+        subject_icon = "🎯" if is_project else "📝"
+        brevo_service.send_email(
+            to_emails=[student.email],
+            subject=f"{subject_icon} {item_type.title()} Graded — Modification Required: {assignment.title}",
+            html_content=email_html
+        )
+        logger.info(f"📧 Grade + modification notification sent to {student.email} for {item_type} {assignment.id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send grade + modification notification: {str(e)}")
         return False
 
 
