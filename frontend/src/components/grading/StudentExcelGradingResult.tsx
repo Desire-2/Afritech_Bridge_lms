@@ -22,10 +22,14 @@ import {
   ArrowRight,
   Star,
   AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  BookOpen,
 } from "lucide-react";
 import ExcelGradingService, {
   StudentGradingResult,
 } from "@/services/excel-grading.service";
+import MarkdownRenderer from "@/components/ui/MarkdownRenderer";
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -276,24 +280,76 @@ export default function StudentExcelGradingResult({
         </div>
       )}
 
-      {/* ── Feedback ───────────────────────────── */}
+      {/* ── Detailed Feedback ─────────────────── */}
       {result.overall_feedback && (
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800/60 bg-gradient-to-br from-white via-indigo-50/30 to-purple-50/20 dark:from-slate-800 dark:via-indigo-950/20 dark:to-purple-950/10 shadow-md overflow-hidden transition-all duration-300">
+          {/* Header */}
           <button
             onClick={() => setShowDetails(!showDetails)}
-            className="w-full flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors"
+            className="w-full flex items-center gap-3 px-5 py-4 hover:bg-indigo-50/50 dark:hover:bg-indigo-950/20 transition-colors group"
           >
-            <span className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
-              <MessageSquare className="h-4 w-4 text-indigo-500" />
-              Detailed Feedback
-            </span>
-            <span className="text-xs text-gray-400">{showDetails ? "Hide" : "Show"}</span>
-          </button>
-          {showDetails && (
-            <div className="px-5 pb-5 border-t border-gray-100 dark:border-gray-700 pt-3">
-              <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
-                {result.overall_feedback}
+            <div className="p-2 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-lg shadow-sm group-hover:shadow-md transition-shadow">
+              <BookOpen className="h-4 w-4 text-white" />
+            </div>
+            <div className="flex-1 text-left">
+              <span className="text-sm font-bold text-gray-900 dark:text-white">
+                Detailed Feedback
+              </span>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                {showDetails ? "AI-generated analysis of your submission" : "Click to view AI-generated analysis"}
               </p>
+            </div>
+            <div className={`p-1.5 rounded-full transition-colors ${
+              showDetails
+                ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+            }`}>
+              {showDetails ? (
+                <ChevronUp className="h-4 w-4" />
+              ) : (
+                <ChevronDown className="h-4 w-4" />
+              )}
+            </div>
+          </button>
+
+          {/* Expanded Content */}
+          {showDetails && (
+            <div className="border-t border-indigo-100 dark:border-indigo-800/40">
+              {/* Feedback body with MarkdownRenderer */}
+              <div className="px-5 py-5 sm:px-6 sm:py-6">
+                <div className="bg-white dark:bg-gray-800/60 rounded-lg p-4 sm:p-5 border border-gray-100 dark:border-gray-700/50 shadow-sm">
+                  <div className="prose prose-sm dark:prose-invert max-w-none
+                    prose-headings:text-gray-900 dark:prose-headings:text-white
+                    prose-h3:text-base prose-h3:font-bold prose-h3:mt-5 prose-h3:mb-2
+                    prose-h3:border-b prose-h3:border-gray-200 dark:prose-h3:border-gray-700 prose-h3:pb-2
+                    prose-strong:text-gray-900 dark:prose-strong:text-white
+                    prose-em:text-indigo-700 dark:prose-em:text-indigo-300
+                    prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-p:leading-relaxed
+                    prose-li:text-gray-700 dark:prose-li:text-gray-300
+                    prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5">
+                    <MarkdownRenderer
+                      content={result.overall_feedback}
+                      variant="compact"
+                      className="leading-relaxed"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer with metadata */}
+              <div className="px-5 pb-4 sm:px-6 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
+                  <Sparkles className="h-3 w-3" />
+                  <span>AI-powered analysis</span>
+                </div>
+                {result.graded_at && (
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                    {new Date(result.graded_at).toLocaleDateString('en-US', {
+                      month: 'short', day: 'numeric', year: 'numeric'
+                    })}
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
