@@ -48,6 +48,7 @@ interface LearningSidebarProps {
   getModuleStatus: (moduleId: number) => ModuleStatus;
   onLessonSelect: (lessonId: number, moduleId: number) => void;
   onQuizSelect?: (lessonId: number, moduleId: number, quizId: number) => void;
+  onAssignmentSelect?: (lessonId: number, moduleId: number, assignmentId: number) => void;
   lessonAssessments?: { [lessonId: number]: LessonAssessment[] };
   completedLessons?: number[];
   lessonCompletionStatus?: { [lessonId: number]: boolean };
@@ -68,6 +69,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   getModuleStatus,
   onLessonSelect,
   onQuizSelect,
+  onAssignmentSelect,
   lessonAssessments = {},
   completedLessons = [],
   lessonCompletionStatus = {},
@@ -277,6 +279,21 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
       }
     }
   }, [onQuizSelect, setSidebarOpen]);
+
+  // Enhanced assignment selection handler — navigates to lesson AND opens assignment tab
+  const handleAssignmentSelection = useCallback((lessonId: number, moduleId: number, assignmentId: number) => {
+    if (onAssignmentSelect) {
+      onAssignmentSelect(lessonId, moduleId, assignmentId);
+    } else {
+      // Fallback: just navigate to the lesson
+      onLessonSelect(lessonId, moduleId);
+    }
+
+    // Auto-close sidebar on mobile after assignment selection
+    if (setSidebarOpen && window.innerWidth < 1024) {
+      setSidebarOpen(false);
+    }
+  }, [onAssignmentSelect, onLessonSelect, setSidebarOpen]);
 
   return (
     <>
@@ -606,8 +623,8 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     // Use responsive handler that auto-closes sidebar on mobile
                                     handleQuizSelection(lesson.id, module.id, assessment.id);
                                   } else if (assessment.type === 'assignment' && canAccessLesson) {
-                                    // Use responsive handler for lesson selection
-                                    handleLessonSelection(lesson.id, module.id);
+                                    // Navigate to lesson AND auto-open assignments tab
+                                    handleAssignmentSelection(lesson.id, module.id, assessment.id);
                                   }
                                 };
                                 

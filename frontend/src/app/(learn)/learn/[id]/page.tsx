@@ -1623,6 +1623,61 @@ const LearningPage = () => {
     }
   };
 
+  // Handle assignment selection from sidebar — navigates to lesson AND opens assignments tab
+  const handleAssignmentSelect = (lessonId: number, moduleId: number, assignmentId: number) => {
+    console.log('📋 Navigating to assignment:', assignmentId, 'for lesson:', lessonId);
+
+    const courseModules = courseData?.course?.modules || courseData?.modules || [];
+    if (courseModules) {
+      const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
+      const lesson = allLessons.find((l: any) => l.id === lessonId);
+      if (lesson) {
+        // If already on this lesson, just switch the tab
+        if (currentLesson?.id === lessonId) {
+          setCurrentViewMode('assignments');
+          console.log('✅ Already on lesson, switched to assignments view');
+          setTimeout(() => {
+            if (contentRef.current) {
+              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }, 100);
+          return;
+        }
+
+        setCurrentLesson(lesson);
+        setCurrentModuleId(moduleId);
+
+        // Auto-close sidebar on small screens (mobile/tablet)
+        if (window.innerWidth < 1024) {
+          setSidebarOpen(false);
+          console.log('📱 Auto-closing sidebar on small screen (assignment)');
+        }
+
+        // Load lesson content (which includes assignments) then switch tab
+        loadLessonContent(lessonId).then(() => {
+          setCurrentViewMode('assignments');
+          console.log('✅ Switched to assignments view');
+
+          setTimeout(() => {
+            if (contentRef.current) {
+              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }, 100);
+        });
+
+        setInteractionHistory(prev => [...prev, {
+          type: 'assignment_select',
+          lessonId,
+          moduleId,
+          assignmentId,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    }
+  };
+
   // Handle module unlock
   const handleModuleUnlock = (moduleName: string) => {
     setUnlockedModuleName(moduleName);
@@ -2404,6 +2459,7 @@ const LearningPage = () => {
           getModuleStatus={getModuleStatus}
           onLessonSelect={handleLessonSelect}
           onQuizSelect={handleQuizSelect}
+          onAssignmentSelect={handleAssignmentSelect}
           lessonAssessments={lessonAssessments}
           lessonCompletionStatus={lessonCompletionStatus}
           quizCompletionStatus={quizCompletionStatus}
