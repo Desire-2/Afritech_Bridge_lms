@@ -1173,6 +1173,141 @@ class TestLearningEngine:
 
 
 # ===========================================================================
+# 16. Auto-Grader
+# ===========================================================================
+
+class TestAutoGrader:
+    """Tests for the auto_grader module helper functions."""
+
+    def test_has_excel_files_single_url(self):
+        from src.services.excel_grading.auto_grader import _has_excel_files
+        assert _has_excel_files('https://storage.example.com/report.xlsx') is True
+        assert _has_excel_files('https://storage.example.com/report.pdf') is False
+
+    def test_has_excel_files_json_list(self):
+        from src.services.excel_grading.auto_grader import _has_excel_files
+        import json
+        files = json.dumps([{'original_filename': 'MySheet.xlsx'}])
+        assert _has_excel_files(files) is True
+        files2 = json.dumps([{'original_filename': 'report.pdf'}])
+        assert _has_excel_files(files2) is False
+
+    def test_has_excel_files_list_of_dicts(self):
+        from src.services.excel_grading.auto_grader import _has_excel_files
+        assert _has_excel_files([{'filename': 'data.csv'}]) is True
+        assert _has_excel_files([{'name': 'data.xlsm'}]) is True
+        assert _has_excel_files([{'filename': 'notes.txt'}]) is False
+
+    def test_has_excel_files_list_of_strings(self):
+        from src.services.excel_grading.auto_grader import _has_excel_files
+        assert _has_excel_files(['https://host.com/f.xls']) is True
+        assert _has_excel_files(['https://host.com/f.docx']) is False
+
+    def test_has_excel_files_empty(self):
+        from src.services.excel_grading.auto_grader import _has_excel_files
+        assert _has_excel_files(None) is False
+        assert _has_excel_files('') is False
+        assert _has_excel_files([]) is False
+
+    def test_has_excel_files_dict(self):
+        from src.services.excel_grading.auto_grader import _has_excel_files
+        assert _has_excel_files({'original_filename': 'budget.xlsx'}) is True
+        assert _has_excel_files({'filename': 'doc.pdf'}) is False
+
+    def test_is_excel_course(self):
+        from src.services.excel_grading.auto_grader import _is_excel_course
+
+        class MockCourse:
+            def __init__(self, title='', description=''):
+                self.title = title
+                self.description = description
+
+        assert _is_excel_course(MockCourse('MS Excel Fundamentals', '')) is True
+        assert _is_excel_course(MockCourse('Advanced Spreadsheet Analysis', '')) is True
+        assert _is_excel_course(MockCourse('Python Programming', '')) is False
+        assert _is_excel_course(MockCourse('Data Tools', 'Using Microsoft Excel')) is True
+        assert _is_excel_course(None) is False
+
+
+# ===========================================================================
+# 17. Grading Engine — Strengths & Weaknesses
+# ===========================================================================
+
+class TestStrengthsWeaknesses:
+    """Tests for the strengths/weaknesses analysis in the grading engine."""
+
+    def test_grade_result_includes_strengths_weaknesses(self):
+        from src.services.excel_grading.grading_engine import GradingEngine
+
+        engine = GradingEngine(
+            workbook_analysis={
+                'sheet_count': 2, 'sheet_names': ['Data', 'Analysis'],
+                'total_data_cells': 80, 'total_formulas': 15, 'file_type': 'xlsx',
+            },
+            formula_analysis={
+                'formula_count': 15,
+                'functions_used': ['SUM', 'AVERAGE', 'VLOOKUP', 'IF', 'SUMIF'],
+                'unique_functions': ['SUM', 'AVERAGE', 'VLOOKUP', 'IF', 'SUMIF'],
+                'function_categories': {'basic_math': ['SUM'], 'lookup_reference': ['VLOOKUP']},
+                'advanced_functions_used': ['VLOOKUP'],
+                'complexity_score': 40, 'has_nested': True,
+            },
+            chart_analysis={'chart_count': 3, 'chart_types': ['bar', 'line'], 'type_diversity': 2, 'charts_with_titles': 2},
+            pivot_analysis={'pivot_count': 0},
+            vba_analysis={'has_vba': False, 'module_count': 0, 'security': {'risk_level': 'none'}},
+            pq_analysis={'has_power_query': False, 'query_count': 0},
+            formatting_analysis={
+                'score': 50,
+                'conditional_formatting': {'rule_count': 2},
+            },
+            requirements={'scope_formulas': True, 'scope_charts': True, 'scope_formatting': True},
+        )
+        result = engine.grade()
+
+        assert 'strengths' in result
+        assert 'weaknesses' in result
+        assert isinstance(result['strengths'], list)
+        assert isinstance(result['weaknesses'], list)
+
+    def test_high_score_criterion_is_strength(self):
+        from src.services.excel_grading.grading_engine import GradingEngine
+
+        engine = GradingEngine(
+            workbook_analysis={
+                'sheet_count': 2, 'sheet_names': ['Data', 'Summary'],
+                'total_data_cells': 100, 'total_formulas': 20, 'file_type': 'xlsx',
+            },
+            formula_analysis={
+                'formula_count': 20,
+                'functions_used': ['SUM', 'AVERAGE', 'VLOOKUP', 'IF', 'SUMIF', 'COUNTIF',
+                                   'IFERROR', 'INDEX', 'MATCH', 'LEFT', 'RIGHT'],
+                'unique_functions': ['SUM', 'AVERAGE', 'VLOOKUP', 'IF', 'SUMIF', 'COUNTIF',
+                                     'IFERROR', 'INDEX', 'MATCH', 'LEFT', 'RIGHT'],
+                'function_categories': {
+                    'basic_math': ['SUM'], 'statistical': ['AVERAGE'],
+                    'lookup_reference': ['VLOOKUP', 'INDEX', 'MATCH'],
+                    'logical': ['IF'], 'conditional_aggregation': ['SUMIF', 'COUNTIF'],
+                    'error_handling': ['IFERROR'], 'text': ['LEFT', 'RIGHT'],
+                },
+                'advanced_functions_used': ['VLOOKUP', 'INDEX', 'MATCH'],
+                'complexity_score': 65, 'has_nested': True,
+                'reference_types': {'relative': 10, 'absolute': 5},
+            },
+            chart_analysis={'chart_count': 0},
+            pivot_analysis={'pivot_count': 0},
+            vba_analysis={'has_vba': False, 'module_count': 0, 'security': {'risk_level': 'none'}},
+            pq_analysis={'has_power_query': False, 'query_count': 0},
+            formatting_analysis={'score': 50},
+            requirements={'scope_formulas': True, 'scope_formatting': True},
+        )
+        result = engine.grade()
+
+        # Formula score should be high → should appear in strengths
+        strengths_text = ' '.join(result['strengths']).lower()
+        assert 'formula' in strengths_text or 'diverse' in strengths_text
+
+
+# ===========================================================================
 # CLI runner
 # ===========================================================================
 
@@ -1197,6 +1332,8 @@ def run_all():
         TestFileDownload,
         TestRubricGenerator,
         TestLearningEngine,
+        TestAutoGrader,
+        TestStrengthsWeaknesses,
     ]
 
     total = 0

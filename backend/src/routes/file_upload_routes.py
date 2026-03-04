@@ -15,6 +15,7 @@ from ..models.course_models import (
 from ..models.student_models import LessonCompletion
 from ..utils.validators import StudentValidators
 from ..utils.google_drive_service import google_drive_service
+from ..services.excel_grading.auto_grader import trigger_auto_excel_grading
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,20 @@ def submit_assignment_with_files(assignment_id):
         
         logger.info(f"Assignment {assignment_id} submitted by user {current_user_id} with {len(files_data)} files")
         
+        # Auto-trigger AI grading for Excel submissions
+        auto_grading_triggered = False
+        try:
+            course = Course.query.get(assignment.course_id)
+            auto_grading_triggered = trigger_auto_excel_grading(
+                submission_id=submission.id,
+                submission_type='assignment',
+                student_id=current_user_id,
+                course=course,
+                files_data=files_data,
+            )
+        except Exception as ag_err:
+            logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
+        
         return jsonify({
             "success": True,
             "message": "Assignment submitted successfully",
@@ -163,7 +178,8 @@ def submit_assignment_with_files(assignment_id):
                 "submitted_at": submission.submitted_at.isoformat(),
                 "files_count": len(files_data),
                 "has_text": bool(data.get('content')),
-                "status": "submitted"
+                "status": "submitted",
+                "ai_grading_triggered": auto_grading_triggered,
             }
         }), 201
         
@@ -258,6 +274,7 @@ def resubmit_assignment_with_files(assignment_id):
         assignment.modification_request_reason = None
         assignment.modification_requested_at = None
         assignment.modification_requested_by = None
+        assignment.can_resubmit = False
         
         # Update lesson completion if exists
         if assignment.lesson_id:
@@ -275,6 +292,20 @@ def resubmit_assignment_with_files(assignment_id):
         
         logger.info(f"Assignment {assignment_id} resubmitted by user {current_user_id} with {len(files_data)} files")
         
+        # Auto-trigger AI grading for Excel resubmissions
+        auto_grading_triggered = False
+        try:
+            course = Course.query.get(assignment.course_id)
+            auto_grading_triggered = trigger_auto_excel_grading(
+                submission_id=existing.id,
+                submission_type='assignment',
+                student_id=current_user_id,
+                course=course,
+                files_data=files_data,
+            )
+        except Exception as ag_err:
+            logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
+        
         return jsonify({
             "success": True,
             "message": "Assignment resubmitted successfully",
@@ -284,7 +315,8 @@ def resubmit_assignment_with_files(assignment_id):
                 "submitted_at": existing.submitted_at.isoformat(),
                 "files_count": len(files_data),
                 "has_text": bool(data.get('content')),
-                "status": "resubmitted"
+                "status": "resubmitted",
+                "ai_grading_triggered": auto_grading_triggered,
             }
         }), 200
         
@@ -381,6 +413,20 @@ def submit_project_with_files(project_id):
         
         logger.info(f"Project {project_id} submitted by user {current_user_id} with {len(files_data)} files")
         
+        # Auto-trigger AI grading for Excel submissions
+        auto_grading_triggered = False
+        try:
+            course = Course.query.get(project.course_id)
+            auto_grading_triggered = trigger_auto_excel_grading(
+                submission_id=submission.id,
+                submission_type='project',
+                student_id=current_user_id,
+                course=course,
+                files_data=files_data,
+            )
+        except Exception as ag_err:
+            logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
+        
         return jsonify({
             "success": True,
             "message": "Project submitted successfully",
@@ -391,7 +437,8 @@ def submit_project_with_files(project_id):
                 "files_count": len(files_data),
                 "has_text": bool(data.get('text_content')),
                 "team_size": len(team_members),
-                "status": "submitted"
+                "status": "submitted",
+                "ai_grading_triggered": auto_grading_triggered,
             }
         }), 201
         

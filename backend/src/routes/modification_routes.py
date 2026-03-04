@@ -178,6 +178,7 @@ def request_assignment_modification(assignment_id):
         assignment.modification_request_reason = reason
         assignment.modification_requested_at = datetime.utcnow()
         assignment.modification_requested_by = user_id
+        assignment.can_resubmit = True
         
         logger.info(f"🔍 Debug: About to update assignment {assignment_id}")
         
@@ -327,6 +328,7 @@ def request_project_modification(project_id):
         project.modification_request_reason = reason
         project.modification_requested_at = datetime.utcnow()
         project.modification_requested_by = user_id
+        project.can_resubmit = True
         
         # Increment resubmission count
         if not hasattr(project, 'resubmission_count'):

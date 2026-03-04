@@ -73,6 +73,11 @@ class FeedbackGenerator:
         # Opening
         sections.append(self._opening())
 
+        # Strengths & weaknesses summary (from grading engine)
+        summary = self._strengths_weaknesses_summary()
+        if summary:
+            sections.append(summary)
+
         # Per-criterion feedback
         breakdown = self.result.get('rubric_breakdown', {})
         for criterion, data in breakdown.items():
@@ -153,6 +158,25 @@ class FeedbackGenerator:
             f"{level_text} "
             f"Please review the detailed feedback below for each evaluation area."
         )
+
+    def _strengths_weaknesses_summary(self) -> str:
+        """Build a quick summary of strengths and areas to improve."""
+        strengths = self.result.get('strengths', [])
+        weaknesses = self.result.get('weaknesses', [])
+
+        if not strengths and not weaknesses:
+            return ""
+
+        lines = ["### 📌 Quick Summary"]
+        if strengths:
+            lines.append("**Strengths:**")
+            for s in strengths:
+                lines.append(f"  ✅ {s}")
+        if weaknesses:
+            lines.append("**Areas to Improve:**")
+            for w in weaknesses:
+                lines.append(f"  🔧 {w}")
+        return '\n'.join(lines)
 
     def _criterion_feedback(self, name: str, data: Dict[str, Any]) -> str:
         """Build feedback for a single criterion."""

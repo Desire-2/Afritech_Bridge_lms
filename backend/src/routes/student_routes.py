@@ -2189,6 +2189,74 @@ def submit_quiz(quiz_id):
         db.session.rollback()
         return jsonify({"message": "Error submitting quiz", "error": str(e)}), 500
 
+
+def _build_assignment_submission_status(assignment, submission):
+    """Build submission_status dict, including 'needs_revision' when
+    an instructor has requested modifications."""
+    if not submission:
+        status = 'not_submitted'
+        # Check if overdue
+        try:
+            if assignment.due_date:
+                from datetime import datetime as dt
+                due = assignment.due_date
+                if isinstance(due, str):
+                    due = dt.fromisoformat(due.replace('Z', '+00:00'))
+                if due < dt.utcnow():
+                    status = 'late'
+        except Exception:
+            pass
+        return {
+            'submitted': False,
+            'status': status,
+            'grade': None,
+            'feedback': None,
+            'submitted_at': None,
+            'graded_at': None,
+            'grader_name': None,
+        }
+
+    base = {
+        'submitted': True,
+        'id': submission.id,
+        'submitted_at': submission.submitted_at.isoformat() if submission.submitted_at else None,
+        'grade': submission.grade,
+        'feedback': submission.feedback,
+        'graded_at': submission.graded_at.isoformat() if submission.graded_at and submission.grade is not None else None,
+        'grader_name': None,
+    }
+
+    # Check modification_requested FIRST — it takes priority
+    # even when a grade exists (grading flow may keep the grade)
+    if getattr(assignment, 'modification_requested', False):
+        base['status'] = 'needs_revision'
+        base['feedback'] = assignment.modification_request_reason
+        # Still include grade data so the student can view it
+        if submission.grade is not None:
+            base['grade'] = submission.grade
+            base['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
+            try:
+                if submission.graded_by:
+                    grader = User.query.get(submission.graded_by)
+                    if grader:
+                        base['grader_name'] = grader.full_name
+            except Exception:
+                pass
+    elif submission.grade is not None:
+        base['status'] = 'graded'
+        try:
+            if submission.graded_by:
+                grader = User.query.get(submission.graded_by)
+                if grader:
+                    base['grader_name'] = grader.full_name
+        except Exception:
+            pass
+    else:
+        base['status'] = 'submitted'
+
+    return base
+
+
 @student_bp.route("/assignments/<int:assignment_id>/details", methods=["GET"])
 @student_required
 def get_assignment_details(assignment_id):
@@ -2234,23 +2302,7 @@ def get_assignment_details(assignment_id):
             'modification_requested_by': assignment.modification_requested_by,
             'can_resubmit': assignment.can_resubmit,
             
-            'submission_status': {
-                'submitted': submission is not None,
-                'status': 'graded' if submission and submission.grade is not None else ('submitted' if submission else 'not_submitted'),
-                'grade': submission.grade if submission else None,
-                'feedback': submission.feedback if submission else None,
-                'submitted_at': submission.submitted_at.isoformat() if submission else None,
-                'graded_at': submission.graded_at.isoformat() if submission and submission.graded_at else None,
-                'grader_name': submission.grader.name if submission and hasattr(submission, 'grader') and submission.grader else None,
-            } if submission else {
-                'submitted': False,
-                'status': 'not_submitted',
-                'grade': None,
-                'feedback': None,
-                'submitted_at': None,
-                'graded_at': None,
-                'grader_name': None,
-            }
+            'submission_status': _build_assignment_submission_status(assignment, submission),
         }
         
         return jsonify(assignment_data), 200

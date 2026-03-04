@@ -157,6 +157,9 @@ class GradingEngine:
             percentage < 30 or percentage > 95
         )
 
+        # Strengths & weaknesses analysis
+        strengths, weaknesses = self._analyze_strengths_weaknesses(breakdown)
+
         return {
             'rubric_breakdown': breakdown,
             'total_score': round(total_score, 1),
@@ -166,6 +169,8 @@ class GradingEngine:
             'confidence': confidence,
             'flagged_issues': flagged,
             'manual_review_required': manual_review,
+            'strengths': strengths,
+            'weaknesses': weaknesses,
             'mastery_level': {
                 'level_id': self.level_id,
                 'level_name': self.mastery_level.get('level_name', 'Intermediate'),
@@ -173,6 +178,60 @@ class GradingEngine:
                 'confidence': self.mastery_level.get('confidence', 'medium'),
             },
         }
+
+    # ------------------------------------------------------------------
+    # Strengths & weaknesses analysis
+    # ------------------------------------------------------------------
+
+    def _analyze_strengths_weaknesses(
+        self, breakdown: Dict[str, Dict[str, Any]]
+    ) -> Tuple[List[str], List[str]]:
+        """Derive student strengths and weaknesses from rubric breakdown."""
+        strengths: List[str] = []
+        weaknesses: List[str] = []
+
+        for criterion, result in breakdown.items():
+            max_pts = result.get('max', 0)
+            if max_pts == 0:
+                continue
+            score = result.get('score', 0)
+            pct = score / max_pts * 100
+
+            label = criterion.replace('_', ' ').replace('PowerQuery M', 'Power Query')
+
+            if pct >= 85:
+                strengths.append(f"Strong {label} skills ({score}/{max_pts})")
+            elif pct >= 70:
+                strengths.append(f"Good {label} foundation ({score}/{max_pts})")
+            elif pct >= 40:
+                weaknesses.append(f"{label} needs improvement ({score}/{max_pts})")
+            else:
+                weaknesses.append(f"{label} requires significant work ({score}/{max_pts})")
+
+        # Add specific insights from analysis data
+        formula_count = self.formulas.get('formula_count', 0)
+        unique_funcs = len(self.formulas.get('unique_functions', []))
+        if unique_funcs >= 10:
+            strengths.append(f"Diverse formula vocabulary ({unique_funcs} unique functions)")
+        elif formula_count > 0 and unique_funcs <= 2:
+            weaknesses.append("Limited formula variety — try exploring more functions")
+
+        if self.formulas.get('has_nested', False):
+            strengths.append("Uses nested/complex formulas")
+
+        if self.charts.get('chart_count', 0) >= 3:
+            strengths.append(f"Multiple chart visualizations ({self.charts['chart_count']} charts)")
+
+        if self.pivots.get('pivot_count', 0) >= 2:
+            strengths.append("Multiple pivot tables for data analysis")
+
+        if self.vba.get('has_vba') and self.vba.get('module_count', 0) >= 2:
+            strengths.append("Multi-module VBA project")
+
+        if self.formatting.get('conditional_formatting', {}).get('rule_count', 0) > 0:
+            strengths.append("Uses conditional formatting for data visualization")
+
+        return strengths[:6], weaknesses[:6]
 
     # ------------------------------------------------------------------
     # Rubric building
@@ -839,7 +898,7 @@ class GradingEngine:
         }
 
     def _grade_completeness(self) -> Dict[str, Any]:
-        """Grade overall completeness and compliance with requirements."""
+        """Grade overall completeness and compliance — level-aware."""
         max_pts = self.rubric['Completeness']['max']
         if max_pts == 0:
             return {'score': 0, 'max': 0, 'comment': 'Completeness not in rubric.'}
@@ -847,50 +906,95 @@ class GradingEngine:
         score = 0
         comments = []
 
-        # Sheet structure compliance
+        # Sheet structure compliance (30%)
         req_sheets = self.requirements.get('required_sheets', [])
         actual_sheets = set(s.lower() for s in self.wb.get('sheet_names', []))
+        sheet_count = self.wb.get('sheet_count', 0)
 
         if req_sheets:
             found = sum(1 for s in req_sheets if s.lower() in actual_sheets)
             total = len(req_sheets)
             sheet_pct = found / max(total, 1)
-            score += sheet_pct * 0.4 * max_pts
+            score += sheet_pct * 0.3 * max_pts
             if found < total:
                 missing = [s for s in req_sheets if s.lower() not in actual_sheets]
                 comments.append(f"Missing required sheet(s): {', '.join(missing)}.")
             else:
                 comments.append("All required sheets present.")
         else:
-            # No specific sheet requirements – give base credit for having data
-            if self.wb.get('total_data_cells', 0) > 0:
-                score += 0.4 * max_pts
+            # No specific sheet requirements – credit for having organized sheets
+            if sheet_count >= 2:
+                score += 0.3 * max_pts
+                comments.append(f"Workbook organized with {sheet_count} sheet(s).")
+            elif self.wb.get('total_data_cells', 0) > 0:
+                score += 0.2 * max_pts
 
-        # Data presence
-        if self.wb.get('total_data_cells', 0) > 10:
+        # Data presence (20%)
+        total_cells = self.wb.get('total_data_cells', 0)
+        if total_cells > 50:
             score += 0.2 * max_pts
-            comments.append(f"Workbook contains {self.wb.get('total_data_cells', 0)} data cells across {self.wb.get('sheet_count', 0)} sheet(s).")
-        elif self.wb.get('total_data_cells', 0) > 0:
-            score += 0.1 * max_pts
+            comments.append(f"Workbook contains {total_cells} data cells across {sheet_count} sheet(s).")
+        elif total_cells > 10:
+            score += 0.15 * max_pts
+            comments.append(f"Workbook contains {total_cells} data cells.")
+        elif total_cells > 0:
+            score += 0.05 * max_pts
             comments.append("Workbook has minimal data.")
         else:
             comments.append("Workbook appears to be empty.")
 
-        # Formula presence (when required)
-        if self.wb.get('total_formulas', 0) > 0:
+        # Formula presence (20%)
+        formula_count = self.wb.get('total_formulas', 0)
+        if formula_count > 10:
             score += 0.2 * max_pts
+        elif formula_count > 0:
+            score += 0.1 * max_pts
 
-        # File type compliance
+        # Feature coverage — does the submission cover the features in scope? (20%)
+        scope_features_found = 0
+        scope_features_expected = 0
+        if self.requirements.get('scope_formulas'):
+            scope_features_expected += 1
+            if formula_count > 0:
+                scope_features_found += 1
+        if self.requirements.get('scope_pivots'):
+            scope_features_expected += 1
+            if self.pivots.get('pivot_count', 0) > 0:
+                scope_features_found += 1
+        if self.requirements.get('scope_charts'):
+            scope_features_expected += 1
+            if self.charts.get('chart_count', 0) > 0:
+                scope_features_found += 1
+        if self.requirements.get('scope_vba'):
+            scope_features_expected += 1
+            if self.vba.get('has_vba', False):
+                scope_features_found += 1
+        if self.requirements.get('scope_power_query'):
+            scope_features_expected += 1
+            if self.pq.get('has_power_query', False):
+                scope_features_found += 1
+        if scope_features_expected > 0:
+            coverage_pct = scope_features_found / scope_features_expected
+            score += coverage_pct * 0.2 * max_pts
+            if coverage_pct < 1.0:
+                comments.append(
+                    f"Feature coverage: {scope_features_found}/{scope_features_expected} "
+                    f"expected features present."
+                )
+            else:
+                comments.append("All expected features implemented.")
+        else:
+            # No specific scope — give base credit
+            score += 0.15 * max_pts
+
+        # File type and structure (10%)
         req_types = self.requirements.get('required_file_types', [])
         if req_types and self.wb.get('file_type') not in req_types:
             comments.append(f"File type .{self.wb.get('file_type')} may not match requirements.")
-            score -= 2
         else:
-            score += 0.1 * max_pts
-
-        # Submission not empty
-        if self.wb.get('sheet_count', 0) > 0:
-            score += 0.1 * max_pts
+            score += 0.05 * max_pts
+        if sheet_count > 0:
+            score += 0.05 * max_pts
 
         return {
             'score': round(max(0, min(max_pts, score)), 1),
@@ -903,8 +1007,7 @@ class GradingEngine:
     # ------------------------------------------------------------------
 
     def _determine_confidence(self) -> str:
-        """Determine grading confidence level."""
-        # Low confidence triggers
+        """Determine grading confidence level — level-aware."""
         low_triggers = 0
 
         # VBA that couldn't be fully analyzed
@@ -913,9 +1016,13 @@ class GradingEngine:
             if modules and modules[0].get('type') == 'binary':
                 low_triggers += 1
 
-        # Very few formulas in what should be an Excel assignment
-        if self.formulas.get('formula_count', 0) < 3:
+        # Few formulas — only a concern at intermediate+ levels
+        formula_count = self.formulas.get('formula_count', 0)
+        if self.level_id in ('advanced', 'expert') and formula_count < 5:
             low_triggers += 1
+        elif self.level_id == 'intermediate' and formula_count < 3:
+            low_triggers += 1
+        # Foundation students with even 1 formula are fine
 
         # File errors
         if self.wb.get('error'):
@@ -924,6 +1031,9 @@ class GradingEngine:
         # .xls or .csv with limited analysis
         if self.wb.get('file_type') in ('xls', 'csv'):
             low_triggers += 1
+
+        # Very high or very low score relative to level expectations
+        # (handled in the grade() method via manual_review flag)
 
         if low_triggers >= 3:
             return 'low'

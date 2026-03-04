@@ -613,6 +613,58 @@ def grading_stats(course_id):
 # ==============================================================
 
 # ==============================================================
+# GET /auto-grade-status/<submission_id>  — Check auto-grade progress
+# ==============================================================
+@excel_grading_bp.route("/auto-grade-status/<int:submission_id>", methods=["GET"])
+@student_required
+def auto_grade_status(submission_id):
+    """
+    Lightweight poll endpoint for students to check if AI auto-grading
+    has finished for their submission.
+
+    Query: submission_type=assignment|project (default: assignment)
+
+    Returns:
+        status: 'not_started' | 'processing' | 'completed' | 'failed'
+        result_id: int | null  (if completed)
+        grade_letter: str | null
+        percentage: float | null
+    """
+    uid = int(get_jwt_identity())
+    sub_type = request.args.get('submission_type', 'assignment')
+
+    if sub_type == 'assignment':
+        result = ExcelGradingResult.query.filter_by(
+            assignment_submission_id=submission_id,
+            submission_type='assignment',
+            student_id=uid,
+        ).order_by(ExcelGradingResult.graded_at.desc()).first()
+    else:
+        result = ExcelGradingResult.query.filter_by(
+            project_submission_id=submission_id,
+            submission_type='project',
+            student_id=uid,
+        ).order_by(ExcelGradingResult.graded_at.desc()).first()
+
+    if not result:
+        return jsonify({
+            'status': 'not_started',
+            'result_id': None,
+            'grade_letter': None,
+            'percentage': None,
+        }), 200
+
+    payload = {
+        'status': result.status or 'processing',
+        'result_id': result.id if result.status == 'completed' else None,
+        'grade_letter': result.grade_letter if result.status == 'completed' else None,
+        'percentage': round(result.total_score / max(result.max_score, 1) * 100, 1)
+            if result.status == 'completed' and result.max_score else None,
+    }
+    return jsonify(payload), 200
+
+
+# ==============================================================
 # GET /my-results  — Student's own AI grading results
 # ==============================================================
 @excel_grading_bp.route("/my-results", methods=["GET"])

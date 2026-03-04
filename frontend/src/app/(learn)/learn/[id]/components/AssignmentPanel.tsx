@@ -104,7 +104,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   
   // Only allow resubmit when instructor specifically requests modifications
   // Only allow resubmit if not already resubmitted for this modification request
-  const canResubmit = hasModificationRequest && isSubmitted && !isGraded && !resubmittedForCurrentRequest;
+  const canResubmit = hasModificationRequest && isSubmitted && !resubmittedForCurrentRequest;
 
   const allowedFileTypes = assignmentData.allowed_file_types 
     ? assignmentData.allowed_file_types.split(',').map(t => t.trim()) 
@@ -127,6 +127,47 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       setRefreshing(false);
     }
   };
+
+  // Silent refresh (no toast) for auto-polling
+  const silentRefresh = async () => {
+    try {
+      const updatedData = await ContentAssignmentService.refreshAssignmentData(assignmentData.id);
+      // Only update if something meaningful changed
+      const newModReq = Boolean(updatedData.modification_requested);
+      const newStatus = updatedData.submission_status?.status;
+      const oldModReq = Boolean(assignmentData.modification_requested);
+      const oldStatus = assignmentData.submission_status?.status;
+      if (newModReq !== oldModReq || newStatus !== oldStatus) {
+        setAssignmentData(updatedData);
+        if (newModReq && !oldModReq) {
+          toast.info('Your instructor has requested modifications for this assignment.');
+        }
+      }
+    } catch {
+      // Silent fail — don't bother the user on background poll errors
+    }
+  };
+
+  // Auto-poll for modification requests when assignment is submitted but not graded
+  useEffect(() => {
+    if (!isSubmitted || isGraded || hasModificationRequest) return;
+    // Poll every 30 seconds while the student has a pending submission
+    const interval = setInterval(silentRefresh, 30_000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSubmitted, isGraded, hasModificationRequest, assignmentData.id]);
+
+  // Also refresh when the tab becomes visible again
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' && isSubmitted && !isGraded) {
+        silentRefresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSubmitted, isGraded, assignmentData.id]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -341,6 +382,26 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
       setSubmissionResult(result);
       if (isResubmitMode) {
         setResubmittedForCurrentRequest(true);
+
+        // Update local state to reflect cleared grade & modification flags
+        setAssignmentData(prev => ({
+          ...prev,
+          modification_requested: false,
+          modification_request_reason: undefined,
+          modification_request_at: undefined,
+          can_resubmit: false,
+          submission_status: {
+            ...prev.submission_status,
+            submitted: true,
+            status: 'submitted' as const,
+            grade: undefined,
+            score: undefined,
+            feedback: undefined,
+            graded_at: undefined,
+            grader_name: undefined,
+            submitted_at: new Date().toISOString(),
+          },
+        }));
       }
       setSubmissionMode('submitted');
       
@@ -720,7 +781,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
 
             {/* Action Buttons */}
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full">
-              {assignment.submission_status?.status === 'graded' ? (
+              {assignment.submission_status?.status === 'graded' && !hasModificationRequest ? (
                 <>
                   <Button 
                     onClick={() => setSubmissionMode('submitted')}
@@ -759,7 +820,7 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                     </div>
                   </Button>
                   
-                  {hasModificationRequest && isSubmitted && !isGraded && (
+                  {hasModificationRequest && isSubmitted && (
                     <Button
                       onClick={() => setSubmissionMode('resubmit')}
                       className="flex-1 w-full sm:w-auto bg-gradient-to-r from-orange-500 via-red-500 to-pink-500 hover:from-orange-600 hover:via-red-600 hover:to-pink-600 text-white py-3 sm:py-4 md:py-6 lg:py-7 px-4 sm:px-6 text-sm sm:text-lg md:text-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all duration-300 border border-orange-400/30 animate-pulse min-h-[3rem] sm:min-h-[4rem]"

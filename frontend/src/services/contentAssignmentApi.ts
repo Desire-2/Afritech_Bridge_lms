@@ -75,7 +75,7 @@ export interface ContentAssignment {
   submission_status?: {
     id?: number;
     submitted: boolean;
-    status: 'not_submitted' | 'submitted' | 'graded' | 'late';
+    status: 'not_submitted' | 'submitted' | 'graded' | 'late' | 'needs_revision';
     grade?: number;
     feedback?: string;
     submitted_at?: string;
@@ -416,7 +416,16 @@ class ContentAssignmentService extends BaseApiService {
   async refreshAssignmentData(assignmentId: number): Promise<ContentAssignment> {
     // Add cache-busting parameter to ensure fresh data
     const timestamp = new Date().getTime();
-    return this.get(`/student/assignments/${assignmentId}/details?_t=${timestamp}`);
+    const response = await this.get(`/student/assignments/${assignmentId}/details?_t=${timestamp}`);
+    return {
+      ...response,
+      modification_requested: Boolean(response.modification_requested),
+      can_resubmit: Boolean(response.can_resubmit),
+      submission_status: response.submission_status || {
+        submitted: false,
+        status: 'not_submitted' as const,
+      },
+    };
   }
 
   /**

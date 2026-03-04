@@ -1019,6 +1019,8 @@ class ExcelGradingService:
                 'match_score': mastery_level.get('match_score', 0),
                 'matched_keywords': mastery_level.get('matched_keywords', []),
             },
+            'strengths': grading_result.get('strengths', []),
+            'weaknesses': grading_result.get('weaknesses', []),
         }
 
         return grading_result
