@@ -3760,6 +3760,90 @@ def validate_momo_account():
     }), 200
 
 
+# ---------------------------------------------------------------------------
+# Currency conversion helper for PayPal
+# ---------------------------------------------------------------------------
+# Hardcoded fallback rates (1 unit → USD).  Updated periodically; the
+# function tries a live API first and falls back to these.
+_FALLBACK_RATES_TO_USD: dict[str, float] = {
+    "RWF": 1 / 1400.0,    # 1 RWF ≈ 0.000714 USD
+    "UGX": 1 / 3750.0,    # 1 UGX ≈ 0.000267 USD
+    "KES": 1 / 155.0,     # 1 KES ≈ 0.00645 USD
+    "TZS": 1 / 2700.0,    # 1 TZS ≈ 0.000370 USD
+    "NGN": 1 / 1600.0,    # 1 NGN ≈ 0.000625 USD
+    "GHS": 1 / 15.5,      # 1 GHS ≈ 0.0645 USD
+    "ZAR": 1 / 18.5,      # 1 ZAR ≈ 0.054 USD
+    "BIF": 1 / 2900.0,    # 1 BIF ≈ 0.000345 USD
+    "ETB": 1 / 130.0,     # 1 ETB ≈ 0.0077 USD
+    "XAF": 1 / 620.0,     # 1 XAF ≈ 0.00161 USD
+    "XOF": 1 / 620.0,     # 1 XOF ≈ 0.00161 USD
+}
+
+def _convert_to_paypal_currency(
+    amount: float,
+    source_currency: str,
+    target_currency: str = "USD",
+) -> tuple:
+    """
+    Convert *amount* from *source_currency* to a PayPal-supported
+    *target_currency* (default USD).
+
+    Returns ``(target_currency, converted_amount)`` rounded to 2 decimals.
+    Tries a free exchange-rate API first, then falls back to hardcoded rates.
+    """
+    import requests as _requests
+
+    source_currency = source_currency.upper()
+    target_currency = target_currency.upper()
+
+    # 1. Try live exchange-rate API  (free, no key required)
+    live_rate = None
+    try:
+        resp = _requests.get(
+            f"https://open.er-api.com/v6/latest/{source_currency}",
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("result") == "success":
+                live_rate = data["rates"].get(target_currency)
+    except Exception:
+        pass  # fall through to fallback
+
+    if live_rate:
+        converted = round(amount * live_rate, 2)
+        logger.info(
+            f"Currency conversion (live): {amount} {source_currency} → "
+            f"{converted} {target_currency} (rate={live_rate})"
+        )
+        return target_currency, converted
+
+    # 2. Fallback to hardcoded rate
+    per_usd = _FALLBACK_RATES_TO_USD.get(source_currency)
+    if per_usd is None:
+        raise ValueError(
+            f"No exchange rate available for {source_currency} → {target_currency}"
+        )
+
+    if target_currency == "USD":
+        converted = round(amount * per_usd, 2)
+    else:
+        # Convert source → USD → target  (only if target also has a fallback)
+        target_per_usd = _FALLBACK_RATES_TO_USD.get(target_currency)
+        if target_per_usd is None:
+            raise ValueError(
+                f"No fallback rate for {target_currency}; cannot convert."
+            )
+        usd_value = amount * per_usd
+        converted = round(usd_value / target_per_usd, 2)
+
+    logger.info(
+        f"Currency conversion (fallback): {amount} {source_currency} → "
+        f"{converted} {target_currency}"
+    )
+    return target_currency, converted
+
+
 @application_bp.route("/initiate-payment", methods=["POST"])
 def initiate_payment():
     """
@@ -3808,6 +3892,11 @@ def initiate_payment():
     amount = float(data.get("amount") or 0)
     currency = (data.get("currency") or "USD").upper()
 
+    logger.info(
+        f"initiate-payment: course_id={course_id} method={payment_method} "
+        f"amount={amount} currency={currency} window_id={data.get('application_window_id')}"
+    )
+
     if not course_id:
         return jsonify({"error": "course_id is required"}), 400
     if not amount or amount <= 0:
@@ -3827,41 +3916,71 @@ def initiate_payment():
     else:
         enabled_methods = course._get_payment_methods() if course.enrollment_type == "paid" else []
 
+    logger.info(
+        f"initiate-payment: enrollment_type={course.enrollment_type} "
+        f"enabled_methods={enabled_methods} requested={payment_method}"
+    )
+
     # All recognized gateway names
     ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave"}
     if payment_method not in ALL_KNOWN_METHODS:
+        logger.warning(f"initiate-payment: REJECTED unknown method '{payment_method}'")
         return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
     if course.enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
+        logger.warning(
+            f"initiate-payment: REJECTED method '{payment_method}' not in enabled_methods={enabled_methods}"
+        )
         return jsonify({"error": f"Payment method '{payment_method}' is not enabled for this course"}), 400
 
     try:
         if payment_method == "paypal":
-            # Import supported currencies; validate before calling PayPal
+            # Import supported currencies; auto-convert if needed
             from ..services.payment_service import PAYPAL_SUPPORTED_CURRENCIES
+
+            paypal_currency = currency
+            paypal_amount = amount
+
             if currency not in PAYPAL_SUPPORTED_CURRENCIES:
-                return jsonify({
-                    "error": f"Currency '{currency}' is not supported by PayPal. "
-                             f"Please use one of: {', '.join(sorted(PAYPAL_SUPPORTED_CURRENCIES))}",
-                    "unsupported_currency": True,
-                    "supported_currencies": sorted(PAYPAL_SUPPORTED_CURRENCIES),
-                }), 400
+                # Auto-convert to USD for PayPal using a live rate (best-effort)
+                try:
+                    paypal_currency, paypal_amount = _convert_to_paypal_currency(amount, currency)
+                    logger.info(
+                        f"initiate-payment: auto-converted {amount} {currency} → "
+                        f"{paypal_amount} {paypal_currency} for PayPal"
+                    )
+                except Exception as conv_err:
+                    logger.error(f"Currency conversion failed for PayPal: {conv_err}")
+                    return jsonify({
+                        "error": f"Currency '{currency}' is not directly supported by PayPal "
+                                 f"and automatic conversion failed. Please try again or use a different payment method.",
+                        "unsupported_currency": True,
+                        "supported_currencies": sorted(PAYPAL_SUPPORTED_CURRENCIES),
+                    }), 400
 
             return_url = data.get("return_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/success?course_id={course_id}"
             cancel_url = data.get("cancel_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/cancel?course_id={course_id}"
             result = paypal_create_order(
-                amount=amount,
-                currency=currency,
+                amount=paypal_amount,
+                currency=paypal_currency,
                 return_url=return_url,
                 cancel_url=cancel_url,
                 description=f"Enrollment: {course.title}",
             )
-            return jsonify({
+            resp_payload = {
                 "payment_method": "paypal",
                 "order_id": result["order_id"],
                 "approval_url": result["approval_url"],
                 "status": "pending",
                 "message": "Redirect to PayPal to complete payment.",
-            }), 200
+            }
+            # If a currency conversion happened, tell the frontend
+            if paypal_currency != currency:
+                resp_payload["converted"] = True
+                resp_payload["original_currency"] = currency
+                resp_payload["original_amount"] = amount
+                resp_payload["paypal_currency"] = paypal_currency
+                resp_payload["paypal_amount"] = paypal_amount
+            return jsonify(resp_payload), 200
 
         elif payment_method == "stripe":
             return_url = data.get("return_url") or f"{os.environ.get('FRONTEND_URL', 'http://localhost:3000')}/payment/success?course_id={course_id}"
