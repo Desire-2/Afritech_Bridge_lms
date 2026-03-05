@@ -214,7 +214,7 @@ def _auto_approve_grading_result(
     """
     try:
         from src.models.excel_grading_models import ExcelGradingResult
-        from src.extensions import db
+        from src.models.user_models import db
         from datetime import datetime
 
         if submission_type == 'assignment':
@@ -251,7 +251,7 @@ def _auto_approve_grading_result(
             f"{submission_type} #{submission_id}: {e}"
         )
         try:
-            from src.extensions import db
+            from src.models.user_models import db
             db.session.rollback()
         except Exception:
             pass
@@ -280,7 +280,7 @@ def _apply_grade_to_submission(
             Assignment, AssignmentSubmission,
             Project, ProjectSubmission,
         )
-        from src.extensions import db
+        from src.models.user_models import db
         from datetime import datetime
 
         if submission_type == 'assignment':
@@ -338,7 +338,7 @@ def _apply_grade_to_submission(
             f"#{submission_id}: {e}"
         )
         try:
-            from src.extensions import db
+            from src.models.user_models import db
             db.session.rollback()
         except Exception:
             pass
@@ -371,7 +371,8 @@ def _update_learning_progress(
             Lesson, Enrollment,
         )
         from src.models.student_models import ModuleProgress, LessonCompletion
-        from src.extensions import db
+        from src.models.user_models import db
+        from datetime import datetime
 
         # Resolve the submission + parent
         if submission_type == 'assignment':
@@ -421,19 +422,35 @@ def _update_learning_progress(
                         enrollment_id=enrollment.id,
                     ).first()
 
-                    if mp:
-                        current_score = mp.assignment_score or 0.0
-                        new_score = max(current_score, percentage_score)
-                        mp.assignment_score = new_score
-
-                        if hasattr(mp, 'calculate_cumulative_score'):
-                            mp.calculate_cumulative_score()
-
-                        db.session.commit()
-                        logger.info(
-                            f"📊 Module {module_id} assignment score updated "
-                            f"for student {student_id}: {new_score:.1f}%"
+                    if not mp:
+                        mp = ModuleProgress(
+                            student_id=student_id,
+                            module_id=module_id,
+                            enrollment_id=enrollment.id,
                         )
+                        db.session.add(mp)
+                        logger.info(
+                            f"📦 Created ModuleProgress for student {student_id}, "
+                            f"module {module_id}"
+                        )
+
+                    current_score = mp.assignment_score or 0.0
+                    new_score = max(current_score, percentage_score)
+                    mp.assignment_score = new_score
+
+                    if hasattr(mp, 'calculate_cumulative_score'):
+                        mp.calculate_cumulative_score()
+
+                    db.session.commit()
+                    logger.info(
+                        f"📊 Module {module_id} assignment score updated "
+                        f"for student {student_id}: {new_score:.1f}%"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ No enrollment found for student {student_id}, "
+                        f"course {course_id} — skipping ModuleProgress update"
+                    )
 
         # ── 2. Update LessonCompletion (assignments only) ─────────
         if submission_type == 'assignment':
@@ -441,6 +458,26 @@ def _update_learning_progress(
             if lesson_id:
                 try:
                     from src.services.lesson_completion_service import LessonCompletionService
+
+                    # Mark assignment as graded on the LessonCompletion record
+                    # (mirrors what the instructor grading endpoint does)
+                    lc = LessonCompletion.query.filter_by(
+                        student_id=student_id,
+                        lesson_id=lesson_id,
+                    ).first()
+
+                    if lc:
+                        lc.assignment_graded = True
+                        lc.assignment_grade = percentage_score
+                        lc.assignment_graded_at = datetime.utcnow()
+                        lc.assignment_needs_resubmission = False
+                        lc.modification_request_reason = None
+                        db.session.commit()
+                        logger.info(
+                            f"📝 LessonCompletion updated — assignment_graded=True, "
+                            f"grade={percentage_score:.1f}% for student {student_id}, "
+                            f"lesson {lesson_id}"
+                        )
 
                     # Update the composite lesson score
                     score_updated = LessonCompletionService.update_lesson_score_after_assignment_grading(
@@ -459,10 +496,12 @@ def _update_learning_progress(
                         )
                     )
 
-                    lc = LessonCompletion.query.filter_by(
-                        student_id=student_id,
-                        lesson_id=lesson_id,
-                    ).first()
+                    # Re-fetch lc in case it was created by the service above
+                    if not lc:
+                        lc = LessonCompletion.query.filter_by(
+                            student_id=student_id,
+                            lesson_id=lesson_id,
+                        ).first()
 
                     if can_complete and lc and not lc.completed:
                         success, message, _ = (
@@ -509,7 +548,7 @@ def _update_learning_progress(
             f"#{submission_id}: {e}"
         )
         try:
-            from src.extensions import db
+            from src.models.user_models import db
             db.session.rollback()
         except Exception:
             pass
@@ -537,7 +576,7 @@ def _auto_request_modification_if_needed(
             Project, ProjectSubmission,
         )
         from src.models.student_models import LessonCompletion
-        from src.extensions import db
+        from src.models.user_models import db
         from datetime import datetime
 
         # Calculate percentage score
@@ -645,7 +684,7 @@ def _auto_request_modification_if_needed(
             f"#{submission_id}: {e}"
         )
         try:
-            from src.extensions import db
+            from src.models.user_models import db
             db.session.rollback()
         except Exception:
             pass
