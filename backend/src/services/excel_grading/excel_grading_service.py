@@ -1055,12 +1055,37 @@ class ExcelGradingService:
         feedback: str,
         processing_time: float,
     ):
-        """Save grading result to database."""
+        """Save grading result to database.
+
+        If a previous result exists for the same submission, DELETE it first
+        so only one authoritative result exists — prevents score mismatch
+        between student and instructor views.
+        """
         from src.models.user_models import db
         from src.models.excel_grading_models import ExcelGradingResult
         from .grading_engine import compute_grade_letter
 
         try:
+            # ── Remove any previous results for this submission ──────
+            if submission_type == 'assignment':
+                old_results = ExcelGradingResult.query.filter_by(
+                    assignment_submission_id=submission_id,
+                    submission_type='assignment',
+                ).all()
+            else:
+                old_results = ExcelGradingResult.query.filter_by(
+                    project_submission_id=submission_id,
+                    submission_type='project',
+                ).all()
+
+            if old_results:
+                for old in old_results:
+                    db.session.delete(old)
+                logger.info(
+                    f"Deleted {len(old_results)} old grading result(s) for "
+                    f"{submission_type} #{submission_id} before re-grade"
+                )
+
             # Build rubric breakdown for strict JSON format
             breakdown = grading_result.get('rubric_breakdown', {})
             strict_breakdown = {}

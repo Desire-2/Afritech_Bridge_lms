@@ -91,6 +91,7 @@ def _run_grading_in_background(
     submission_type: str,
     student_id: int,
     attempt: int = 1,
+    force: bool = False,
 ):
     """
     Run grading inside a Flask app context in a background thread.
@@ -109,7 +110,7 @@ def _run_grading_in_background(
             result = service.grade_submission(
                 submission_id,
                 submission_type,
-                force=(attempt > 1),  # Force on retry
+                force=(force or attempt > 1),  # Force on resubmission or retry
             )
 
             status = result.get('status', 'unknown')
@@ -125,14 +126,28 @@ def _run_grading_in_background(
                     f"({grade_data.get('grade_letter', '?')})"
                 )
 
-                # Check against passing score and auto-request modification
-                # if the student didn't meet the threshold
+                # ── Step A: Write grade onto the actual submission record ──
+                # This mirrors what the instructor grading endpoint does,
+                # so the student sees the grade immediately in their UI.
+                _apply_grade_to_submission(
+                    app, submission_id, submission_type, student_id,
+                    total_score, max_score, grade_data,
+                )
+
+                # ── Step B: Auto-request modification if below passing ──
                 modification_requested = _auto_request_modification_if_needed(
                     app, submission_id, submission_type, student_id,
                     total_score, max_score, grade_data,
                 )
 
-                # Notify student (includes modification info if applicable)
+                # ── Step C: Update module progress & lesson completion ──
+                if not modification_requested:
+                    _update_learning_progress(
+                        app, submission_id, submission_type, student_id,
+                        total_score, max_score,
+                    )
+
+                # ── Step D: Notify student ──
                 _notify_student_auto_graded(
                     app, submission_id, submission_type, student_id, result,
                     modification_requested=modification_requested,
@@ -160,7 +175,7 @@ def _run_grading_in_background(
                     time.sleep(RETRY_DELAY_SECONDS)
                     _run_grading_in_background(
                         app, submission_id, submission_type,
-                        student_id, attempt + 1,
+                        student_id, attempt + 1, force=force,
                     )
             else:
                 logger.warning(
@@ -176,8 +191,267 @@ def _run_grading_in_background(
                 time.sleep(RETRY_DELAY_SECONDS)
                 _run_grading_in_background(
                     app, submission_id, submission_type,
-                    student_id, attempt + 1,
+                    student_id, attempt + 1, force=force,
                 )
+
+
+def _apply_grade_to_submission(
+    app,
+    submission_id: int,
+    submission_type: str,
+    student_id: int,
+    total_score: float,
+    max_score: float,
+    grade_data: Dict[str, Any],
+) -> bool:
+    """
+    Write the AI-generated grade directly onto the AssignmentSubmission or
+    ProjectSubmission record, mirroring what the instructor grading endpoint
+    does.  This makes the grade visible in the student's dashboard/API
+    immediately after auto-grading completes.
+
+    Returns True on success.
+    """
+    try:
+        from src.models.course_models import (
+            Assignment, AssignmentSubmission,
+            Project, ProjectSubmission,
+        )
+        from src.extensions import db
+        from datetime import datetime
+
+        if submission_type == 'assignment':
+            submission = AssignmentSubmission.query.get(submission_id)
+        elif submission_type == 'project':
+            submission = ProjectSubmission.query.get(submission_id)
+        else:
+            return False
+
+        if not submission:
+            return False
+
+        # Scale the AI score to the assignment's points_possible
+        parent = None
+        if submission_type == 'assignment':
+            parent = Assignment.query.get(submission.assignment_id)
+        elif submission_type == 'project':
+            parent = Project.query.get(submission.project_id)
+
+        points_possible = (getattr(parent, 'points_possible', None) or 100) if parent else 100
+
+        # Scale: if AI graded out of max_score, map to points_possible
+        if max_score > 0:
+            scaled_grade = round((total_score / max_score) * points_possible, 2)
+        else:
+            scaled_grade = 0
+
+        # Clamp
+        scaled_grade = max(0, min(points_possible, scaled_grade))
+
+        # Build a clean feedback string from the AI overall_feedback
+        feedback = grade_data.get('overall_feedback', '')
+        ai_note = (
+            "\n\n---\n"
+            "📊 *This is an AI-generated preliminary grade. "
+            "Your instructor will review and may adjust the final score.*"
+        )
+        full_feedback = (feedback + ai_note) if feedback else ai_note.strip()
+
+        submission.grade = scaled_grade
+        submission.feedback = full_feedback
+        submission.graded_at = datetime.utcnow()
+        submission.graded_by = None  # System/AI — no instructor yet
+
+        db.session.commit()
+
+        logger.info(
+            f"📝 Grade written to {submission_type} submission #{submission_id}: "
+            f"{scaled_grade}/{points_possible}"
+        )
+        return True
+
+    except Exception as e:
+        logger.exception(
+            f"❌ Failed to apply grade to {submission_type} "
+            f"#{submission_id}: {e}"
+        )
+        try:
+            from src.extensions import db
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def _update_learning_progress(
+    app,
+    submission_id: int,
+    submission_type: str,
+    student_id: int,
+    total_score: float,
+    max_score: float,
+) -> bool:
+    """
+    After a passing auto-grade, update module progress and lesson completion
+    exactly like the instructor grading endpoint does:
+
+    1. Update ModuleProgress.assignment_score (keep the best score)
+    2. Recalculate cumulative module score
+    3. Update lesson composite score via LessonCompletionService
+    4. Auto-complete the lesson if all requirements are now met
+
+    Returns True on success.
+    """
+    try:
+        from src.models.course_models import (
+            Assignment, AssignmentSubmission,
+            Project, ProjectSubmission,
+            Lesson, Enrollment,
+        )
+        from src.models.student_models import ModuleProgress, LessonCompletion
+        from src.extensions import db
+
+        # Resolve the submission + parent
+        if submission_type == 'assignment':
+            submission = AssignmentSubmission.query.get(submission_id)
+            if not submission:
+                return False
+            parent = Assignment.query.get(submission.assignment_id)
+        elif submission_type == 'project':
+            submission = ProjectSubmission.query.get(submission_id)
+            if not submission:
+                return False
+            parent = Project.query.get(submission.project_id)
+        else:
+            return False
+
+        if not parent:
+            return False
+
+        points_possible = getattr(parent, 'points_possible', None) or 100
+        if max_score > 0:
+            percentage_score = round((total_score / max_score) * 100, 2)
+        else:
+            percentage_score = 0
+        percentage_score = max(0, min(100, percentage_score))
+
+        # ── 1. Update ModuleProgress ──────────────────────────────
+        module_id = getattr(parent, 'module_id', None)
+        if not module_id:
+            lesson_id = getattr(parent, 'lesson_id', None)
+            if lesson_id:
+                lesson = Lesson.query.get(lesson_id)
+                if lesson:
+                    module_id = getattr(lesson, 'module_id', None)
+
+        if module_id:
+            course_id = getattr(parent, 'course_id', None)
+            if course_id:
+                enrollment = Enrollment.query.filter_by(
+                    student_id=student_id,
+                    course_id=course_id,
+                ).first()
+
+                if enrollment:
+                    mp = ModuleProgress.query.filter_by(
+                        student_id=student_id,
+                        module_id=module_id,
+                        enrollment_id=enrollment.id,
+                    ).first()
+
+                    if mp:
+                        current_score = mp.assignment_score or 0.0
+                        new_score = max(current_score, percentage_score)
+                        mp.assignment_score = new_score
+
+                        if hasattr(mp, 'calculate_cumulative_score'):
+                            mp.calculate_cumulative_score()
+
+                        db.session.commit()
+                        logger.info(
+                            f"📊 Module {module_id} assignment score updated "
+                            f"for student {student_id}: {new_score:.1f}%"
+                        )
+
+        # ── 2. Update LessonCompletion (assignments only) ─────────
+        if submission_type == 'assignment':
+            lesson_id = getattr(parent, 'lesson_id', None)
+            if lesson_id:
+                try:
+                    from src.services.lesson_completion_service import LessonCompletionService
+
+                    # Update the composite lesson score
+                    score_updated = LessonCompletionService.update_lesson_score_after_assignment_grading(
+                        student_id, lesson_id,
+                    )
+                    if score_updated:
+                        logger.info(
+                            f"✅ Lesson score updated after auto-grade — "
+                            f"Student {student_id}, Lesson {lesson_id}"
+                        )
+
+                    # Check whether the lesson can now be auto-completed
+                    can_complete, reason, _ = (
+                        LessonCompletionService.check_lesson_completion_requirements(
+                            student_id, lesson_id,
+                        )
+                    )
+
+                    lc = LessonCompletion.query.filter_by(
+                        student_id=student_id,
+                        lesson_id=lesson_id,
+                    ).first()
+
+                    if can_complete and lc and not lc.completed:
+                        success, message, _ = (
+                            LessonCompletionService.attempt_lesson_completion(
+                                student_id, lesson_id,
+                            )
+                        )
+                        if success:
+                            logger.info(
+                                f"🎯 Lesson {lesson_id} auto-completed for "
+                                f"student {student_id} after auto-grading"
+                            )
+                    else:
+                        logger.debug(
+                            f"📋 Lesson {lesson_id} completion status: "
+                            f"can_complete={can_complete}, reason={reason}"
+                        )
+
+                except Exception as lc_err:
+                    logger.warning(
+                        f"⚠️ LessonCompletion update failed: {lc_err}"
+                    )
+
+        # ── 3. Clear modification flags if passing ────────────────
+        passing_score = getattr(parent, 'passing_score', None) or 60.0
+        if percentage_score >= passing_score:
+            if getattr(parent, 'modification_requested', False):
+                parent.modification_requested = False
+                parent.modification_request_reason = None
+                parent.modification_requested_at = None
+                parent.modification_requested_by = None
+                parent.can_resubmit = False
+                db.session.commit()
+                logger.info(
+                    f"✅ Cleared modification request — score "
+                    f"{percentage_score:.1f}% >= passing {passing_score}%"
+                )
+
+        return True
+
+    except Exception as e:
+        logger.exception(
+            f"❌ Failed to update learning progress for {submission_type} "
+            f"#{submission_id}: {e}"
+        )
+        try:
+            from src.extensions import db
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
 
 
 def _auto_request_modification_if_needed(
@@ -396,6 +670,7 @@ def trigger_auto_excel_grading(
     student_id: int,
     course,
     files_data: Any,
+    force: bool = False,
 ) -> bool:
     """
     Check if auto-grading should run and trigger it in the background.
@@ -408,6 +683,7 @@ def trigger_auto_excel_grading(
         student_id: Student user ID
         course: The Course ORM object (to check if it's an Excel course)
         files_data: The raw file_url / file_path field value
+        force: If True, re-grade even if a previous result exists (for resubmissions)
 
     Returns:
         True if auto-grading was triggered, False if skipped.
@@ -432,6 +708,7 @@ def trigger_auto_excel_grading(
         thread = threading.Thread(
             target=_run_grading_in_background,
             args=(app, submission_id, submission_type, student_id),
+            kwargs={'force': force},
             name=f"auto-grade-{submission_type}-{submission_id}",
             daemon=True,
         )

@@ -105,17 +105,80 @@ export interface ProjectSubmission {
 }
 
 export interface SubmissionDetail extends AssignmentSubmission {
-  assignment?: any;
-  project?: any;
+  assignment?: {
+    id: number;
+    title: string;
+    description?: string;
+    instructions?: string;
+    course_id: number;
+    module_id?: number;
+    lesson_id?: number;
+    assignment_type?: string;
+    max_file_size_mb?: number;
+    allowed_file_types?: string;
+    due_date?: string;
+    points_possible: number;
+    passing_score?: number;
+    is_published?: boolean;
+    modification_requested?: boolean;
+    modification_request_reason?: string;
+    modification_request_at?: string;
+    modification_requested_by?: number;
+    can_resubmit?: boolean;
+    max_resubmissions?: number;
+    resubmission_count?: number;
+  };
+  project?: {
+    id: number;
+    title: string;
+    description?: string;
+    instructions?: string;
+    objectives?: string;
+    course_id: number;
+    module_id?: number;
+    lesson_id?: number;
+    points_possible: number;
+    passing_score?: number;
+    is_published?: boolean;
+    due_date?: string;
+    is_collaborative?: boolean;
+    max_team_size?: number;
+    modules?: any[];
+    modification_requested?: boolean;
+    modification_request_reason?: string;
+    modification_request_at?: string;
+    modification_requested_by?: number;
+    can_resubmit?: boolean;
+    max_resubmissions?: number;
+    resubmission_count?: number;
+  };
   course?: {
     id: number;
     title: string;
+    instructor_name?: string;
   };
   student_info?: {
     id: number;
     name: string;
     email: string;
     username: string;
+    first_name?: string;
+    last_name?: string;
+  };
+  submission_status?: {
+    is_first?: boolean;
+    is_first_submission?: boolean;
+    is_resubmission?: boolean;
+    count?: number;
+    resubmission_count?: number;
+    submission_type?: string;
+    modification_requested?: boolean;
+    can_resubmit?: boolean;
+    submission_notes?: string;
+    notes?: string;
+    modification_request_reason?: string;
+    modification_requested_at?: string;
+    modification_requested_by?: number;
   };
   team_members_info?: Array<{
     id: number;
@@ -127,6 +190,22 @@ export interface SubmissionDetail extends AssignmentSubmission {
     submitted_at: string;
     grade?: number;
   }>;
+  // Parsed file metadata (from to_dict)
+  files?: Array<{
+    filename: string;
+    url: string;
+    size?: number;
+    uploadedAt?: string;
+    original_filename?: string;
+  }>;
+  files_count?: number;
+  original_filename?: string;
+  text_content?: string;
+  original_submission_id?: number;
+  // Project-specific
+  project_title?: string;
+  project_points?: number;
+  project_id?: number;
 }
 
 export interface GradeRequest {

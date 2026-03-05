@@ -302,6 +302,7 @@ def resubmit_assignment_with_files(assignment_id):
                 student_id=current_user_id,
                 course=course,
                 files_data=files_data,
+                force=True,  # Force re-grade on resubmission (ignores previous result)
             )
         except Exception as ag_err:
             logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")

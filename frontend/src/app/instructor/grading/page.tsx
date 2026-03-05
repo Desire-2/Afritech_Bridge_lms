@@ -208,6 +208,35 @@ const GradingPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModule]);
 
+  // ── Auto-refresh polling (30s) when on grading step ──
+  // Picks up auto-grading results without manual refresh
+  useEffect(() => {
+    if (step !== 'grading' || !selectedCourseId || !selectedCohortId) return;
+
+    const POLL_INTERVAL = 30_000; // 30 seconds
+
+    const intervalId = setInterval(() => {
+      // Silent refresh — don't show loading spinner
+      fetchGradingData();
+      fetchSummary();
+    }, POLL_INTERVAL);
+
+    // Also refresh on tab visibility change
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchGradingData();
+        fetchSummary();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, selectedCourseId, selectedCohortId, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent, currentPage]);
+
   // ══════════════════════════════════════
   // DATA FETCHING
   // ══════════════════════════════════════
