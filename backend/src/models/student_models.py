@@ -756,48 +756,11 @@ class ForumPostLike(db.Model):
     is_like = db.Column(db.Boolean, nullable=False)  # True for like, False for dislike
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-
-# TEMPORARILY COMMENTED OUT DUE TO CONSTRAINT CONFLICT
-# class ForumSubscription(db.Model):
-#     """User subscriptions to forums for notifications"""
-#     __tablename__ = 'forum_subscriptions'
-#     id = db.Column(db.Integer, primary_key=True)
-#     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-#     forum_id = db.Column(db.Integer, db.ForeignKey('student_forums.id'), nullable=True)
-#     thread_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=True)
-#     subscription_type = db.Column(db.String(20), nullable=False)
-#     notify_replies = db.Column(db.Boolean, default=True)
-#     notify_new_threads = db.Column(db.Boolean, default=True)
-#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-#     is_active = db.Column(db.Boolean, default=True)
-#     
-#     user = db.relationship('User', backref=db.backref('forum_subscriptions', lazy='dynamic'))
-#     forum = db.relationship('StudentForum', backref=db.backref('subscriptions', lazy='dynamic'))
-#     thread = db.relationship('ForumPost', backref=db.backref('thread_subscriptions', lazy='dynamic'))
-#     
-#     __table_args__ = (db.UniqueConstraint('user_id', 'forum_id', 'thread_id', name='_user_forum_thread_sub_uc'),)
-
-# Simple placeholder class to avoid import errors
-class ForumSubscription:
-    @staticmethod
-    def query():
-        return EmptyQuery()
-
-class EmptyQuery:
-    def filter_by(self, **kwargs):
-        return self
-    
-    def first(self):
-        return None
-    
-    def all(self):
-        return []
-    
     post = db.relationship('ForumPost', backref=db.backref('post_likes', lazy='dynamic'))
     user = db.relationship('User', backref=db.backref('forum_likes', lazy='dynamic'))
-    
+
     __table_args__ = (db.UniqueConstraint('post_id', 'user_id', name='_post_user_like_uc'),)
-    
+
     def to_dict(self):
         return {
             'id': self.id,

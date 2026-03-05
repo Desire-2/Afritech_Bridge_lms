@@ -683,8 +683,14 @@ const ProjectGradingDetail = () => {
             </div>
             <div className="p-4">
               <ExcelAIGradingButton submissionId={submissionId} submissionType="project" onGradingComplete={(aiResult) => {
-                if (aiResult.total_score != null && !grade) setGrade(aiResult.total_score.toString());
-                if (aiResult.overall_feedback && !feedback) setFeedback(aiResult.overall_feedback);
+                // Scale AI score to project points
+                if (aiResult.total_score != null && aiResult.max_score) {
+                  const scaled = Math.round((aiResult.total_score / aiResult.max_score) * maxPoints * 100) / 100;
+                  setGrade(scaled.toString());
+                } else if (aiResult.total_score != null) {
+                  setGrade(aiResult.total_score.toString());
+                }
+                if (aiResult.overall_feedback) setFeedback(aiResult.overall_feedback);
                 fetchSubmission(true);
               }} />
             </div>

@@ -9,7 +9,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission, Announcement
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission, Announcement, ApplicationWindow, CohortModuleRelease
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
@@ -1048,35 +1048,57 @@ def get_student_announcements():
 @student_bp.route("/assignments", methods=["GET"])
 @student_required
 def get_student_assignments():
-    """Get all assignments for enrolled courses"""
-    current_user_id = int(get_jwt_identity())  # Convert string back to int
-    
-    # Get enrolled course IDs
-    enrolled_course_ids = db.session.query(Enrollment.course_id).filter_by(
-        student_id=current_user_id
-    ).subquery()
-    
+    """Get all assignments for enrolled courses, filtered by cohort-released modules."""
+    current_user_id = int(get_jwt_identity())
+
+    # Get all active enrollments with cohort info
+    enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
+    if not enrollments:
+        return jsonify([]), 200
+
+    # Build a set of released module IDs per enrollment (respecting cohort release)
+    released_module_ids = set()
+    enrolled_course_ids = set()
+    for enrollment in enrollments:
+        enrolled_course_ids.add(enrollment.course_id)
+        course = Course.query.get(enrollment.course_id)
+        if not course:
+            continue
+        cohort_id = enrollment.application_window_id
+        released_modules = course.get_released_modules(cohort_id=cohort_id)
+        for mod in released_modules:
+            released_module_ids.add(mod.id)
+
+    # Query assignments that belong to released modules OR are course-level (no module)
     assignments = Assignment.query.filter(
         Assignment.course_id.in_(enrolled_course_ids),
-        Assignment.is_active == True
+        Assignment.is_published == True,
+        db.or_(
+            Assignment.module_id.in_(released_module_ids) if released_module_ids else db.false(),
+            Assignment.module_id.is_(None)
+        )
     ).order_by(Assignment.due_date.asc().nullslast()).all()
-    
+
     assignments_data = []
     for assignment in assignments:
         assignment_data = assignment.to_dict()
-        
-        # Check if student has submitted
+
         submission = AssignmentSubmission.query.filter_by(
             assignment_id=assignment.id,
             student_id=current_user_id
         ).first()
-        
+
         assignment_data['submitted'] = submission is not None
         if submission:
             assignment_data['submission'] = submission.to_dict()
-        
+
+        assignment_data['submission_status'] = _build_assignment_submission_status(assignment, submission)
+        assignment_data['course_title'] = assignment.course.title if assignment.course else 'Unknown Course'
+        assignment_data['module_title'] = assignment.module.title if assignment.module else None
+        assignment_data['module_id'] = assignment.module_id
+
         assignments_data.append(assignment_data)
-    
+
     return jsonify(assignments_data), 200
 
 @student_bp.route("/assignments/<int:assignment_id>/submit", methods=["POST"])
@@ -2391,22 +2413,43 @@ def get_learning_path():
 @student_bp.route("/projects", methods=["GET"])
 @student_required
 def get_student_projects():
-    """Get all projects for courses the student is enrolled in with submission status"""
+    """Get all projects for enrolled courses, filtered by cohort-released modules."""
     try:
         current_user_id = int(get_jwt_identity())
-        
-        # Get enrolled course IDs
+
         enrollments = Enrollment.query.filter_by(student_id=current_user_id).all()
-        enrolled_course_ids = [e.course_id for e in enrollments]
-        
-        # Get all published projects for enrolled courses
+        if not enrollments:
+            return jsonify([]), 200
+
+        released_module_ids = set()
+        enrolled_course_ids = set()
+        for enrollment in enrollments:
+            enrolled_course_ids.add(enrollment.course_id)
+            course = Course.query.get(enrollment.course_id)
+            if not course:
+                continue
+            cohort_id = enrollment.application_window_id
+            released_modules = course.get_released_modules(cohort_id=cohort_id)
+            for mod in released_modules:
+                released_module_ids.add(mod.id)
+
         projects = Project.query.filter(
             Project.course_id.in_(enrolled_course_ids),
             Project.is_published == True
         ).order_by(Project.due_date.asc()).all()
+
+        # Filter projects: keep only those whose module_ids overlap with released modules
+        filtered_projects = []
+        for project in projects:
+            project_module_ids = project.get_modules()  # returns list of ints from JSON
+            if not project_module_ids:
+                # Course-level project (no specific modules) — always show
+                filtered_projects.append(project)
+            elif released_module_ids and any(mid in released_module_ids for mid in project_module_ids):
+                filtered_projects.append(project)
         
         result = []
-        for project in projects:
+        for project in filtered_projects:
             # Get submission status
             submission = ProjectSubmission.query.filter_by(
                 project_id=project.id,
@@ -2424,7 +2467,16 @@ def get_student_projects():
                 submission_status['submitted_at'] = submission.submitted_at.isoformat()
                 submission_status['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at else False
                 
-                if submission.grade is not None:
+                if project.modification_requested and project.can_resubmit:
+                    submission_status['status'] = 'needs_revision'
+                    submission_status['feedback'] = submission.feedback or project.modification_request_reason
+                    if submission.grade is not None:
+                        submission_status['grade'] = submission.grade
+                    if submission.graded_at:
+                        submission_status['graded_at'] = submission.graded_at.isoformat()
+                    if submission.grader:
+                        submission_status['grader_name'] = submission.grader.full_name
+                elif submission.grade is not None:
                     submission_status['status'] = 'graded'
                     submission_status['grade'] = submission.grade
                     submission_status['feedback'] = submission.feedback
@@ -2445,6 +2497,13 @@ def get_student_projects():
             
             project_data = project.to_dict()
             project_data['course_title'] = project.course.title
+            # Resolve module names from module_ids
+            project_mod_ids = project.get_modules()
+            if project_mod_ids:
+                mod_names = [m.title for m in Module.query.filter(Module.id.in_(project_mod_ids)).all()]
+                project_data['module_titles'] = mod_names
+            else:
+                project_data['module_titles'] = []
             project_data['submission_status'] = submission_status
             result.append(project_data)
         
@@ -2480,19 +2539,61 @@ def get_student_project_details(project_id):
             student_id=current_user_id
         ).first()
         
-        result = {
-            'project': project.to_dict(include_modules=True),
-            'submission': None
+        project_data = project.to_dict(include_modules=True)
+        project_data['course_title'] = project.course.title
+        
+        # Build submission_status dict
+        submission_status = {
+            'submitted': submission is not None,
+            'status': 'not_submitted',
+            'is_late': False
         }
         
-        result['project']['course_title'] = project.course.title
-        
+        submission_data = None
         if submission:
             submission_data = submission.to_dict()
             submission_data['is_late'] = submission.submitted_at > project.due_date if submission.submitted_at else False
             if submission.grader:
                 submission_data['grader_name'] = submission.grader.full_name
-            result['submission'] = submission_data
+            
+            submission_status['submitted'] = True
+            submission_status['id'] = submission.id
+            submission_status['submitted_at'] = submission.submitted_at.isoformat()
+            submission_status['is_late'] = submission_data['is_late']
+            
+            if project.modification_requested and project.can_resubmit:
+                submission_status['status'] = 'needs_revision'
+                submission_status['feedback'] = submission.feedback or project.modification_request_reason
+                if submission.grade is not None:
+                    submission_status['grade'] = submission.grade
+                if submission.graded_at:
+                    submission_status['graded_at'] = submission.graded_at.isoformat()
+                if submission.grader:
+                    submission_status['grader_name'] = submission.grader.full_name
+            elif submission.grade is not None:
+                submission_status['status'] = 'graded'
+                submission_status['grade'] = submission.grade
+                submission_status['feedback'] = submission.feedback
+                submission_status['graded_at'] = submission.graded_at.isoformat() if submission.graded_at else None
+                if submission.grader:
+                    submission_status['grader_name'] = submission.grader.full_name
+            else:
+                submission_status['status'] = 'submitted'
+        else:
+            if project.due_date < datetime.utcnow():
+                submission_status['status'] = 'late'
+                submission_status['is_late'] = True
+                submission_status['days_late'] = (datetime.utcnow() - project.due_date).days
+        
+        project_data['submission_status'] = submission_status
+        project_data['modification_requested'] = project.modification_requested
+        project_data['can_resubmit'] = project.can_resubmit
+        project_data['modification_request_reason'] = project.modification_request_reason
+        
+        result = {
+            'project': project_data,
+            'submission': submission_data
+        }
         
         return jsonify(result), 200
         

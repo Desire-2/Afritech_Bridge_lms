@@ -17,6 +17,12 @@ from ..models.course_models import (
 )
 from ..models.student_models import AssessmentAttempt, LessonCompletion
 from ..utils.email_notifications import send_grade_notification, send_project_graded_notification, send_grade_with_modification_notification
+from ..services.notification_service import (
+    notify_assignment_graded,
+    notify_project_graded,
+    notify_modification_requested,
+    notify_resubmission_received,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -654,6 +660,29 @@ def grade_assignment_submission(submission_id):
             logger.error(f"❌ Error sending grade notification: {str(email_error)}")
             # Don't fail the request if email fails
         
+        # ── In-app notification ──
+        try:
+            notify_assignment_graded(
+                submission=submission,
+                assignment=assignment,
+                student_id=submission.student_id,
+                grade=grade,
+                feedback=data.get('feedback', ''),
+                actor_id=current_user_id,
+                course_id=assignment.course_id if hasattr(assignment, 'course_id') else None,
+            )
+            if modification_auto_requested:
+                notify_modification_requested(
+                    student_id=submission.student_id,
+                    assignment_or_project=assignment,
+                    reason=modification_reason,
+                    actor_id=current_user_id,
+                    course_id=assignment.course_id if hasattr(assignment, 'course_id') else None,
+                    is_project=False,
+                )
+        except Exception as notif_err:
+            logger.error(f"❌ Error creating in-app grade notification: {str(notif_err)}")
+
         logger.info(f"✅ Assignment submission {submission_id} graded successfully by instructor {current_user_id}")
         
         response_data = {
@@ -1295,6 +1324,29 @@ def grade_project_submission(submission_id):
             logger.error(f"❌ Failed to send project grade notification email: {str(email_error)}")
             # Don't fail the request if email fails
         
+        # ── In-app notification ──
+        try:
+            notify_project_graded(
+                submission=submission,
+                project=submission.project,
+                student_id=submission.student_id,
+                grade=grade,
+                feedback=data.get('feedback', ''),
+                actor_id=current_user_id,
+                course_id=submission.project.course_id if hasattr(submission.project, 'course_id') else None,
+            )
+            if modification_auto_requested:
+                notify_modification_requested(
+                    student_id=submission.student_id,
+                    assignment_or_project=submission.project,
+                    reason=modification_reason,
+                    actor_id=current_user_id,
+                    course_id=submission.project.course_id if hasattr(submission.project, 'course_id') else None,
+                    is_project=True,
+                )
+        except Exception as notif_err:
+            logger.error(f"❌ Error creating in-app project grade notification: {str(notif_err)}")
+
         logger.info(f"✅ Project submission {submission_id} graded successfully by instructor {current_user_id}")
         
         response_data = {

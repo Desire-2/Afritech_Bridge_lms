@@ -408,6 +408,9 @@ export default function ExcelGradingResultPanel({
               <p className="text-2xl font-bold text-gray-900 dark:text-white">
                 {result.total_score}
                 <span className="text-base font-normal text-gray-500"> / {result.max_score}</span>
+                <span className="text-base font-semibold text-gray-500 ml-2">
+                  ({result.max_score > 0 ? Math.round((result.total_score / result.max_score) * 100) : 0}%)
+                </span>
               </p>
               <div className="w-full max-w-sm mx-auto sm:mx-0">
                 {percentBar(result.total_score, result.max_score)}

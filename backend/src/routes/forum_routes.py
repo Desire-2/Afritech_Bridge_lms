@@ -1,12 +1,22 @@
 """Forum routes for community discussions"""
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from src.models.student_models import StudentForum, ForumPost, ForumSubscription, ForumPostLike
+from src.models.student_models import StudentForum, ForumPost, ForumSubscription, ForumPostLike, ForumNotification
 from src.models.course_models import Course, Enrollment
 from src.models.user_models import User, Role, db
+from src.services.notification_service import (
+    notify_forum_reply,
+    notify_forum_post_liked,
+    notify_forum_new_thread,
+    notify_forum_post_flagged,
+    notify_forum_created,
+)
 from datetime import datetime
 from sqlalchemy import func, desc, or_, and_
 from functools import wraps
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Role-based decorators
 def role_required(*allowed_roles):
@@ -237,7 +247,25 @@ def create_forum(current_user):
         
         db.session.add(new_forum)
         db.session.commit()
-        
+
+        # ── Notify enrolled students when a course forum is created ──
+        try:
+            if course_id:
+                enrolled = Enrollment.query.filter_by(course_id=course_id).all()
+                student_ids = [e.student_id for e in enrolled if e.student_id != current_user.id]
+                if student_ids:
+                    course_obj = Course.query.get(course_id)
+                    notify_forum_created(
+                        student_ids=student_ids,
+                        forum_title=title,
+                        course_title=course_obj.title if course_obj else 'your course',
+                        forum_id=new_forum.id,
+                        course_id=course_id,
+                        actor_id=current_user.id,
+                    )
+        except Exception as notif_err:
+            logger.warning(f'Failed to send forum creation notifications: {notif_err}')
+
         return jsonify({
             'success': True,
             'message': 'Forum created successfully',
@@ -526,6 +554,35 @@ def create_thread(current_user, forum_id):
         forum.updated_at = datetime.utcnow()
         
         db.session.commit()
+
+        # ── Unified in-app notification for forum subscribers ──
+        try:
+            # Collect subscriber IDs from explicit forum subscriptions
+            forum_subscribers = ForumSubscription.query.filter_by(
+                forum_id=forum_id,
+                subscription_type='forum',
+                is_active=True,
+                notify_new_threads=True,
+            ).filter(ForumSubscription.user_id != current_user.id).all()
+            subscriber_ids = set(s.user_id for s in forum_subscribers)
+
+            # For course forums, also include all enrolled students
+            if forum.course_id:
+                enrolled = Enrollment.query.filter_by(course_id=forum.course_id).all()
+                subscriber_ids.update(e.student_id for e in enrolled)
+
+            # Remove the thread author
+            subscriber_ids.discard(current_user.id)
+
+            if subscriber_ids:
+                notify_forum_new_thread(
+                    subscriber_ids=list(subscriber_ids),
+                    author=current_user,
+                    post=new_thread,
+                    forum=forum,
+                )
+        except Exception as notif_err:
+            logger.error(f"Error creating in-app new thread notification: {notif_err}")
         
         return jsonify({
             'success': True,
@@ -714,26 +771,43 @@ def create_reply(current_user, thread_id):
         thread.updated_at = datetime.utcnow()
         thread.forum.updated_at = datetime.utcnow()
         
-        # Create notifications for thread subscribers
-        subscribers = ForumSubscription.query.filter_by(
-            thread_id=thread_id,
-            subscription_type='thread',
-            is_active=True,
-            notify_replies=True
-        ).filter(ForumSubscription.user_id != current_user.id).all()
-        
-        for subscription in subscribers:
-            notification = ForumNotification(
-                user_id=subscription.user_id,
-                forum_id=thread.forum_id,
-                post_id=reply.id,
-                notification_type='new_reply',
-                title=f'New reply in "{thread.title}"',
-                message=f'{current_user.first_name} {current_user.last_name} replied to a thread you\'re following.'
-            )
-            db.session.add(notification)
-        
         db.session.commit()
+
+        # ── In-app notifications for thread author + subscribers ──
+        try:
+            notified_ids = set()
+
+            # Notify original thread author if they're not the replier
+            if thread.author_id != current_user.id:
+                notify_forum_reply(
+                    recipient_id=thread.author_id,
+                    author=current_user,
+                    post=reply,
+                    parent_post=thread,
+                    forum_id=thread.forum_id,
+                )
+                notified_ids.add(thread.author_id)
+
+            # Notify explicit thread subscribers
+            subscribers = ForumSubscription.query.filter_by(
+                thread_id=thread_id,
+                subscription_type='thread',
+                is_active=True,
+                notify_replies=True
+            ).filter(ForumSubscription.user_id != current_user.id).all()
+
+            for subscription in subscribers:
+                if subscription.user_id not in notified_ids:
+                    notify_forum_reply(
+                        recipient_id=subscription.user_id,
+                        author=current_user,
+                        post=reply,
+                        parent_post=thread,
+                        forum_id=thread.forum_id,
+                    )
+                    notified_ids.add(subscription.user_id)
+        except Exception as notif_err:
+            logger.error(f"Error creating in-app forum reply notification: {notif_err}")
         
         return jsonify({
             'success': True,
@@ -976,19 +1050,18 @@ def like_post(current_user, post_id):
                 post.dislike_count = (post.dislike_count or 0) + 1
             action = 'added'
         
-        # Create notification for post author (if not self-like)
-        if current_user.id != post.author_id and action != 'removed' and is_like:
-            notification = ForumNotification(
-                user_id=post.author_id,
-                forum_id=post.forum_id,
-                post_id=post_id,
-                notification_type='post_liked',
-                title=f'Your post was liked',
-                message=f'{current_user.first_name} {current_user.last_name} liked your post "{post.title}".'
-            )
-            db.session.add(notification)
-        
         db.session.commit()
+
+        # In-app notification for post author (if not self-like)
+        if current_user.id != post.author_id and action != 'removed' and is_like:
+            try:
+                notify_forum_post_liked(
+                    recipient_id=post.author_id,
+                    liker=current_user,
+                    post=post,
+                )
+            except Exception as notif_err:
+                logger.error(f"Error creating in-app forum like notification: {notif_err}")
         
         return jsonify({
             'success': True,
@@ -1035,23 +1108,23 @@ def flag_post(current_user, post_id):
         post.flag_reason = reason
         post.updated_at = datetime.utcnow()
         
-        # Create notification for moderators
-        moderators = User.query.join(Role).filter(
-            Role.name.in_(['admin', 'instructor'])
-        ).all()
-        
-        for moderator in moderators:
-            notification = ForumNotification(
-                user_id=moderator.id,
-                forum_id=post.forum_id,
-                post_id=post_id,
-                notification_type='post_flagged',
-                title=f'Post flagged for review',
-                message=f'A post in "{post.forum.title}" has been flagged: {reason}'
-            )
-            db.session.add(notification)
-        
         db.session.commit()
+
+        # In-app notification for moderators
+        try:
+            moderators = User.query.join(Role).filter(
+                Role.name.in_(['admin', 'instructor'])
+            ).all()
+            moderator_ids = [m.id for m in moderators]
+            if moderator_ids:
+                notify_forum_post_flagged(
+                    moderator_ids=moderator_ids,
+                    flagger=current_user,
+                    post=post,
+                    reason=reason,
+                )
+        except Exception as notif_err:
+            logger.error(f"Error creating in-app forum flag notification: {notif_err}")
         
         return jsonify({
             'success': True,

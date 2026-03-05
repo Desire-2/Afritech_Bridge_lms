@@ -95,9 +95,10 @@ export default function ExcelAIGradingButton({
         return;
       }
 
-      // The result could be nested or flat depending on status
+      // The grading result may be nested under response.result
+      // (status=completed wraps it) or flat (already_graded / direct).
       const gradingResult =
-        response.status === "already_graded"
+        (response as any).result?.id
           ? (response as any).result
           : response;
 
@@ -105,6 +106,12 @@ export default function ExcelAIGradingButton({
         setResult(gradingResult);
         setExistingResult(gradingResult);
         onGradingComplete?.(gradingResult);
+      } else {
+        // Result saved on backend — re-fetch to get the full object
+        await checkExistingResult();
+        if (existingResult) {
+          onGradingComplete?.(existingResult);
+        }
       }
     } catch (err: any) {
       setError(err.message || "AI grading request failed");
@@ -155,7 +162,7 @@ export default function ExcelAIGradingButton({
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-3 py-2 bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 rounded-lg text-sm font-medium">
               <Zap className="h-4 w-4" />
-              AI Graded: {existingResult.total_score}/{existingResult.max_score} (
+              AI Graded: {existingResult.max_score > 0 ? Math.round((existingResult.total_score / existingResult.max_score) * 100) : 0}% (
               {existingResult.grade_letter})
             </div>
             <button

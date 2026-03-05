@@ -651,11 +651,15 @@ def _auto_request_modification_if_needed(
         parent.modification_requested_by = None  # System/AI initiated
         parent.can_resubmit = True
 
-        # Clear the grade on the submission so the student sees "needs_revision"
-        submission.grade = None
-        submission.feedback = f"Modification requested (auto): {reason[:200]}"
-        submission.graded_at = None
-        submission.graded_by = None
+        # Keep the AI grade on the submission so the instructor can see the
+        # score that triggered the modification request.  Only update the
+        # feedback to note the auto-modification.
+        submission.feedback = (
+            f"{grade_data.get('overall_feedback', '')}\n\n---\n"
+            f"⚠️ *Score {score_pct:.1f}% is below the passing threshold "
+            f"({passing_score:.0f}%). A modification request was created "
+            f"automatically. The student has been asked to resubmit.*"
+        )
 
         # Update lesson completion if applicable (assignments only)
         if submission_type == 'assignment':

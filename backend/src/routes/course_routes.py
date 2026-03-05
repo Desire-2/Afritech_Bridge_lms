@@ -8,6 +8,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from ..models.user_models import db, User, Role # For role checking
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, ApplicationWindow, CohortModuleRelease
 from ..utils.email_notifications import send_announcement_notification
+from ..services.notification_service import notify_announcement_new
 
 # Helper for role checking (decorator)
 from functools import wraps
@@ -1389,13 +1390,27 @@ def create_announcement_for_course(course_id):
         db.session.add(new_announcement)
         db.session.commit()
         
-        # Send email notification to all enrolled students
+        # Gather enrolled students
+        enrollments = Enrollment.query.filter_by(course_id=course_id).all()
+        students = [User.query.get(enrollment.student_id) for enrollment in enrollments]
+        students = [s for s in students if s and s.email]  # Filter out None and no email
+        student_ids = [s.id for s in students]
+
+        # ── In-app notifications ──
+        try:
+            if student_ids:
+                notify_announcement_new(
+                    announcement=new_announcement,
+                    course=course,
+                    student_ids=student_ids,
+                    actor_id=current_user_id,
+                )
+        except Exception as notif_error:
+            logger.error(f"❌ Error creating in-app announcement notifications: {str(notif_error)}")
+
+        # ── Email notifications ──
         email_results = {"sent": 0, "failed": 0, "total": 0}
         try:
-            enrollments = Enrollment.query.filter_by(course_id=course_id).all()
-            students = [User.query.get(enrollment.student_id) for enrollment in enrollments]
-            students = [s for s in students if s and s.email]  # Filter out None and no email
-            
             if students:
                 logger.info(f"📧 Preparing announcement notification for {len(students)} students")
                 logger.info(f"   Course: {course.title}")
@@ -1414,7 +1429,7 @@ def create_announcement_for_course(course_id):
             else:
                 logger.info(f"🔕 No students with email addresses found for course {course_id}")
         except Exception as email_error:
-            logger.error(f"❌ Error sending announcement notifications: {str(email_error)}")
+            logger.error(f"❌ Error sending announcement email notifications: {str(email_error)}")
             # Don't fail the request if emails fail
         
         return jsonify(new_announcement.to_dict()), 201

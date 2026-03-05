@@ -276,10 +276,18 @@ class ExcelGradingService:
     def _load_submission(
         self, submission_id: int, submission_type: str
     ) -> Tuple[Any, Any, Any]:
-        """Load submission, parent (assignment/project), and course."""
+        """Load submission, parent (assignment/project), and course.
+
+        Expires the SQLAlchemy session first so re-grade always reads
+        the latest file data from the database.
+        """
         from src.models.course_models import (
             Assignment, AssignmentSubmission, Project, ProjectSubmission, Course
         )
+        from src.models.user_models import db
+
+        # Ensure we read the latest data (critical for re-grades after resubmission)
+        db.session.expire_all()
 
         if submission_type == 'assignment':
             submission = AssignmentSubmission.query.get(submission_id)
@@ -323,30 +331,36 @@ class ExcelGradingService:
     # ------------------------------------------------------------------
 
     def _extract_files(self, submission, submission_type: str) -> List[Dict[str, Any]]:
-        """Extract file metadata from submission."""
+        """Extract file metadata from submission.
+
+        Both assignment and project submissions may store files as a JSON
+        array in their file column (file_url for assignments, file_path for
+        projects).  We try JSON parsing first, then fall back to treating
+        the value as a plain URL/path.
+        """
         files = []
 
         if submission_type == 'assignment':
-            # AssignmentSubmission stores files as JSON in file_url
             raw = getattr(submission, 'file_url', None)
-            if raw:
-                try:
-                    parsed = json.loads(raw)
-                    if isinstance(parsed, list):
-                        files.extend(parsed)
-                    elif isinstance(parsed, dict):
-                        files.append(parsed)
-                except (json.JSONDecodeError, TypeError):
-                    # Might be a plain URL
-                    files.append({'url': raw, 'filename': 'submission_file'})
         else:
-            # ProjectSubmission has file_path and file_name
-            fp = getattr(submission, 'file_path', None)
-            fn = getattr(submission, 'file_name', None)
-            if fp:
+            raw = getattr(submission, 'file_path', None)
+
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    files.extend(parsed)
+                elif isinstance(parsed, dict):
+                    files.append(parsed)
+                else:
+                    # Unexpected JSON scalar — treat as URL
+                    files.append({'url': str(parsed), 'filename': 'submission_file'})
+            except (json.JSONDecodeError, TypeError):
+                # Plain URL or path string
+                fn = getattr(submission, 'file_name', None) or 'submission_file'
                 files.append({
-                    'url': fp,
-                    'filename': fn or 'project_file',
+                    'url': raw,
+                    'filename': fn,
                     'original_filename': fn,
                 })
 

@@ -930,13 +930,19 @@ const AssignmentGradingDetail = () => {
                 submissionId={submissionId}
                 submissionType="assignment"
                 onGradingComplete={(aiResult) => {
-                  if (aiResult.total_score != null && !grade) {
+                  // Scale AI score to assignment points
+                  if (aiResult.total_score != null && aiResult.max_score) {
+                    const scaled = Math.round(
+                      (aiResult.total_score / aiResult.max_score) * maxPoints * 100
+                    ) / 100;
+                    setGrade(scaled.toString());
+                  } else if (aiResult.total_score != null) {
                     setGrade(aiResult.total_score.toString());
                   }
-                  if (aiResult.overall_feedback && !feedback) {
+                  if (aiResult.overall_feedback) {
                     setFeedback(aiResult.overall_feedback);
                   }
-                  // Refresh to get latest data
+                  // Refresh to get latest submission data
                   fetchSubmission(true);
                 }}
               />

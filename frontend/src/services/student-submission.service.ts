@@ -9,7 +9,7 @@ export interface SubmissionStatus {
   id?: number;
   submitted: boolean;
   submitted_at?: string;
-  status: 'not_submitted' | 'submitted' | 'graded' | 'late';
+  status: 'not_submitted' | 'submitted' | 'graded' | 'late' | 'needs_revision';
   grade?: number;
   feedback?: string;
   graded_at?: string;
@@ -24,6 +24,8 @@ export interface AssignmentWithStatus {
   description: string;
   course_id: number;
   course_title: string;
+  module_id?: number;
+  module_title?: string;
   due_date?: string;
   points_possible: number;
   assignment_type: string;
@@ -31,6 +33,9 @@ export interface AssignmentWithStatus {
   allowed_file_types?: string;
   max_file_size_mb?: number;
   is_published: boolean;
+  modification_requested?: boolean;
+  modification_request_reason?: string;
+  can_resubmit?: boolean;
   submission_status: SubmissionStatus;
 }
 
@@ -41,12 +46,18 @@ export interface ProjectWithStatus {
   objectives?: string;
   course_id: number;
   course_title: string;
+  module_titles?: string[];
   due_date: string;
   points_possible: number;
   submission_format: string;
+  max_file_size_mb?: number;
+  allowed_file_types?: string;
   collaboration_allowed: boolean;
   max_team_size: number;
   is_published: boolean;
+  modification_requested?: boolean;
+  modification_request_reason?: string;
+  can_resubmit?: boolean;
   submission_status: SubmissionStatus;
 }
 
@@ -68,6 +79,7 @@ export interface SubmissionDetail {
     graded_by?: number;
     grader_name?: string;
     team_members?: number[];
+    is_late?: boolean;
   };
 }
 
@@ -179,6 +191,14 @@ export class StudentSubmissionService {
         text: 'Graded',
         color: 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400',
         icon: 'check-circle'
+      };
+    }
+
+    if (status.status === 'needs_revision') {
+      return {
+        text: 'Needs Revision',
+        color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-400',
+        icon: 'warning'
       };
     }
 

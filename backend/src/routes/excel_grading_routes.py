@@ -100,12 +100,61 @@ def grade_submission(submission_id):
         service = ExcelGradingService()
         result = service.grade_submission(submission_id, submission_type, force=force)
 
+        status = result.get('status', 'unknown')
+
+        # ── After a successful grade, run the same pipeline steps
+        # that auto_grader does so the submission grade is updated
+        # immediately instead of only creating an ExcelGradingResult. ──
+        if status == 'completed':
+            try:
+                from ..services.excel_grading.auto_grader import (
+                    _auto_approve_grading_result,
+                    _apply_grade_to_submission as _auto_apply_grade,
+                    _auto_request_modification_if_needed,
+                    _update_learning_progress,
+                )
+                from flask import current_app
+
+                grade_data = result.get('result', {})
+                total_score = grade_data.get('total_score', 0)
+                max_score = grade_data.get('max_score', 100)
+
+                # Resolve student_id from the submission
+                student_id = _get_student_id(submission_id, submission_type)
+                app = current_app._get_current_object()
+
+                _auto_approve_grading_result(
+                    app, submission_id, submission_type, grade_data,
+                )
+                _auto_apply_grade(
+                    app, submission_id, submission_type, student_id,
+                    total_score, max_score, grade_data,
+                )
+                mod_requested = _auto_request_modification_if_needed(
+                    app, submission_id, submission_type, student_id,
+                    total_score, max_score, grade_data,
+                )
+                if not mod_requested:
+                    _update_learning_progress(
+                        app, submission_id, submission_type, student_id,
+                        total_score, max_score,
+                    )
+
+                logger.info(
+                    f"✅ Grade pipeline completed for {submission_type} "
+                    f"#{submission_id}: {total_score}/{max_score}"
+                )
+            except Exception as pipeline_err:
+                logger.exception(
+                    f"⚠️ Grade pipeline error (result still saved): {pipeline_err}"
+                )
+
         status_code = {
             'completed': 200,
             'already_graded': 200,
             'skipped': 200,
             'failed': 422,
-        }.get(result.get('status'), 500)
+        }.get(status, 500)
 
         return jsonify(result), status_code
 
@@ -892,25 +941,56 @@ def approve_generated_rubric(assignment_id):
 # Helpers
 # ==============================================================
 
+def _get_student_id(submission_id: int, submission_type: str) -> int:
+    """Look up the student_id that owns a submission."""
+    if submission_type == 'assignment':
+        sub = AssignmentSubmission.query.get(submission_id)
+    elif submission_type == 'project':
+        sub = ProjectSubmission.query.get(submission_id)
+    else:
+        return 0
+    return sub.student_id if sub else 0
+
+
 def _apply_grade_to_submission(result: ExcelGradingResult):
-    """Push the AI grade onto the real submission record."""
+    """Push the AI grade onto the real submission record.
+
+    Scales total_score / max_score to the assignment's points_possible so
+    the stored grade is on the correct scale.
+    """
     try:
+        sub = None
+        parent = None
+
         if result.submission_type == 'assignment' and result.assignment_submission_id:
             sub = AssignmentSubmission.query.get(result.assignment_submission_id)
             if sub:
-                sub.grade = result.total_score
-                sub.feedback = result.overall_feedback
-                sub.graded_at = datetime.utcnow()
-                sub.graded_by = result.instructor_id
-                logger.info(f"Applied AI grade to AssignmentSubmission#{sub.id}")
+                parent = Assignment.query.get(sub.assignment_id)
 
         elif result.submission_type == 'project' and result.project_submission_id:
             sub = ProjectSubmission.query.get(result.project_submission_id)
             if sub:
-                sub.grade = result.total_score
-                sub.feedback = result.overall_feedback
-                sub.graded_at = datetime.utcnow()
-                sub.graded_by = result.instructor_id
-                logger.info(f"Applied AI grade to ProjectSubmission#{sub.id}")
+                parent = Project.query.get(sub.project_id)
+
+        if not sub:
+            return
+
+        points_possible = (getattr(parent, 'points_possible', None) or 100) if parent else 100
+        max_score = result.max_score or 100
+
+        if max_score > 0:
+            scaled = round((result.total_score / max_score) * points_possible, 2)
+        else:
+            scaled = 0
+        scaled = max(0, min(points_possible, scaled))
+
+        sub.grade = scaled
+        sub.feedback = result.overall_feedback
+        sub.graded_at = datetime.utcnow()
+        sub.graded_by = result.instructor_id
+        logger.info(
+            f"Applied AI grade to {result.submission_type} submission "
+            f"#{sub.id}: {scaled}/{points_possible}"
+        )
     except Exception as e:
         logger.error(f"Failed to apply grade to submission: {e}")

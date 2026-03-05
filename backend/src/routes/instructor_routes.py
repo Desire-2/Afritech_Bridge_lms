@@ -13,6 +13,7 @@ from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Que
 from ..services.background_service import background_service
 from ..utils.email_utils import send_email
 from ..utils.email_templates import course_announcement_email
+from ..services.notification_service import notify_announcement_new
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -316,6 +317,19 @@ def create_announcement():
         
         # Send email notifications to enrolled students
         _send_announcement_emails(new_announcement, course)
+        
+        # Send in-app notifications to enrolled students
+        try:
+            student_ids = [e.student_id for e in Enrollment.query.filter_by(course_id=course.id).all()]
+            if student_ids:
+                notify_announcement_new(
+                    announcement=new_announcement,
+                    course=course,
+                    student_ids=student_ids,
+                    actor_id=current_user_id,
+                )
+        except Exception as notif_err:
+            logger.warning(f"Failed to create in-app notifications: {notif_err}")
         
         # Return the created announcement
         ann_dict = new_announcement.to_dict()
