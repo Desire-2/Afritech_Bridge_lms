@@ -126,7 +126,14 @@ def _run_grading_in_background(
                     f"({grade_data.get('grade_letter', '?')})"
                 )
 
-                # ── Step A: Write grade onto the actual submission record ──
+                # ── Step A: Auto-approve the ExcelGradingResult ──────
+                # Mark the AI result as reviewed/approved so both student
+                # and instructor views treat it as a final grade.
+                _auto_approve_grading_result(
+                    app, submission_id, submission_type, grade_data,
+                )
+
+                # ── Step B: Write grade onto the actual submission record ──
                 # This mirrors what the instructor grading endpoint does,
                 # so the student sees the grade immediately in their UI.
                 _apply_grade_to_submission(
@@ -134,20 +141,20 @@ def _run_grading_in_background(
                     total_score, max_score, grade_data,
                 )
 
-                # ── Step B: Auto-request modification if below passing ──
+                # ── Step C: Auto-request modification if below passing ──
                 modification_requested = _auto_request_modification_if_needed(
                     app, submission_id, submission_type, student_id,
                     total_score, max_score, grade_data,
                 )
 
-                # ── Step C: Update module progress & lesson completion ──
+                # ── Step D: Update module progress & lesson completion ──
                 if not modification_requested:
                     _update_learning_progress(
                         app, submission_id, submission_type, student_id,
                         total_score, max_score,
                     )
 
-                # ── Step D: Notify student ──
+                # ── Step E: Notify student ──
                 _notify_student_auto_graded(
                     app, submission_id, submission_type, student_id, result,
                     modification_requested=modification_requested,
@@ -193,6 +200,62 @@ def _run_grading_in_background(
                     app, submission_id, submission_type,
                     student_id, attempt + 1, force=force,
                 )
+
+
+def _auto_approve_grading_result(
+    app,
+    submission_id: int,
+    submission_type: str,
+    grade_data: Dict[str, Any],
+) -> bool:
+    """
+    Mark the ExcelGradingResult as auto-approved so the grade is treated
+    as final rather than a preliminary result waiting for instructor review.
+    """
+    try:
+        from src.models.excel_grading_models import ExcelGradingResult
+        from src.extensions import db
+        from datetime import datetime
+
+        if submission_type == 'assignment':
+            result = ExcelGradingResult.query.filter_by(
+                assignment_submission_id=submission_id,
+                submission_type='assignment',
+            ).order_by(ExcelGradingResult.graded_at.desc()).first()
+        else:
+            result = ExcelGradingResult.query.filter_by(
+                project_submission_id=submission_id,
+                submission_type='project',
+            ).order_by(ExcelGradingResult.graded_at.desc()).first()
+
+        if not result:
+            return False
+
+        result.instructor_reviewed = True
+        result.manual_review_required = False
+        result.instructor_reviewed_at = datetime.utcnow()
+        result.instructor_notes = 'Auto-approved by AI grading system'
+        result.status = 'completed'
+
+        db.session.commit()
+
+        logger.info(
+            f"✅ Auto-approved ExcelGradingResult for "
+            f"{submission_type} #{submission_id}"
+        )
+        return True
+
+    except Exception as e:
+        logger.exception(
+            f"❌ Failed to auto-approve grading result for "
+            f"{submission_type} #{submission_id}: {e}"
+        )
+        try:
+            from src.extensions import db
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
 
 
 def _apply_grade_to_submission(
@@ -252,8 +315,7 @@ def _apply_grade_to_submission(
         feedback = grade_data.get('overall_feedback', '')
         ai_note = (
             "\n\n---\n"
-            "📊 *This is an AI-generated preliminary grade. "
-            "Your instructor will review and may adjust the final score.*"
+            "📊 *This grade was automatically generated and approved by AI analysis.*"
         )
         full_feedback = (feedback + ai_note) if feedback else ai_note.strip()
 
@@ -622,14 +684,12 @@ def _notify_student_auto_graded(
                 "⚠️ *Your score is below the passing threshold. "
                 "A modification request has been created automatically. "
                 "Please review the feedback above and resubmit your work.*\n\n"
-                "📊 *This is an AI-generated preliminary grade. "
-                "Your instructor will review and may adjust the final score.*"
+                "📊 *This grade was automatically generated and approved by AI analysis.*"
             )
         else:
             ai_note = (
                 "\n\n---\n"
-                "📊 *This is an AI-generated preliminary grade. "
-                "Your instructor will review and may adjust the final score.*"
+                "📊 *This grade was automatically generated and approved by AI analysis.*"
             )
         feedback_with_note = (feedback + ai_note) if feedback else ai_note
 
