@@ -88,7 +88,7 @@ const UserStatsCards: React.FC<UserStatsCardsProps> = ({ stats }) => {
           return (
             <div
               key={index}
-              className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+              className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5 hover:shadow-md transition-shadow"
             >
               <div className="flex items-center justify-between mb-3">
                 <div className={`p-2.5 rounded-lg ${card.iconBg}`}>
@@ -101,9 +101,9 @@ const UserStatsCards: React.FC<UserStatsCardsProps> = ({ stats }) => {
                 )}
               </div>
               <h3 className="text-gray-500 text-sm font-medium mb-1">{card.title}</h3>
-              <p className="text-2xl font-bold text-gray-900">{card.value.toLocaleString()}</p>
+              <p className="text-2xl font-bold text-white">{card.value.toLocaleString()}</p>
               {card.changeLabel && (
-                <p className="text-xs text-gray-400 mt-1">{card.changeLabel}</p>
+                <p className="text-xs text-gray-500 mt-1">{card.changeLabel}</p>
               )}
             </div>
           );
@@ -113,7 +113,7 @@ const UserStatsCards: React.FC<UserStatsCardsProps> = ({ stats }) => {
       {/* Role Distribution Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {Object.entries(stats.users_by_role || {}).map(([role, count]) => {
-          const colors = roleColors[role] || { bg: 'bg-gray-50', text: 'text-gray-700', border: 'border-gray-200' };
+          const colors = roleColors[role] || { bg: 'bg-[#162844]', text: 'text-gray-200', border: 'border-white/10' };
           const percentage = stats.total_users > 0 ? ((count / stats.total_users) * 100).toFixed(1) : 0;
           
           return (
@@ -133,7 +133,7 @@ const UserStatsCards: React.FC<UserStatsCardsProps> = ({ stats }) => {
               </div>
               
               {/* Progress bar */}
-              <div className="w-full h-2 bg-white/50 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-[#162844]/50 rounded-full overflow-hidden">
                 <div 
                   className={`h-full rounded-full transition-all duration-500 ${
                     role === 'student' ? 'bg-green-400' :

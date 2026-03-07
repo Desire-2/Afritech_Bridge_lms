@@ -40,21 +40,21 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
       instructor: 'bg-blue-100 text-blue-800',
       student: 'bg-green-100 text-green-800'
     };
-    return colors[role as keyof typeof colors] || 'bg-gray-100 text-gray-800';
+    return colors[role as keyof typeof colors] || 'bg-[#162844]/10 text-gray-100';
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-[#0d1b2a] rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="p-6 border-b border-gray-200">
+        <div className="p-6 border-b border-white/10">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-4">
               <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold">
                 {user.first_name?.[0] || user.username[0].toUpperCase()}
               </div>
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">
+                <h2 className="text-2xl font-bold text-white">
                   {user.first_name && user.last_name
                     ? `${user.first_name} ${user.last_name}`
                     : user.username}
@@ -74,7 +74,7 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
               </button>
               <button
                 onClick={onClose}
-                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-50 transition-colors"
+                className="px-4 py-2 border border-white/15 text-gray-200 rounded-lg font-medium hover:bg-[#162844]/5 transition-colors"
               >
                 Close
               </button>
@@ -83,7 +83,7 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
         </div>
 
         {/* Tabs */}
-        <div className="border-b border-gray-200">
+        <div className="border-b border-white/10">
           <div className="flex">
             {['details', 'activity', 'statistics'].map((tab) => (
               <button
@@ -92,7 +92,7 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
                 className={`px-6 py-3 font-medium text-sm transition-colors ${
                   activeTab === tab
                     ? 'border-b-2 border-blue-600 text-blue-600'
-                    : 'text-gray-600 hover:text-gray-900'
+                    : 'text-gray-600 hover:text-white'
                 }`}
               >
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
@@ -114,15 +114,15 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-600 mb-1">Email</label>
-                      <p className="text-gray-900">{userDetails?.email || user.email}</p>
+                      <p className="text-white">{userDetails?.email || user.email}</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-600 mb-1">Phone</label>
-                      <p className="text-gray-900">{userDetails?.phone_number || 'Not provided'}</p>
+                      <p className="text-white">{userDetails?.phone_number || 'Not provided'}</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-600 mb-1">Status</label>
-                      <p className="text-gray-900">
+                      <p className="text-white">
                         {userDetails?.is_active !== false ? (
                           <span className="text-green-600">Active</span>
                         ) : (
@@ -132,7 +132,7 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-600 mb-1">Created At</label>
-                      <p className="text-gray-900">
+                      <p className="text-white">
                         {new Date(userDetails?.created_at || user.created_at).toLocaleDateString()}
                       </p>
                     </div>
@@ -140,7 +140,7 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
                   {userDetails?.bio && (
                     <div>
                       <label className="block text-sm font-medium text-gray-600 mb-1">Bio</label>
-                      <p className="text-gray-900">{userDetails.bio}</p>
+                      <p className="text-white">{userDetails.bio}</p>
                     </div>
                   )}
                 </div>
@@ -149,11 +149,11 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
               {activeTab === 'statistics' && userDetails?.statistics && (
                 <div className="grid grid-cols-2 gap-4">
                   {Object.entries(userDetails.statistics).map(([key, value]) => (
-                    <div key={key} className="bg-gray-50 p-4 rounded-lg">
+                    <div key={key} className="bg-[#162844] p-4 rounded-lg">
                       <h4 className="text-sm font-medium text-gray-600 mb-1 capitalize">
                         {key.replace(/_/g, ' ')}
                       </h4>
-                      <p className="text-2xl font-bold text-gray-900">{value as any}</p>
+                      <p className="text-2xl font-bold text-white">{value as any}</p>
                     </div>
                   ))}
                 </div>
@@ -163,14 +163,14 @@ const UserDetailsModal: React.FC<UserDetailsModalProps> = ({ user, onClose, onEd
                 <div className="space-y-4">
                   {activity?.activities && activity.activities.length > 0 ? (
                     activity.activities.map((item: any, index: number) => (
-                      <div key={index} className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg">
+                      <div key={index} className="flex items-start gap-3 p-4 bg-[#0a1628] rounded-lg">
                         <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 flex-shrink-0">
                           {item.type === 'enrollment' && '📚'}
                           {item.type === 'quiz_submission' && '📝'}
                           {item.type === 'course_created' && '✨'}
                         </div>
                         <div className="flex-1">
-                          <p className="text-gray-900 font-medium">{item.type.replace(/_/g, ' ')}</p>
+                          <p className="text-white font-medium">{item.type.replace(/_/g, ' ')}</p>
                           <p className="text-sm text-gray-600 mt-1">
                             {item.course_title || item.quiz_title}
                           </p>

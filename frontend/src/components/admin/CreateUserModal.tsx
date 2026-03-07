@@ -55,7 +55,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
   // Password strength calculation
   const passwordStrength = useMemo(() => {
     const passed = passwordRules.filter(rule => rule.test(formData.password)).length;
-    if (passed === 0) return { level: 0, label: 'Very Weak', color: 'bg-gray-200' };
+    if (passed === 0) return { level: 0, label: 'Very Weak', color: 'bg-[#162844]/15' };
     if (passed === 1) return { level: 1, label: 'Weak', color: 'bg-red-500' };
     if (passed === 2) return { level: 2, label: 'Fair', color: 'bg-orange-500' };
     if (passed === 3) return { level: 3, label: 'Good', color: 'bg-yellow-500' };
@@ -177,16 +177,16 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
+      <div className="bg-[#0d1b2a] rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b border-white/10 sticky top-0 bg-[#0d1b2a] z-10">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900">Create New User</h2>
+              <h2 className="text-2xl font-bold text-white">Create New User</h2>
               <p className="text-sm text-gray-500 mt-1">Add a new user to the system</p>
             </div>
             <button
               onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+              className="p-2 hover:bg-[#162844]/10 rounded-full transition-colors"
             >
               <X className="w-5 h-5 text-gray-500" />
             </button>
@@ -203,11 +203,11 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
 
           {/* Account Information Section */}
           <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Account Information</h3>
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Account Information</h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-200 mb-2">
                   Username <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -216,8 +216,8 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                   value={formData.username}
                   onChange={(e) => handleFieldChange('username', e.target.value.toLowerCase())}
                   onBlur={() => handleBlur('username')}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                    fieldErrors.username ? 'border-red-500' : 'border-gray-300'
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                    fieldErrors.username ? 'border-red-500' : 'border-white/15'
                   }`}
                   placeholder="johndoe"
                 />
@@ -227,7 +227,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-200 mb-2">
                   Email <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -236,8 +236,8 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                   value={formData.email}
                   onChange={(e) => handleFieldChange('email', e.target.value)}
                   onBlur={() => handleBlur('email')}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                    fieldErrors.email ? 'border-red-500' : 'border-gray-300'
+                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                    fieldErrors.email ? 'border-red-500' : 'border-white/15'
                   }`}
                   placeholder="john@example.com"
                 />
@@ -251,7 +251,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-gray-700">
+                  <label className="block text-sm font-medium text-gray-200">
                     Password <span className="text-red-500">*</span>
                   </label>
                   <button
@@ -269,15 +269,15 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                     value={formData.password}
                     onChange={(e) => handleFieldChange('password', e.target.value)}
                     onBlur={() => handleBlur('password')}
-                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      fieldErrors.password ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                      fieldErrors.password ? 'border-red-500' : 'border-white/15'
                     }`}
                     placeholder="••••••••"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-200"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -287,7 +287,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                 {formData.password && (
                   <div className="mt-2">
                     <div className="flex items-center gap-2 mb-1">
-                      <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                      <div className="flex-1 h-1.5 bg-[#162844]/15 rounded-full overflow-hidden">
                         <div
                           className={`h-full transition-all ${passwordStrength.color}`}
                           style={{ width: `${(passwordStrength.level / 4) * 100}%` }}
@@ -300,7 +300,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                         <div
                           key={rule.id}
                           className={`flex items-center gap-1 ${
-                            rule.test(formData.password) ? 'text-green-600' : 'text-gray-400'
+                            rule.test(formData.password) ? 'text-green-600' : 'text-gray-500'
                           }`}
                         >
                           {rule.test(formData.password) ? (
@@ -321,7 +321,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
 
               {/* Confirm Password */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-200 mb-2">
                   Confirm Password <span className="text-red-500">*</span>
                 </label>
                 <div className="relative">
@@ -331,15 +331,15 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                     value={formData.confirm_password}
                     onChange={(e) => handleFieldChange('confirm_password', e.target.value)}
                     onBlur={() => handleBlur('confirm_password')}
-                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                      fieldErrors.confirm_password ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                      fieldErrors.confirm_password ? 'border-red-500' : 'border-white/15'
                     }`}
                     placeholder="••••••••"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-200"
                   >
                     {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -357,14 +357,14 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
 
             {/* Role Selection */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-200 mb-2">
                 Role <span className="text-red-500">*</span>
               </label>
               <select
                 required
                 value={formData.role_name}
                 onChange={(e) => handleFieldChange('role_name', e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
               >
                 {roles.map((role) => (
                   <option key={role.id} value={role.name}>
@@ -382,58 +382,58 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
 
           {/* Personal Information Section */}
           <div className="space-y-4 pt-4 border-t">
-            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Personal Information</h3>
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Personal Information</h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-200 mb-2">
                   First Name
                 </label>
                 <input
                   type="text"
                   value={formData.first_name}
                   onChange={(e) => handleFieldChange('first_name', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                   placeholder="John"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-200 mb-2">
                   Last Name
                 </label>
                 <input
                   type="text"
                   value={formData.last_name}
                   onChange={(e) => handleFieldChange('last_name', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                   placeholder="Doe"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-200 mb-2">
                 Phone Number
               </label>
               <input
                 type="tel"
                 value={formData.phone_number}
                 onChange={(e) => handleFieldChange('phone_number', e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                 placeholder="+1 234 567 8900"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-200 mb-2">
                 Bio
               </label>
               <textarea
                 value={formData.bio}
                 onChange={(e) => handleFieldChange('bio', e.target.value)}
                 rows={3}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 resize-none"
                 placeholder="Brief description about the user..."
               />
             </div>
@@ -441,44 +441,44 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
 
           {/* Account Settings Section */}
           <div className="space-y-4 pt-4 border-t">
-            <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">Account Settings</h3>
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Account Settings</h3>
             
             <div className="space-y-3">
-              <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+              <label className="flex items-center gap-3 p-3 bg-[#0a1628] rounded-lg hover:bg-[#162844]/10 transition-colors cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData.is_active}
                   onChange={(e) => handleFieldChange('is_active', e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="w-4 h-4 text-blue-600 border-white/15 rounded focus:ring-white/30"
                 />
                 <div>
-                  <span className="text-sm font-medium text-gray-700">Active Account</span>
+                  <span className="text-sm font-medium text-gray-200">Active Account</span>
                   <p className="text-xs text-gray-500">User can log in immediately after creation</p>
                 </div>
               </label>
 
-              <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+              <label className="flex items-center gap-3 p-3 bg-[#0a1628] rounded-lg hover:bg-[#162844]/10 transition-colors cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData.require_password_change}
                   onChange={(e) => handleFieldChange('require_password_change', e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="w-4 h-4 text-blue-600 border-white/15 rounded focus:ring-white/30"
                 />
                 <div>
-                  <span className="text-sm font-medium text-gray-700">Require Password Change</span>
+                  <span className="text-sm font-medium text-gray-200">Require Password Change</span>
                   <p className="text-xs text-gray-500">User must change password on first login</p>
                 </div>
               </label>
 
-              <label className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer">
+              <label className="flex items-center gap-3 p-3 bg-[#0a1628] rounded-lg hover:bg-[#162844]/10 transition-colors cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData.send_welcome_email}
                   onChange={(e) => handleFieldChange('send_welcome_email', e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="w-4 h-4 text-blue-600 border-white/15 rounded focus:ring-white/30"
                 />
                 <div>
-                  <span className="text-sm font-medium text-gray-700">Send Welcome Email</span>
+                  <span className="text-sm font-medium text-gray-200">Send Welcome Email</span>
                   <p className="text-xs text-gray-500">Send account credentials to user&apos;s email</p>
                 </div>
               </label>
@@ -486,12 +486,12 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
           </div>
 
           {/* Form Actions */}
-          <div className="flex justify-end gap-3 pt-4 border-t sticky bottom-0 bg-white pb-2">
+          <div className="flex justify-end gap-3 pt-4 border-t sticky bottom-0 bg-[#162844] pb-2">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="px-6 py-2.5 border border-white/15 rounded-lg text-gray-200 font-medium hover:bg-[#162844]/5 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>

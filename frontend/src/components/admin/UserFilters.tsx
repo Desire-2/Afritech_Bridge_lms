@@ -44,25 +44,25 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
   };
 
   return (
-    <div className="bg-white rounded-lg shadow mb-6">
+    <div className="bg-[#0d1b2a] rounded-lg shadow mb-6">
       {/* Main Filters Row */}
       <div className="p-4">
         <div className="flex flex-col lg:flex-row gap-4">
           {/* Search - Takes more space */}
           <div className="flex-1 min-w-0">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
               <input
                 type="text"
                 value={filters.search}
                 onChange={(e) => onFilterChange({ search: e.target.value })}
                 placeholder="Search by name, email, or username..."
-                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full pl-10 pr-4 py-2.5 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
               />
               {filters.search && (
                 <button
                   onClick={() => onFilterChange({ search: '' })}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -76,7 +76,7 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
             <select
               value={filters.role}
               onChange={(e) => onFilterChange({ role: e.target.value })}
-              className="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[140px]"
+              className="px-4 py-2.5 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 bg-[#162844] min-w-[140px]"
             >
               <option value="">All Roles</option>
               <option value="student">🎓 Student</option>
@@ -88,7 +88,7 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
             <select
               value={filters.status}
               onChange={(e) => onFilterChange({ status: e.target.value })}
-              className="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[140px]"
+              className="px-4 py-2.5 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 bg-[#162844] min-w-[140px]"
             >
               <option value="">All Status</option>
               <option value="active">✅ Active</option>
@@ -99,7 +99,7 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
             <select
               value={filters.sort_by}
               onChange={(e) => onFilterChange({ sort_by: e.target.value })}
-              className="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[150px]"
+              className="px-4 py-2.5 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 bg-[#162844] min-w-[150px]"
             >
               <option value="created_at">Created Date</option>
               <option value="username">Username</option>
@@ -112,7 +112,7 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
               onClick={() => onFilterChange({ 
                 sort_order: filters.sort_order === 'asc' ? 'desc' : 'asc' 
               })}
-              className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors flex items-center gap-2"
+              className="px-4 py-2.5 bg-[#162844]/10 hover:bg-[#162844]/15 text-gray-200 rounded-lg font-medium transition-colors flex items-center gap-2"
               title={filters.sort_order === 'asc' ? 'Ascending' : 'Descending'}
             >
               {filters.sort_order === 'asc' ? (
@@ -134,7 +134,7 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
               className={`px-4 py-2.5 rounded-lg font-medium transition-colors flex items-center gap-2 ${
                 showAdvanced || hasActiveFilters
                   ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  : 'bg-[#162844]/10 text-gray-200 hover:bg-[#162844]/15'
               }`}
             >
               <Filter className="w-4 h-4" />
@@ -151,32 +151,32 @@ const UserFilters: React.FC<UserFiltersProps> = ({ filters, onFilterChange }) =>
 
       {/* Advanced Filters Panel */}
       {showAdvanced && (
-        <div className="px-4 pb-4 pt-2 border-t border-gray-100">
+        <div className="px-4 pb-4 pt-2 border-t border-white/8">
           <div className="flex flex-wrap items-end gap-4">
             {/* Date Range */}
             <div className="flex items-center gap-2">
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Created From</label>
                 <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
                   <input
                     type="date"
                     value={dateFrom}
                     onChange={(e) => handleDateChange('from', e.target.value)}
-                    className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    className="pl-9 pr-3 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 text-sm"
                   />
                 </div>
               </div>
-              <span className="text-gray-400 pb-2">to</span>
+              <span className="text-gray-500 pb-2">to</span>
               <div>
                 <label className="block text-xs font-medium text-gray-500 mb-1">Created To</label>
                 <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
                   <input
                     type="date"
                     value={dateTo}
                     onChange={(e) => handleDateChange('to', e.target.value)}
-                    className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    className="pl-9 pr-3 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 text-sm"
                   />
                 </div>
               </div>

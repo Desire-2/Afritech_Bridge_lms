@@ -275,18 +275,18 @@ export default function UserManagementPage() {
   if (loading && users.length === 0 && activeTab === 'all-users') {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-[#0a1628]">
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Header */}
         <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
+            <h1 className="text-3xl font-bold text-white">User Management</h1>
             <p className="text-gray-600 mt-1">
               Manage and monitor all system users
               {activeTab === 'all-users' && pagination.total_items > 0 && (
@@ -301,7 +301,7 @@ export default function UserManagementPage() {
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing}
-                className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
+                className="bg-[#162844]/10 hover:bg-[#162844]/15 text-gray-200 px-4 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors disabled:opacity-50"
               >
                 <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
                 Refresh
@@ -314,16 +314,16 @@ export default function UserManagementPage() {
                   <Download className="w-4 h-4" />
                   Export
                 </button>
-                <div className="absolute right-0 mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                <div className="absolute right-0 mt-1 w-36 bg-[#0d1b2a] rounded-lg shadow-lg border border-white/10 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                   <button
                     onClick={() => handleExportUsers('csv')}
-                    className="w-full text-left px-4 py-2.5 hover:bg-gray-100 text-sm rounded-t-lg"
+                    className="w-full text-left px-4 py-2.5 hover:bg-[#162844]/10 text-sm rounded-t-lg"
                   >
                     📊 Export CSV
                   </button>
                   <button
                     onClick={() => handleExportUsers('json')}
-                    className="w-full text-left px-4 py-2.5 hover:bg-gray-100 text-sm rounded-b-lg"
+                    className="w-full text-left px-4 py-2.5 hover:bg-[#162844]/10 text-sm rounded-b-lg"
                   >
                     📋 Export JSON
                   </button>
@@ -341,23 +341,23 @@ export default function UserManagementPage() {
         </div>
 
         {/* Tabs */}
-        <div className="mb-6 border-b border-gray-200">
+        <div className="mb-6 border-b border-white/10">
           <nav className="-mb-px flex gap-6" aria-label="Tabs">
             <button
               onClick={() => setActiveTab('all-users')}
               className={`group inline-flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'all-users'
                   ? 'border-brand text-brand'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-200 hover:border-white/15'
               }`}
             >
-              <Users className={`w-5 h-5 ${activeTab === 'all-users' ? 'text-brand' : 'text-gray-400 group-hover:text-gray-500'}`} />
+              <Users className={`w-5 h-5 ${activeTab === 'all-users' ? 'text-brand' : 'text-gray-500 group-hover:text-gray-400'}`} />
               All Users
               {pagination.total_items > 0 && (
                 <span className={`ml-2 py-0.5 px-2 rounded-full text-xs ${
                   activeTab === 'all-users'
                     ? 'bg-brand/10 text-brand'
-                    : 'bg-gray-100 text-gray-600'
+                    : 'bg-[#162844]/10 text-gray-600'
                 }`}>
                   {pagination.total_items}
                 </span>
@@ -368,15 +368,15 @@ export default function UserManagementPage() {
               className={`group inline-flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
                 activeTab === 'inactive-users'
                   ? 'border-orange-500 text-orange-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-200 hover:border-white/15'
               }`}
             >
-              <UserX className={`w-5 h-5 ${activeTab === 'inactive-users' ? 'text-orange-500' : 'text-gray-400 group-hover:text-gray-500'}`} />
+              <UserX className={`w-5 h-5 ${activeTab === 'inactive-users' ? 'text-orange-500' : 'text-gray-500 group-hover:text-gray-400'}`} />
               Inactive Users
               <span className={`ml-2 py-0.5 px-2 rounded-full text-xs ${
                 activeTab === 'inactive-users'
                   ? 'bg-orange-100 text-orange-600'
-                  : 'bg-gray-100 text-gray-600'
+                  : 'bg-[#162844]/10 text-gray-600'
               }`}>
                 14+ days
               </span>

@@ -167,7 +167,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
       case 'student':
         return 'bg-green-100 text-green-800';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-[#162844]/10 text-gray-100';
     }
   };
 
@@ -191,14 +191,14 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
       {/* Analysis Summary Cards */}
       {analysis && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">7+ Days Inactive</p>
                 <p className="text-2xl font-bold text-yellow-600">
                   {analysis.inactivity_rates?.['7_days']?.count || 0}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs text-gray-500 mt-1">
                   {(analysis.inactivity_rates?.['7_days']?.rate || 0).toFixed(1)}% of users
                 </p>
               </div>
@@ -208,14 +208,14 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">14+ Days Inactive</p>
                 <p className="text-2xl font-bold text-orange-600">
                   {analysis.inactivity_rates?.['14_days']?.count || 0}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs text-gray-500 mt-1">
                   {(analysis.inactivity_rates?.['14_days']?.rate || 0).toFixed(1)}% of users
                 </p>
               </div>
@@ -225,14 +225,14 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">30+ Days Inactive</p>
                 <p className="text-2xl font-bold text-red-600">
                   {analysis.inactivity_rates?.['30_days']?.count || 0}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs text-gray-500 mt-1">
                   {(analysis.inactivity_rates?.['30_days']?.rate || 0).toFixed(1)}% of users
                 </p>
               </div>
@@ -242,14 +242,14 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-500">Total Active Users</p>
                 <p className="text-2xl font-bold text-brand">
                   {analysis.total_active_users || 0}
                 </p>
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs text-gray-500 mt-1">
                   Across all roles
                 </p>
               </div>
@@ -263,8 +263,8 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
 
       {/* Recommendations */}
       {analysis?.recommendations && analysis.recommendations.length > 0 && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-          <h3 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5">
+          <h3 className="font-semibold text-white mb-4 flex items-center gap-2">
             <Info className="w-5 h-5 text-blue-600" />
             Recommendations
           </h3>
@@ -289,9 +289,9 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                     <Info className="w-5 h-5 text-blue-600 mt-0.5" />
                   )}
                   <div>
-                    <p className="font-medium text-gray-900">{rec.title}</p>
+                    <p className="font-medium text-white">{rec.title}</p>
                     <p className="text-sm text-gray-600 mt-1">{rec.message}</p>
-                    <p className="text-sm font-medium text-gray-700 mt-2">
+                    <p className="text-sm font-medium text-gray-200 mt-2">
                       Action: {rec.action}
                     </p>
                   </div>
@@ -303,11 +303,11 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
       )}
 
       {/* Filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
+      <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-5">
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Filters:</span>
+            <span className="text-sm font-medium text-gray-200">Filters:</span>
           </div>
           
           <div className="flex items-center gap-2">
@@ -315,7 +315,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             <select
               value={thresholdDays}
               onChange={(e) => setThresholdDays(Number(e.target.value))}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/50"
+              className="border border-white/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30/50"
             >
               <option value={7}>7+ days</option>
               <option value={14}>14+ days</option>
@@ -330,7 +330,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             <select
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/50"
+              className="border border-white/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30/50"
             >
               <option value="">All Roles</option>
               <option value="student">Students</option>
@@ -341,7 +341,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
 
           <button
             onClick={() => fetchInactiveUsers()}
-            className="ml-auto flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            className="ml-auto flex items-center gap-2 bg-[#162844]/10 hover:bg-[#162844]/15 text-gray-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
@@ -361,7 +361,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSelectedUsers([])}
-              className="px-4 py-2 text-sm bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
+              className="px-4 py-2 text-sm bg-[#162844]/20 hover:bg-[#162844]/30 rounded-lg transition-colors"
             >
               Clear Selection
             </button>
@@ -378,9 +378,9 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
       )}
 
       {/* Users Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-5 border-b border-gray-200 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+      <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 overflow-hidden">
+        <div className="p-5 border-b border-white/10 flex items-center justify-between">
+          <h3 className="font-semibold text-white flex items-center gap-2">
             <UserX className="w-5 h-5 text-orange-600" />
             Inactive Users ({inactiveUsers.length})
           </h3>
@@ -390,7 +390,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                 type="checkbox"
                 checked={selectedUsers.length === inactiveUsers.length}
                 onChange={(e) => handleSelectAll(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-brand focus:ring-brand"
+                className="w-4 h-4 rounded border-white/15 text-brand focus:ring-white/30"
               />
               Select All
             </label>
@@ -399,7 +399,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
 
         {loading ? (
           <div className="flex items-center justify-center py-12">
-            <RefreshCw className="w-8 h-8 text-gray-400 animate-spin" />
+            <RefreshCw className="w-8 h-8 text-gray-500 animate-spin" />
           </div>
         ) : inactiveUsers.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
@@ -412,7 +412,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-[#0a1628]">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12">
                     <span className="sr-only">Select</span>
@@ -437,15 +437,15 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-white/10">
                 {inactiveUsers.map((user) => (
-                  <tr key={user.user_id} className="hover:bg-gray-50">
+                  <tr key={user.user_id} className="hover:bg-[#162844]/5">
                     <td className="px-4 py-4">
                       <input
                         type="checkbox"
                         checked={selectedUsers.includes(user.user_id)}
                         onChange={() => handleSelectUser(user.user_id)}
-                        className="w-4 h-4 rounded border-gray-300 text-brand focus:ring-brand"
+                        className="w-4 h-4 rounded border-white/15 text-brand focus:ring-white/30"
                       />
                     </td>
                     <td className="px-4 py-4">
@@ -454,7 +454,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                           {user.first_name?.[0] || user.username[0].toUpperCase()}
                         </div>
                         <div>
-                          <p className="font-medium text-gray-900">
+                          <p className="font-medium text-white">
                             {user.first_name && user.last_name
                               ? `${user.first_name} ${user.last_name}`
                               : user.username}
@@ -480,8 +480,8 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                     </td>
                     <td className="px-4 py-4">
                       <div className="text-sm">
-                        <p className="text-gray-900 flex items-center gap-1">
-                          <Calendar className="w-3 h-3 text-gray-400" />
+                        <p className="text-white flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-gray-500" />
                           {formatDate(user.last_activity)}
                         </p>
                         <p className="text-gray-500 text-xs mt-1">
@@ -500,7 +500,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                         {user.role === 'instructor' && user.role_data && (
                           <p>📖 {user.role_data.courses_created || 0} courses</p>
                         )}
-                        <p className="text-gray-400">
+                        <p className="text-gray-500">
                           Joined: {formatDate(user.created_at)}
                         </p>
                       </div>
@@ -527,22 +527,22 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
       {/* Confirm Delete Modal */}
       {showConfirmModal && userToDelete && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+          <div className="bg-[#162844] rounded-xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center gap-4 mb-4">
               <div className="p-3 bg-red-100 rounded-full">
                 <AlertTriangle className="w-6 h-6 text-red-600" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Confirm Deletion</h3>
+                <h3 className="text-lg font-semibold text-white">Confirm Deletion</h3>
                 <p className="text-sm text-gray-500">This action cannot be undone</p>
               </div>
             </div>
             
-            <p className="text-gray-700 mb-4">
+            <p className="text-gray-200 mb-4">
               Are you sure you want to delete user <strong>{userToDelete.username}</strong>?
             </p>
             
-            <div className="bg-gray-50 rounded-lg p-4 mb-6 text-sm">
+            <div className="bg-[#162844] rounded-lg p-4 mb-6 text-sm">
               <p><strong>Email:</strong> {userToDelete.email}</p>
               <p><strong>Role:</strong> {userToDelete.role}</p>
               <p><strong>Days Inactive:</strong> {userToDelete.days_inactive}</p>
@@ -554,7 +554,7 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
                   setShowConfirmModal(false);
                   setUserToDelete(null);
                 }}
-                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition-colors"
+                className="px-4 py-2 text-gray-200 bg-[#162844]/10 hover:bg-[#162844]/15 rounded-lg font-medium transition-colors"
               >
                 Cancel
               </button>
@@ -583,25 +583,25 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
       {/* Bulk Delete Confirm Modal */}
       {showBulkConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+          <div className="bg-[#162844] rounded-xl shadow-2xl max-w-md w-full p-6">
             <div className="flex items-center gap-4 mb-4">
               <div className="p-3 bg-red-100 rounded-full">
                 <AlertTriangle className="w-6 h-6 text-red-600" />
               </div>
               <div>
-                <h3 className="text-lg font-semibold text-gray-900">Confirm Bulk Deletion</h3>
+                <h3 className="text-lg font-semibold text-white">Confirm Bulk Deletion</h3>
                 <p className="text-sm text-gray-500">This action cannot be undone</p>
               </div>
             </div>
             
-            <p className="text-gray-700 mb-6">
+            <p className="text-gray-200 mb-6">
               Are you sure you want to delete <strong>{selectedUsers.length}</strong> selected user{selectedUsers.length > 1 ? 's' : ''}?
             </p>
 
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setShowBulkConfirm(false)}
-                className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition-colors"
+                className="px-4 py-2 text-gray-200 bg-[#162844]/10 hover:bg-[#162844]/15 rounded-lg font-medium transition-colors"
               >
                 Cancel
               </button>

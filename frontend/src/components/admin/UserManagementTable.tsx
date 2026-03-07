@@ -44,7 +44,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
       instructor: 'bg-blue-100 text-blue-800 border-blue-200',
       student: 'bg-green-100 text-green-800 border-green-200'
     };
-    return colors[role] || 'bg-gray-100 text-gray-800 border-gray-200';
+    return colors[role] || 'bg-[#162844]/10 text-gray-100 border-white/10';
   };
 
   const getStatusBadgeColor = (isActive: boolean) => {
@@ -99,7 +99,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
 
   if (loading) {
     return (
-      <div className="bg-white rounded-lg shadow p-8 text-center">
+      <div className="bg-[#0d1b2a] rounded-lg shadow p-8 text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
         <p className="text-gray-600 mt-4">Loading users...</p>
       </div>
@@ -107,18 +107,18 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
   }
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
+    <div className="bg-[#0d1b2a] rounded-lg shadow overflow-hidden">
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+        <table className="min-w-full divide-y divide-white/10">
+          <thead className="bg-[#0a1628]">
             <tr>
               <th className="px-6 py-3 text-left">
                 <input
                   type="checkbox"
                   checked={users.length > 0 && selectedUsers.length === users.length}
                   onChange={(e) => onSelectAll(e.target.checked)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                  className="w-4 h-4 text-blue-600 border-white/15 rounded focus:ring-white/30"
                 />
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -141,7 +141,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-[#0d1b2a] divide-y divide-white/10">
             {users.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
@@ -150,13 +150,13 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
               </tr>
             ) : (
               users.map((user) => (
-                <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={user.id} className="hover:bg-[#162844]/5 transition-colors">
                   <td className="px-6 py-4">
                     <input
                       type="checkbox"
                       checked={selectedUsers.includes(user.id)}
                       onChange={() => onSelectUser(user.id)}
-                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                      className="w-4 h-4 text-blue-600 border-white/15 rounded focus:ring-white/30"
                     />
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -165,7 +165,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
                         {user.first_name?.[0] || user.username[0].toUpperCase()}
                       </div>
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="text-sm font-medium text-white">
                           {user.first_name && user.last_name
                             ? `${user.first_name} ${user.last_name}`
                             : user.username}
@@ -175,7 +175,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{user.email}</div>
+                    <div className="text-sm text-white">{user.email}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getRoleBadgeColor(user.role)}`}>
@@ -237,8 +237,8 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
 
       {/* Pagination */}
       {pagination.total_pages > 1 && (
-        <div className="bg-white px-6 py-4 border-t border-gray-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-sm text-gray-700">
+        <div className="bg-[#0d1b2a] px-6 py-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="text-sm text-gray-200">
             Showing <span className="font-medium">{((pagination.current_page - 1) * pagination.per_page) + 1}</span> to{' '}
             <span className="font-medium">
               {Math.min(pagination.current_page * pagination.per_page, pagination.total_items)}
@@ -251,7 +251,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
             <button
               onClick={() => onPageChange(1)}
               disabled={pagination.current_page === 1}
-              className="p-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 border border-white/15 rounded-lg text-sm font-medium text-gray-200 hover:bg-[#162844]/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="First page"
             >
               <ChevronsLeft className="w-4 h-4" />
@@ -261,7 +261,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
             <button
               onClick={() => onPageChange(pagination.current_page - 1)}
               disabled={!pagination.has_prev}
-              className="p-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 border border-white/15 rounded-lg text-sm font-medium text-gray-200 hover:bg-[#162844]/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="Previous page"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -279,7 +279,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
                     className={`min-w-[40px] px-3 py-2 border rounded-lg text-sm font-medium transition-colors ${
                       page === pagination.current_page
                         ? 'bg-blue-600 text-white border-blue-600'
-                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                        : 'border-white/15 text-gray-200 hover:bg-[#162844]/5'
                     }`}
                   >
                     {page}
@@ -289,7 +289,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
             </div>
             
             {/* Mobile page indicator */}
-            <span className="sm:hidden px-3 py-2 text-sm text-gray-700">
+            <span className="sm:hidden px-3 py-2 text-sm text-gray-200">
               Page {pagination.current_page} of {pagination.total_pages}
             </span>
             
@@ -297,7 +297,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
             <button
               onClick={() => onPageChange(pagination.current_page + 1)}
               disabled={!pagination.has_next}
-              className="p-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 border border-white/15 rounded-lg text-sm font-medium text-gray-200 hover:bg-[#162844]/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="Next page"
             >
               <ChevronRight className="w-4 h-4" />
@@ -307,7 +307,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
             <button
               onClick={() => onPageChange(pagination.total_pages)}
               disabled={pagination.current_page === pagination.total_pages}
-              className="p-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="p-2 border border-white/15 rounded-lg text-sm font-medium text-gray-200 hover:bg-[#162844]/5 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="Last page"
             >
               <ChevronsRight className="w-4 h-4" />
@@ -318,7 +318,7 @@ const UserManagementTable: React.FC<UserManagementTableProps> = ({
       
       {/* No pagination needed message */}
       {pagination.total_items > 0 && pagination.total_pages === 1 && (
-        <div className="bg-white px-6 py-3 border-t border-gray-200">
+        <div className="bg-[#0d1b2a] px-6 py-3 border-t border-white/10">
           <p className="text-sm text-gray-500">
             Showing all {pagination.total_items} user{pagination.total_items !== 1 ? 's' : ''}
           </p>
