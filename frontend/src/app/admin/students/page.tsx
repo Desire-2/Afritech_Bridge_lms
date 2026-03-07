@@ -883,7 +883,6 @@ export default function StudentManagementPage() {
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider hidden xl:table-cell">Phone</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Progress</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Performance</th>
@@ -893,12 +892,12 @@ export default function StudentManagementPage() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {studentsLoading && students.length === 0 ? (
-                <tr><td colSpan={8} className="py-16 text-center">
+                <tr><td colSpan={7} className="py-16 text-center">
                   <RefreshCw className="w-6 h-6 animate-spin text-blue-500 mx-auto mb-2" />
                   <p className="text-gray-500 text-sm">Loading students…</p>
                 </td></tr>
               ) : students.length === 0 ? (
-                <tr><td colSpan={8} className="py-16 text-center">
+                <tr><td colSpan={7} className="py-16 text-center">
                   <Users className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-600 font-medium">No students in this cohort</p>
                   {activeFilterCount > 0 && (
@@ -927,29 +926,29 @@ export default function StudentManagementPage() {
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-gray-900 truncate">{getStudentName(student)}</p>
                           <p className="text-xs text-gray-400 truncate">{student.email}</p>
+                          {student.phone_number && (
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                              <a href={`tel:${student.phone_number}`}
+                                onClick={e => e.stopPropagation()}
+                                className="flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600">
+                                <Phone className="w-3 h-3 flex-shrink-0" />
+                                <span>{student.phone_number}</span>
+                              </a>
+                              {student.whatsapp_number && (
+                                <a href={`https://wa.me/${student.whatsapp_number.replace(/\D/g,'')}`}
+                                  target="_blank" rel="noopener noreferrer"
+                                  onClick={e => e.stopPropagation()}
+                                  className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700">
+                                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1 rounded">WA</span>
+                                  {student.whatsapp_number !== student.phone_number && (
+                                    <span>{student.whatsapp_number}</span>
+                                  )}
+                                </a>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    </td>
-                    <td className="px-4 py-3 hidden xl:table-cell">
-                      {student.phone_number ? (
-                        <a href={`tel:${student.phone_number}`}
-                          onClick={e => e.stopPropagation()}
-                          className="flex items-center gap-1.5 text-xs text-gray-700 hover:text-blue-600 group">
-                          <Phone className="w-3.5 h-3.5 text-gray-400 group-hover:text-blue-500 flex-shrink-0" />
-                          <span className="truncate max-w-[130px]">{student.phone_number}</span>
-                        </a>
-                      ) : (
-                        <span className="text-xs text-gray-300">—</span>
-                      )}
-                      {student.whatsapp_number && student.whatsapp_number !== student.phone_number && (
-                        <a href={`https://wa.me/${student.whatsapp_number.replace(/\D/g,'')}`}
-                          target="_blank" rel="noopener noreferrer"
-                          onClick={e => e.stopPropagation()}
-                          className="flex items-center gap-1.5 text-xs text-emerald-600 hover:text-emerald-700 mt-0.5">
-                          <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1 rounded">WA</span>
-                          <span className="truncate max-w-[110px]">{student.whatsapp_number}</span>
-                        </a>
-                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${student.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
