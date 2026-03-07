@@ -17,6 +17,7 @@ export interface StudentListParams {
   performance?: 'high' | 'medium' | 'low';
   date_from?: string;
   date_to?: string;
+  window_id?: number | 'none';
 }
 
 export interface EnrollmentSummary {
@@ -49,6 +50,8 @@ export interface StudentListItem {
   is_active: boolean;
   created_at: string;
   role: string;
+  phone_number: string | null;
+  whatsapp_number: string | null;
   enrollment_summary: EnrollmentSummary;
   progress_summary: ProgressSummary;
   activity: StudentActivity;
@@ -214,6 +217,35 @@ export interface AvailableCourse {
   enrollments_count: number;
 }
 
+export interface CourseStats {
+  id: number;
+  title: string;
+  instructor_name: string;
+  enrollment_type: string;
+  is_published: boolean;
+  total_students: number;
+  active_students: number;
+  completed_students: number;
+  cohort_count: number;
+  thumbnail_url?: string | null;
+}
+
+export interface CohortStats {
+  id: number | null;
+  cohort_label: string;
+  description?: string | null;
+  status: 'open' | 'closed' | 'upcoming';
+  opens_at?: string | null;
+  closes_at?: string | null;
+  cohort_start?: string | null;
+  cohort_end?: string | null;
+  max_students?: number | null;
+  enrollment_type: string;
+  total_students: number;
+  active_students: number;
+  completed_students: number;
+}
+
 // ============================================================
 // Service
 // ============================================================
@@ -236,6 +268,7 @@ export class AdminStudentService {
       if (params?.performance) sp.set('performance', params.performance);
       if (params?.date_from) sp.set('date_from', params.date_from);
       if (params?.date_to) sp.set('date_to', params.date_to);
+      if (params?.window_id !== undefined) sp.set('window_id', params.window_id.toString());
 
       const url = sp.toString() ? `${this.BASE}?${sp.toString()}` : this.BASE;
       const response = await apiClient.get(url);
@@ -408,6 +441,29 @@ export class AdminStudentService {
     }
   }
 
+  // --- Cohort-based navigation ---
+  static async getCourses(): Promise<{ courses: CourseStats[] }> {
+    try {
+      const response = await apiClient.get(`${this.BASE}/courses`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async getCohortsForCourse(courseId: number): Promise<{
+    course: { id: number; title: string; instructor_name: string };
+    cohorts: CohortStats[];
+    total_cohorts: number;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE}/courses/${courseId}/cohorts`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
   // --- Available courses for enrollment ---
   static async getAvailableCourses(): Promise<{ courses: AvailableCourse[] }> {
     try {
@@ -450,12 +506,14 @@ export class AdminStudentService {
     search?: string;
     status?: string;
     course_id?: number;
+    window_id?: number | 'none';
     student_ids?: number[];
   }): Promise<void> {
     const sp = new URLSearchParams();
     if (params?.search) sp.set('search', params.search);
     if (params?.status) sp.set('status', params.status);
     if (params?.course_id) sp.set('course_id', params.course_id.toString());
+    if (params?.window_id !== undefined) sp.set('window_id', params.window_id.toString());
     if (params?.student_ids?.length) sp.set('student_ids', params.student_ids.join(','));
 
     const url = `/admin/students/export${sp.toString() ? `?${sp.toString()}` : ''}`;

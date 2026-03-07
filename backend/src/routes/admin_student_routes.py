@@ -6,9 +6,11 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, or_, and_, desc, asc, case
 from datetime import datetime, timedelta
 from ..models.user_models import db, User, Role
+from ..models.course_application import CourseApplication
 from ..models.course_models import (
     Course, Module, Lesson, Enrollment, Quiz, Question, Answer,
-    Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission
+    Submission, Assignment, AssignmentSubmission, Project, ProjectSubmission,
+    ApplicationWindow
 )
 from ..models.student_models import (
     LessonCompletion, UserProgress, ModuleProgress, StudentNote,
@@ -62,6 +64,7 @@ def list_students():
         performance = request.args.get("performance")  # high, medium, low
         date_from = request.args.get("date_from")
         date_to = request.args.get("date_to")
+        window_id = request.args.get("window_id")  # cohort filter: int or 'none'
 
         # Get student role
         student_role = Role.query.filter_by(name="student").first()
@@ -108,6 +111,29 @@ def list_students():
                     )
                 )
             )
+
+        # Cohort (application window) filter
+        if window_id is not None:
+            if window_id == "none":
+                # Students enrolled without any cohort (optionally scoped to a course)
+                conds = [Enrollment.application_window_id == None]
+                if course_filter:
+                    conds.append(Enrollment.course_id == course_filter)
+                query = query.filter(
+                    User.id.in_(db.session.query(Enrollment.student_id).filter(*conds))
+                )
+            else:
+                try:
+                    wid = int(window_id)
+                    query = query.filter(
+                        User.id.in_(
+                            db.session.query(Enrollment.student_id).filter(
+                                Enrollment.application_window_id == wid
+                            )
+                        )
+                    )
+                except ValueError:
+                    pass
 
         # Date range filter
         if date_from:
@@ -173,8 +199,32 @@ def list_students():
             if student.last_activity:
                 days_inactive = (datetime.utcnow() - student.last_activity).days
 
+            # Resolve phone: prefer User.phone_number, fall back to CourseApplication.phone
+            phone_number = getattr(student, 'phone_number', None)
+            whatsapp_number = None
+            if not phone_number:
+                # Try to find a linked application via any enrollment
+                app = CourseApplication.query.join(
+                    Enrollment, Enrollment.application_id == CourseApplication.id
+                ).filter(Enrollment.student_id == student.id).order_by(
+                    CourseApplication.id.desc()
+                ).first()
+                if app:
+                    phone_number = app.phone
+                    whatsapp_number = app.whatsapp_number
+            else:
+                app = CourseApplication.query.join(
+                    Enrollment, Enrollment.application_id == CourseApplication.id
+                ).filter(Enrollment.student_id == student.id).order_by(
+                    CourseApplication.id.desc()
+                ).first()
+                if app:
+                    whatsapp_number = app.whatsapp_number
+
             student_data = {
                 **student.to_dict(),
+                "phone_number": phone_number,
+                "whatsapp_number": whatsapp_number,
                 "enrollment_summary": {
                     "total": total_enrollments,
                     "active": active_enrollments,
@@ -1320,6 +1370,106 @@ def bulk_message_students():
         db.session.rollback()
         logger.error(f"Error in bulk message: {str(e)}")
         return jsonify({"error": "Bulk message failed"}), 500
+
+
+# ============================================================
+# COHORT-BASED NAVIGATION ENDPOINTS
+# ============================================================
+
+@admin_student_bp.route("/courses", methods=["GET"])
+@admin_required
+def list_courses_with_cohort_stats():
+    """List all courses with cohort counts and enrollment stats for admin drill-down."""
+    try:
+        courses = Course.query.order_by(Course.title).all()
+        result = []
+        for course in courses:
+            total = Enrollment.query.filter_by(course_id=course.id).count()
+            active = Enrollment.query.filter_by(course_id=course.id, status='active').count()
+            completed = Enrollment.query.filter_by(course_id=course.id, status='completed').count()
+            cohort_count = ApplicationWindow.query.filter_by(course_id=course.id).count()
+            result.append({
+                "id": course.id,
+                "title": course.title,
+                "instructor_name": course.instructor.full_name if course.instructor else "Unknown",
+                "enrollment_type": course.enrollment_type,
+                "is_published": course.is_published,
+                "total_students": total,
+                "active_students": active,
+                "completed_students": completed,
+                "cohort_count": cohort_count,
+                "thumbnail_url": getattr(course, 'thumbnail_url', None),
+            })
+        return jsonify({"courses": result}), 200
+    except Exception as e:
+        logger.error(f"Error listing courses with stats: {str(e)}")
+        return jsonify({"error": "Failed to list courses"}), 500
+
+
+@admin_student_bp.route("/courses/<int:course_id>/cohorts", methods=["GET"])
+@admin_required
+def list_cohorts_for_course(course_id):
+    """List cohorts (application windows) for a course with per-cohort student counts."""
+    try:
+        course = Course.query.get(course_id)
+        if not course:
+            return jsonify({"error": "Course not found"}), 404
+
+        cohorts = ApplicationWindow.query.filter_by(course_id=course_id) \
+            .order_by(ApplicationWindow.created_at.desc()).all()
+
+        result = []
+        for cohort in cohorts:
+            total = Enrollment.query.filter_by(course_id=course_id, application_window_id=cohort.id).count()
+            active = Enrollment.query.filter_by(course_id=course_id, application_window_id=cohort.id, status='active').count()
+            completed = Enrollment.query.filter_by(course_id=course_id, application_window_id=cohort.id, status='completed').count()
+            result.append({
+                "id": cohort.id,
+                "cohort_label": cohort.cohort_label or f"Cohort #{cohort.id}",
+                "description": cohort.description,
+                "status": cohort.compute_status(),
+                "opens_at": cohort.opens_at.isoformat() if cohort.opens_at else None,
+                "closes_at": cohort.closes_at.isoformat() if cohort.closes_at else None,
+                "cohort_start": cohort.cohort_start.isoformat() if cohort.cohort_start else None,
+                "cohort_end": cohort.cohort_end.isoformat() if cohort.cohort_end else None,
+                "max_students": cohort.max_students,
+                "enrollment_type": cohort.get_effective_enrollment_type(),
+                "total_students": total,
+                "active_students": active,
+                "completed_students": completed,
+            })
+
+        # Students enrolled with no cohort (direct admin enrollments)
+        no_cohort_total = Enrollment.query.filter_by(course_id=course_id, application_window_id=None).count()
+        if no_cohort_total > 0:
+            no_cohort_active = Enrollment.query.filter_by(course_id=course_id, application_window_id=None, status='active').count()
+            no_cohort_completed = Enrollment.query.filter_by(course_id=course_id, application_window_id=None, status='completed').count()
+            result.append({
+                "id": None,
+                "cohort_label": "No Cohort",
+                "description": "Students enrolled directly without a cohort",
+                "status": "open",
+                "opens_at": None, "closes_at": None,
+                "cohort_start": None, "cohort_end": None,
+                "max_students": None,
+                "enrollment_type": course.enrollment_type,
+                "total_students": no_cohort_total,
+                "active_students": no_cohort_active,
+                "completed_students": no_cohort_completed,
+            })
+
+        return jsonify({
+            "course": {
+                "id": course.id,
+                "title": course.title,
+                "instructor_name": course.instructor.full_name if course.instructor else "Unknown",
+            },
+            "cohorts": result,
+            "total_cohorts": len(result),
+        }), 200
+    except Exception as e:
+        logger.error(f"Error listing cohorts for course {course_id}: {str(e)}")
+        return jsonify({"error": "Failed to list cohorts"}), 500
 
 
 # ============================================================
