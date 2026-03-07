@@ -56,6 +56,7 @@ const AdminSidebar = () => {
       title: 'Management',
       items: [
         { href: '/admin/users', label: 'User Management', icon: '👥', description: 'Manage users' },
+        { href: '/admin/students', label: 'Student Management', icon: '🎓', description: 'Manage students & enrollments' },
         { href: '/admin/courses', label: 'Course Management', icon: '📚', description: 'Manage courses' },
         { href: '/admin/forums', label: 'Forum Management', icon: '💬', description: 'Manage forums & moderation' },
         { href: '/admin/applications', label: 'Applications', icon: '📝', description: 'Review applications' },

@@ -54,6 +54,7 @@ from src.routes.forum_routes import forum_bp # Import forum blueprint
 from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
 from src.routes.enhanced_file_routes import enhanced_file_bp # Import enhanced file routes
 from src.routes.admin_routes import admin_bp # Import admin blueprint
+from src.routes.admin_student_routes import admin_student_bp # Import admin student management blueprint
 from src.routes.system_settings_routes import settings_bp # Import system settings blueprint
 from src.routes.file_upload_routes import file_upload_bp # Import file upload blueprint
 from src.routes.maintenance_routes import maintenance_bp # Import maintenance routes
@@ -313,6 +314,7 @@ app.register_blueprint(ai_agent_bp) # Register AI agent blueprint
 app.register_blueprint(enhanced_file_bp) # Register enhanced file routes
 app.register_blueprint(application_bp) # Register application blueprint
 app.register_blueprint(admin_bp) # Register admin blueprint
+app.register_blueprint(admin_student_bp) # Register admin student management blueprint
 app.register_blueprint(settings_bp) # Register system settings blueprint
 app.register_blueprint(file_upload_bp) # Register file upload blueprint
 app.register_blueprint(maintenance_bp) # Register maintenance routes (public endpoints)
@@ -325,8 +327,67 @@ app.register_blueprint(email_bp) # Register email preference/unsubscribe routes
 maintenance_mode = MaintenanceMode(app)
 logger.info("Maintenance mode middleware initialized and active")
 
+def _sqlite_auto_migrate():
+    """
+    Automatically add any columns that exist in SQLAlchemy models but are missing
+    from the SQLite database. This prevents OperationalError on startup after
+    model changes without a full schema recreation.
+    Only runs when using SQLite (dev environment).
+    """
+    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if 'sqlite' not in db_uri:
+        return  # Only needed for SQLite; PostgreSQL uses db.create_all() fine
+
+    from sqlalchemy import inspect, text
+    inspector = inspect(db.engine)
+
+    # Map of table_name -> [(column_name, column_type_sql)]
+    migrations = {
+        'users': [
+            ('email_unsubscribe_token', 'VARCHAR(64)'),
+            ('last_login', 'DATETIME'),
+            ('last_activity', 'DATETIME'),
+            ('deleted_at', 'DATETIME'),
+            ('deleted_by', 'INTEGER'),
+            ('deletion_reason', 'TEXT'),
+            ('must_change_password', 'BOOLEAN DEFAULT 0'),
+            ('push_notifications', 'BOOLEAN DEFAULT 1'),
+            ('weekly_digest', 'BOOLEAN DEFAULT 1'),
+            ('show_progress', 'BOOLEAN DEFAULT 1'),
+            ('enable_gamification', 'BOOLEAN DEFAULT 1'),
+            ('show_leaderboard', 'BOOLEAN DEFAULT 1'),
+        ],
+        'enrollments': [
+            ('cohort_label', 'VARCHAR(100)'),
+            ('application_window_id', 'INTEGER'),
+            ('payment_status', 'VARCHAR(50)'),
+            ('payment_verified', 'BOOLEAN DEFAULT 0'),
+            ('payment_verified_at', 'DATETIME'),
+            ('payment_verified_by', 'INTEGER'),
+            ('payment_slip_url', 'VARCHAR(500)'),
+            ('payment_slip_filename', 'VARCHAR(255)'),
+            ('payment_reminder_sent', 'BOOLEAN DEFAULT 0'),
+            ('payment_reminder_sent_at', 'DATETIME'),
+        ],
+    }
+
+    for table_name, columns in migrations.items():
+        if not inspector.has_table(table_name):
+            continue
+        existing = {col['name'] for col in inspector.get_columns(table_name)}
+        with db.engine.begin() as conn:
+            for col_name, col_type in columns:
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}'))
+                        logger.info(f"✅ Auto-migrated: added {table_name}.{col_name}")
+                    except Exception as e:
+                        logger.warning(f"⚠️  Auto-migrate skipped {table_name}.{col_name}: {e}")
+
+
 with app.app_context():
     db.create_all()
+    _sqlite_auto_migrate()
     if not Role.query.filter_by(name='student').first():
         db.session.add(Role(name='student'))
     if not Role.query.filter_by(name='instructor').first():

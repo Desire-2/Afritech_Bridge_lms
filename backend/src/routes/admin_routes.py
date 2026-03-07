@@ -333,6 +333,14 @@ def bulk_user_action():
                         except ImportError:
                             pass
                     
+                    # Delete notifications (must be done for all roles)
+                    try:
+                        from ..models.notification_models import Notification, NotificationPreference
+                        Notification.query.filter_by(user_id=user_id).delete()
+                        NotificationPreference.query.filter_by(user_id=user_id).delete()
+                    except ImportError:
+                        pass
+                    
                     db.session.delete(user)
                     deleted_count += 1
                     
@@ -778,9 +786,15 @@ def delete_user_admin(user_id):
                 
             # 6. Delete achievement/gamification data if models exist
             try:
-                from ..models.achievement_models import UserAchievement, LearningStreak
+                from ..models.achievement_models import (
+                    UserAchievement, LearningStreak, StudentPoints,
+                    UserMilestone, UserQuestProgress
+                )
                 UserAchievement.query.filter_by(user_id=user_id).delete()
                 LearningStreak.query.filter_by(user_id=user_id).delete()
+                StudentPoints.query.filter_by(user_id=user_id).delete()
+                UserMilestone.query.filter_by(user_id=user_id).delete()
+                UserQuestProgress.query.filter_by(user_id=user_id).delete()
             except ImportError:
                 pass
                 
@@ -792,6 +806,14 @@ def delete_user_admin(user_id):
                 return jsonify({
                     "error": f"Cannot delete instructor with {course_count} active course(s). Please reassign or delete courses first."
                 }), 400
+        
+        # Delete notifications (must be done for all roles before deleting user)
+        try:
+            from ..models.notification_models import Notification, NotificationPreference
+            Notification.query.filter_by(user_id=user_id).delete()
+            NotificationPreference.query.filter_by(user_id=user_id).delete()
+        except ImportError:
+            pass
         
         # Delete the user
         db.session.delete(user)
