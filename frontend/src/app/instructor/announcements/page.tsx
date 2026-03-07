@@ -7,7 +7,7 @@ import { AnnouncementService, CourseService } from '@/services/course.service';
 import { Announcement } from '@/types/api';
 import AnnouncementModal from '@/components/instructor/AnnouncementModal';
 import { Button } from '@/components/ui/button';
-import { Plus, Edit2, Trash2, Calendar, BookOpen } from 'lucide-react';
+import { Plus, Edit2, Trash2, Calendar, BookOpen, Users } from 'lucide-react';
 
 const AnnouncementsPage = () => {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -207,6 +207,18 @@ const AnnouncementsPage = () => {
                         <Calendar className="h-4 w-4" />
                         <span>Posted: {formatDate(announcement.created_at)}</span>
                       </div>
+
+                      {announcement.cohort_label ? (
+                        <div className="flex items-center gap-1">
+                          <Users className="h-4 w-4 text-purple-500" />
+                          <span className="text-purple-600 dark:text-purple-400 font-medium">{announcement.cohort_label}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <Users className="h-4 w-4" />
+                          <span>All Cohorts</span>
+                        </div>
+                      )}
 
                       {announcement.created_at !== announcement.updated_at && (
                         <div className="flex items-center gap-1">

@@ -9,7 +9,7 @@ import threading
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role
-from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, Assignment
+from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, Assignment, ApplicationWindow
 from ..services.background_service import background_service
 from ..utils.email_utils import send_email
 from ..utils.email_templates import course_announcement_email
@@ -44,13 +44,16 @@ def instructor_required(f):
 instructor_bp = Blueprint("instructor_bp", __name__, url_prefix="/api/v1/instructor")
 
 # Helper function for sending announcement emails
-def _send_announcement_emails(announcement, course):
-    """Send announcement emails to all enrolled students in a course"""
+def _send_announcement_emails(announcement, course, cohort_id=None):
+    """Send announcement emails to enrolled students, optionally filtered by cohort"""
     try:
-        # Get all enrolled students for this course
-        enrollments = Enrollment.query.filter_by(course_id=course.id).filter(
+        # Get enrolled students, optionally filtered by cohort
+        enrollment_query = Enrollment.query.filter_by(course_id=course.id).filter(
             Enrollment.status.in_(['active', 'completed'])
-        ).all()
+        )
+        if cohort_id:
+            enrollment_query = enrollment_query.filter_by(application_window_id=cohort_id)
+        enrollments = enrollment_query.all()
         
         # Get the instructor information
         instructor = User.query.get(announcement.instructor_id)
@@ -258,7 +261,7 @@ def get_course_analytics(course_id):
 @instructor_bp.route("/announcements", methods=["GET"])
 @instructor_required
 def get_instructor_announcements():
-    """Get all announcements for courses taught by the instructor."""
+    """Get all announcements for courses taught by the instructor, optionally filtered by cohort."""
     current_user_id = int(get_jwt_identity())
     
     try:
@@ -266,10 +269,18 @@ def get_instructor_announcements():
         courses = Course.query.filter_by(instructor_id=current_user_id).all()
         course_ids = [c.id for c in courses]
         
-        # Get all announcements for these courses
-        announcements = db.session.query(Announcement).filter(
+        # Build query with optional cohort filter
+        query = db.session.query(Announcement).filter(
             Announcement.course_id.in_(course_ids)
-        ).order_by(Announcement.created_at.desc()).all()
+        )
+        
+        cohort_id = request.args.get('cohort_id', type=int)
+        if cohort_id:
+            query = query.filter(
+                db.or_(Announcement.cohort_id == cohort_id, Announcement.cohort_id.is_(None))
+            )
+        
+        announcements = query.order_by(Announcement.created_at.desc()).all()
         
         # Return formatted announcements
         announcements_data = []
@@ -288,7 +299,7 @@ def get_instructor_announcements():
 @instructor_bp.route("/announcements", methods=["POST"])
 @instructor_required  
 def create_announcement():
-    """Create a new announcement for a specific course."""
+    """Create a new announcement for a specific course, optionally targeted to a cohort."""
     current_user_id = int(get_jwt_identity())
     data = request.get_json()
     
@@ -304,10 +315,18 @@ def create_announcement():
         if not course:
             return jsonify({"message": "Course not found or access denied"}), 404
         
+        # Validate cohort if provided
+        cohort_id = data.get('cohort_id')
+        if cohort_id:
+            cohort = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course.id).first()
+            if not cohort:
+                return jsonify({"message": "Cohort not found or does not belong to this course"}), 404
+        
         # Create announcement
         new_announcement = Announcement(
             course_id=data['course_id'],
             instructor_id=current_user_id,
+            cohort_id=cohort_id if cohort_id else None,
             title=data['title'].strip(),
             content=data['content'].strip()
         )
@@ -315,12 +334,15 @@ def create_announcement():
         db.session.add(new_announcement)
         db.session.commit()
         
-        # Send email notifications to enrolled students
-        _send_announcement_emails(new_announcement, course)
+        # Send email notifications to enrolled students (cohort-filtered)
+        _send_announcement_emails(new_announcement, course, cohort_id=cohort_id)
         
-        # Send in-app notifications to enrolled students
+        # Send in-app notifications to enrolled students (cohort-filtered)
         try:
-            student_ids = [e.student_id for e in Enrollment.query.filter_by(course_id=course.id).all()]
+            enrollment_query = Enrollment.query.filter_by(course_id=course.id)
+            if cohort_id:
+                enrollment_query = enrollment_query.filter_by(application_window_id=cohort_id)
+            student_ids = [e.student_id for e in enrollment_query.all()]
             if student_ids:
                 notify_announcement_new(
                     announcement=new_announcement,
@@ -335,7 +357,7 @@ def create_announcement():
         ann_dict = new_announcement.to_dict()
         ann_dict['course_title'] = course.title
         
-        logger.info(f"Announcement created by instructor {current_user_id} for course {course.id}")
+        logger.info(f"Announcement created by instructor {current_user_id} for course {course.id}" + (f" cohort {cohort_id}" if cohort_id else ""))
         return jsonify(ann_dict), 201
         
     except Exception as e:

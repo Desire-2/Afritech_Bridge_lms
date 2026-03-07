@@ -419,6 +419,7 @@ export interface Announcement {
   id: number;
   course_id: number;
   instructor_id: number;
+  cohort_id?: number | null;
   title: string;
   content: string;
   created_at: string;
@@ -426,12 +427,14 @@ export interface Announcement {
   course?: Course;
   course_title?: string;
   instructor_name?: string;
+  cohort_label?: string | null;
 }
 
 export interface CreateAnnouncementRequest {
   course_id: number;
   title: string;
   content: string;
+  cohort_id?: number | null;
 }
 
 // Opportunity Types (from backend models)

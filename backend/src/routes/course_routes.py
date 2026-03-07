@@ -1490,17 +1490,28 @@ def create_announcement_for_course(course_id):
 
     data = request.get_json()
     try:
+        # Validate cohort if provided
+        cohort_id = data.get('cohort_id')
+        if cohort_id:
+            cohort = ApplicationWindow.query.filter_by(id=cohort_id, course_id=course_id).first()
+            if not cohort:
+                return jsonify({"message": "Cohort not found or does not belong to this course"}), 404
+
         new_announcement = Announcement(
             course_id=course_id,
             instructor_id=current_user_id,
+            cohort_id=cohort_id if cohort_id else None,
             title=data["title"],
             content=data["content"]
         )
         db.session.add(new_announcement)
         db.session.commit()
         
-        # Gather enrolled students
-        enrollments = Enrollment.query.filter_by(course_id=course_id).all()
+        # Gather enrolled students (filtered by cohort if specified)
+        enrollment_query = Enrollment.query.filter_by(course_id=course_id)
+        if cohort_id:
+            enrollment_query = enrollment_query.filter_by(application_window_id=cohort_id)
+        enrollments = enrollment_query.all()
         students = [User.query.get(enrollment.student_id) for enrollment in enrollments]
         students = [s for s in students if s and s.email]  # Filter out None and no email
         student_ids = [s.id for s in students]
@@ -1560,7 +1571,15 @@ def get_announcements_for_course(course_id):
         except Exception:
              return jsonify({"message": "Course not found or not published"}), 404
 
-    announcements = Announcement.query.filter_by(course_id=course_id).order_by(Announcement.created_at.desc()).all()
+    # Support optional cohort filtering via query param
+    query = Announcement.query.filter_by(course_id=course_id)
+    cohort_id = request.args.get('cohort_id', type=int)
+    if cohort_id:
+        # Return announcements targeted to this cohort OR to all cohorts (cohort_id=None)
+        query = query.filter(
+            db.or_(Announcement.cohort_id == cohort_id, Announcement.cohort_id.is_(None))
+        )
+    announcements = query.order_by(Announcement.created_at.desc()).all()
     return jsonify([ann.to_dict() for ann in announcements]), 200
 
 @announcement_bp.route("/<int:announcement_id>", methods=["PUT"])

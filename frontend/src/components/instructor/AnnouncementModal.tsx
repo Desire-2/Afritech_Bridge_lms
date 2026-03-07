@@ -30,12 +30,15 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
 }) => {
   const [formData, setFormData] = useState({
     course_id: preSelectedCourseId || '',
+    cohort_id: '' as string,
     title: '',
     content: ''
   });
   const [courses, setCourses] = useState<Course[]>([]);
+  const [cohorts, setCohorts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingCourses, setLoadingCourses] = useState(false);
+  const [loadingCohorts, setLoadingCohorts] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isEditMode = !!editAnnouncement;
@@ -52,6 +55,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
     if (editAnnouncement) {
       setFormData({
         course_id: editAnnouncement.course_id.toString(),
+        cohort_id: editAnnouncement.cohort_id?.toString() || '',
         title: editAnnouncement.title,
         content: editAnnouncement.content
       });
@@ -59,11 +63,22 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
       // Reset form when creating new announcement
       setFormData({
         course_id: preSelectedCourseId?.toString() || '',
+        cohort_id: '',
         title: '',
         content: ''
       });
     }
   }, [editAnnouncement, preSelectedCourseId]);
+
+  // Load cohorts when course changes
+  useEffect(() => {
+    if (formData.course_id) {
+      loadCohorts(parseInt(formData.course_id));
+    } else {
+      setCohorts([]);
+      setFormData(prev => ({ ...prev, cohort_id: '' }));
+    }
+  }, [formData.course_id]);
 
   const loadCourses = async () => {
     setLoadingCourses(true);
@@ -75,6 +90,19 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
       setError('Failed to load courses. Please try again.');
     } finally {
       setLoadingCourses(false);
+    }
+  };
+
+  const loadCohorts = async (courseId: number) => {
+    setLoadingCohorts(true);
+    try {
+      const cohortsData = await InstructorService.getCourseCohorts(courseId);
+      setCohorts(Array.isArray(cohortsData) ? cohortsData : []);
+    } catch (err: any) {
+      console.error('Error loading cohorts:', err);
+      setCohorts([]);
+    } finally {
+      setLoadingCohorts(false);
     }
   };
 
@@ -112,7 +140,8 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
       const announcementData: CreateAnnouncementRequest = {
         course_id: parseInt(formData.course_id),
         title: formData.title.trim(),
-        content: formData.content.trim()
+        content: formData.content.trim(),
+        cohort_id: formData.cohort_id ? parseInt(formData.cohort_id) : null
       };
 
       let result: Announcement;
@@ -220,6 +249,48 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
             )}
           </div>
 
+          {/* Cohort Selection (optional) */}
+          {formData.course_id && (
+            <div className="space-y-2">
+              <Label htmlFor="cohort">
+                Target Cohort <span className="text-gray-400 text-xs font-normal">(optional — leave empty for all cohorts)</span>
+              </Label>
+              {loadingCohorts ? (
+                <div className="flex items-center justify-center p-3 border rounded-md">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  <span className="text-sm text-gray-500">Loading cohorts...</span>
+                </div>
+              ) : cohorts.length === 0 ? (
+                <p className="text-sm text-gray-500 italic">No cohorts found for this course. Announcement will be sent to all students.</p>
+              ) : (
+                <Select
+                  value={formData.cohort_id}
+                  onValueChange={(value) => handleInputChange('cohort_id', value === 'all' ? '' : value)}
+                  disabled={loading}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="All cohorts (default)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">
+                      <span className="font-medium">All Cohorts</span>
+                    </SelectItem>
+                    {cohorts.map((cohort) => (
+                      <SelectItem key={cohort.id} value={cohort.id.toString()}>
+                        <div className="flex flex-col">
+                          <span className="font-medium">{cohort.cohort_label || `Cohort #${cohort.id}`}</span>
+                          <span className="text-xs text-gray-500">
+                            {cohort.status || cohort.compute_status || 'Unknown status'}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          )}
+
           {/* Title */}
           <div className="space-y-2">
             <Label htmlFor="title">
@@ -266,8 +337,18 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                   <h3 className="font-semibold text-lg mb-2">{formData.title}</h3>
                 )}
                 {selectedCourse && (
-                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-1">
                     For Course: <strong>{selectedCourse.title}</strong>
+                  </p>
+                )}
+                {formData.cohort_id && cohorts.length > 0 && (
+                  <p className="text-sm text-purple-600 dark:text-purple-400 mb-3">
+                    Cohort: <strong>{cohorts.find(c => c.id.toString() === formData.cohort_id)?.cohort_label || `Cohort #${formData.cohort_id}`}</strong>
+                  </p>
+                )}
+                {!formData.cohort_id && cohorts.length > 0 && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+                    Target: <strong>All Cohorts</strong>
                   </p>
                 )}
                 {formData.content && (

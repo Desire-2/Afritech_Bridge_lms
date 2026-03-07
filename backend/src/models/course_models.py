@@ -1537,6 +1537,7 @@ class Announcement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
     instructor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    cohort_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # NULL = all cohorts
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -1544,6 +1545,7 @@ class Announcement(db.Model):
 
     course = db.relationship('Course', backref=db.backref('announcements', lazy='dynamic', cascade="all, delete-orphan"))
     instructor = db.relationship('User', backref=db.backref('announcements', lazy='dynamic'))
+    cohort = db.relationship('ApplicationWindow', backref=db.backref('announcements', lazy='dynamic'))
 
     def __repr__(self):
         return f'<Announcement {self.title}>'
@@ -1553,10 +1555,12 @@ class Announcement(db.Model):
             'id': self.id,
             'course_id': self.course_id,
             'instructor_id': self.instructor_id,
+            'cohort_id': self.cohort_id,
             'title': self.title,
             'content': self.content,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
-            'instructor_name': f"{self.instructor.first_name} {self.instructor.last_name}" if self.instructor else None
+            'instructor_name': f"{self.instructor.first_name} {self.instructor.last_name}" if self.instructor else None,
+            'cohort_label': self.cohort.cohort_label if self.cohort else None,
         }
 

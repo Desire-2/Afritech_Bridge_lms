@@ -1419,10 +1419,14 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
     {get_email_footer()}
     """
 
-def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name):
+def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None):
     """Email template for course announcements"""
+    import os
     # Clean and format the content (strip HTML if needed, truncate if too long)
     clean_content = announcement_content[:500] + "..." if len(announcement_content) > 500 else announcement_content
+    # Build the announcement link from FRONTEND_URL env var
+    frontend_base = (announcement_url or os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online')).rstrip('/')
+    announcement_link = f"{frontend_base}/student/announcements"
     
     return f"""
     {get_email_header()}
@@ -1469,7 +1473,7 @@ def course_announcement_email(student_name, course_title, announcement_title, an
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="{announcement_link}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Full Announcement
             </a>
         </div>
