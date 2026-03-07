@@ -44,7 +44,7 @@ function ConfirmDialog({ open, title, description, confirmLabel = 'Confirm', dan
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium hover:bg-gray-50">Cancel</button>
           <button onClick={onConfirm}
-            className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+            className={`px-4 py-2 rounded-lg text-sm font-medium text-white ${danger ? 'bg-red-600 hover:bg-red-700' : 'bg-[#0d1b2a] hover:bg-[#162844]'}`}>
             {confirmLabel}
           </button>
         </div>
@@ -81,7 +81,7 @@ function EnrollModal({ open, student, courses, onClose, onSuccess }: {
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
         <div className="flex items-center justify-between p-5 border-b">
-          <h3 className="text-lg font-semibold flex items-center gap-2"><BookPlus className="w-5 h-5 text-blue-600" />Enroll Student</h3>
+          <h3 className="text-lg font-semibold flex items-center gap-2"><BookPlus className="w-5 h-5 text-[#0d1b2a]" />Enroll Student</h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
@@ -89,7 +89,7 @@ function EnrollModal({ open, student, courses, onClose, onSuccess }: {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Course *</label>
             <select value={courseId} onChange={e => setCourseId(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" required>
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0d1b2a]" required>
               <option value="">Select a course…</option>
               {courses.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
             </select>
@@ -98,12 +98,12 @@ function EnrollModal({ open, student, courses, onClose, onSuccess }: {
             <label className="block text-sm font-medium text-gray-700 mb-1">Cohort Label (optional)</label>
             <input type="text" value={cohortLabel} onChange={e => setCohortLabel(e.target.value)}
               placeholder="e.g. Cohort 2026-A"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" />
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0d1b2a]" />
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">Cancel</button>
             <button type="submit" disabled={loading}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2">
+              className="px-4 py-2 bg-[#0d1b2a] hover:bg-[#162844] text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2">
               {loading && <RefreshCw className="w-4 h-4 animate-spin" />}Enroll
             </button>
           </div>
@@ -144,7 +144,7 @@ function MessageModal({ open, recipients, onClose }: {
       <div className="bg-white rounded-xl shadow-xl max-w-lg w-full">
         <div className="flex items-center justify-between p-5 border-b">
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            <MessageSquare className="w-5 h-5 text-blue-600" />
+            <MessageSquare className="w-5 h-5 text-[#0d1b2a]" />
             {isBulk ? `Message ${recipients.length} Students` : `Message ${recipients[0]?.name}`}
           </h3>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-lg"><X className="w-5 h-5" /></button>
@@ -153,7 +153,7 @@ function MessageModal({ open, recipients, onClose }: {
           {isBulk && (
             <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
               {recipients.slice(0, 10).map(r => (
-                <span key={r.id} className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded-full">{r.name}</span>
+                <span key={r.id} className="bg-[#0d1b2a]/5 text-[#0d1b2a] text-xs px-2 py-0.5 rounded-full">{r.name}</span>
               ))}
               {recipients.length > 10 && <span className="text-xs text-gray-500">+{recipients.length - 10} more</span>}
             </div>
@@ -162,18 +162,18 @@ function MessageModal({ open, recipients, onClose }: {
             <label className="block text-sm font-medium text-gray-700 mb-1">Subject *</label>
             <input type="text" value={subject} onChange={e => setSubject(e.target.value)}
               placeholder="Message subject"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" required />
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0d1b2a]" required />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Message *</label>
             <textarea value={message} onChange={e => setMessage(e.target.value)} rows={5}
               placeholder="Write your message…"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 resize-none" required />
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0d1b2a] resize-none" required />
           </div>
           <div className="flex justify-end gap-3 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">Cancel</button>
             <button type="submit" disabled={loading}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2">
+              className="px-4 py-2 bg-[#0d1b2a] hover:bg-[#162844] text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2">
               {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}Send
             </button>
           </div>
@@ -204,13 +204,13 @@ function RowActionMenu({ student, onView, onToggleStatus, onEnroll, onResetProgr
   return (
     <div className="relative" ref={ref}>
       <div className="flex items-center gap-1">
-        <button onClick={onView} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="View"><Eye className="w-4 h-4" /></button>
+        <button onClick={onView} className="p-1.5 text-gray-400 hover:text-[#0d1b2a] hover:bg-[#0d1b2a]/5 rounded-lg" title="View"><Eye className="w-4 h-4" /></button>
         <button onClick={onMessage} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg" title="Message"><Mail className="w-4 h-4" /></button>
         <button onClick={() => setOpen(!open)} className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"><MoreVertical className="w-4 h-4" /></button>
       </div>
       {open && (
         <div className="absolute right-0 top-9 bg-white border border-gray-200 rounded-xl shadow-lg z-20 min-w-[180px] py-1.5 px-1">
-          {btn(<Eye className="w-4 h-4 text-blue-500" />, 'View Profile', onView)}
+          {btn(<Eye className="w-4 h-4 text-[#0d1b2a]" />, 'View Profile', onView)}
           {btn(<BookPlus className="w-4 h-4 text-green-500" />, 'Enroll in Course', onEnroll)}
           {btn(student.is_active ? <UserX className="w-4 h-4 text-orange-500" /> : <UserCheck className="w-4 h-4 text-green-500" />,
             student.is_active ? 'Deactivate' : 'Activate', onToggleStatus,
@@ -229,7 +229,7 @@ function CohortStatusBadge({ status }: { status: string }) {
   const map: Record<string, { cls: string; icon: React.ReactNode; label: string }> = {
     open: { cls: 'bg-emerald-100 text-emerald-700', icon: <Unlock className="w-3 h-3" />, label: 'Open' },
     closed: { cls: 'bg-gray-100 text-gray-600', icon: <Lock className="w-3 h-3" />, label: 'Closed' },
-    upcoming: { cls: 'bg-blue-100 text-blue-700', icon: <Clock className="w-3 h-3" />, label: 'Upcoming' },
+    upcoming: { cls: 'bg-[#0d1b2a]/10 text-[#0d1b2a]', icon: <Clock className="w-3 h-3" />, label: 'Upcoming' },
   };
   const s = map[status] || map.closed;
   return (
@@ -470,14 +470,14 @@ export default function StudentManagementPage() {
   const Breadcrumb = () => (
     <nav className="flex items-center gap-1.5 text-sm mb-1">
       <button onClick={goBackToCourses}
-        className={`font-medium ${view === 'courses' ? 'text-gray-900' : 'text-blue-600 hover:underline'}`}>
+        className={`font-medium ${view === 'courses' ? 'text-gray-900' : 'text-[#0d1b2a] hover:underline'}`}>
         Students
       </button>
       {selectedCourse && (
         <>
           <ChevronRight className="w-3.5 h-3.5 text-gray-400" />
           <button onClick={() => view !== 'cohorts' && goBackToCohorts()}
-            className={`font-medium ${view === 'cohorts' ? 'text-gray-900' : 'text-blue-600 hover:underline'} truncate max-w-[200px]`}>
+            className={`font-medium ${view === 'cohorts' ? 'text-gray-900' : 'text-[#0d1b2a] hover:underline'} truncate max-w-[200px]`}>
             {selectedCourse.title}
           </button>
         </>
@@ -501,12 +501,12 @@ export default function StudentManagementPage() {
         <div>
           <Breadcrumb />
           <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-            <GraduationCap className="w-8 h-8 text-blue-600" /> Student Management
+            <GraduationCap className="w-8 h-8 text-[#0d1b2a]" /> Student Management
           </h1>
           <p className="text-gray-500 mt-1 text-sm">Select a course to manage its cohorts and students</p>
         </div>
         <button onClick={() => router.push('/admin/students/performance')}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
+          className="bg-[#0d1b2a] hover:bg-[#162844] text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-sm">
           <BarChart3 className="w-4 h-4" /> Performance Report
         </button>
       </div>
@@ -515,7 +515,7 @@ export default function StudentManagementPage() {
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: 'Total Students', value: stats.total_students, icon: <Users className="w-4 h-4" />, color: 'text-blue-600', bg: 'bg-blue-50' },
+            { label: 'Total Students', value: stats.total_students, icon: <Users className="w-4 h-4" />, color: 'text-[#0d1b2a]', bg: 'bg-[#0d1b2a]/5' },
             { label: 'Active Students', value: stats.active_students, icon: <UserCheck className="w-4 h-4" />, color: 'text-emerald-600', bg: 'bg-emerald-50' },
             { label: 'Active 7 days', value: stats.active_last_7d, icon: <Clock className="w-4 h-4" />, color: 'text-orange-600', bg: 'bg-orange-50' },
             { label: 'Certificates Issued', value: stats.achievement_stats.certificates_issued, icon: <Award className="w-4 h-4" />, color: 'text-amber-600', bg: 'bg-amber-50' },
@@ -534,13 +534,13 @@ export default function StudentManagementPage() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
         <input type="text" placeholder="Search courses…" value={courseSearch}
           onChange={e => setCourseSearch(e.target.value)}
-          className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 bg-white" />
+          className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#0d1b2a] bg-white" />
       </div>
 
       {/* Course cards */}
       {coursesLoading ? (
         <div className="flex items-center justify-center py-20">
-          <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
+          <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a]" />
         </div>
       ) : filteredCourses.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
@@ -551,10 +551,10 @@ export default function StudentManagementPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredCourses.map(course => (
             <button key={course.id} onClick={() => goToCohorts(course)}
-              className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left group p-5">
+              className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-[#0d1b2a]/30 transition-all text-left group p-5">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1 min-w-0 mr-2">
-                  <h3 className="font-semibold text-gray-900 group-hover:text-blue-700 transition-colors line-clamp-2">{course.title}</h3>
+                  <h3 className="font-semibold text-gray-900 group-hover:text-[#0d1b2a] transition-colors line-clamp-2">{course.title}</h3>
                   <p className="text-xs text-gray-500 mt-1 truncate">{course.instructor_name}</p>
                 </div>
                 <EnrollTypeBadge type={course.enrollment_type} />
@@ -569,7 +569,7 @@ export default function StudentManagementPage() {
                   <p className="text-xs text-gray-500">Active</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-lg font-bold text-blue-600">{course.cohort_count}</p>
+                  <p className="text-lg font-bold text-[#0d1b2a]">{course.cohort_count}</p>
                   <p className="text-xs text-gray-500">Cohorts</p>
                 </div>
               </div>
@@ -578,7 +578,7 @@ export default function StudentManagementPage() {
                   {course.is_published ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                   {course.is_published ? 'Published' : 'Draft'}
                 </span>
-                <span className="text-xs text-blue-600 font-medium group-hover:underline flex items-center gap-1">
+                <span className="text-xs text-[#0d1b2a] font-medium group-hover:underline flex items-center gap-1">
                   View Cohorts <ChevronRight className="w-3 h-3" />
                 </span>
               </div>
@@ -598,7 +598,7 @@ export default function StudentManagementPage() {
         <div>
           <Breadcrumb />
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-            <Layers className="w-7 h-7 text-blue-600" />{selectedCourse?.title}
+            <Layers className="w-7 h-7 text-[#0d1b2a]" />{selectedCourse?.title}
           </h1>
           <p className="text-gray-500 mt-1 text-sm">Select a cohort to manage its students</p>
         </div>
@@ -610,20 +610,20 @@ export default function StudentManagementPage() {
 
       {/* Course summary */}
       {selectedCourse && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-4 flex flex-wrap items-center gap-6">
-          <div className="flex items-center gap-2 text-sm text-blue-800">
+        <div className="bg-[#0d1b2a]/5 border border-[#0d1b2a]/20 rounded-xl px-5 py-4 flex flex-wrap items-center gap-6">
+          <div className="flex items-center gap-2 text-sm text-[#0d1b2a]">
             <Users2 className="w-4 h-4" />
             <strong>{selectedCourse.total_students}</strong> total students
           </div>
-          <div className="flex items-center gap-2 text-sm text-blue-800">
+          <div className="flex items-center gap-2 text-sm text-[#0d1b2a]">
             <UserCheck className="w-4 h-4" />
             <strong>{selectedCourse.active_students}</strong> active
           </div>
-          <div className="flex items-center gap-2 text-sm text-blue-800">
+          <div className="flex items-center gap-2 text-sm text-[#0d1b2a]">
             <BadgeCheck className="w-4 h-4" />
             <strong>{selectedCourse.completed_students}</strong> completed
           </div>
-          <div className="flex items-center gap-2 text-sm text-blue-800">
+          <div className="flex items-center gap-2 text-sm text-[#0d1b2a]">
             <Layers className="w-4 h-4" />
             <strong>{selectedCourse.cohort_count}</strong> cohorts
           </div>
@@ -633,7 +633,7 @@ export default function StudentManagementPage() {
 
       {cohortsLoading ? (
         <div className="flex items-center justify-center py-20">
-          <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
+          <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a]" />
         </div>
       ) : cohorts.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
@@ -650,10 +650,10 @@ export default function StudentManagementPage() {
             const isNoCohort = cohort.id === null;
             return (
               <button key={cohort.id ?? 'no-cohort'} onClick={() => goToStudents(cohort)}
-                className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-blue-300 transition-all text-left group p-5">
+                className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-[#0d1b2a]/30 transition-all text-left group p-5">
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1 min-w-0 mr-2">
-                    <h3 className="font-semibold text-gray-900 group-hover:text-blue-700 transition-colors">
+                    <h3 className="font-semibold text-gray-900 group-hover:text-[#0d1b2a] transition-colors">
                       {cohort.cohort_label}
                     </h3>
                     {cohort.description && (
@@ -684,7 +684,7 @@ export default function StudentManagementPage() {
                     <p className="text-xs text-gray-500">Active</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-base font-bold text-blue-600">{cohort.completed_students}</p>
+                    <p className="text-base font-bold text-[#0d1b2a]">{cohort.completed_students}</p>
                     <p className="text-xs text-gray-500">Done</p>
                   </div>
                 </div>
@@ -705,7 +705,7 @@ export default function StudentManagementPage() {
 
                 <div className="flex items-center justify-between pt-3 border-t border-gray-100">
                   <EnrollTypeBadge type={cohort.enrollment_type} />
-                  <span className="text-xs text-blue-600 font-medium group-hover:underline flex items-center gap-1">
+                  <span className="text-xs text-[#0d1b2a] font-medium group-hover:underline flex items-center gap-1">
                     Manage <ChevronRight className="w-3 h-3" />
                   </span>
                 </div>
@@ -727,7 +727,7 @@ export default function StudentManagementPage() {
         <div>
           <Breadcrumb />
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-            <Users className="w-7 h-7 text-blue-600" />
+            <Users className="w-7 h-7 text-[#0d1b2a]" />
             {selectedCohort?.cohort_label}
           </h1>
           {selectedCourse && (
@@ -759,18 +759,18 @@ export default function StudentManagementPage() {
 
       {/* Cohort info */}
       {selectedCohort && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-xl px-5 py-3.5 flex flex-wrap items-center gap-5">
+        <div className="bg-[#0d1b2a]/5 border border-[#0d1b2a]/20 rounded-xl px-5 py-3.5 flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-2">
             {selectedCohort.id !== null && <CohortStatusBadge status={selectedCohort.status} />}
             <EnrollTypeBadge type={selectedCohort.enrollment_type} />
           </div>
           {(selectedCohort.cohort_start || selectedCohort.cohort_end) && (
-            <span className="flex items-center gap-1.5 text-xs text-indigo-700">
+            <span className="flex items-center gap-1.5 text-xs text-[#0d1b2a]">
               <Calendar className="w-3 h-3" />
               {fmtDate(selectedCohort.cohort_start) || '?'} – {fmtDate(selectedCohort.cohort_end) || 'Ongoing'}
             </span>
           )}
-          <span className="flex items-center gap-1.5 text-xs text-indigo-700">
+          <span className="flex items-center gap-1.5 text-xs text-[#0d1b2a]">
             <Users2 className="w-3 h-3" /> <strong>{selectedCohort.active_students}</strong> active /
             <strong>{selectedCohort.total_students}</strong> total
             {selectedCohort.max_students && <span>/ {selectedCohort.max_students} capacity</span>}
@@ -785,7 +785,7 @@ export default function StudentManagementPage() {
           <span className="flex items-center gap-2">
             <Filter className="w-4 h-4 text-gray-400" /> Filters
             {activeFilterCount > 0 && (
-              <span className="bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">{activeFilterCount}</span>
+              <span className="bg-[#0d1b2a] text-white text-xs px-2 py-0.5 rounded-full">{activeFilterCount}</span>
             )}
           </span>
           <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showFilters ? 'rotate-180' : ''}`} />
@@ -797,7 +797,7 @@ export default function StudentManagementPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                 <input type="text" placeholder="Search students…" value={filters.search}
                   onChange={e => handleFilterChange('search', e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500" />
+                  className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#0d1b2a]" />
               </div>
               {[
                 { key: 'status', options: [['', 'All Statuses'], ['active', 'Active'], ['inactive', 'Inactive']] },
@@ -806,14 +806,14 @@ export default function StudentManagementPage() {
               ].map(f => (
                 <select key={f.key} value={(filters as any)[f.key]}
                   onChange={e => handleFilterChange(f.key, e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 bg-white">
+                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0d1b2a] bg-white">
                   {f.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               ))}
             </div>
             <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-gray-100">
               <select value={filters.sort_by} onChange={e => handleFilterChange('sort_by', e.target.value)}
-                className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-blue-500">
+                className="border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white focus:ring-2 focus:ring-[#0d1b2a]">
                 <option value="created_at">Registered</option>
                 <option value="username">Username</option>
                 <option value="last_activity">Last Activity</option>
@@ -840,8 +840,8 @@ export default function StudentManagementPage() {
 
       {/* Bulk actions */}
       {selectedStudents.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-          <span className="text-sm font-semibold text-blue-800">{selectedStudents.length} selected</span>
+        <div className="bg-[#0d1b2a]/5 border border-[#0d1b2a]/20 rounded-xl px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm font-semibold text-[#0d1b2a]">{selectedStudents.length} selected</span>
           <div className="flex flex-wrap gap-2">
             <button onClick={() => setMessageModal({ open: true, recipients: selectedRecipients })}
               className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5">
@@ -880,7 +880,7 @@ export default function StudentManagementPage() {
                   <input type="checkbox"
                     checked={selectedStudents.length === students.length && students.length > 0}
                     onChange={e => setSelectedStudents(e.target.checked ? students.map(s => s.id) : [])}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    className="rounded border-gray-300 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
@@ -893,7 +893,7 @@ export default function StudentManagementPage() {
             <tbody className="divide-y divide-gray-100">
               {studentsLoading && students.length === 0 ? (
                 <tr><td colSpan={7} className="py-16 text-center">
-                  <RefreshCw className="w-6 h-6 animate-spin text-blue-500 mx-auto mb-2" />
+                  <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a] mx-auto mb-2" />
                   <p className="text-gray-500 text-sm">Loading students…</p>
                 </td></tr>
               ) : students.length === 0 ? (
@@ -902,7 +902,7 @@ export default function StudentManagementPage() {
                   <p className="text-gray-600 font-medium">No students in this cohort</p>
                   {activeFilterCount > 0 && (
                     <button onClick={() => { setFilters({ search: '', status: '', enrollment_status: '', performance: '', sort_by: 'created_at', sort_order: 'desc' }); }}
-                      className="mt-2 text-sm text-blue-600 hover:underline">Clear filters</button>
+                      className="mt-2 text-sm text-[#0d1b2a] hover:underline">Clear filters</button>
                   )}
                 </td></tr>
               ) : students.map(student => {
@@ -912,15 +912,15 @@ export default function StudentManagementPage() {
                 const daysCls = student.activity.days_inactive === null ? 'text-gray-400' : student.activity.days_inactive === 0 ? 'text-emerald-600' : student.activity.days_inactive <= 7 ? 'text-green-600' : student.activity.days_inactive <= 14 ? 'text-orange-500' : 'text-red-500';
                 return (
                   <tr key={student.id}
-                    className={`hover:bg-gray-50/70 transition-colors ${selectedStudents.includes(student.id) ? 'bg-blue-50/40' : ''}`}>
+                    className={`hover:bg-gray-50/70 transition-colors ${selectedStudents.includes(student.id) ? 'bg-[#0d1b2a]/5/40' : ''}`}>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <input type="checkbox" checked={selectedStudents.includes(student.id)}
                         onChange={() => setSelectedStudents(prev => prev.includes(student.id) ? prev.filter(id => id !== student.id) : [...prev, student.id])}
-                        className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                        className="rounded border-gray-300 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
                     </td>
                     <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/admin/students/${student.id}`)}>
                       <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-indigo-600 flex items-center justify-center text-white font-semibold text-sm flex-shrink-0 shadow-sm">
+                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#162844] to-[#0d1b2a] flex items-center justify-center text-white font-semibold text-sm flex-shrink-0 shadow-sm">
                           {(student.first_name?.[0] || student.username[0]).toUpperCase()}
                         </div>
                         <div className="min-w-0">
@@ -930,7 +930,7 @@ export default function StudentManagementPage() {
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               <a href={`tel:${student.phone_number}`}
                                 onClick={e => e.stopPropagation()}
-                                className="flex items-center gap-1 text-xs text-gray-500 hover:text-blue-600">
+                                className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#0d1b2a]">
                                 <Phone className="w-3 h-3 flex-shrink-0" />
                                 <span>{student.phone_number}</span>
                               </a>
@@ -1028,7 +1028,7 @@ export default function StudentManagementPage() {
                   if (page > pagination.total_pages) return null;
                   return (
                     <button key={page} onClick={() => setPagination(p => ({ ...p, current_page: page }))}
-                      className={`w-8 h-8 rounded-lg text-sm font-medium ${page === pagination.current_page ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-700'}`}>
+                      className={`w-8 h-8 rounded-lg text-sm font-medium ${page === pagination.current_page ? 'bg-[#0d1b2a] text-white' : 'hover:bg-gray-100 text-gray-700'}`}>
                       {page}
                     </button>
                   );

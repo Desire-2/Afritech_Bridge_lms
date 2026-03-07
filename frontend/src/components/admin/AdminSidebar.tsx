@@ -91,7 +91,7 @@ const AdminSidebar = () => {
       {/* Mobile Toggle Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700"
+        className="md:hidden fixed top-4 left-4 z-50 p-2 bg-[#0d1b2a] text-white rounded-lg hover:bg-[#162844]"
       >
         {isOpen ? '✕' : '☰'}
       </button>
@@ -110,7 +110,7 @@ const AdminSidebar = () => {
           fixed
           left-0 top-0
           h-screen
-          bg-gray-900 text-gray-100
+          bg-[#0d1b2a] text-gray-100
           overflow-y-auto
           transition-all duration-300 ease-in-out
           z-40
@@ -127,9 +127,9 @@ const AdminSidebar = () => {
 
           {/* User Info */}
           {authContext?.user && (
-            <div className="mb-8 pb-8 border-b border-gray-700">
+            <div className="mb-8 pb-8 border-b border-white/10">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-white font-semibold">
+                <div className="w-10 h-10 rounded-full bg-white/15 border border-white/20 flex items-center justify-center text-white font-semibold">
                   {authContext.user.first_name?.charAt(0) || authContext.user.username.charAt(0)}
                 </div>
                 <div>
@@ -159,8 +159,8 @@ const AdminSidebar = () => {
                           transition-all duration-200
                           ${
                             active
-                              ? 'bg-blue-600 text-white shadow-lg'
-                              : 'text-gray-300 hover:bg-gray-800 hover:text-white'
+                              ? 'bg-white/15 text-white shadow-lg border border-white/10'
+                              : 'text-gray-300 hover:bg-white/8 hover:text-white'
                           }
                         `}
                       >
@@ -185,7 +185,7 @@ const AdminSidebar = () => {
           ))}
 
           {/* Logout Button */}
-          <div className="mt-8 pt-8 border-t border-gray-700">
+          <div className="mt-8 pt-8 border-t border-white/10">
             <button
               onClick={() => {
                 authContext?.logout?.();
