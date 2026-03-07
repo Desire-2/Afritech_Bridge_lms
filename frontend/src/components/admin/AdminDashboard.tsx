@@ -105,10 +105,10 @@ export const AdminDashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-gray-50">
+      <div className="flex items-center justify-center h-screen bg-[#0a1628]">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading dashboard data...</p>
+          <p className="text-gray-300">Loading dashboard data...</p>
         </div>
       </div>
     );
@@ -116,7 +116,7 @@ export const AdminDashboard: React.FC = () => {
 
   if (error) {
     return (
-      <div className="p-6 bg-red-50 border border-red-200 rounded-lg text-red-700 m-6">
+      <div className="p-6 bg-red-900/20 border border-red-200 rounded-lg text-red-300 m-6">
         <div className="flex items-center gap-3 mb-2">
           <AlertTriangle className="h-5 w-5" />
           <h3 className="font-semibold">Error Loading Dashboard</h3>
@@ -143,16 +143,16 @@ export const AdminDashboard: React.FC = () => {
       icon: <Users className="h-6 w-6" />,
       trend: userStats?.new_users_7d || 0,
       trendLabel: 'new this week',
-      color: 'text-blue-600',
-      bgColor: 'bg-blue-100',
+      color: 'text-blue-400',
+      bgColor: 'bg-blue-900/40',
       subValue: `${stats?.active_users || 0} active`
     },
     {
       title: 'Total Courses',
       value: stats?.total_courses || 0,
       icon: <BookOpen className="h-6 w-6" />,
-      color: 'text-green-600',
-      bgColor: 'bg-green-100',
+      color: 'text-green-400',
+      bgColor: 'bg-green-900/40',
       subValue: `${stats?.published_courses || 0} published`
     },
     {
@@ -161,22 +161,22 @@ export const AdminDashboard: React.FC = () => {
       icon: <GraduationCap className="h-6 w-6" />,
       trend: 15,
       trendLabel: '% this month',
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-100',
+      color: 'text-purple-400',
+      bgColor: 'bg-purple-900/40',
     },
     {
       title: 'Opportunities',
       value: stats?.total_opportunities || 0,
       icon: <Briefcase className="h-6 w-6" />,
-      color: 'text-orange-600',
-      bgColor: 'bg-orange-100',
+      color: 'text-orange-400',
+      bgColor: 'bg-orange-900/40',
     },
     {
       title: 'Active Quizzes',
       value: stats?.active_quizzes || 0,
       icon: <ClipboardCheck className="h-6 w-6" />,
-      color: 'text-pink-600',
-      bgColor: 'bg-pink-100',
+      color: 'text-pink-400',
+      bgColor: 'bg-pink-900/40',
     },
   ];
 
@@ -204,17 +204,17 @@ export const AdminDashboard: React.FC = () => {
   const COLORS = ['#3b82f6', '#10b981', '#ef4444', '#f59e0b', '#8b5cf6'];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="min-h-screen bg-[#0a1628] p-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8 flex flex-col md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
-            <p className="text-gray-600">Welcome back! Here&apos;s your system overview.</p>
+            <h1 className="text-3xl font-bold text-white mb-2">Admin Dashboard</h1>
+            <p className="text-gray-300">Welcome back! Here&apos;s your system overview.</p>
           </div>
           <div className="mt-4 md:mt-0 flex items-center gap-4">
             {lastUpdated && (
-              <span className="text-sm text-gray-500 flex items-center gap-1">
+              <span className="text-sm text-gray-400 flex items-center gap-1">
                 <Clock className="h-4 w-4" />
                 Updated {lastUpdated.toLocaleTimeString()}
               </span>
@@ -222,7 +222,7 @@ export const AdminDashboard: React.FC = () => {
             <button 
               onClick={() => fetchDashboardData(true)}
               disabled={refreshing}
-              className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-[#162844] border border-white/10 rounded-lg hover:bg-white/5 transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
               {refreshing ? 'Refreshing...' : 'Refresh'}
@@ -235,7 +235,7 @@ export const AdminDashboard: React.FC = () => {
           {statCards.map((card, index) => (
             <div
               key={index}
-              className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-all duration-200"
+              className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-6 hover:shadow-md transition-all duration-200"
             >
               <div className="flex items-center justify-between mb-4">
                 <div className={`p-3 rounded-lg ${card.bgColor}`}>
@@ -244,19 +244,19 @@ export const AdminDashboard: React.FC = () => {
                 {card.trend !== undefined && (
                   <div className="flex items-center gap-1 text-sm">
                     <TrendingUp className="h-4 w-4 text-green-500" />
-                    <span className="font-semibold text-green-600">
+                    <span className="font-semibold text-green-400">
                       +{card.trend}
                     </span>
                     {card.trendLabel && (
-                      <span className="text-gray-500 text-xs">{card.trendLabel}</span>
+                      <span className="text-gray-400 text-xs">{card.trendLabel}</span>
                     )}
                   </div>
                 )}
               </div>
-              <h3 className="text-gray-600 text-sm font-medium mb-1">{card.title}</h3>
-              <p className="text-2xl font-bold text-gray-900">{card.value.toLocaleString()}</p>
+              <h3 className="text-gray-300 text-sm font-medium mb-1">{card.title}</h3>
+              <p className="text-2xl font-bold text-white">{card.value.toLocaleString()}</p>
               {card.subValue && (
-                <p className="text-sm text-gray-500 mt-1">{card.subValue}</p>
+                <p className="text-sm text-gray-400 mt-1">{card.subValue}</p>
               )}
             </div>
           ))}
@@ -265,10 +265,10 @@ export const AdminDashboard: React.FC = () => {
         {/* Charts Grid - Row 1 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* User Growth Chart */}
-          <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+          <div className="lg:col-span-2 bg-[#162844] rounded-xl shadow-sm border border-white/10 p-6">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">User Growth</h2>
-              <span className="text-sm text-gray-500">Last 6 months</span>
+              <h2 className="text-lg font-semibold text-white">User Growth</h2>
+              <span className="text-sm text-gray-400">Last 6 months</span>
             </div>
             {userGrowthData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
@@ -302,15 +302,15 @@ export const AdminDashboard: React.FC = () => {
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex items-center justify-center h-[300px] text-gray-500">
+              <div className="flex items-center justify-center h-[300px] text-gray-400">
                 <p>No growth data available</p>
               </div>
             )}
           </div>
 
           {/* Users by Role Pie Chart */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Users by Role</h2>
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Users by Role</h2>
             {usersByRoleData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
@@ -338,12 +338,12 @@ export const AdminDashboard: React.FC = () => {
                   <Legend 
                     verticalAlign="bottom" 
                     height={36}
-                    formatter={(value) => <span className="text-sm text-gray-600">{value}</span>}
+                    formatter={(value) => <span className="text-sm text-gray-300">{value}</span>}
                   />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex items-center justify-center h-[300px] text-gray-500">
+              <div className="flex items-center justify-center h-[300px] text-gray-400">
                 <p>No role data available</p>
               </div>
             )}
@@ -353,8 +353,8 @@ export const AdminDashboard: React.FC = () => {
         {/* Charts Grid - Row 2 */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           {/* Enrollment Status Pie Chart */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Enrollment Status</h2>
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Enrollment Status</h2>
             <ResponsiveContainer width="100%" height={280}>
               <PieChart>
                 <Pie
@@ -385,36 +385,36 @@ export const AdminDashboard: React.FC = () => {
           </div>
 
           {/* User Activity Stats */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">User Activity Overview</h2>
+          <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">User Activity Overview</h2>
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-blue-50 rounded-lg p-4">
+              <div className="bg-blue-900/20 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <UserCheck className="h-5 w-5 text-blue-600" />
-                  <span className="text-sm text-gray-600">Active Users</span>
+                  <UserCheck className="h-5 w-5 text-blue-400" />
+                  <span className="text-sm text-gray-300">Active Users</span>
                 </div>
-                <p className="text-2xl font-bold text-blue-700">{stats?.active_users || 0}</p>
+                <p className="text-2xl font-bold text-blue-300">{stats?.active_users || 0}</p>
               </div>
-              <div className="bg-red-50 rounded-lg p-4">
+              <div className="bg-red-900/20 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <UserX className="h-5 w-5 text-red-600" />
-                  <span className="text-sm text-gray-600">Inactive Users</span>
+                  <UserX className="h-5 w-5 text-red-400" />
+                  <span className="text-sm text-gray-300">Inactive Users</span>
                 </div>
-                <p className="text-2xl font-bold text-red-700">{userStats?.inactive_users || 0}</p>
+                <p className="text-2xl font-bold text-red-300">{userStats?.inactive_users || 0}</p>
               </div>
-              <div className="bg-green-50 rounded-lg p-4">
+              <div className="bg-green-900/20 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <TrendingUp className="h-5 w-5 text-green-600" />
-                  <span className="text-sm text-gray-600">New (7 days)</span>
+                  <TrendingUp className="h-5 w-5 text-green-400" />
+                  <span className="text-sm text-gray-300">New (7 days)</span>
                 </div>
-                <p className="text-2xl font-bold text-green-700">{userStats?.new_users_7d || 0}</p>
+                <p className="text-2xl font-bold text-green-300">{userStats?.new_users_7d || 0}</p>
               </div>
-              <div className="bg-purple-50 rounded-lg p-4">
+              <div className="bg-purple-900/20 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <Calendar className="h-5 w-5 text-purple-600" />
-                  <span className="text-sm text-gray-600">New (30 days)</span>
+                  <Calendar className="h-5 w-5 text-purple-400" />
+                  <span className="text-sm text-gray-300">New (30 days)</span>
                 </div>
-                <p className="text-2xl font-bold text-purple-700">{userStats?.new_users_30d || 0}</p>
+                <p className="text-2xl font-bold text-purple-300">{userStats?.new_users_30d || 0}</p>
               </div>
             </div>
           </div>
@@ -422,28 +422,28 @@ export const AdminDashboard: React.FC = () => {
 
         {/* Inactivity Warnings */}
         {inactivityAnalysis?.recommendations && inactivityAnalysis.recommendations.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-6">
+          <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-6 mb-6">
             <div className="flex items-center gap-2 mb-4">
-              <AlertTriangle className="h-5 w-5 text-amber-600" />
-              <h2 className="text-lg font-semibold text-amber-800">System Alerts</h2>
+              <AlertTriangle className="h-5 w-5 text-amber-400" />
+              <h2 className="text-lg font-semibold text-amber-300">System Alerts</h2>
             </div>
             <div className="space-y-3">
               {inactivityAnalysis.recommendations.map((rec, index) => (
                 <div 
                   key={index}
                   className={`p-4 rounded-lg border ${
-                    rec.type === 'urgent' ? 'bg-red-50 border-red-200' :
-                    rec.type === 'warning' ? 'bg-amber-100 border-amber-300' :
-                    'bg-blue-50 border-blue-200'
+                    rec.type === 'urgent' ? 'bg-red-900/20 border-red-700/40' :
+                    rec.type === 'warning' ? 'bg-amber-900/30 border-amber-700/40' :
+                    'bg-blue-900/20 border-blue-700/50'
                   }`}
                 >
                   <h3 className={`font-medium mb-1 ${
-                    rec.type === 'urgent' ? 'text-red-800' :
-                    rec.type === 'warning' ? 'text-amber-800' :
-                    'text-blue-800'
+                    rec.type === 'urgent' ? 'text-red-300' :
+                    rec.type === 'warning' ? 'text-amber-300' :
+                    'text-blue-200'
                   }`}>{rec.title}</h3>
-                  <p className="text-sm text-gray-600">{rec.message}</p>
-                  <p className="text-xs text-gray-500 mt-1">Action: {rec.action}</p>
+                  <p className="text-sm text-gray-300">{rec.message}</p>
+                  <p className="text-xs text-gray-400 mt-1">Action: {rec.action}</p>
                 </div>
               ))}
             </div>
@@ -451,37 +451,37 @@ export const AdminDashboard: React.FC = () => {
         )}
 
         {/* Recent Activity */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+        <div className="bg-[#162844] rounded-xl shadow-sm border border-white/10 p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
-            <Activity className="h-5 w-5 text-gray-600" />
-            <h2 className="text-lg font-semibold text-gray-900">Recent Activity</h2>
+            <Activity className="h-5 w-5 text-gray-300" />
+            <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
           </div>
           <div className="space-y-3">
             {stats?.recent_activity && stats.recent_activity.length > 0 ? (
               stats.recent_activity.map((activity, index) => (
                 <div
                   key={index}
-                  className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="flex items-center gap-4 p-4 bg-[#0a1628] rounded-lg hover:bg-white/10 transition-colors"
                 >
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    activity.type === 'user_registration' ? 'bg-blue-100 text-blue-600' :
-                    activity.type === 'enrollment' ? 'bg-green-100 text-green-600' :
-                    'bg-purple-100 text-purple-600'
+                    activity.type === 'user_registration' ? 'bg-blue-900/40 text-blue-400' :
+                    activity.type === 'enrollment' ? 'bg-green-900/40 text-green-400' :
+                    'bg-purple-900/40 text-purple-400'
                   }`}>
                     {activity.type === 'user_registration' ? <Users className="h-5 w-5" /> :
                      activity.type === 'enrollment' ? <GraduationCap className="h-5 w-5" /> :
                      <Activity className="h-5 w-5" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-gray-900 font-medium truncate">{activity.description}</p>
-                    <p className="text-gray-500 text-sm">
+                    <p className="text-white font-medium truncate">{activity.description}</p>
+                    <p className="text-gray-400 text-sm">
                       {new Date(activity.timestamp).toLocaleString()}
                     </p>
                   </div>
                   <span className={`text-xs px-3 py-1 rounded-full whitespace-nowrap ${
-                    activity.type === 'user_registration' ? 'bg-blue-100 text-blue-700' :
-                    activity.type === 'enrollment' ? 'bg-green-100 text-green-700' :
-                    'bg-purple-100 text-purple-700'
+                    activity.type === 'user_registration' ? 'bg-blue-900/40 text-blue-300' :
+                    activity.type === 'enrollment' ? 'bg-green-900/40 text-green-300' :
+                    'bg-purple-900/40 text-purple-300'
                   }`}>
                     {activity.type?.replace('_', ' ')}
                   </span>
@@ -490,7 +490,7 @@ export const AdminDashboard: React.FC = () => {
             ) : (
               <div className="text-center py-8">
                 <Activity className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500">No recent activity</p>
+                <p className="text-gray-400">No recent activity</p>
               </div>
             )}
           </div>
@@ -500,7 +500,7 @@ export const AdminDashboard: React.FC = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <a
             href="/admin/users/create"
-            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 px-4 rounded-xl text-center transition-all duration-200 hover:shadow-lg"
+            className="flex items-center justify-center gap-2 bg-[#0d1b2a] hover:bg-blue-700 text-white font-semibold py-4 px-4 rounded-xl text-center transition-all duration-200 hover:shadow-lg"
           >
             <Users className="h-5 w-5" />
             Create User
