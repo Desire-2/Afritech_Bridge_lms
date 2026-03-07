@@ -87,6 +87,9 @@ class User(db.Model):
     # Force password change on first login (for auto-created accounts)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     
+    # Email unsubscribe token (persistent, generated once per user)
+    email_unsubscribe_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
+    
     # Activity tracking
     last_login = db.Column(db.DateTime, nullable=True)
     last_activity = db.Column(db.DateTime, nullable=True)
@@ -127,6 +130,12 @@ class User(db.Model):
         """Clear the reset token after it's been used"""
         self.reset_token = None
         self.reset_token_expires_at = None
+    
+    def get_or_create_unsubscribe_token(self):
+        """Get existing unsubscribe token or generate a new one"""
+        if not self.email_unsubscribe_token:
+            self.email_unsubscribe_token = secrets.token_urlsafe(32)
+        return self.email_unsubscribe_token
     
     def update_last_login(self):
         """Update last login timestamp"""

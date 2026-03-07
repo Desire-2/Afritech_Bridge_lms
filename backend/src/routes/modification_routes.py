@@ -227,7 +227,8 @@ def request_assignment_modification(assignment_id):
                 is_project=False,
                 assignment_id=assignment_id,
                 due_date=due_date,
-                frontend_url=frontend_url
+                frontend_url=frontend_url,
+                student=student
             )
             
             if success:
@@ -358,7 +359,8 @@ def request_project_modification(project_id):
                 is_project=True,
                 assignment_id=project_id,
                 due_date=due_date,
-                frontend_url=frontend_url
+                frontend_url=frontend_url,
+                student=student
             )
             
             if success:

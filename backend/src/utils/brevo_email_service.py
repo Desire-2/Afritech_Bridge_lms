@@ -58,8 +58,13 @@ class BrevoEmailService:
             self.is_configured = False
     
     def send_email(self, to_emails, subject, html_content=None, text_content=None, 
-                   template_id=None, params=None, cc=None, bcc=None, reply_to=None):
-        """Send email using Brevo API"""
+                   template_id=None, params=None, cc=None, bcc=None, reply_to=None,
+                   headers=None):
+        """Send email using Brevo API
+        
+        Args:
+            headers: dict - optional custom headers (e.g. List-Unsubscribe)
+        """
         if not self.is_configured:
             logger.warning("Brevo email service not configured - skipping email send")
             logger.info(f"Would have sent email: {subject} to {to_emails}")
@@ -104,6 +109,10 @@ class BrevoEmailService:
                 # If no content provided, create basic content
                 if not html_content and not text_content:
                     email_data["text_content"] = "This email was sent from your application."
+            
+            # Add custom headers (e.g. List-Unsubscribe for RFC 8058 compliance)
+            if headers:
+                email_data["headers"] = headers
             
             send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**email_data)
             

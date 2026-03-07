@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List, Optional
 from datetime import datetime
 
-from ..models.user_models import User
+from ..models.user_models import db, User
 from ..utils.email_templates import (
     maintenance_notification_email,
     maintenance_completed_email
@@ -102,6 +102,8 @@ class MaintenanceNotificationService:
             for user in users:
                 try:
                     user_name = user.get_display_name()
+                    unsub_token = user.get_or_create_unsubscribe_token()
+                    db.session.commit()
                     
                     email_html = maintenance_notification_email(
                         recipient_name=user_name,
@@ -109,7 +111,8 @@ class MaintenanceNotificationService:
                         start_time=start_time,
                         end_time=end_time,
                         duration=duration,
-                        show_countdown=True
+                        show_countdown=True,
+                        unsubscribe_token=unsub_token
                     )
                     
                     brevo_service.send_email(
@@ -122,6 +125,7 @@ class MaintenanceNotificationService:
                     logger.info(f"📧 Maintenance notification sent to {user.email}")
                     
                 except Exception as e:
+                    db.session.rollback()
                     failed_count += 1
                     logger.error(f"❌ Failed to send maintenance notification to {user.email}: {str(e)}")
             
@@ -205,11 +209,14 @@ class MaintenanceNotificationService:
             for user in users:
                 try:
                     user_name = user.get_display_name()
+                    unsub_token = user.get_or_create_unsubscribe_token()
+                    db.session.commit()
                     
                     email_html = maintenance_completed_email(
                         recipient_name=user_name,
                         downtime_duration=downtime_duration,
-                        improvements=improvements
+                        improvements=improvements,
+                        unsubscribe_token=unsub_token
                     )
                     
                     brevo_service.send_email(
@@ -222,6 +229,7 @@ class MaintenanceNotificationService:
                     logger.info(f"📧 Maintenance completion notification sent to {user.email}")
                     
                 except Exception as e:
+                    db.session.rollback()
                     failed_count += 1
                     logger.error(f"❌ Failed to send completion notification to {user.email}: {str(e)}")
             

@@ -70,11 +70,19 @@ def _send_announcement_emails(announcement, course, cohort_id=None):
             student = enrollment.student
             if student and student.email:
                 student_name = f"{student.first_name} {student.last_name}".strip() if student.first_name else student.username
+                unsub_token = student.get_or_create_unsubscribe_token()
                 students_data.append({
                     'email': student.email,
-                    'name': student_name
+                    'name': student_name,
+                    'unsub_token': unsub_token
                 })
         
+        # Commit any new unsubscribe tokens before threading
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
         # Capture the Flask app instance before threading
         app_instance = current_app._get_current_object()
         
@@ -89,7 +97,8 @@ def _send_announcement_emails(announcement, course, cohort_id=None):
                             course_title=course_title,
                             announcement_title=announcement_title,
                             announcement_content=announcement_content,
-                            instructor_name=instructor_name
+                            instructor_name=instructor_name,
+                            unsubscribe_token=student_info.get('unsub_token')
                         )
                         
                         # Send email

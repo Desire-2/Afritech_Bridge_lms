@@ -355,7 +355,8 @@ class ModificationRequestService:
                         assignment_title=assignment.title,
                         instructor_name=instructor.full_name,
                         reason=f"REMINDER: {assignment.modification_request_reason}",
-                        course_title=course.title
+                        course_title=course.title,
+                        student=student
                     )
                     reminders_sent += 1
                     

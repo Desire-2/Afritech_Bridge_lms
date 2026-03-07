@@ -6,7 +6,7 @@ from datetime import datetime
 from .email_templates import get_email_header, get_email_footer, _frontend_url
 
 
-def application_saved_payment_pending_email(application, course_title, payment_info):
+def application_saved_payment_pending_email(application, course_title, payment_info, unsubscribe_token=None):
     """
     📧 Email sent when applicant saves application for a course requiring payment
     
@@ -185,11 +185,11 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                 </p>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 
-def payment_confirmation_email(application, course_title, payment_details):
+def payment_confirmation_email(application, course_title, payment_details, unsubscribe_token=None):
     """
     ✅ Email sent when payment is successfully confirmed
     
@@ -383,11 +383,11 @@ def payment_confirmation_email(application, course_title, payment_details):
                 </p>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 
-def payment_failed_email(application, course_title, failure_reason=None):
+def payment_failed_email(application, course_title, failure_reason=None, unsubscribe_token=None):
     """
     ❌ Email sent when payment fails
     
@@ -529,11 +529,11 @@ def payment_failed_email(application, course_title, failure_reason=None):
                 </p>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 
-def payment_reminder_email(application, course_title, payment_info):
+def payment_reminder_email(application, course_title, payment_info, unsubscribe_token=None):
     """
     ⏰ Payment reminder email for pending payments
     
@@ -706,11 +706,11 @@ def payment_reminder_email(application, course_title, payment_info):
                 </p>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 
-def payment_refund_email(application, course_title, refund_details):
+def payment_refund_email(application, course_title, refund_details, unsubscribe_token=None):
     """
     💸 Email sent when a payment is refunded
     
@@ -860,5 +860,5 @@ def payment_refund_email(application, course_title, refund_details):
                 </p>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """

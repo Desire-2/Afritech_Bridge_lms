@@ -365,6 +365,12 @@ class InactivityService:
     def _send_termination_notification(student: User, terminated_courses: List[Dict], reason: str):
         """Send email notification to terminated student"""
         from ..utils.email_templates import get_email_header, get_email_footer
+        unsub_token = student.get_or_create_unsubscribe_token()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            unsub_token = None
         
         course_list_html = "".join([
             f'<tr><td style="padding: 12px 20px; border-bottom: 1px solid rgba(239, 68, 68, 0.2); color: #ffffff; background: rgba(239, 68, 68, 0.1); border-radius: 5px; margin: 5px 0;">📚 {course["course_title"]}</td></tr>'
@@ -444,7 +450,7 @@ class InactivityService:
                 </div>
             </div>
             
-        {get_email_footer()}
+        {get_email_footer(unsubscribe_token=unsub_token, email_category='system')}
         """
         
         brevo_service.send_email(
@@ -457,6 +463,12 @@ class InactivityService:
     def _send_deletion_notification(user: User):
         """Send email notification before user deletion"""
         from ..utils.email_templates import get_email_header, get_email_footer
+        unsub_token = user.get_or_create_unsubscribe_token()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            unsub_token = None
         
         subject = "🚨 Urgent: Account Scheduled for Deletion - Immediate Action Required"
         
@@ -540,7 +552,7 @@ class InactivityService:
                 </div>
             </div>
             
-        {get_email_footer()}
+        {get_email_footer(unsubscribe_token=unsub_token, email_category='system')}
         """
         
         brevo_service.send_email(
@@ -553,6 +565,12 @@ class InactivityService:
     def _send_inactivity_warning(student: User, student_data: Dict):
         """Send inactivity warning to student"""
         from ..utils.email_templates import get_email_header, get_email_footer
+        unsub_token = student.get_or_create_unsubscribe_token()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            unsub_token = None
         
         days_inactive = student_data.get('days_inactive', 0)
         # Ensure days_inactive is not None
@@ -650,7 +668,7 @@ class InactivityService:
                 </div>
             </div>
             
-        {get_email_footer()}
+        {get_email_footer(unsubscribe_token=unsub_token, email_category='system')}
         """
         
         brevo_service.send_email(

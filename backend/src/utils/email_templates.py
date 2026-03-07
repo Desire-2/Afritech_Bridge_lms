@@ -139,9 +139,40 @@ def get_email_header():
                         </div>
     """
 
-def get_email_footer():
-    """Modern email footer with social links"""
+def get_email_footer(unsubscribe_token=None, email_category=None):
+    """Modern email footer with unsubscribe, manage preferences, and support links.
+    
+    Args:
+        unsubscribe_token: User's persistent unsubscribe token. When provided,
+            the footer includes one-click unsubscribe and manage preferences links.
+        email_category: The notification category (e.g. 'grades', 'announcements')
+            so the unsubscribe link can target just that category.
+    """
     year = datetime.now().year
+    base_url = _frontend_url()
+    
+    # Build unsubscribe / preferences links when token is available
+    if unsubscribe_token:
+        cat_param = f"&category={email_category}" if email_category else ""
+        unsub_url = f"{base_url}/unsubscribe?token={unsubscribe_token}{cat_param}"
+        prefs_url = f"{base_url}/unsubscribe?token={unsubscribe_token}&manage=true"
+        
+        unsub_section = f"""
+                <div style="margin: 20px 0 0 0; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.08);">
+                    <p class="small-text" style="color: #9ca3af; margin: 0 0 12px 0; font-size: 11px;">
+                        Don't want these emails?
+                    </p>
+                    <a href="{unsub_url}" style="display: inline-block; color: #9ca3af; font-size: 12px; text-decoration: underline; margin: 0 10px;">
+                        Unsubscribe{f' from {email_category}' if email_category else ''}
+                    </a>
+                    <span style="color: #4b5563;">|</span>
+                    <a href="{prefs_url}" style="display: inline-block; color: #9ca3af; font-size: 12px; text-decoration: underline; margin: 0 10px;">
+                        Manage Email Preferences
+                    </a>
+                </div>"""
+    else:
+        unsub_section = ""
+    
     return f"""
             <!-- Footer -->
             <div class="email-footer" style="background-color: #2c3e50; color: #e5e7eb; padding: 40px 30px; text-align: center;">
@@ -154,13 +185,13 @@ def get_email_footer():
                 </p>
                 
                 <div style="margin: 25px 0; padding: 20px 0; border-top: 1px solid rgba(255,255,255,0.1); border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <a href="mailto:afritech.bridge@yahoo.com" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
+                    <a href="mailto:afritech.bridge@yahoo.com" class="mobile-full-width" style="display: inline-block; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         📧 Support
                     </a>
-                    <a href="https://wa.me/250780784924" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(37, 211, 102, 0.2); color: #25d366; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
+                    <a href="https://wa.me/250780784924" class="mobile-full-width" style="display: inline-block; background: rgba(37, 211, 102, 0.2); color: #25d366; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         💬 WhatsApp Help
                     </a>
-                    <a href="#" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
+                    <a href="{_frontend_url('privacy')}" class="mobile-full-width" style="display: inline-block; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         🔒 Privacy
                     </a>
                 </div>
@@ -172,8 +203,9 @@ def get_email_footer():
                 
                 <p class="small-text" style="color: #9ca3af; margin: 15px 0 0 0; font-size: 11px; font-style: italic;">
                     You're receiving this email because you're part of our learning community.<br>
-                    This is an automated message - please don't reply directly.
+                    This is an automated message — please don't reply directly.
                 </p>
+                {unsub_section}
             </div>
         </div>
                 </td>
@@ -183,7 +215,7 @@ def get_email_footer():
     </html>
     """
 
-def application_received_email(application, course_title):
+def application_received_email(application, course_title, unsubscribe_token=None):
     """✨ Creative email template for application confirmation"""
     return f"""
     {get_email_header()}
@@ -391,7 +423,7 @@ def application_received_email(application, course_title):
                 </p>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 def _build_payment_section(payment_info: dict) -> str:
@@ -477,7 +509,7 @@ def _build_payment_section(payment_info: dict) -> str:
     return ""
 
 
-def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None, payment_info=None):
+def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None, payment_info=None, unsubscribe_token=None):
     """🎉 Creative celebration email template for application approval
     
     Args:
@@ -726,10 +758,10 @@ def application_approved_email(application, course, username, temp_password, cus
         </p>
     </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
-def application_rejected_email(application, course_title, reason=None, reapply_info=True):
+def application_rejected_email(application, course_title, reason=None, reapply_info=True, unsubscribe_token=None):
     """💙 Empathetic and encouraging email template for application rejection"""
     return f"""
     {get_email_header()}
@@ -930,10 +962,10 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                 </div>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
-def application_waitlisted_email(application, course_title, position=None, estimated_wait="2-4 weeks"):
+def application_waitlisted_email(application, course_title, position=None, estimated_wait="2-4 weeks", unsubscribe_token=None):
     """⏳ Modern waitlist email template with engaging design"""
     return f"""
     {get_email_header()}
@@ -1172,13 +1204,13 @@ def application_waitlisted_email(application, course_title, position=None, estim
                 </div>
             </div>
             
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 def assignment_graded_with_modification_email(student_name, student_email, assignment_title, course_title, 
                                                 grade, points_possible, feedback, modification_reason,
                                                 instructor_name, resubmission_deadline, resubmit_url,
-                                                passing_percentage=60.0, is_project=False):
+                                                passing_percentage=60.0, is_project=False, unsubscribe_token=None):
     """Email template for graded assignment/project with automatic modification request.
     
     Sent when a score is below the passing threshold, combining the grade notification
@@ -1327,10 +1359,10 @@ def assignment_graded_with_modification_email(student_name, student_email, assig
             <strong>The Afritech Bridge Team</strong>
         </p>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
-def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True, assignment_id=None):
+def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True, assignment_id=None, unsubscribe_token=None):
     """Email template for graded assignment notification"""
     percentage = (grade / points_possible * 100) if points_possible > 0 else 0
     status_color = "#059669" if passed else "#dc2626"
@@ -1425,10 +1457,10 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
             <strong>The Afritech Bridge Team</strong>
         </p>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
-def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None):
+def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None, unsubscribe_token=None):
     """Email template for course announcements"""
     # Clean and format the content (strip HTML if needed, truncate if too long)
     clean_content = announcement_content[:500] + "..." if len(announcement_content) > 500 else announcement_content
@@ -1491,10 +1523,10 @@ def course_announcement_email(student_name, course_title, announcement_title, an
             <strong style="color: #ffffff;">The Afritech Bridge Team</strong>
         </p>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='announcements')}
     """
 
-def quiz_graded_email(student_name, quiz_title, course_title, score, total_points, percentage, passed=True):
+def quiz_graded_email(student_name, quiz_title, course_title, score, total_points, percentage, passed=True, unsubscribe_token=None):
     """Email template for quiz grade notification"""
     status_color = "#059669" if passed else "#dc2626"
     status_bg = "#34495e" if passed else "#34495e"
@@ -1564,10 +1596,10 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
             <strong style="color: #ffffff;">The Afritech Bridge Team</strong>
         </p>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
-def application_status_pending_email(application, course_title, reason=None):
+def application_status_pending_email(application, course_title, reason=None, unsubscribe_token=None):
     """✨ Professional email template for status change to pending"""
     return f"""
     {get_email_header()}
@@ -1720,11 +1752,11 @@ def application_status_pending_email(application, course_title, reason=None):
                     <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 🎓
                 </p>
             </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
 
-def application_status_withdrawn_email(application, course_title, reason=None):
+def application_status_withdrawn_email(application, course_title, reason=None, unsubscribe_token=None):
     """✨ Professional email template for withdrawn status"""
     return f"""
     {get_email_header()}
@@ -1856,10 +1888,10 @@ def application_status_withdrawn_email(application, course_title, reason=None):
                     <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 🎓
                 </p>
             </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
-def custom_application_email(recipient_name, subject, message):
+def custom_application_email(recipient_name, subject, message, unsubscribe_token=None):
     """✨ Custom email template for application management announcements"""
     return f"""
     {get_email_header()}
@@ -1961,10 +1993,10 @@ def custom_application_email(recipient_name, subject, message):
                     <strong style="color: #ffffff; text-shadow: 1px 1px 2px rgba(0,0,0,0.5);">The Afritech Bridge Team</strong> 🎓
                 </p>
             </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='system')}
     """
 
-def full_credit_awarded_email(student_name, module_title, course_title, instructor_name, reason=None, details=None):
+def full_credit_awarded_email(student_name, module_title, course_title, instructor_name, reason=None, details=None, unsubscribe_token=None):
     """✨ Email template for full credit award notification"""
     # Process details for display
     components_text = ""
@@ -2163,11 +2195,11 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
             <strong style="color: #fbbf24;">The Afritech Bridge Team</strong> 🎓
         </p>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
 
-def maintenance_notification_email(recipient_name, maintenance_message, start_time=None, end_time=None, duration=None, show_countdown=True):
+def maintenance_notification_email(recipient_name, maintenance_message, start_time=None, end_time=None, duration=None, show_countdown=True, unsubscribe_token=None):
     """
     Maintenance notification email template
     
@@ -2346,11 +2378,11 @@ def maintenance_notification_email(recipient_name, maintenance_message, start_ti
             </p>
         </div>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='system')}
     """
 
 
-def maintenance_completed_email(recipient_name, downtime_duration=None, improvements=None):
+def maintenance_completed_email(recipient_name, downtime_duration=None, improvements=None, unsubscribe_token=None):
     """
     Maintenance completed notification email
     
@@ -2435,5 +2467,5 @@ def maintenance_completed_email(recipient_name, downtime_duration=None, improvem
             </p>
         </div>
     </div>
-    {get_email_footer()}
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='system')}
     """

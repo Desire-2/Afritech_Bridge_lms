@@ -60,6 +60,7 @@ from src.routes.maintenance_routes import maintenance_bp # Import maintenance ro
 from src.routes.notification_routes import notification_bp # Import notification routes
 from src.routes.waitlist_routes import waitlist_bp # Import waitlist management routes
 from src.routes.excel_grading_routes import excel_grading_bp # Import Excel AI grading routes
+from src.routes.email_routes import email_bp # Import email preference/unsubscribe routes
 from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance middleware
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
@@ -318,6 +319,7 @@ app.register_blueprint(maintenance_bp) # Register maintenance routes (public end
 app.register_blueprint(notification_bp) # Register notification routes
 app.register_blueprint(waitlist_bp) # Register waitlist management routes
 app.register_blueprint(excel_grading_bp) # Register Excel AI grading routes
+app.register_blueprint(email_bp) # Register email preference/unsubscribe routes
 
 # Initialize maintenance mode middleware - MUST BE AFTER BLUEPRINT REGISTRATION
 maintenance_mode = MaintenanceMode(app)

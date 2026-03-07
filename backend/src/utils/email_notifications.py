@@ -9,8 +9,11 @@ from ..utils.email_templates import (
     quiz_graded_email,
     course_announcement_email,
     full_credit_awarded_email,
-    assignment_graded_with_modification_email
+    assignment_graded_with_modification_email,
+    get_email_footer,
+    get_email_header
 )
+from ..models.user_models import db
 
 # Import brevo service with error handling for missing dependencies
 try:
@@ -21,6 +24,44 @@ except (ImportError, ModuleNotFoundError) as e:
     BREVO_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _should_send_email(user, category: str) -> bool:
+    """Check if the user has opted in for this email category.
+    
+    Returns True if we should send, False if the user has unsubscribed.
+    Always returns True for transactional emails (password reset, security).
+    """
+    # Master toggle on User model
+    if not getattr(user, 'email_notifications', True):
+        logger.info(f"Skipping email to user {user.id}: email_notifications disabled")
+        return False
+
+    # Check per-category preference if the model is loaded
+    try:
+        pref = getattr(user, 'notification_preferences', None)
+        if pref:
+            if not getattr(pref, 'email_enabled', True):
+                logger.info(f"Skipping email to user {user.id}: email_enabled=False in preferences")
+                return False
+            if not pref.is_category_enabled(category):
+                logger.info(f"Skipping email to user {user.id}: category '{category}' disabled")
+                return False
+    except Exception:
+        pass  # If preference not loaded, default to sending
+
+    return True
+
+
+def _get_unsub_token(user) -> str | None:
+    """Get (or create) the user's persistent unsubscribe token."""
+    try:
+        token = user.get_or_create_unsubscribe_token()
+        db.session.commit()
+        return token
+    except Exception as e:
+        logger.debug(f"Could not get unsubscribe token for user {user.id}: {e}")
+        return None
 
 def send_grade_notification(submission, assignment, student, grade, feedback):
     """
@@ -34,10 +75,15 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
         feedback: str - instructor feedback
     """
     try:
+        # Check user preference
+        if not _should_send_email(student, 'grades'):
+            return False
+        
         points_possible = assignment.points_possible or 100
         passed = grade >= (points_possible * 0.6)  # 60% passing grade
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        unsub_token = _get_unsub_token(student)
         
         # Fix: Safely get course title
         course_title = "Your Course"  # Default
@@ -56,7 +102,8 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
             points_possible=points_possible,
             feedback=feedback or "",
             passed=passed,
-            assignment_id=assignment.id
+            assignment_id=assignment.id,
+            unsubscribe_token=unsub_token
         )
         
         # Check if brevo service is available
@@ -98,11 +145,16 @@ def send_grade_with_modification_notification(submission, assignment, student, g
         is_project: bool - whether this is a project (vs assignment)
     """
     try:
+        # Check user preference
+        if not _should_send_email(student, 'grades'):
+            return False
+
         item_type = "project" if is_project else "assignment"
         points_possible = assignment.points_possible or 100
         percentage = (grade / points_possible * 100) if points_possible > 0 else 0
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        unsub_token = _get_unsub_token(student)
         
         # Safely get course title
         course_title = "Your Course"
@@ -128,7 +180,8 @@ def send_grade_with_modification_notification(submission, assignment, student, g
             resubmission_deadline=resubmission_deadline,
             resubmit_url=resubmit_url,
             passing_percentage=passing_percentage,
-            is_project=is_project
+            is_project=is_project,
+            unsubscribe_token=unsub_token
         )
         
         # Check if brevo service is available
@@ -160,10 +213,15 @@ def send_quiz_grade_notification(student, quiz, score, total_points):
         total_points: int - total possible points
     """
     try:
+        # Check user preference
+        if not _should_send_email(student, 'grades'):
+            return False
+
         percentage = (score / total_points * 100) if total_points > 0 else 0
         passed = percentage >= 60  # 60% passing
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        unsub_token = _get_unsub_token(student)
         
         # Fix: Safely get course title from quiz via module relationship
         course_title = "Your Course"  # Default
@@ -182,7 +240,8 @@ def send_quiz_grade_notification(student, quiz, score, total_points):
             score=score,
             total_points=total_points,
             percentage=percentage,
-            passed=passed
+            passed=passed,
+            unsubscribe_token=unsub_token
         )
         
         # Check if brevo service is available
@@ -219,14 +278,20 @@ def send_announcement_notification(announcement, course, students):
         
         for student in students:
             try:
+                # Check per-student preference
+                if not _should_send_email(student, 'announcements'):
+                    continue
+
                 student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+                unsub_token = _get_unsub_token(student)
                 
                 email_html = course_announcement_email(
                     student_name=student_name,
                     course_title=course.title,
                     announcement_title=announcement.title,
                     announcement_content=announcement.content,
-                    instructor_name=instructor_name
+                    instructor_name=instructor_name,
+                    unsubscribe_token=unsub_token
                 )
                 
                 if brevo_service.send_email(
@@ -258,10 +323,15 @@ def send_project_graded_notification(submission, project, student, grade, feedba
     Similar to assignment grading
     """
     try:
+        # Check user preference
+        if not _should_send_email(student, 'grades'):
+            return False
+
         points_possible = project.points_possible or 100
         passed = grade >= (points_possible * 0.6)
         
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        unsub_token = _get_unsub_token(student)
         
         # Fix: Safely get course title
         course_title = "Your Course"  # Default
@@ -280,7 +350,8 @@ def send_project_graded_notification(submission, project, student, grade, feedba
             points_possible=points_possible,
             feedback=feedback or "",
             passed=passed,
-            assignment_id=project.id
+            assignment_id=project.id,
+            unsubscribe_token=unsub_token
         )
         
         brevo_service.send_email(
@@ -294,7 +365,7 @@ def send_project_graded_notification(submission, project, student, grade, feedba
         logger.error(f"❌ Failed to send project grade notification: {str(e)}")
         return False
 
-def send_modification_request_notification(student_email, student_name, assignment_title, instructor_name, reason, course_title, is_project=False, assignment_id=None, due_date=None, frontend_url=None):
+def send_modification_request_notification(student_email, student_name, assignment_title, instructor_name, reason, course_title, is_project=False, assignment_id=None, due_date=None, frontend_url=None, student=None):
     """
     Send email notification when instructor requests modifications
     
@@ -309,8 +380,15 @@ def send_modification_request_notification(student_email, student_name, assignme
         assignment_id: int - assignment/project ID for URL generation
         due_date: str - resubmission deadline (optional)
         frontend_url: str - frontend base URL for link generation
+        student: User object (optional) - for preference checking and unsubscribe token
     """
     try:
+        # Check user preference if student object is provided
+        if student and not _should_send_email(student, 'grades'):
+            return False
+
+        unsub_token = _get_unsub_token(student) if student else None
+
         item_type = "project" if is_project else "assignment"
         subject = f"📝 Modification Requested: {assignment_title}"
         
@@ -377,9 +455,7 @@ def send_modification_request_notification(student_email, student_name, assignme
                 
                 <p>Best regards,<br>Afritec Bridge LMS Team</p>
             </div>
-            <div class="footer">
-                <p>This is an automated message from Afritec Bridge LMS</p>
-            </div>
+            {get_email_footer(unsubscribe_token=unsub_token, email_category='grades')}
         </body>
         </html>
         """
@@ -461,9 +537,7 @@ def send_admin_modification_alert(admin_email, instructor_name, student_name, as
                 
                 <p>Best regards,<br>Afritec Bridge LMS System</p>
             </div>
-            <div class="footer">
-                <p>This is an automated admin alert from Afritec Bridge LMS</p>
-            </div>
+            {get_email_footer(email_category='system')}
         </body>
         </html>
         """
@@ -563,9 +637,7 @@ def send_modification_digest(recipient_email, recipient_name, modifications, per
                 
                 <p>Best regards,<br>Afritec Bridge LMS System</p>
             </div>
-            <div class="footer">
-                <p>This is an automated digest from Afritec Bridge LMS</p>
-            </div>
+            {get_email_footer(email_category='system')}
         </body>
         </html>
         """
@@ -587,7 +659,7 @@ def send_modification_digest(recipient_email, recipient_name, modifications, per
         logger.error(f"❌ Failed to send modification digest: {str(e)}")
         return False
 
-def send_resubmission_notification(instructor_email, instructor_name, student_name, assignment_title, course_title, is_project=False, assignment_id=None, frontend_url=None, submission_notes=None):
+def send_resubmission_notification(instructor_email, instructor_name, student_name, assignment_title, course_title, is_project=False, assignment_id=None, frontend_url=None, submission_notes=None, instructor=None):
     """
     Send email notification when student resubmits after modification request
     
@@ -601,8 +673,14 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
         assignment_id: int - assignment/project ID for URL generation
         frontend_url: str - frontend base URL for link generation
         submission_notes: str - optional notes from student
+        instructor: User object (optional) - for preference checking and unsubscribe token
     """
     try:
+        # Check user preference if instructor object provided
+        if instructor and not _should_send_email(instructor, 'grades'):
+            return False
+
+        unsub_token = _get_unsub_token(instructor) if instructor else None
         item_type = "project" if is_project else "assignment"
         subject = f"🔄 {item_type.title()} Resubmitted: {assignment_title}"
         
@@ -669,9 +747,7 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
                 
                 <p>Best regards,<br>Afritec Bridge LMS Team</p>
             </div>
-            <div class="footer">
-                <p>This is an automated message from Afritec Bridge LMS</p>
-            </div>
+            {get_email_footer(unsubscribe_token=unsub_token, email_category='grades')}
         </body>
         </html>
         """
@@ -712,9 +788,14 @@ def send_full_credit_notification(student, module, course, instructor, reason=No
             logger.warning("📧 Email service not available (missing dependencies) - cannot send full credit notification")
             return False
         
+        # Check user preference
+        if not _should_send_email(student, 'grades'):
+            return False
+
         # Build student name
         student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
         instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor.first_name else instructor.username
+        unsub_token = _get_unsub_token(student)
         
         # Generate the email content using the template
         email_html = full_credit_awarded_email(
@@ -723,7 +804,8 @@ def send_full_credit_notification(student, module, course, instructor, reason=No
             course_title=course.title,
             instructor_name=instructor_name,
             reason=reason,
-            details=details
+            details=details,
+            unsubscribe_token=unsub_token
         )
         
         # Send the email
