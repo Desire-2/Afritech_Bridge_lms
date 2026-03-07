@@ -156,8 +156,18 @@ class PowerQueryAnalyzer:
     def _extract_queries(self):
         """Extract Power Query M code from the .xlsx/.xlsm archive."""
         buf = BytesIO(self.file_bytes)
+        MAX_TOTAL_DECOMPRESSED = 200 * 1024 * 1024  # 200 MB limit
         try:
             with zipfile.ZipFile(buf, 'r') as zf:
+                # Zip bomb check
+                total_size = sum(info.file_size for info in zf.infolist())
+                if total_size > MAX_TOTAL_DECOMPRESSED:
+                    logger.warning(
+                        f"Zip archive decompressed size ({total_size}) exceeds limit, "
+                        f"skipping Power Query extraction"
+                    )
+                    return
+
                 # Method 1: customXml (Power Query stores queries here)
                 self._extract_from_custom_xml(zf)
 

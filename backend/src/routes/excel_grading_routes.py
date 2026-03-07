@@ -24,6 +24,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from functools import wraps
 from datetime import datetime
+from typing import Optional
 import logging
 
 from ..models.user_models import db, User, Role
@@ -94,6 +95,8 @@ def grade_submission(submission_id):
     try:
         data = request.get_json(silent=True) or {}
         submission_type = data.get('submission_type', 'assignment')
+        if submission_type not in ('assignment', 'project'):
+            return jsonify({"error": "submission_type must be 'assignment' or 'project'"}), 400
         force = data.get('force', False)
 
         from ..services.excel_grading import ExcelGradingService
@@ -121,6 +124,9 @@ def grade_submission(submission_id):
 
                 # Resolve student_id from the submission
                 student_id = _get_student_id(submission_id, submission_type)
+                if not student_id:
+                    logger.warning(f"Could not resolve student_id for {submission_type} #{submission_id}")
+                    raise ValueError("Student not found for submission")
                 app = current_app._get_current_object()
 
                 _auto_approve_grading_result(
@@ -179,6 +185,8 @@ def grade_batch(assignment_id):
     try:
         data = request.get_json(silent=True) or {}
         submission_type = data.get('submission_type', 'assignment')
+        if submission_type not in ('assignment', 'project'):
+            return jsonify({"error": "submission_type must be 'assignment' or 'project'"}), 400
         force = data.get('force', False)
 
         from ..services.excel_grading import ExcelGradingService
@@ -355,8 +363,8 @@ def review_result(result_id):
                     if project:
                         points_possible = project.points_possible or 100
             
-            if final_score is not None and (assignment or project):
-                percentage_score = round((final_score / points_possible) * 100, 2)
+            if final_score is not None and (assignment or project) and submission:
+                percentage_score = round((final_score / max(points_possible, 1)) * 100, 2)
                 target = assignment or project
                 
                 # Use the passing score set during creation, fallback to default
@@ -364,7 +372,8 @@ def review_result(result_id):
                 
                 if percentage_score < passing_threshold:
                     max_resubs = target.max_resubmissions or 3
-                    current_resubs = target.resubmission_count or 0
+                    # Use submission-level resubmission_count (per-student) not assignment-level (shared)
+                    current_resubs = getattr(submission, 'resubmission_count', 0) or 0
                     
                     if current_resubs < max_resubs:
                         item_type = "project" if project else "assignment"
@@ -383,7 +392,8 @@ def review_result(result_id):
                         target.modification_requested_at = datetime.utcnow()
                         target.modification_requested_by = instructor_id
                         target.can_resubmit = True
-                        target.resubmission_count = current_resubs + 1
+                        # Increment the submission-level count, not the assignment-level count
+                        submission.resubmission_count = current_resubs + 1
                         
                         db.session.commit()
                         modification_auto_requested = True
@@ -516,9 +526,13 @@ def list_gradeable_submissions():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
 
-    # Build query
+    # Build query with eager loading to avoid N+1 queries
+    from sqlalchemy.orm import joinedload
     query = AssignmentSubmission.query.join(
         Assignment, Assignment.id == AssignmentSubmission.assignment_id
+    ).options(
+        joinedload(AssignmentSubmission.student),
+        joinedload(AssignmentSubmission.assignment),
     ).filter(Assignment.course_id == course_id)
 
     if assignment_id:
@@ -533,16 +547,22 @@ def list_gradeable_submissions():
         page=page, per_page=per_page, error_out=False
     )
 
+    # Batch-fetch AI grading results for all submissions on this page
+    sub_ids = [sub.id for sub in pagination.items]
+    ai_results_map = {}
+    if sub_ids:
+        ai_results = ExcelGradingResult.query.filter(
+            ExcelGradingResult.assignment_submission_id.in_(sub_ids),
+            ExcelGradingResult.submission_type == 'assignment',
+        ).all()
+        for ar in ai_results:
+            ai_results_map[ar.assignment_submission_id] = ar
+
     submissions = []
     for sub in pagination.items:
-        # Check if already AI-graded
-        ai_result = ExcelGradingResult.query.filter_by(
-            assignment_submission_id=sub.id,
-            submission_type='assignment',
-        ).first()
-
-        student = User.query.get(sub.student_id)
-        assignment = Assignment.query.get(sub.assignment_id)
+        ai_result = ai_results_map.get(sub.id)
+        student = sub.student
+        assignment = sub.assignment
 
         submissions.append({
             'submission_id': sub.id,
@@ -620,10 +640,11 @@ def grading_stats(course_id):
                 'review_status': {'reviewed': 0, 'pending_review': 0},
             }), 200
 
-        scores = [r.total_score for r in results]
-        max_scores = [r.max_score for r in results]
+        scores = [r.total_score for r in results if r.total_score is not None]
+        max_scores = [r.max_score for r in results if r.max_score is not None]
         avg_score = sum(scores) / len(scores) if scores else 0
-        avg_pct = sum(s / m * 100 for s, m in zip(scores, max_scores) if m > 0) / len(scores) if scores else 0
+        valid_pcts = [s / m * 100 for s, m in zip(scores, max_scores) if m and m > 0]
+        avg_pct = sum(valid_pcts) / len(valid_pcts) if valid_pcts else 0
 
         # Grade distribution
         grade_dist = {}
@@ -846,6 +867,11 @@ def preview_analysis():
         if not file_bytes:
             return jsonify({"error": "Empty file"}), 400
 
+        # Limit file size to 50 MB to prevent memory abuse
+        MAX_PREVIEW_SIZE = 50 * 1024 * 1024
+        if len(file_bytes) > MAX_PREVIEW_SIZE:
+            return jsonify({"error": "File too large. Maximum size is 50 MB."}), 400
+
         # Run analyzers
         from ..services.excel_grading.excel_analyzer import ExcelAnalyzer
         from ..services.excel_grading.formula_analyzer import FormulaAnalyzer
@@ -856,8 +882,8 @@ def preview_analysis():
         wb_analysis = wb.analyze()
 
         formula_analysis = FormulaAnalyzer(wb_analysis).analyze()
-        chart_analysis = ChartAnalyzer(file_bytes, file.filename).analyze()
-        formatting_analysis = FormattingAnalyzer(file_bytes, file.filename).analyze()
+        chart_analysis = ChartAnalyzer(wb_analysis).analyze()
+        formatting_analysis = FormattingAnalyzer(wb_analysis).analyze()
 
         return jsonify({
             'preview': True,
@@ -941,15 +967,15 @@ def approve_generated_rubric(assignment_id):
 # Helpers
 # ==============================================================
 
-def _get_student_id(submission_id: int, submission_type: str) -> int:
+def _get_student_id(submission_id: int, submission_type: str) -> Optional[int]:
     """Look up the student_id that owns a submission."""
     if submission_type == 'assignment':
         sub = AssignmentSubmission.query.get(submission_id)
     elif submission_type == 'project':
         sub = ProjectSubmission.query.get(submission_id)
     else:
-        return 0
-    return sub.student_id if sub else 0
+        return None
+    return sub.student_id if sub else None
 
 
 def _apply_grade_to_submission(result: ExcelGradingResult):

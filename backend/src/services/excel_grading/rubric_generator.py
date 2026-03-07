@@ -724,12 +724,12 @@ class RubricGenerator:
         categories = {c['category'] for c in criteria if c.get('max_points', 0) > 0}
 
         return {
-            'scope_formulas':    'Formulas' in categories or True,  # always on
+            'scope_formulas':    True,  # Formulas always in scope for Excel grading
             'scope_pivots':      'PivotTables' in categories,
             'scope_charts':      'Charts' in categories,
             'scope_vba':         'VBA' in categories,
             'scope_power_query': 'PowerQuery_M' in categories,
-            'scope_formatting':  'Formatting' in categories or True,  # always on
+            'scope_formatting':  True,  # Formatting always in scope for Excel grading
         }
 
     # ------------------------------------------------------------------

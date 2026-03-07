@@ -172,8 +172,13 @@ class ExcelAnalyzer:
         is_protected = ws.protection.sheet if ws.protection else False
 
         # Scan cells (limit scan for very large sheets)
-        max_rows = min(ws.max_row or 0, 500)
-        max_cols = min(ws.max_column or 0, 50)
+        MAX_SCAN_ROWS = 500
+        MAX_SCAN_COLS = 50
+        actual_rows = ws.max_row or 0
+        actual_cols = ws.max_column or 0
+        max_rows = min(actual_rows, MAX_SCAN_ROWS)
+        max_cols = min(actual_cols, MAX_SCAN_COLS)
+        scan_truncated = actual_rows > MAX_SCAN_ROWS or actual_cols > MAX_SCAN_COLS
 
         for row in ws.iter_rows(min_row=1, max_row=max_rows,
                                 min_col=1, max_col=max_cols):
@@ -239,6 +244,7 @@ class ExcelAnalyzer:
             'merged_cell_count': len(merged_ranges),
             'is_protected': is_protected,
             'data_types_found': list(data_types_found),
+            'scan_truncated': scan_truncated,
         }
 
     # ------------------------------------------------------------------

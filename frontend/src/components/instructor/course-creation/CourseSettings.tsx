@@ -49,6 +49,7 @@ interface ModuleReleaseStatus {
   is_auto_released: boolean;
   is_globally_released?: boolean;
   is_cohort_released?: boolean;
+  is_cohort_blocked?: boolean;
   released_at: string | null;
   lesson_count: number;
 }
@@ -243,9 +244,11 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   };
 
   // Toggle module release for a specific cohort
-  const handleToggleCohortModuleRelease = async (cohortId: string, moduleId: number, currentlyReleased: boolean) => {
+  // action can be: 'release', 'unrelease', 'block', or 'unblock'
+  const handleToggleCohortModuleRelease = async (cohortId: string, moduleId: number, currentlyReleased: boolean, action?: string) => {
     if (!token) return;
     setReleasingModuleId(moduleId);
+    const resolvedAction = action || (currentlyReleased ? 'unrelease' : 'release');
     try {
       const response = await fetch(
         `${API_URL}/courses/${course.id}/cohorts/${cohortId}/modules/${moduleId}/release`,
@@ -255,12 +258,18 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
             'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({ action: currentlyReleased ? 'unrelease' : 'release' })
+          body: JSON.stringify({ action: resolvedAction })
         }
       );
-      if (!response.ok) throw new Error(`Failed to ${currentlyReleased ? 'unrelease' : 'release'} module`);
+      if (!response.ok) throw new Error(`Failed to ${resolvedAction} module`);
       await fetchCohortModuleReleaseStatus(cohortId);
-      setSuccess(`Module ${currentlyReleased ? 'unreleased' : 'released'} for cohort successfully`);
+      const actionLabels: Record<string, string> = {
+        release: 'released for cohort',
+        unrelease: 'unreleased for cohort',
+        block: 'blocked for this cohort',
+        unblock: 'unblocked for this cohort'
+      };
+      setSuccess(`Module ${actionLabels[resolvedAction] || resolvedAction} successfully`);
     } catch (err: any) {
       setError(err.message || 'Failed to update module');
     } finally {
@@ -275,11 +284,21 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     setError(null);
     setSuccess(null);
     try {
+      const resolveIntervalDays = (interval: string, customDays: number): number | null => {
+        switch (interval) {
+          case 'weekly': return 7;
+          case 'bi-weekly': return 14;
+          case 'monthly': return 28;
+          case 'custom': return customDays;
+          default: return null;
+        }
+      };
+
       const payload = cohortReleaseOverride
         ? {
             module_release_count: cohortReleaseCount,
             module_release_interval: cohortReleaseInterval !== 'manual' ? cohortReleaseInterval : null,
-            module_release_interval_days: cohortReleaseInterval === 'custom' ? cohortReleaseIntervalDays : null,
+            module_release_interval_days: resolveIntervalDays(cohortReleaseInterval, cohortReleaseIntervalDays),
           }
         : {
             module_release_count: null,
@@ -518,11 +537,21 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     setSuccess(null);
     
     try {
+      const resolveIntervalDays = (interval: string, customDays: number): number | null => {
+        switch (interval) {
+          case 'weekly': return 7;
+          case 'bi-weekly': return 14;
+          case 'monthly': return 28;
+          case 'custom': return customDays;
+          default: return null;
+        }
+      };
+
       const settings = {
         start_date: startDate || null,
         module_release_count: enableModuleRelease ? moduleReleaseCount : null,
         module_release_interval: enableModuleRelease && releaseInterval !== 'manual' ? releaseInterval : null,
-        module_release_interval_days: enableModuleRelease && releaseInterval === 'custom' ? customIntervalDays : null
+        module_release_interval_days: enableModuleRelease ? resolveIntervalDays(releaseInterval, customIntervalDays) : null
       };
       
       const response = await fetch(`${API_URL}/courses/${course.id}/module-release-settings`, {
@@ -538,8 +567,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         throw new Error('Failed to save settings');
       }
       
-      const data: { message: string; course?: Course } = await response.json();
-      setSuccess('Module release settings saved successfully');
+      const data: { message: string; course?: Course; revoked_global_releases?: number } = await response.json();
+      setSuccess(data.message || 'Module release settings saved successfully');
       
       // Refresh the status
       await fetchModuleReleaseStatus();
@@ -572,9 +601,14 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         throw new Error(`Failed to ${endpoint} module`);
       }
       
+      const data = await response.json() as { note?: string };
+      
       // Refresh the status
       await fetchModuleReleaseStatus();
-      setSuccess(`Module ${currentlyReleased ? 'unreleased' : 'released'} successfully`);
+      
+      // Show note about affected cohorts if present
+      const note = data?.note;
+      setSuccess(`Module ${currentlyReleased ? 'unreleased' : 'released'} successfully${note ? '. ' + note : ''}`);
     } catch (err: any) {
       setError(err.message || 'Failed to update module');
     } finally {
@@ -1541,6 +1575,27 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                 />
               </div>
 
+              {!enableModuleRelease && moduleReleaseData?.modules?.some(m => m.is_manually_released) && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-900/20 dark:border-amber-700">
+                  <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                  <div className="text-xs sm:text-sm text-amber-700 dark:text-amber-300">
+                    <strong>Warning:</strong> Saving with global release disabled will revoke{' '}
+                    {moduleReleaseData.modules.filter(m => m.is_manually_released).length} globally released module(s).
+                    Modules will only be available through cohort-level release settings.
+                  </div>
+                </div>
+              )}
+
+              {!enableModuleRelease && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 dark:bg-blue-900/20 dark:border-blue-700">
+                  <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs sm:text-sm text-blue-700 dark:text-blue-300">
+                    With global release disabled, module availability is controlled per-cohort.
+                    Configure release settings in each cohort&apos;s tab.
+                  </p>
+                </div>
+              )}
+
               {enableModuleRelease && (
                 <>
                   <Separator />
@@ -1912,11 +1967,15 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                         </p>
                         <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 flex-wrap">
                           <span>{module.lesson_count} lessons</span>
-                          {module.is_released && (
+                          {(module.is_released || module.is_cohort_blocked) && (
                             <>
                               <span>·</span>
                               {isCohortView ? (
-                                module.is_globally_released ? (
+                                module.is_cohort_blocked ? (
+                                  <Badge variant="outline" className="text-xs px-1.5 py-0 bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700">
+                                    Blocked
+                                  </Badge>
+                                ) : module.is_globally_released ? (
                                   <Badge variant="outline" className="text-xs px-1.5 py-0 bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-700">
                                     Global
                                   </Badge>
@@ -1951,24 +2010,39 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                         <TooltipTrigger asChild>
                           {isCohortView ? (
                             <Button
-                              variant={module.is_cohort_released ? "outline" : "default"}
+                              variant={module.is_cohort_released || module.is_cohort_blocked ? "outline" : "default"}
                               size="sm"
-                              onClick={() => handleToggleCohortModuleRelease(
-                                selectedCohortForRelease, module.id, !!module.is_cohort_released
-                              )}
-                              disabled={releasingModuleId === module.id || !!module.is_globally_released}
+                              onClick={() => {
+                                if (module.is_globally_released) {
+                                  // Block/unblock a globally released module for this cohort
+                                  handleToggleCohortModuleRelease(
+                                    selectedCohortForRelease, module.id, false,
+                                    module.is_cohort_blocked ? 'unblock' : 'block'
+                                  );
+                                } else {
+                                  // Normal cohort release/unrelease
+                                  handleToggleCohortModuleRelease(
+                                    selectedCohortForRelease, module.id, !!module.is_cohort_released
+                                  );
+                                }
+                              }}
+                              disabled={releasingModuleId === module.id}
                               className={`disabled:opacity-50 disabled:cursor-not-allowed ${
-                                module.is_globally_released
-                                  ? "bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
-                                  : module.is_cohort_released
-                                    ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
-                                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                module.is_cohort_blocked
+                                  ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
+                                  : module.is_globally_released
+                                    ? "border-orange-300 text-orange-600 hover:bg-orange-50 dark:border-orange-700 dark:text-orange-400"
+                                    : module.is_cohort_released
+                                      ? "border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
+                                      : "bg-indigo-600 hover:bg-indigo-700 text-white"
                               }`}
                             >
                               {releasingModuleId === module.id ? (
-                                <><RefreshCw className="h-3 w-3 mr-1 animate-spin" />{module.is_cohort_released ? 'Revoking...' : 'Releasing...'}</>
+                                <><RefreshCw className="h-3 w-3 mr-1 animate-spin" />Processing...</>
+                              ) : module.is_cohort_blocked ? (
+                                <><Unlock className="h-3 w-3 mr-1" />Unblock</>
                               ) : module.is_globally_released ? (
-                                <><CheckCircle className="h-3 w-3 mr-1" />Global</>
+                                <><Lock className="h-3 w-3 mr-1" />Block</>
                               ) : module.is_cohort_released ? (
                                 <><Lock className="h-3 w-3 mr-1" />Revoke</>
                               ) : (
@@ -1998,11 +2072,13 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                         </TooltipTrigger>
                         <TooltipContent>
                           {isCohortView
-                            ? module.is_globally_released
-                              ? "Globally released — manage from Course Default view"
-                              : module.is_cohort_released
-                                ? "Revoke cohort-specific release"
-                                : "Release this module for this cohort only"
+                            ? module.is_cohort_blocked
+                              ? "Unblock this module for this cohort (restore global release visibility)"
+                              : module.is_globally_released
+                                ? "Block this globally released module from this cohort"
+                                : module.is_cohort_released
+                                  ? "Revoke cohort-specific release"
+                                  : "Release this module for this cohort only"
                             : module.is_manually_released
                               ? "Revoke manual release (follows auto schedule)"
                               : "Manually release this module now"

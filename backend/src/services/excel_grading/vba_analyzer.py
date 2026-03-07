@@ -171,9 +171,19 @@ class VBAAnalyzer:
 
     def _extract_from_zip(self):
         """Try to find VBA project info from the .xlsm ZIP structure."""
+        MAX_TOTAL_DECOMPRESSED = 200 * 1024 * 1024  # 200 MB limit
         try:
             buf = BytesIO(self.file_bytes)
             with zipfile.ZipFile(buf, 'r') as zf:
+                # Zip bomb check
+                total_size = sum(info.file_size for info in zf.infolist())
+                if total_size > MAX_TOTAL_DECOMPRESSED:
+                    logger.warning(
+                        f"Zip archive decompressed size ({total_size}) exceeds limit, "
+                        f"skipping VBA extraction"
+                    )
+                    return
+
                 vba_files = [n for n in zf.namelist()
                              if 'vba' in n.lower() or n.endswith('.bin')]
 

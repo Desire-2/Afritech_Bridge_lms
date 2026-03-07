@@ -68,7 +68,17 @@ class PivotAnalyzer:
         buf = BytesIO(self.file_bytes)
         pivots = []
 
+        MAX_TOTAL_DECOMPRESSED = 200 * 1024 * 1024  # 200 MB limit
         with zipfile.ZipFile(buf, 'r') as zf:
+            # Zip bomb check: reject if total decompressed size is excessive
+            total_size = sum(info.file_size for info in zf.infolist())
+            if total_size > MAX_TOTAL_DECOMPRESSED:
+                logger.warning(
+                    f"Zip archive decompressed size ({total_size}) exceeds limit, "
+                    f"skipping pivot analysis"
+                )
+                return []
+
             pivot_files = [n for n in zf.namelist()
                            if n.startswith('xl/pivotTables/') and n.endswith('.xml')]
 

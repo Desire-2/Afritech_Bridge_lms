@@ -503,26 +503,49 @@ class ExcelGradingService:
         """
         Download file bytes from any public HTTP/HTTPS URL.
         Handles Vercel Blob, S3, and any publicly accessible file.
+        Enforces a 100 MB download limit to prevent memory abuse.
         """
         import requests as http_requests
 
+        MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024  # 100 MB
+
         try:
             logger.info(f"Downloading file from URL: {url[:120]}...")
-            resp = http_requests.get(url, timeout=60, stream=True)
+            resp = http_requests.get(url, timeout=(10, 60), stream=True)
             resp.raise_for_status()
 
             # Sanity-check: reject HTML error pages
             content_type = resp.headers.get('Content-Type', '')
             if 'text/html' in content_type and resp.status_code == 200:
                 # Might be a redirect/login page rather than the actual file
-                first_bytes = resp.content[:50]
-                if b'<!DOCTYPE' in first_bytes or b'<html' in first_bytes:
+                first_chunk = next(resp.iter_content(50), b'')
+                if b'<!DOCTYPE' in first_chunk or b'<html' in first_chunk:
                     logger.warning(
                         f"URL returned HTML instead of a file — possible auth wall: {url[:80]}"
                     )
                     return None
 
-            content = resp.content
+            # Check Content-Length if available
+            content_length = resp.headers.get('Content-Length')
+            if content_length and int(content_length) > MAX_DOWNLOAD_SIZE:
+                logger.warning(
+                    f"File too large ({int(content_length)} bytes) from URL: {url[:80]}"
+                )
+                return None
+
+            # Read in chunks with size limit
+            chunks = []
+            downloaded = 0
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                downloaded += len(chunk)
+                if downloaded > MAX_DOWNLOAD_SIZE:
+                    logger.warning(
+                        f"Download exceeded {MAX_DOWNLOAD_SIZE} bytes, aborting: {url[:80]}"
+                    )
+                    return None
+                chunks.append(chunk)
+
+            content = b''.join(chunks)
             if not content:
                 logger.warning(f"Empty response from URL: {url[:80]}")
                 return None
@@ -533,6 +556,12 @@ class ExcelGradingService:
             )
             return content
 
+        except http_requests.Timeout:
+            logger.error(f"Download timed out for {url[:80]}")
+            return None
+        except http_requests.ConnectionError:
+            logger.error(f"Connection failed for {url[:80]}")
+            return None
         except Exception as e:
             logger.error(f"HTTP download failed for {url[:80]}: {e}")
             return None

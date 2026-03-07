@@ -95,111 +95,103 @@ def _run_grading_in_background(
 ):
     """
     Run grading inside a Flask app context in a background thread.
-    Includes retry logic on transient failures.
+    Uses a loop for retry logic to avoid recursive nested app contexts.
     """
-    with app.app_context():
-        try:
-            from . import ExcelGradingService
+    max_attempts = MAX_RETRIES + 1
+    current_attempt = attempt
 
-            logger.info(
-                f"🤖 Auto-grading started: {submission_type} #{submission_id} "
-                f"(attempt {attempt}/{MAX_RETRIES + 1})"
-            )
-
-            service = ExcelGradingService()
-            result = service.grade_submission(
-                submission_id,
-                submission_type,
-                force=(force or attempt > 1),  # Force on resubmission or retry
-            )
-
-            status = result.get('status', 'unknown')
-
-            if status == 'completed':
-                grade_data = result.get('result', {})
-                total_score = grade_data.get('total_score', 0)
-                max_score = grade_data.get('max_score', 100)
+    while current_attempt <= max_attempts:
+        with app.app_context():
+            try:
+                from . import ExcelGradingService
 
                 logger.info(
-                    f"✅ Auto-grading completed: {submission_type} #{submission_id} → "
-                    f"{total_score}/{max_score} "
-                    f"({grade_data.get('grade_letter', '?')})"
+                    f"🤖 Auto-grading started: {submission_type} #{submission_id} "
+                    f"(attempt {current_attempt}/{max_attempts})"
                 )
 
-                # ── Step A: Auto-approve the ExcelGradingResult ──────
-                # Mark the AI result as reviewed/approved so both student
-                # and instructor views treat it as a final grade.
-                _auto_approve_grading_result(
-                    app, submission_id, submission_type, grade_data,
+                service = ExcelGradingService()
+                result = service.grade_submission(
+                    submission_id,
+                    submission_type,
+                    force=(force or current_attempt > 1),
                 )
 
-                # ── Step B: Write grade onto the actual submission record ──
-                # This mirrors what the instructor grading endpoint does,
-                # so the student sees the grade immediately in their UI.
-                _apply_grade_to_submission(
-                    app, submission_id, submission_type, student_id,
-                    total_score, max_score, grade_data,
-                )
+                status = result.get('status', 'unknown')
 
-                # ── Step C: Auto-request modification if below passing ──
-                modification_requested = _auto_request_modification_if_needed(
-                    app, submission_id, submission_type, student_id,
-                    total_score, max_score, grade_data,
-                )
+                if status == 'completed':
+                    grade_data = result.get('result', {})
+                    total_score = grade_data.get('total_score', 0)
+                    max_score = grade_data.get('max_score', 100)
 
-                # ── Step D: Update module progress & lesson completion ──
-                if not modification_requested:
-                    _update_learning_progress(
-                        app, submission_id, submission_type, student_id,
-                        total_score, max_score,
-                    )
-
-                # ── Step E: Notify student ──
-                _notify_student_auto_graded(
-                    app, submission_id, submission_type, student_id, result,
-                    modification_requested=modification_requested,
-                )
-
-            elif status == 'already_graded':
-                logger.info(
-                    f"ℹ️ Auto-grading skipped: {submission_type} #{submission_id} "
-                    f"already graded"
-                )
-
-            elif status in ('failed', 'skipped'):
-                reason = result.get('reason', result.get('message', 'unknown'))
-                logger.warning(
-                    f"⚠️ Auto-grading {status}: {submission_type} #{submission_id} — {reason}"
-                )
-                # Retry on transient failures
-                if (
-                    attempt <= MAX_RETRIES
-                    and result.get('reason') in ('download_failed',)
-                ):
                     logger.info(
-                        f"🔄 Retrying auto-grade in {RETRY_DELAY_SECONDS}s…"
+                        f"✅ Auto-grading completed: {submission_type} #{submission_id} → "
+                        f"{total_score}/{max_score} "
+                        f"({grade_data.get('grade_letter', '?')})"
                     )
-                    time.sleep(RETRY_DELAY_SECONDS)
-                    _run_grading_in_background(
-                        app, submission_id, submission_type,
-                        student_id, attempt + 1, force=force,
-                    )
-            else:
-                logger.warning(
-                    f"❓ Auto-grading returned unexpected status '{status}' "
-                    f"for {submission_type} #{submission_id}"
-                )
 
-        except Exception as e:
-            logger.exception(
-                f"❌ Auto-grading exception for {submission_type} #{submission_id}: {e}"
-            )
-            if attempt <= MAX_RETRIES:
-                time.sleep(RETRY_DELAY_SECONDS)
-                _run_grading_in_background(
-                    app, submission_id, submission_type,
-                    student_id, attempt + 1, force=force,
+                    _auto_approve_grading_result(
+                        app, submission_id, submission_type, grade_data,
+                    )
+                    _apply_grade_to_submission(
+                        app, submission_id, submission_type, student_id,
+                        total_score, max_score, grade_data,
+                    )
+                    modification_requested = _auto_request_modification_if_needed(
+                        app, submission_id, submission_type, student_id,
+                        total_score, max_score, grade_data,
+                    )
+                    if not modification_requested:
+                        _update_learning_progress(
+                            app, submission_id, submission_type, student_id,
+                            total_score, max_score,
+                        )
+                    _notify_student_auto_graded(
+                        app, submission_id, submission_type, student_id, result,
+                        modification_requested=modification_requested,
+                    )
+                    return  # Done
+
+                elif status == 'already_graded':
+                    logger.info(
+                        f"ℹ️ Auto-grading skipped: {submission_type} #{submission_id} "
+                        f"already graded"
+                    )
+                    return
+
+                elif status in ('failed', 'skipped'):
+                    reason = result.get('reason', result.get('message', 'unknown'))
+                    logger.warning(
+                        f"⚠️ Auto-grading {status}: {submission_type} #{submission_id} — {reason}"
+                    )
+                    if (
+                        current_attempt < max_attempts
+                        and result.get('reason') in ('download_failed',)
+                    ):
+                        logger.info(f"🔄 Retrying auto-grade in {RETRY_DELAY_SECONDS}s…")
+                        current_attempt += 1
+                        # Sleep outside app context to release DB connections
+                        break  # Break inner with-block, sleep below
+                    return
+
+                else:
+                    logger.warning(
+                        f"❓ Auto-grading returned unexpected status '{status}' "
+                        f"for {submission_type} #{submission_id}"
+                    )
+                    return
+
+            except Exception as e:
+                logger.exception(
+                    f"❌ Auto-grading exception for {submission_type} #{submission_id}: {e}"
                 )
+                if current_attempt < max_attempts:
+                    current_attempt += 1
+                    break  # Break inner with-block, sleep below
+                return
+
+        # Sleep between retries (outside app context)
+        time.sleep(RETRY_DELAY_SECONDS)
 
 
 def _auto_approve_grading_result(
@@ -607,9 +599,9 @@ def _auto_request_modification_if_needed(
             )
             return False
 
-        # Check resubmission limits
+        # Check resubmission limits — use submission-level count (per-student)
         max_resubs = getattr(parent, 'max_resubmissions', 3) or 3
-        current_resubs = getattr(parent, 'resubmission_count', 0) or 0
+        current_resubs = getattr(submission, 'resubmission_count', 0) or 0
         if current_resubs >= max_resubs:
             logger.info(
                 f"⚠️ Score {score_pct:.1f}% below passing ({passing_score}%) "

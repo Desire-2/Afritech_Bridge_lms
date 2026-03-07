@@ -843,19 +843,53 @@ def update_module_release_settings(course_id):
                 course.start_date = None
         
         if "module_release_count" in data:
-            course.module_release_count = data["module_release_count"]
+            val = data["module_release_count"]
+            if val is not None:
+                val = int(val)
+                if val < 0:
+                    return jsonify({"message": "module_release_count must be non-negative"}), 400
+            course.module_release_count = val
         
         if "module_release_interval" in data:
-            course.module_release_interval = data["module_release_interval"]
+            interval = data["module_release_interval"]
+            valid_intervals = [None, '', 'weekly', 'bi-weekly', 'monthly', 'custom']
+            if interval not in valid_intervals:
+                return jsonify({"message": f"Invalid interval. Must be one of: {', '.join(str(v) for v in valid_intervals)}"}), 400
+            course.module_release_interval = interval or None
         
         if "module_release_interval_days" in data:
-            course.module_release_interval_days = data["module_release_interval_days"]
+            val = data["module_release_interval_days"]
+            if val is not None:
+                val = int(val)
+                if val < 1:
+                    return jsonify({"message": "module_release_interval_days must be at least 1"}), 400
+            course.module_release_interval_days = val
+
+        # When global release is being disabled (all settings null),
+        # revoke all course-level manual releases so cohort-level settings take full control
+        global_disabled = (
+            course.module_release_count is None
+            and course.module_release_interval is None
+            and course.module_release_interval_days is None
+        )
+        revoked_count = 0
+        if global_disabled:
+            globally_released = Module.query.filter_by(course_id=course_id, is_released=True).all()
+            for mod in globally_released:
+                mod.is_released = False
+                mod.released_at = None
+                revoked_count += 1
 
         db.session.commit()
         logger.info(f"Module release settings updated for course {course_id} by user {current_user_id}")
+
+        message = "Module release settings updated"
+        if revoked_count > 0:
+            message += f". {revoked_count} globally released module(s) have been revoked — cohort-level settings now control release."
         return jsonify({
-            "message": "Module release settings updated",
-            "course": course.to_dict()
+            "message": message,
+            "course": course.to_dict(),
+            "revoked_global_releases": revoked_count
         }), 200
     except Exception as e:
         db.session.rollback()
@@ -879,18 +913,19 @@ def get_cohort_module_release_status(course_id, cohort_id):
     released_modules = cohort.get_released_modules_for_cohort()
     released_module_ids = [m.id for m in released_modules]
 
-    # Get cohort-specific manual releases
-    cohort_manual_releases = {
+    # Get ALL cohort-specific release records (both released and blocked)
+    cohort_release_records = {
         cmr.module_id: cmr
-        for cmr in CohortModuleRelease.query.filter_by(cohort_id=cohort_id, is_released=True).all()
+        for cmr in CohortModuleRelease.query.filter_by(cohort_id=cohort_id).all()
     }
 
     modules_status = []
     for module in all_modules:
         is_in_released = module.id in released_module_ids
         is_global_manual = module.is_released
-        is_cohort_manual = module.id in cohort_manual_releases
-        cmr = cohort_manual_releases.get(module.id)
+        cmr = cohort_release_records.get(module.id)
+        is_cohort_manual = cmr.is_released if cmr else False
+        is_cohort_blocked = (cmr is not None and not cmr.is_released) if cmr else False
 
         modules_status.append({
             'id': module.id,
@@ -900,6 +935,7 @@ def get_cohort_module_release_status(course_id, cohort_id):
             'is_released': is_in_released,
             'is_globally_released': is_global_manual,
             'is_cohort_released': is_cohort_manual,
+            'is_cohort_blocked': is_cohort_blocked,
             'is_auto_released': is_in_released and not is_global_manual and not is_cohort_manual,
             'released_at': (cmr.released_at.isoformat() if cmr and cmr.released_at else
                           module.released_at.isoformat() if module.released_at else None),
@@ -948,14 +984,26 @@ def update_cohort_module_release_settings(course_id, cohort_id):
     try:
         if "module_release_count" in data:
             val = data.get("module_release_count")
-            cohort.module_release_count = int(val) if val is not None else None
+            if val is not None:
+                val = int(val)
+                if val < 0:
+                    return jsonify({"message": "module_release_count must be non-negative"}), 400
+            cohort.module_release_count = val
 
         if "module_release_interval" in data:
-            cohort.module_release_interval = data.get("module_release_interval") or None
+            interval = data.get("module_release_interval") or None
+            valid_intervals = [None, 'weekly', 'bi-weekly', 'monthly', 'custom']
+            if interval not in valid_intervals:
+                return jsonify({"message": f"Invalid interval. Must be one of: {', '.join(str(v) for v in valid_intervals)}"}), 400
+            cohort.module_release_interval = interval
 
         if "module_release_interval_days" in data:
             val = data.get("module_release_interval_days")
-            cohort.module_release_interval_days = int(val) if val is not None else None
+            if val is not None:
+                val = int(val)
+                if val < 1:
+                    return jsonify({"message": "module_release_interval_days must be at least 1"}), 400
+            cohort.module_release_interval_days = val
 
         db.session.commit()
         logger.info(f"Cohort {cohort_id} module release settings updated by user {current_user_id}")
@@ -983,7 +1031,7 @@ def toggle_cohort_module_release(course_id, cohort_id, module_id):
     module = Module.query.filter_by(id=module_id, course_id=course_id).first_or_404()
 
     data = request.get_json() or {}
-    action = data.get("action", "release")  # 'release' or 'unrelease'
+    action = data.get("action", "release")  # 'release', 'unrelease', or 'block'
 
     try:
         existing = CohortModuleRelease.query.filter_by(
@@ -1007,8 +1055,42 @@ def toggle_cohort_module_release(course_id, cohort_id, module_id):
             db.session.commit()
             logger.info(f"Module {module_id} released for cohort {cohort_id} by user {current_user_id}")
             return jsonify({"message": f"Module '{module.title}' released for cohort '{cohort.cohort_label}'"}), 200
+
+        elif action == "block":
+            # Block a globally released module from this specific cohort
+            if existing:
+                existing.is_released = False
+                existing.released_at = None
+                existing.released_by = current_user_id
+            else:
+                cmr = CohortModuleRelease(
+                    cohort_id=cohort_id,
+                    module_id=module_id,
+                    is_released=False,
+                    released_at=None,
+                    released_by=current_user_id
+                )
+                db.session.add(cmr)
+            db.session.commit()
+            logger.info(f"Module {module_id} blocked for cohort {cohort_id} by user {current_user_id}")
+            return jsonify({
+                "message": f"Module '{module.title}' blocked for cohort '{cohort.cohort_label}'",
+                "note": "This module will be hidden from students in this cohort even though it is globally released."
+            }), 200
+
+        elif action == "unblock":
+            # Remove a cohort-level block (restore global release visibility)
+            if existing and not existing.is_released:
+                db.session.delete(existing)
+                db.session.commit()
+            logger.info(f"Module {module_id} unblocked for cohort {cohort_id} by user {current_user_id}")
+            return jsonify({
+                "message": f"Module '{module.title}' unblocked for cohort '{cohort.cohort_label}'",
+                "note": "This module will now follow global release settings for this cohort."
+            }), 200
+
         else:
-            # Unrelease
+            # Unrelease (remove cohort-specific manual release)
             if existing:
                 existing.is_released = False
                 existing.released_at = None
@@ -1187,9 +1269,21 @@ def release_module(module_id):
         module.released_at = datetime.utcnow()
         db.session.commit()
         logger.info(f"Module {module_id} manually released by user {current_user_id}")
+
+        # Count active cohorts that will see this module due to global release
+        active_cohorts = ApplicationWindow.query.filter_by(course_id=course.id).all()
+        # Cohorts that have explicitly blocked this module won't be affected
+        blocked_cohort_count = CohortModuleRelease.query.filter_by(
+            module_id=module_id, is_released=False
+        ).count()
+        affected_cohorts = len(active_cohorts) - blocked_cohort_count
+
         return jsonify({
             "message": "Module released successfully",
-            "module": module.to_dict()
+            "module": module.to_dict(),
+            "affected_cohorts": affected_cohorts,
+            "total_cohorts": len(active_cohorts),
+            "note": f"This module is now visible to students in {affected_cohorts} cohort(s). Cohorts with explicit blocks are excluded." if active_cohorts else None
         }), 200
     except Exception as e:
         db.session.rollback()
@@ -1212,9 +1306,24 @@ def unrelease_module(module_id):
         module.released_at = None
         db.session.commit()
         logger.info(f"Module {module_id} release revoked by user {current_user_id}")
+
+        # Count cohorts where this module was visible only due to global release
+        # (not via cohort manual release or auto-release)
+        active_cohorts = ApplicationWindow.query.filter_by(course_id=course.id).all()
+        cohort_released_ids = set(
+            cmr.cohort_id for cmr in CohortModuleRelease.query.filter_by(
+                module_id=module_id, is_released=True
+            ).all()
+        )
+        # Cohorts that don't have their own release will lose access
+        cohorts_losing_access = len([c for c in active_cohorts if c.id not in cohort_released_ids])
+
         return jsonify({
             "message": "Module release revoked",
-            "module": module.to_dict()
+            "module": module.to_dict(),
+            "cohorts_losing_access": cohorts_losing_access,
+            "total_cohorts": len(active_cohorts),
+            "note": f"Students in {cohorts_losing_access} cohort(s) may lose access to this module (unless covered by auto-release)." if cohorts_losing_access > 0 else None
         }), 200
     except Exception as e:
         db.session.rollback()

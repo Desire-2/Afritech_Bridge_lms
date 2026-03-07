@@ -290,29 +290,15 @@ def get_course_for_learning(course_id):
         # OPTIMIZED: Load modules and lessons in efficient batch queries
         # For students: only show published AND released modules
         # For instructors/admins: show all modules
+        total_published_count = None  # Track for student sidebar "X of Y modules"
         if is_instructor or is_admin:
             # Instructors and admins see all modules
             modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
         else:
-            # Students: filter for published modules and apply release settings
-            published_modules = course.modules.filter_by(is_published=True).order_by(Module.order).all()
-            
-            # Apply course release settings to determine which published modules to show
-            released_count = course.get_released_module_count()
-            
-            if released_count is None:
-                # All published modules are released
-                modules = published_modules
-            else:
-                # Apply release logic: show modules that are either manually released or within auto-release count
-                modules = []
-                auto_released_count = 0
-                
-                for module in published_modules:
-                    if module.is_released or auto_released_count < released_count:
-                        modules.append(module)
-                        if not module.is_released:
-                            auto_released_count += 1
+            # Students: use cohort-aware release logic
+            cohort_id = enrollment.application_window_id if enrollment else None
+            modules = course.get_released_modules(cohort_id=cohort_id)
+            total_published_count = course.modules.filter_by(is_published=True).count()
         
         module_ids = [m.id for m in modules]
         
@@ -398,6 +384,8 @@ def get_course_for_learning(course_id):
             "title": course.title,
             "description": course.description,
             "instructor_id": course.instructor_id,
+            "total_module_count": total_published_count if total_published_count is not None else len(modules),
+            "released_module_count": len(modules),
             "modules": [{
                 "id": m.id,
                 "title": m.title,
@@ -546,25 +534,9 @@ def get_course_modules(course_id):
             # Instructors and admins see all modules
             modules = course.modules.order_by(Module.order).all()
         else:
-            # Students: filter for published modules and apply release settings
-            published_modules = course.modules.filter_by(is_published=True).order_by(Module.order).all()
-            
-            # Apply course release settings to determine which published modules to show
-            released_count = course.get_released_module_count()
-            
-            if released_count is None:
-                # All published modules are released
-                modules = published_modules
-            else:
-                # Apply release logic: show modules that are either manually released or within auto-release count
-                modules = []
-                auto_released_count = 0
-                
-                for module in published_modules:
-                    if module.is_released or auto_released_count < released_count:
-                        modules.append(module)
-                        if not module.is_released:
-                            auto_released_count += 1
+            # Students: use cohort-aware release logic
+            cohort_id = enrollment.application_window_id if enrollment else None
+            modules = course.get_released_modules(cohort_id=cohort_id)
         
         # Get progress for each module
         modules_data = []

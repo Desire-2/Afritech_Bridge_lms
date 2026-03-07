@@ -35,7 +35,9 @@ class ProgressionService:
                 return {"error": "Enrollment not found"}
             
             course = Course.query.get(course_id)
-            modules = course.modules.order_by('order').all()
+            # Use cohort-aware module release logic
+            cohort_id = enrollment.application_window_id if enrollment else None
+            modules = course.get_released_modules(cohort_id=cohort_id)
             
             progress_data = {
                 "course": course.to_dict(),

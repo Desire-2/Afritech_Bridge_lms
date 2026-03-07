@@ -147,6 +147,17 @@ class Course(db.Model):
         
         return summary
 
+    @staticmethod
+    def _resolve_interval_days(interval_days, interval_name):
+        """Resolve the effective interval in days from explicit days or named interval."""
+        if interval_days and interval_days > 0:
+            return interval_days
+        # Convert named interval to days when interval_days is not set
+        interval_map = {'weekly': 7, 'bi-weekly': 14, 'monthly': 28}
+        if interval_name and interval_name in interval_map:
+            return interval_map[interval_name]
+        return None
+
     def get_released_module_count(self):
         """
         Calculate how many modules should be released based on settings and current date.
@@ -165,17 +176,23 @@ class Course(db.Model):
         
         now = datetime.utcnow()
         
+        # Ensure both datetimes are naive for comparison
+        start_naive = start_date.replace(tzinfo=None) if hasattr(start_date, 'tzinfo') and start_date.tzinfo else start_date
+        
         # If course hasn't started yet, return 0
-        if now < start_date:
+        if now < start_naive:
             return 0
         
         # Start with the initial release count
         released_count = self.module_release_count
         
-        # If time-based release is configured, calculate additional releases
-        if self.module_release_interval_days and self.module_release_interval_days > 0:
-            days_since_start = (now - start_date).days
-            additional_releases = days_since_start // self.module_release_interval_days
+        # Resolve interval days from explicit value or named interval
+        effective_days = Course._resolve_interval_days(
+            self.module_release_interval_days, self.module_release_interval
+        )
+        if effective_days:
+            days_since_start = (now - start_naive).days
+            additional_releases = days_since_start // effective_days
             released_count += additional_releases
         
         return released_count
@@ -203,6 +220,9 @@ class Course(db.Model):
         if released_count is None:
             return published_modules
         
+        # Cap at total published modules
+        released_count = min(released_count, len(published_modules))
+
         released_modules = []
         auto_released_count = 0
         
@@ -212,10 +232,6 @@ class Course(db.Model):
                 released_modules.append(module)
                 if not module.is_released:
                     auto_released_count += 1
-            else:
-                # Check if manually released
-                if module.is_released:
-                    released_modules.append(module)
         
         return released_modules
 
@@ -538,16 +554,20 @@ class ApplicationWindow(db.Model):
 
         # If cohort hasn't started yet, return 0
         # Make both datetimes naive for comparison
-        start_naive = start_date.replace(tzinfo=None) if start_date.tzinfo else start_date
+        start_naive = start_date.replace(tzinfo=None) if hasattr(start_date, 'tzinfo') and start_date.tzinfo else start_date
         if now < start_naive:
             return 0
 
         released = release_count
 
-        interval_days = self.get_effective_module_release_interval_days()
-        if interval_days and interval_days > 0:
+        # Resolve interval days from explicit value or named interval
+        effective_days = Course._resolve_interval_days(
+            self.get_effective_module_release_interval_days(),
+            self.get_effective_module_release_interval()
+        )
+        if effective_days:
             days_since_start = (now - start_naive).days
-            additional = days_since_start // interval_days
+            additional = days_since_start // effective_days
             released += additional
 
         return released
@@ -556,7 +576,16 @@ class ApplicationWindow(db.Model):
         """
         Get the list of modules that should be visible to students in THIS cohort.
         Takes into account publication status, cohort-level release settings,
-        per-cohort manual releases, and global manual releases.
+        per-cohort manual releases, global manual releases, and cohort-level blocks.
+
+        Priority (highest to lowest):
+        1. Cohort-level block (CohortModuleRelease.is_released=False) — overrides global release
+        2. Global manual release (module.is_released=True) — only when course has global settings
+        3. Cohort-specific manual release (CohortModuleRelease.is_released=True)
+        4. Auto-release (within calculated count based on time)
+
+        When the course has no global release settings (module_release_count is None),
+        global manual releases are ignored so cohort-level settings have full control.
         """
         if not self.course:
             return []
@@ -566,28 +595,36 @@ class ApplicationWindow(db.Model):
         )
         released_count = self.get_released_module_count_for_cohort()
 
-        # Build set of cohort-specific manually released module IDs
-        cohort_manual_ids = set()
-        cohort_manual_releases = CohortModuleRelease.query.filter_by(
-            cohort_id=self.id, is_released=True
-        ).all()
-        for cmr in cohort_manual_releases:
-            cohort_manual_ids.add(cmr.module_id)
+        # Check if the course has global release settings active
+        course_has_global_release = self.course.module_release_count is not None
 
-        # If no limit, return all published modules
+        # Load ALL cohort release records (both released and blocked)
+        cohort_released_ids = set()
+        cohort_blocked_ids = set()
+        for cmr in CohortModuleRelease.query.filter_by(cohort_id=self.id).all():
+            if cmr.is_released:
+                cohort_released_ids.add(cmr.module_id)
+            else:
+                cohort_blocked_ids.add(cmr.module_id)
+
+        # If no limit, return all published modules (minus cohort-blocked ones)
         if released_count is None:
-            return published_modules
+            return [m for m in published_modules if m.id not in cohort_blocked_ids]
+
+        # Cap at total published modules
+        released_count = min(released_count, len(published_modules))
 
         released_modules = []
         auto_released_count = 0
 
         for module in published_modules:
-            # Module is released if:
-            # 1. It has a global manual release (module.is_released) OR
-            # 2. It has a cohort-specific manual release OR
-            # 3. It falls within the auto-release count
-            is_global_released = module.is_released
-            is_cohort_released = module.id in cohort_manual_ids
+            # A cohort-level block overrides everything, including global release
+            if module.id in cohort_blocked_ids:
+                continue
+
+            # Only honour global manual release when the course has global release active
+            is_global_released = module.is_released and course_has_global_release
+            is_cohort_released = module.id in cohort_released_ids
 
             if is_global_released or is_cohort_released or auto_released_count < released_count:
                 released_modules.append(module)
