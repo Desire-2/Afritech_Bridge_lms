@@ -55,7 +55,8 @@ def send_grade_notification(submission, assignment, student, grade, feedback):
             grade=grade,
             points_possible=points_possible,
             feedback=feedback or "",
-            passed=passed
+            passed=passed,
+            assignment_id=assignment.id
         )
         
         # Check if brevo service is available
@@ -111,9 +112,8 @@ def send_grade_with_modification_notification(submission, assignment, student, g
         except (AttributeError, TypeError):
             pass
         
-        # Generate resubmission URL
-        assignment_id = assignment.id if assignment else None
-        resubmit_url = f"{frontend_url}/student/{item_type}s/{assignment_id}/resubmit" if frontend_url and assignment_id else "#"
+        # Generate resubmission URL - links to the modifications page
+        resubmit_url = f"{frontend_url}/student/modifications" if frontend_url else "#"
         
         email_html = assignment_graded_with_modification_email(
             student_name=student_name,
@@ -279,7 +279,8 @@ def send_project_graded_notification(submission, project, student, grade, feedba
             grade=grade,
             points_possible=points_possible,
             feedback=feedback or "",
-            passed=passed
+            passed=passed,
+            assignment_id=project.id
         )
         
         brevo_service.send_email(
@@ -313,10 +314,8 @@ def send_modification_request_notification(student_email, student_name, assignme
         item_type = "project" if is_project else "assignment"
         subject = f"📝 Modification Requested: {assignment_title}"
         
-        # Generate resubmission URL if frontend_url is provided
-        resubmit_url = "#"
-        if frontend_url and assignment_id:
-            resubmit_url = f"{frontend_url}/student/assignments/{assignment_id}/resubmit"
+        # Generate resubmission URL - links to the modifications page
+        resubmit_url = f"{frontend_url}/student/modifications" if frontend_url else "#"
         
         # Format due date if provided
         due_date_html = ""

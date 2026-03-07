@@ -2,7 +2,16 @@
 ✨ Modern & Creative Email Templates for Afritech Bridge LMS
 Beautiful, responsive, and engaging email designs
 """
+import os
 from datetime import datetime
+
+
+def _frontend_url(path=""):
+    """Build a full frontend URL from FRONTEND_URL env var and a relative path."""
+    base = os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')
+    if path:
+        return f"{base}/{path.lstrip('/')}"
+    return base
 
 def get_email_header():
     """Modern email header with gradient and branding"""
@@ -145,7 +154,7 @@ def get_email_footer():
                 </p>
                 
                 <div style="margin: 25px 0; padding: 20px 0; border-top: 1px solid rgba(255,255,255,0.1); border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <a href="mailto:Afritechh.bridge@yahoo.com" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
+                    <a href="mailto:afritech.bridge@yahoo.com" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(102, 126, 234, 0.2); color: #60a5fa; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
                         📧 Support
                     </a>
                     <a href="https://wa.me/250780784924" class="mobile-full-width" style="display: inline-block; background-color: #e5e7eb; background: rgba(37, 211, 102, 0.2); color: #25d366; padding: 10px 20px; text-decoration: none; border-radius: 8px; margin: 5px; font-size: 13px; font-weight: 500;">
@@ -512,8 +521,8 @@ def application_approved_email(application, course, username, temp_password, cus
                     <tr>
                         <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
                         <td style="padding: 12px 0;">
-                            <a href="https://study.Afritechhbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
-                                study.Afritechhbridge.online
+                            <a href="{_frontend_url('auth/login')}" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
+                                {_frontend_url()}
                             </a>
                         </td>
                     </tr>
@@ -578,8 +587,8 @@ def application_approved_email(application, course, username, temp_password, cus
                     <tr>
                         <td style="padding: 12px 0; font-weight: 600; color: #e5e7eb;"><span style="margin-right: 8px;">🌐</span> Login URL:</td>
                         <td style="padding: 12px 0;">
-                            <a href="https://study.Afritechhbridge.online/auth/login" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
-                                study.Afritechhbridge.online
+                            <a href="{_frontend_url('auth/login')}" style="color: #60a5fa; text-decoration: none; font-weight: 600;">
+                                {_frontend_url()}
                             </a>
                         </td>
                     </tr>
@@ -689,7 +698,7 @@ def application_approved_email(application, course, username, temp_password, cus
         
         <!-- Call to Action -->
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.Afritechhbridge.online/auth/login" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="{_frontend_url('auth/login')}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 🚀 Access Your Dashboard
             </a>
         </div>
@@ -846,7 +855,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                     </div>
                     
                     <div style="text-align: center;">
-                        <a href="https://study.Afritechhbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
+                        <a href="{_frontend_url('courses')}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); text-transform: uppercase; letter-spacing: 1px; mobile-button">
                             🔍 Browse All Courses
                         </a>
                         <p style="color: #bdc3c7; margin: 15px 0 0 0; font-size: 13px;">
@@ -1102,7 +1111,7 @@ def application_waitlisted_email(application, course_title, position=None, estim
                                 can strengthen your background for this one! 💪
                             </p>
                             <div style="text-align: center;">
-                                <a href="https://study.Afritechhbridge.online/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); mobile-button">
+                                <a href="{_frontend_url('courses')}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 14px 35px; text-decoration: none; border-radius: 30px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); mobile-button">
                                     🔍 Browse Available Courses
                                 </a>
                             </div>
@@ -1321,7 +1330,7 @@ def assignment_graded_with_modification_email(student_name, student_email, assig
     {get_email_footer()}
     """
 
-def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True):
+def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True, assignment_id=None):
     """Email template for graded assignment notification"""
     percentage = (grade / points_possible * 100) if points_possible > 0 else 0
     status_color = "#059669" if passed else "#dc2626"
@@ -1405,7 +1414,7 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
         </div>'''}
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="{_frontend_url(f'student/assignments/{assignment_id}') if assignment_id else _frontend_url('student/courses')}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Full Details
             </a>
         </div>
@@ -1421,12 +1430,10 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
 
 def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None):
     """Email template for course announcements"""
-    import os
     # Clean and format the content (strip HTML if needed, truncate if too long)
     clean_content = announcement_content[:500] + "..." if len(announcement_content) > 500 else announcement_content
-    # Build the announcement link from FRONTEND_URL env var
-    frontend_base = (announcement_url or os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online')).rstrip('/')
-    announcement_link = f"{frontend_base}/student/announcements"
+    # Build the announcement link
+    announcement_link = announcement_url or _frontend_url('student/announcements')
     
     return f"""
     {get_email_header()}
@@ -1546,7 +1553,7 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
+            <a href="{_frontend_url('student/courses')}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; mobile-button">
                 View Detailed Results
             </a>
         </div>
@@ -1828,7 +1835,7 @@ def application_status_withdrawn_email(application, course_title, reason=None):
                         You're always welcome to submit a new application if you'd like to join this course in the future.
                     </p>
                     <div style="text-align: center;">
-                        <a href="https://study.Afritechhbridge.online/courses" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
+                        <a href="{_frontend_url('courses')}" class="mobile-button" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; text-decoration: none; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);">
                             📚 Browse Courses
                         </a>
                     </div>
@@ -2127,7 +2134,7 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
         
         <!-- CTA Button -->
         <div style="text-align: center; margin: 40px 0;">
-            <a href="https://study.Afritechhbridge.online/student/courses" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 15px; font-weight: 700; font-size: 18px; mobile-button; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); border: 3px solid rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: 1px;">
+            <a href="{_frontend_url('student/courses')}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 20px 50px; text-decoration: none; border-radius: 15px; font-weight: 700; font-size: 18px; mobile-button; box-shadow: 0 10px 30px rgba(16, 185, 129, 0.4); border: 3px solid rgba(255,255,255,0.2); text-transform: uppercase; letter-spacing: 1px;">
                 📊 View Course Progress
             </a>
             <p style="color: rgba(255,255,255,0.8); margin: 15px 0 0 0; font-size: 14px;">
@@ -2412,7 +2419,7 @@ def maintenance_completed_email(recipient_name, downtime_duration=None, improvem
         
         <!-- CTA Button -->
         <div style="text-align: center; margin: 40px 0;">
-            <a href="https://study.afritechbridge.online" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px 50px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 18px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);">
+            <a href="{_frontend_url()}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px 50px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 18px; box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);">
                 🚀 Resume Learning
             </a>
         </div>

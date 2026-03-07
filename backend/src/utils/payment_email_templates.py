@@ -3,7 +3,7 @@
 Beautiful, responsive email designs for all payment-related actions
 """
 from datetime import datetime
-from .email_templates import get_email_header, get_email_footer
+from .email_templates import get_email_header, get_email_footer, _frontend_url
 
 
 def application_saved_payment_pending_email(application, course_title, payment_info):
@@ -144,7 +144,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                 
                 <!-- Action Button -->
                 <div style="text-align: center; margin: 40px 0;">
-                    <a href="https://study.Afritechhbridge.online/student/courses/apply?applicationId={application.id}" 
+                    <a href="{_frontend_url(f'courses/{application.course_id}/apply')}" 
                        style="display: inline-block; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4); transition: all 0.3s ease;">
                         💳 Complete Payment Now
                     </a>
@@ -170,7 +170,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                     </p>
                     <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
                         If you have any questions about the payment process or need assistance,<br>
-                        feel free to contact us at <a href="mailto:support@Afritechhbridge.online" style="color: #8b5cf6; text-decoration: none; font-weight: 600;">support@Afritechhbridge.online</a>
+                        feel free to contact us at <a href="mailto:afritech.bridge@yahoo.com" style="color: #8b5cf6; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
                     </p>
                 </div>
                 
@@ -355,7 +355,7 @@ def payment_confirmation_email(application, course_title, payment_details):
                 
                 <!-- Action Button -->
                 <div style="text-align: center; margin: 40px 0;">
-                    <a href="https://study.Afritechhbridge.online/student/dashboard" 
+                    <a href="{_frontend_url('student/dashboard')}" 
                        style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);">
                         🚀 Go to Dashboard
                     </a>
@@ -368,7 +368,7 @@ def payment_confirmation_email(application, course_title, payment_details):
                     </p>
                     <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
                         Our support team is always ready to help at<br>
-                        <a href="mailto:support@Afritechhbridge.online" style="color: #10b981; text-decoration: none; font-weight: 600;">support@Afritechhbridge.online</a>
+                        <a href="mailto:afritech.bridge@yahoo.com" style="color: #10b981; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
                     </p>
                 </div>
                 
@@ -499,7 +499,7 @@ def payment_failed_email(application, course_title, failure_reason=None):
                 
                 <!-- Action Button -->
                 <div style="text-align: center; margin: 40px 0;">
-                    <a href="https://study.Afritechhbridge.online/student/courses/apply?applicationId={application.id}" 
+                    <a href="{_frontend_url(f'courses/{application.course_id}/apply')}" 
                        style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);">
                         🔄 Try Payment Again
                     </a>
@@ -512,7 +512,7 @@ def payment_failed_email(application, course_title, failure_reason=None):
                     </p>
                     <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
                         Our support team is here to help at<br>
-                        <a href="mailto:support@Afritechhbridge.online" style="color: #f59e0b; text-decoration: none; font-weight: 600;">support@Afritechhbridge.online</a>
+                        <a href="mailto:afritech.bridge@yahoo.com" style="color: #f59e0b; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
                         <br><br>
                         Or call us at: <strong style="color: #ffffff;">+237 XXX XXX XXX</strong>
                     </p>
@@ -679,7 +679,7 @@ def payment_reminder_email(application, course_title, payment_info):
                 
                 <!-- Action Button -->
                 <div style="text-align: center; margin: 40px 0;">
-                    <a href="https://study.Afritechhbridge.online/student/courses/apply?applicationId={application.id}" 
+                    <a href="{_frontend_url(f'courses/{application.course_id}/apply')}" 
                        style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);">
                         💳 Complete Payment Now
                     </a>
@@ -691,7 +691,7 @@ def payment_reminder_email(application, course_title, payment_info):
                         Need Help with Payment? 🤝
                     </p>
                     <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
-                        Contact us at <a href="mailto:support@Afritechhbridge.online" style="color: #f59e0b; text-decoration: none; font-weight: 600;">support@Afritechhbridge.online</a>
+                        Contact us at <a href="mailto:afritech.bridge@yahoo.com" style="color: #f59e0b; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
                     </p>
                 </div>
                 
@@ -845,7 +845,7 @@ def payment_refund_email(application, course_title, refund_details):
                     </p>
                     <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
                         Our support team is here to help at<br>
-                        <a href="mailto:support@Afritechhbridge.online" style="color: #3b82f6; text-decoration: none; font-weight: 600;">support@Afritechhbridge.online</a>
+                        <a href="mailto:afritech.bridge@yahoo.com" style="color: #3b82f6; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
                     </p>
                 </div>
                 
