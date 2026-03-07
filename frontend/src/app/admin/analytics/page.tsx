@@ -9,7 +9,7 @@ const AnalyticsDashboard = dynamic(
   {
     loading: () => (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-white/30"></div>
       </div>
     ),
   }
@@ -17,7 +17,7 @@ const AnalyticsDashboard = dynamic(
 
 export default function AnalyticsPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="text-gray-600">Loading...</div></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center h-screen"><div className="text-gray-300">Loading...</div></div>}>
       <AnalyticsDashboard />
     </Suspense>
   );
