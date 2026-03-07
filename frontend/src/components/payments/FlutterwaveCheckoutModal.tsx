@@ -277,12 +277,12 @@ export default function FlutterwaveCheckoutModal({
                   className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
                     subMethod === 'card'
                       ? 'border-orange-500 bg-orange-50 shadow-sm'
-                      : 'border-gray-200 bg-white hover:border-orange-200'
+                      : 'border-white/10 bg-[#162844] hover:border-orange-200'
                   }`}
                 >
-                  <CreditCard className={`h-6 w-6 ${subMethod === 'card' ? 'text-orange-600' : 'text-gray-400'}`} />
+                  <CreditCard className={`h-6 w-6 ${subMethod === 'card' ? 'text-orange-600' : 'text-gray-500'}`} />
                   <div className="text-center">
-                    <p className={`font-semibold text-sm ${subMethod === 'card' ? 'text-orange-700' : 'text-gray-700'}`}>
+                    <p className={`font-semibold text-sm ${subMethod === 'card' ? 'text-orange-700' : 'text-gray-200'}`}>
                       Card Payment
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">Visa, Mastercard, Amex</p>
@@ -295,12 +295,12 @@ export default function FlutterwaveCheckoutModal({
                   className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all ${
                     subMethod === 'mobile_money'
                       ? 'border-orange-500 bg-orange-50 shadow-sm'
-                      : 'border-gray-200 bg-white hover:border-orange-200'
+                      : 'border-white/10 bg-[#162844] hover:border-orange-200'
                   }`}
                 >
-                  <Smartphone className={`h-6 w-6 ${subMethod === 'mobile_money' ? 'text-orange-600' : 'text-gray-400'}`} />
+                  <Smartphone className={`h-6 w-6 ${subMethod === 'mobile_money' ? 'text-orange-600' : 'text-gray-500'}`} />
                   <div className="text-center">
-                    <p className={`font-semibold text-sm ${subMethod === 'mobile_money' ? 'text-orange-700' : 'text-gray-700'}`}>
+                    <p className={`font-semibold text-sm ${subMethod === 'mobile_money' ? 'text-orange-700' : 'text-gray-200'}`}>
                       Mobile Money
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">MTN, Airtel</p>
@@ -332,7 +332,7 @@ export default function FlutterwaveCheckoutModal({
                       id="fw_momo_network"
                       value={momoNetwork}
                       onChange={(e) => setMomoNetwork(e.target.value)}
-                      className="w-full h-11 rounded-md border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      className="w-full h-11 rounded-md border border-white/10 bg-[#162844] px-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                     >
                       <option value="MTN">MTN Mobile Money</option>
                       <option value="AIRTEL">Airtel Money</option>
@@ -357,16 +357,16 @@ export default function FlutterwaveCheckoutModal({
               )}
 
               {/* Amount summary */}
-              <div className="bg-gray-50 rounded-xl p-4 flex justify-between items-center">
+              <div className="bg-[#0a1628] rounded-xl p-4 flex justify-between items-center">
                 <div>
                   <p className="text-xs text-gray-500">Amount to pay</p>
-                  <p className="text-xl font-bold text-gray-900">
+                  <p className="text-xl font-bold text-white">
                     {currency} {amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-gray-500">{email}</p>
-                  <p className="text-xs text-gray-400">{fullName}</p>
+                  <p className="text-xs text-gray-500">{fullName}</p>
                 </div>
               </div>
 
@@ -392,7 +392,7 @@ export default function FlutterwaveCheckoutModal({
                 )}
               </Button>
 
-              <p className="text-center text-xs text-gray-400 flex items-center justify-center gap-1">
+              <p className="text-center text-xs text-gray-500 flex items-center justify-center gap-1">
                 <Shield className="h-3 w-3" /> Secured by Flutterwave
               </p>
             </>
@@ -401,9 +401,9 @@ export default function FlutterwaveCheckoutModal({
           {/* ── Step 2a: Card checkout iframe ── */}
           {step === 'iframe' && checkoutUrl && (
             <div className="space-y-3">
-              <div className="relative bg-gray-100 rounded-xl overflow-hidden" style={{ minHeight: '480px' }}>
+              <div className="relative bg-white/10 rounded-xl overflow-hidden" style={{ minHeight: '480px' }}>
                 {!iframeLoaded && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10 bg-gray-50">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10 bg-[#0a1628]">
                     <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
                     <p className="text-sm text-gray-500">Loading secure checkout…</p>
                   </div>
@@ -421,7 +421,7 @@ export default function FlutterwaveCheckoutModal({
               </div>
 
               <div className="flex items-center justify-between">
-                <p className="text-xs text-gray-400">
+                <p className="text-xs text-gray-500">
                   <Shield className="inline h-3 w-3 mr-1" />
                   Secure payment by Flutterwave
                 </p>
@@ -453,7 +453,7 @@ export default function FlutterwaveCheckoutModal({
               </div>
 
               <div className="space-y-2">
-                <h3 className="font-semibold text-gray-900">Approve on your phone</h3>
+                <h3 className="font-semibold text-white">Approve on your phone</h3>
                 <p className="text-sm text-gray-600 max-w-xs mx-auto">
                   {momoInstruction || 'A payment prompt has been sent to your phone. Please approve it to continue.'}
                 </p>
@@ -501,7 +501,7 @@ export default function FlutterwaveCheckoutModal({
               <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
                 <CheckCircle2 className="h-8 w-8 text-green-600" />
               </div>
-              <h3 className="font-bold text-lg text-gray-900">Payment Confirmed!</h3>
+              <h3 className="font-bold text-lg text-white">Payment Confirmed!</h3>
               <p className="text-sm text-gray-500">Closing in a moment…</p>
             </div>
           )}

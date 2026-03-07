@@ -120,7 +120,7 @@ export default function AdvancedFilters({ onFiltersChange, initialFilters = {} }
     <Card>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>
-          <CardHeader className="cursor-pointer hover:bg-gray-50">
+          <CardHeader className="cursor-pointer hover:bg-[#162844]/5">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Filter className="w-4 h-4" />

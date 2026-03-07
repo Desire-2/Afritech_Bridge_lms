@@ -131,8 +131,8 @@ const STATUS_BG: Record<string, string> = {
   completed: 'bg-green-50 text-green-700 border-green-200',
   confirmed: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   failed: 'bg-red-50 text-red-700 border-red-200',
-  refunded: 'bg-gray-100 text-gray-600 border-gray-300',
-  initiated: 'bg-gray-50 text-gray-500 border-gray-200',
+  refunded: 'bg-white/10 text-gray-600 border-white/15',
+  initiated: 'bg-[#0a1628] text-gray-500 border-white/10',
 };
 
 const ACTIONABLE_STATUSES = new Set(['pending', 'pending_bank_transfer', 'initiated']);
@@ -247,7 +247,7 @@ function DRow({ label, children }: { label: string; children: React.ReactNode })
   return (
     <div className="flex justify-between items-start gap-4 py-1.5">
       <span className="text-xs text-gray-500 shrink-0 w-32">{label}</span>
-      <span className="text-sm text-right flex-1 font-medium text-gray-800">{children}</span>
+      <span className="text-sm text-right flex-1 font-medium text-gray-100">{children}</span>
     </div>
   );
 }
@@ -305,31 +305,31 @@ function DetailDrawer({
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-start justify-end" onClick={onClose}>
-      <div className="w-full max-w-md bg-white h-full shadow-2xl overflow-y-auto flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-5 border-b bg-gray-50 sticky top-0 z-10">
+      <div className="w-full max-w-md bg-[#162844] h-full shadow-2xl overflow-y-auto flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-5 border-b bg-[#0a1628] sticky top-0 z-10">
           <div className="flex items-center gap-3">
             {record.payment_method && <MethodIcon method={record.payment_method} size="md" />}
             <div>
-              <h2 className="font-bold text-gray-900 text-base leading-tight">{record.full_name}</h2>
+              <h2 className="font-bold text-white text-base leading-tight">{record.full_name}</h2>
               <p className="text-xs text-gray-500">{record.email}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-200 text-gray-500 text-xl leading-none">×</button>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/15 text-gray-500 text-xl leading-none">×</button>
         </div>
 
         <div className="p-5 space-y-4 flex-1">
-          <section className="bg-gray-50 rounded-xl p-4 space-y-1">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Payment Details</p>
+          <section className="bg-[#0a1628] rounded-xl p-4 space-y-1">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Payment Details</p>
             <DRow label="Method">{record.payment_method ? METHOD_LABELS[record.payment_method] : '—'}</DRow>
             <DRow label="Status">
               {record.payment_status
-                ? <Badge text={STATUS_LABELS[record.payment_status] || record.payment_status} cls={STATUS_BG[record.payment_status] || 'bg-gray-100 text-gray-600 border-gray-200'} />
+                ? <Badge text={STATUS_LABELS[record.payment_status] || record.payment_status} cls={STATUS_BG[record.payment_status] || 'bg-white/10 text-gray-600 border-white/10'} />
                 : '—'}
             </DRow>
             <DRow label="Amount">
               <span className="font-bold text-emerald-700">
                 {formatAmount(record.amount_paid, record.course_currency)}
-                {record.course_payment_mode === 'partial' && <span className="ml-1 text-xs text-gray-400 font-normal">(partial)</span>}
+                {record.course_payment_mode === 'partial' && <span className="ml-1 text-xs text-gray-500 font-normal">(partial)</span>}
               </span>
             </DRow>
             <DRow label="Reference">
@@ -342,7 +342,7 @@ function DetailDrawer({
           {hasSlip && (() => {
             if (slipLoading) {
               return (
-                <section className="bg-gray-50 rounded-xl p-4 flex items-center gap-3">
+                <section className="bg-[#0a1628] rounded-xl p-4 flex items-center gap-3">
                   <div className="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
                   <p className="text-sm text-gray-500">Loading payment slip…</p>
                 </section>
@@ -350,8 +350,8 @@ function DetailDrawer({
             }
             if (!slipUrl) {
               return (
-                <section className="bg-gray-50 rounded-xl p-4">
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Payment Slip / Receipt</p>
+                <section className="bg-[#0a1628] rounded-xl p-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Payment Slip / Receipt</p>
                   <p className="text-sm text-gray-500">Slip uploaded but could not be loaded.</p>
                 </section>
               );
@@ -386,8 +386,8 @@ function DetailDrawer({
             };
 
             return (
-              <section className="bg-gray-50 rounded-xl p-4 space-y-2">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Payment Slip / Receipt</p>
+              <section className="bg-[#0a1628] rounded-xl p-4 space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Payment Slip / Receipt</p>
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
                     <svg viewBox="0 0 24 24" className="w-5 h-5 fill-emerald-600">
@@ -395,7 +395,7 @@ function DetailDrawer({
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{record.payment_slip_filename || 'Payment Slip'}</p>
+                    <p className="text-sm font-medium text-white truncate">{record.payment_slip_filename || 'Payment Slip'}</p>
                     <p className="text-xs text-gray-500">Uploaded by applicant</p>
                   </div>
                   <button onClick={openSlip} type="button"
@@ -407,12 +407,12 @@ function DetailDrawer({
                   </button>
                 </div>
                 {isImage && (
-                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 bg-white">
+                  <div className="mt-2 rounded-lg overflow-hidden border border-white/10 bg-[#162844]">
                     <img src={slipUrl} alt="Payment slip" className="max-h-64 w-auto mx-auto" />
                   </div>
                 )}
                 {isPdf && isDataUrl && (
-                  <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 bg-white">
+                  <div className="mt-2 rounded-lg overflow-hidden border border-white/10 bg-[#162844]">
                     <iframe src={slipUrl} title="Payment slip PDF" className="w-full h-96 border-0" />
                   </div>
                 )}
@@ -420,8 +420,8 @@ function DetailDrawer({
             );
           })()}
 
-          <section className="bg-gray-50 rounded-xl p-4 space-y-1">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Course & Cohort</p>
+          <section className="bg-[#0a1628] rounded-xl p-4 space-y-1">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Course & Cohort</p>
             <DRow label="Title">{record.course_title || '—'}</DRow>
             <DRow label="Cohort">
               {record.cohort_label
@@ -457,15 +457,15 @@ function DetailDrawer({
               <DRow label="Enabled Methods">
                 <div className="flex flex-wrap gap-1 justify-end">
                   {record.course_enabled_methods.map((m) => (
-                    <span key={m} className={`text-xs px-2 py-0.5 rounded-full border ${METHOD_BG[m] || 'bg-gray-50 text-gray-600 border-gray-200'}`}>{METHOD_LABELS[m] || m}</span>
+                    <span key={m} className={`text-xs px-2 py-0.5 rounded-full border ${METHOD_BG[m] || 'bg-[#0a1628] text-gray-600 border-white/10'}`}>{METHOD_LABELS[m] || m}</span>
                   ))}
                 </div>
               </DRow>
             )}
           </section>
 
-          <section className="bg-gray-50 rounded-xl p-4 space-y-1">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Applicant</p>
+          <section className="bg-[#0a1628] rounded-xl p-4 space-y-1">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Applicant</p>
             <DRow label="Phone">{record.phone || '—'}</DRow>
             <DRow label="Country">{record.country || '—'}</DRow>
             <DRow label="App Status"><span className="capitalize">{record.status}</span></DRow>
@@ -473,8 +473,8 @@ function DetailDrawer({
 
           {record.admin_notes && (
             <section>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Admin Notes</p>
-              <pre className="bg-gray-50 rounded-xl p-3 text-xs text-gray-600 whitespace-pre-wrap font-sans leading-relaxed border">{record.admin_notes}</pre>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Admin Notes</p>
+              <pre className="bg-[#0a1628] rounded-xl p-3 text-xs text-gray-600 whitespace-pre-wrap font-sans leading-relaxed border">{record.admin_notes}</pre>
             </section>
           )}
 
@@ -484,7 +484,7 @@ function DetailDrawer({
               <div className={`mb-3 text-xs p-2 rounded ${msg.type === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg.text}</div>
             )}
             <select value={newStatus} onChange={(e) => setNewStatus(e.target.value)}
-              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400">
               <option value="">Choose new status…</option>
               <option value="completed">✅ Completed</option>
               <option value="confirmed">✔ Confirmed (Bank Transfer)</option>
@@ -495,7 +495,7 @@ function DetailDrawer({
             </select>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
               placeholder="Optional note…"
-              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-white focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400" />
             <button onClick={handleChange} disabled={!newStatus || loading}
               className="w-full py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
               {loading ? 'Saving…' : 'Save Status Change'}
@@ -512,10 +512,10 @@ function DetailDrawer({
 function CourseBreakdownCard({ course, onFilter }: { course: CourseBreakdown; onFilter: (id: number) => void }) {
   const isFreeOrScholarship = course.cohort_enrollment_type === 'free' || course.cohort_enrollment_type === 'scholarship';
   return (
-    <div className="bg-white border rounded-xl p-4 hover:shadow-md transition-shadow">
+    <div className="bg-[#162844] border rounded-xl p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-gray-900 text-sm truncate">{course.course_title}</p>
+          <p className="font-semibold text-white text-sm truncate">{course.course_title}</p>
           <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
             {course.cohort_label && (
               <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">{course.cohort_label}</span>
@@ -540,8 +540,8 @@ function CourseBreakdownCard({ course, onFilter }: { course: CourseBreakdown; on
       </div>
 
       <div className="grid grid-cols-3 gap-2 mb-3">
-        <div className="text-center bg-gray-50 rounded-lg p-2">
-          <p className="text-lg font-bold text-gray-900">{course.total}</p>
+        <div className="text-center bg-[#0a1628] rounded-lg p-2">
+          <p className="text-lg font-bold text-white">{course.total}</p>
           <p className="text-xs text-gray-500">Total</p>
         </div>
         <div className="text-center bg-emerald-50 rounded-lg p-2">
@@ -766,14 +766,14 @@ export default function PaymentsDashboard({ role }: Props) {
       )}
 
       {/* ── Tabs ────────────────────────────────────────────────────────── */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 bg-white/10 rounded-xl p-1 w-fit">
         {([
           { key: 'all' as Tab, label: 'All Payments' },
           { key: 'action' as Tab, label: `Needs Action${actionableCount > 0 ? ` · ${actionableCount}` : ''}` },
           { key: 'courses' as Tab, label: `By Course${summary?.by_course?.length ? ` · ${summary.by_course.length}` : ''}` },
         ]).map(({ key, label }) => (
           <button key={key} onClick={() => { setTab(key); setPage(1); }}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab === key ? 'bg-[#162844] text-white shadow-sm' : 'text-gray-500 hover:text-gray-200'}`}>
             {label}
           </button>
         ))}
@@ -788,7 +788,7 @@ export default function PaymentsDashboard({ role }: Props) {
             ))}
           </div>
         ) : (
-          <div className="py-16 text-center text-gray-400">
+          <div className="py-16 text-center text-gray-500">
             <p className="text-3xl mb-2">📊</p>
             <p className="text-sm">No payment data per course yet.</p>
           </div>
@@ -797,14 +797,14 @@ export default function PaymentsDashboard({ role }: Props) {
 
       {/* ── All / Needs Action Table ────────────────────────────────────── */}
       {tab !== 'courses' && (
-        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <div className="bg-[#162844] rounded-xl shadow-sm border overflow-hidden">
           {/* Toolbar */}
           <div className="p-4 border-b flex flex-wrap items-center gap-3">
             <input type="text" placeholder="Search name, email…" value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
               className="flex-1 min-w-40 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
             <select value={filterMethod} onChange={(e) => { setFilterMethod(e.target.value); setPage(1); }}
-              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-[#162844]">
               <option value="">All Methods</option>
               <option value="paypal">PayPal</option>
               <option value="stripe">Stripe</option>
@@ -814,7 +814,7 @@ export default function PaymentsDashboard({ role }: Props) {
               <option value="flutterwave">Flutterwave</option>
             </select>
             <select value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
-              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+              className="border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-[#162844]">
               <option value="">All Statuses</option>
               <option value="completed">Completed</option>
               <option value="confirmed">Confirmed</option>
@@ -831,7 +831,7 @@ export default function PaymentsDashboard({ role }: Props) {
               </span>
             )}
             {(filterMethod || filterStatus || filterCourse || search) && (
-              <button onClick={resetFilters} className="px-3 py-2 border border-gray-300 text-gray-600 text-sm rounded-lg hover:bg-gray-50">Clear</button>
+              <button onClick={resetFilters} className="px-3 py-2 border border-white/15 text-gray-600 text-sm rounded-lg hover:bg-[#0a1628]">Clear</button>
             )}
             <button onClick={exportCSV}
               className="ml-auto flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
@@ -849,13 +849,13 @@ export default function PaymentsDashboard({ role }: Props) {
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600" />
               </div>
             ) : records.length === 0 ? (
-              <div className="py-16 text-center text-gray-400">
+              <div className="py-16 text-center text-gray-500">
                 <p className="text-4xl mb-2">💳</p>
                 <p className="text-sm">No payment records found{tab === 'action' ? ' that need action' : ''}.</p>
               </div>
             ) : (
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b">
+                <thead className="bg-[#0a1628] border-b">
                   <tr>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Applicant</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Course / Cohort</th>
@@ -867,11 +867,11 @@ export default function PaymentsDashboard({ role }: Props) {
                     <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-white/8">
                   {records.map((rec) => (
-                    <tr key={rec.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => setSelected(rec)}>
+                    <tr key={rec.id} className="hover:bg-[#0a1628] transition-colors cursor-pointer" onClick={() => setSelected(rec)}>
                       <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900">{rec.full_name}</p>
+                        <p className="font-medium text-white">{rec.full_name}</p>
                         <p className="text-xs text-gray-500">{rec.email}</p>
                       </td>
                       <td className="px-4 py-3 max-w-44">
@@ -884,21 +884,21 @@ export default function PaymentsDashboard({ role }: Props) {
                         {rec.payment_method ? (
                           <div className="flex items-center gap-1.5">
                             <MethodIcon method={rec.payment_method} />
-                            <span className="text-xs text-gray-700 hidden sm:inline">{METHOD_LABELS[rec.payment_method] || rec.payment_method}</span>
+                            <span className="text-xs text-gray-200 hidden sm:inline">{METHOD_LABELS[rec.payment_method] || rec.payment_method}</span>
                             {(rec.has_payment_slip || rec.payment_slip_url) && (
                               <span title="Payment slip attached" className="text-emerald-500">📎</span>
                             )}
                           </div>
-                        ) : <span className="text-gray-400 text-xs">—</span>}
+                        ) : <span className="text-gray-500 text-xs">—</span>}
                       </td>
-                      <td className="px-4 py-3 font-medium text-gray-800 text-xs whitespace-nowrap">
+                      <td className="px-4 py-3 font-medium text-gray-100 text-xs whitespace-nowrap">
                         {formatAmount(rec.amount_paid, rec.payment_currency || rec.course_currency)}
-                        {rec.course_payment_mode === 'partial' && <span className="ml-1 text-gray-400 text-xs font-normal">(part)</span>}
+                        {rec.course_payment_mode === 'partial' && <span className="ml-1 text-gray-500 text-xs font-normal">(part)</span>}
                       </td>
                       <td className="px-4 py-3">
                         {rec.payment_status
-                          ? <Badge text={STATUS_LABELS[rec.payment_status] || rec.payment_status} cls={STATUS_BG[rec.payment_status] || 'bg-gray-50 text-gray-600 border-gray-200'} />
-                          : <span className="text-gray-400 text-xs">—</span>}
+                          ? <Badge text={STATUS_LABELS[rec.payment_status] || rec.payment_status} cls={STATUS_BG[rec.payment_status] || 'bg-[#0a1628] text-gray-600 border-white/10'} />
+                          : <span className="text-gray-500 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-gray-500 max-w-28 truncate">{rec.payment_reference || '—'}</td>
                       <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
@@ -930,10 +930,10 @@ export default function PaymentsDashboard({ role }: Props) {
               <p className="text-sm text-gray-500">{totalRecords.toLocaleString()} total records</p>
               <div className="flex gap-2 items-center">
                 <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
-                  className="px-3 py-1 border rounded text-sm disabled:opacity-40 hover:bg-gray-50">← Prev</button>
+                  className="px-3 py-1 border rounded text-sm disabled:opacity-40 hover:bg-[#0a1628]">← Prev</button>
                 <span className="text-sm font-medium px-1">Page {page}</span>
                 <button onClick={() => setPage((p) => p + 1)} disabled={records.length < perPage}
-                  className="px-3 py-1 border rounded text-sm disabled:opacity-40 hover:bg-gray-50">Next →</button>
+                  className="px-3 py-1 border rounded text-sm disabled:opacity-40 hover:bg-[#0a1628]">Next →</button>
               </div>
             </div>
           )}

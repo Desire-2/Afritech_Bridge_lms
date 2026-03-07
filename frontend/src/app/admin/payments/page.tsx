@@ -8,9 +8,9 @@ export const metadata: Metadata = {
 
 export default function AdminPaymentsPage() {
   return (
-    <div className="container mx-auto py-8 px-4">
+    <div className="container mx-auto py-8 px-4 bg-[#0a1628] min-h-screen">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Payment Management</h1>
+        <h1 className="text-2xl font-bold text-white">Payment Management</h1>
         <p className="text-gray-500 mt-1 text-sm">
           Track all course payments, confirm bank transfers, and monitor payment statuses across your platform.
         </p>

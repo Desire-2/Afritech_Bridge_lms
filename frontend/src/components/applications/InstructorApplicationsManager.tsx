@@ -393,7 +393,7 @@ export default function InstructorApplicationsManager() {
 
   const getScoreBadge = (score: number | null | undefined, label: string) => {
     if (score === null || score === undefined) return null;
-    let cls = 'bg-gray-100 text-gray-800';
+    let cls = 'bg-[#162844]/10 text-gray-100';
     if (score >= 80) cls = 'bg-green-100 text-green-800';
     else if (score >= 60) cls = 'bg-blue-100 text-blue-800';
     else if (score >= 40) cls = 'bg-yellow-100 text-yellow-800';
@@ -413,7 +413,7 @@ export default function InstructorApplicationsManager() {
   if (loading && courses.length === 0) {
     return (
       <div className="text-center py-12">
-        <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" />
+        <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-500" />
         <p className="text-gray-500 mt-2">Loading your courses…</p>
       </div>
     );
@@ -422,8 +422,8 @@ export default function InstructorApplicationsManager() {
   if (courses.length === 0) {
     return (
       <div className="text-center py-16">
-        <GraduationCap className="w-16 h-16 mx-auto text-gray-300" />
-        <h3 className="text-lg font-semibold text-gray-700 mt-4">No Courses Found</h3>
+        <GraduationCap className="w-16 h-16 mx-auto text-gray-600" />
+        <h3 className="text-lg font-semibold text-gray-200 mt-4">No Courses Found</h3>
         <p className="text-gray-500 mt-1">You don't have any courses with applications yet.</p>
       </div>
     );
@@ -434,7 +434,7 @@ export default function InstructorApplicationsManager() {
     return (
       <div className="space-y-6">
         <div>
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
             <GraduationCap className="w-6 h-6 text-blue-600" />
             Select a Course
           </h2>
@@ -448,17 +448,17 @@ export default function InstructorApplicationsManager() {
               <button
                 key={course.id}
                 onClick={() => handleCourseSelect(course.id.toString())}
-                className="text-left p-5 rounded-xl border-2 border-gray-200 bg-white hover:border-blue-400 hover:shadow-lg transition-all group"
+                className="text-left p-5 rounded-xl border-2 border-white/10 bg-[#162844] hover:border-blue-400 hover:shadow-lg transition-all group"
               >
                 <div className="flex items-start justify-between mb-3">
                   <GraduationCap className="w-8 h-8 text-blue-500 group-hover:text-blue-600" />
                   <span className="text-2xl font-bold text-blue-600">{course.applications_count}</span>
                 </div>
-                <h3 className="font-semibold text-gray-900 text-base mb-1 line-clamp-2">{course.title}</h3>
+                <h3 className="font-semibold text-white text-base mb-1 line-clamp-2">{course.title}</h3>
                 <div className="flex items-center gap-2 mt-3 text-xs text-gray-500">
                   <Layers className="w-3.5 h-3.5" />
                   <span>{windowCount} cohort{windowCount !== 1 ? 's' : ''}</span>
-                  <span className="text-gray-300">•</span>
+                  <span className="text-gray-600">•</span>
                   <Users className="w-3.5 h-3.5" />
                   <span>{course.applications_count} application{course.applications_count !== 1 ? 's' : ''}</span>
                 </div>
@@ -475,12 +475,12 @@ export default function InstructorApplicationsManager() {
       {/* ── Course header with back button (multi-course) ── */}
       {courses.length > 1 && (
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={handleBackToCourses} className="text-gray-500 hover:text-gray-700">
+          <Button variant="ghost" size="sm" onClick={handleBackToCourses} className="text-gray-500 hover:text-gray-200">
             ← Back to courses
           </Button>
           <div className="h-5 w-px bg-gray-300" />
           <GraduationCap className="w-5 h-5 text-blue-600" />
-          <span className="font-semibold text-gray-900">{selectedCourse?.title}</span>
+          <span className="font-semibold text-white">{selectedCourse?.title}</span>
           <Badge variant="outline" className="text-blue-700 border-blue-200">{selectedCourse?.applications_count} apps</Badge>
         </div>
       )}
@@ -522,19 +522,19 @@ export default function InstructorApplicationsManager() {
                   className={`text-left p-3 rounded-lg border transition-all ${
                     selectedCohortId === cohort.id
                       ? 'border-blue-500 bg-blue-600 text-white shadow-md'
-                      : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+                      : 'border-white/10 bg-[#162844] hover:border-blue-300 hover:shadow-sm'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className={`text-sm font-semibold truncate ${
-                      selectedCohortId === cohort.id ? 'text-white' : 'text-gray-900'
+                      selectedCohortId === cohort.id ? 'text-white' : 'text-white'
                     }`}>
                       {cohort.label}
                     </span>
                     <Badge
                       variant="outline"
                       className={selectedCohortId === cohort.id
-                        ? 'bg-white/20 text-white border-white/40 text-xs'
+                        ? 'bg-[#162844]/20 text-white border-white/40 text-xs'
                         : `${getCohortBadgeStyles(cohort.status)} text-xs`
                       }
                     >
@@ -666,7 +666,7 @@ export default function InstructorApplicationsManager() {
           <div className="flex flex-wrap gap-3 mb-6">
             <div className="flex-1 min-w-[200px]">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 w-4 h-4" />
                 <Input
                   placeholder="Search by name, email..."
                   value={searchInput}
@@ -719,14 +719,14 @@ export default function InstructorApplicationsManager() {
           {/* Loading */}
           {loading ? (
             <div className="text-center py-12">
-              <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" />
+              <RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-500" />
               <p className="text-gray-500 mt-2">Loading applications…</p>
             </div>
           ) : applications.length === 0 ? (
             <div className="text-center py-12">
-              <FileText className="w-12 h-12 mx-auto text-gray-300" />
+              <FileText className="w-12 h-12 mx-auto text-gray-600" />
               <p className="text-gray-500 mt-2 font-medium">No applications found</p>
-              <p className="text-gray-400 text-sm mt-1">
+              <p className="text-gray-500 text-sm mt-1">
                 {selectedCohort
                   ? `No applications for ${selectedCohort.label} with the current filters.`
                   : 'Try adjusting your filters or select a different cohort.'}
@@ -737,7 +737,7 @@ export default function InstructorApplicationsManager() {
               {applications.map(app => (
                 <div
                   key={app.id}
-                  className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-white"
+                  className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-[#162844]"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
@@ -778,7 +778,7 @@ export default function InstructorApplicationsManager() {
                         )}
                       </div>
 
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-gray-500">
                         Applied: {app.created_at ? formatShortDate(app.created_at) : app.submission_date ? formatShortDate(app.submission_date) : '—'}
                       </p>
                     </div>
