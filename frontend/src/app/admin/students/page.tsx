@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   AdminStudentService,
   StudentListItem,
+  StudentDetailResponse,
   StudentStats,
   AvailableCourse,
   CourseStats,
@@ -18,6 +19,7 @@ import {
   Mail, RotateCcw, MoreVertical, BookPlus, MessageSquare, UserPlus,
   Trash2, ChevronDown, Send, X, ShieldAlert, ArrowLeft, Calendar,
   Building2, Layers, Lock, Unlock, Users2, BadgeCheck, Phone,
+  User, ExternalLink,
 } from 'lucide-react';
 
 // ─── Debounce ──────────────────────────────────────────────────────────────────
@@ -183,6 +185,382 @@ function MessageModal({ open, recipients, onClose }: {
   );
 }
 
+// ─── View Student Modal ────────────────────────────────────────────────────────
+function ViewStudentModal({ studentId, listItem, onClose, onToggleStatus, onEnroll, onMessage }: {
+  studentId: number | null;
+  listItem: StudentListItem | null;
+  onClose: () => void;
+  onToggleStatus: (s: StudentListItem) => void;
+  onEnroll: (s: StudentListItem) => void;
+  onMessage: (s: StudentListItem) => void;
+}) {
+  const router = useRouter();
+  const [detail, setDetail] = useState<StudentDetailResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useState<'overview' | 'enrollments' | 'quiz' | 'achievements'>('overview');
+  const [expandedEnrollment, setExpandedEnrollment] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!studentId) return;
+    setDetail(null);
+    setTab('overview');
+    setExpandedEnrollment(null);
+    setLoading(true);
+    AdminStudentService.getStudentDetail(studentId)
+      .then(setDetail)
+      .catch(e => toast.error(e.message || 'Failed to load student'))
+      .finally(() => setLoading(false));
+  }, [studentId]);
+
+  if (!studentId || !listItem) return null;
+
+  const name = listItem.first_name && listItem.last_name
+    ? `${listItem.first_name} ${listItem.last_name}`
+    : listItem.username;
+
+  const perf = listItem.performance_level;
+  const perfCls: Record<string, string> = {
+    high: 'bg-emerald-900/40 text-emerald-300',
+    medium: 'bg-amber-900/40 text-amber-300',
+    low: 'bg-red-900/40 text-red-300',
+  };
+
+  const TABS = [
+    { id: 'overview', label: 'Overview', icon: <User className="w-3.5 h-3.5" /> },
+    { id: 'enrollments', label: 'Enrollments', icon: <BookOpen className="w-3.5 h-3.5" />, count: detail?.enrollments.length },
+    { id: 'quiz', label: 'Quiz', icon: <BarChart3 className="w-3.5 h-3.5" />, count: detail?.quiz_performance.length },
+    { id: 'achievements', label: 'Achievements', icon: <Award className="w-3.5 h-3.5" /> },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-[#0d1b2a] rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col border border-white/10"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* ── Header ── */}
+        <div className="flex items-start justify-between p-5 border-b border-white/10">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#162844] to-[#0a1628] border border-white/15 flex items-center justify-center text-white font-bold text-xl flex-shrink-0">
+              {(listItem.first_name?.[0] || listItem.username[0]).toUpperCase()}
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-white leading-tight">{name}</h2>
+              <p className="text-sm text-gray-400">{listItem.email}</p>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${listItem.is_active ? 'bg-emerald-900/40 text-emerald-300' : 'bg-red-900/40 text-red-300'}`}>
+                  {listItem.is_active ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                  {listItem.is_active ? 'Active' : 'Inactive'}
+                </span>
+                {perf && (
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${perfCls[perf] || 'bg-white/10 text-gray-400'}`}>
+                    {perf === 'high' ? <TrendingUp className="w-3 h-3" /> : perf === 'low' ? <AlertTriangle className="w-3 h-3" /> : <BarChart3 className="w-3 h-3" />}
+                    {perf.charAt(0).toUpperCase() + perf.slice(1)} Performer
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => onMessage(listItem)} title="Send Message"
+              className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-purple-300 transition-colors">
+              <Mail className="w-4 h-4" />
+            </button>
+            <button onClick={() => onEnroll(listItem)} title="Enroll in course"
+              className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-emerald-300 transition-colors">
+              <BookPlus className="w-4 h-4" />
+            </button>
+            <button onClick={() => onToggleStatus(listItem)} title={listItem.is_active ? 'Deactivate' : 'Activate'}
+              className={`p-2 hover:bg-white/10 rounded-lg transition-colors ${listItem.is_active ? 'text-gray-400 hover:text-orange-300' : 'text-gray-400 hover:text-emerald-300'}`}>
+              {listItem.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={() => { onClose(); router.push(`/admin/students/${studentId}`); }}
+              title="View full profile"
+              className="hidden sm:flex items-center gap-1 px-3 py-1.5 bg-white/8 hover:bg-white/15 rounded-lg text-xs font-medium text-gray-200 transition-colors ml-1">
+              <ExternalLink className="w-3.5 h-3.5" /> Full Profile
+            </button>
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-lg text-gray-400 ml-0.5">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Tabs ── */}
+        <div className="flex border-b border-white/10 px-5 overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id as typeof tab)}
+              className={`flex items-center gap-1.5 px-3 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors flex-shrink-0 ${tab === t.id ? 'border-white text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>
+              {t.icon} {t.label}
+              {t.count !== undefined && t.count > 0 && (
+                <span className="bg-white/15 text-gray-300 text-xs px-1.5 py-0.5 rounded-full ml-0.5">{t.count}</span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Body ── */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-3">
+              <RefreshCw className="w-6 h-6 animate-spin text-gray-400" />
+              <p className="text-gray-500 text-sm">Loading student data…</p>
+            </div>
+          ) : !detail ? (
+            <div className="text-center py-20 text-gray-500">
+              <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              <p>Failed to load student details</p>
+            </div>
+          ) : (
+            <>
+              {/* ═══ OVERVIEW ═══ */}
+              {tab === 'overview' && (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { label: 'Enrollments', value: detail.enrollments.length, icon: <BookOpen className="w-4 h-4" />, color: 'text-blue-400' },
+                      { label: 'Avg Progress', value: `${listItem.progress_summary.avg_progress}%`, icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-400' },
+                      { label: 'Quizzes', value: detail.quiz_performance.length, icon: <BarChart3 className="w-4 h-4" />, color: 'text-amber-400' },
+                      { label: 'Points', value: detail.achievements.total_points.toLocaleString(), icon: <Award className="w-4 h-4" />, color: 'text-purple-400' },
+                    ].map(s => (
+                      <div key={s.label} className="bg-[#162844] rounded-xl p-4 border border-white/8">
+                        <span className={s.color}>{s.icon}</span>
+                        <p className="text-xl font-bold text-white mt-1">{s.value}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="bg-[#162844] rounded-xl p-4 border border-white/8 space-y-3">
+                      <h4 className="text-sm font-semibold text-gray-200 flex items-center gap-2"><User className="w-4 h-4" /> Contact Info</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-center gap-2 text-gray-300">
+                          <Mail className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                          <a href={`mailto:${listItem.email}`} className="hover:text-white truncate">{listItem.email}</a>
+                        </div>
+                        {listItem.phone_number && (
+                          <div className="flex items-center gap-2 text-gray-300">
+                            <Phone className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                            <a href={`tel:${listItem.phone_number}`} className="hover:text-white">{listItem.phone_number}</a>
+                          </div>
+                        )}
+                        {listItem.whatsapp_number && (
+                          <div className="flex items-center gap-2 text-gray-300">
+                            <span className="text-[10px] font-bold bg-emerald-900/40 text-emerald-400 px-1.5 py-0.5 rounded flex-shrink-0">WA</span>
+                            <a href={`https://wa.me/${listItem.whatsapp_number.replace(/\D/g,'')}`} target="_blank" rel="noopener noreferrer" className="hover:text-white">{listItem.whatsapp_number}</a>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 text-gray-400">
+                          <Users className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                          <span>@{listItem.username}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-[#162844] rounded-xl p-4 border border-white/8 space-y-3">
+                      <h4 className="text-sm font-semibold text-gray-200 flex items-center gap-2"><Clock className="w-4 h-4" /> Account Info</h4>
+                      <div className="space-y-2 text-sm">
+                        {[
+                          { label: 'Joined', value: fmtDate(detail.account_info.created_at) || '—' },
+                          { label: 'Last Login', value: fmtDate(detail.account_info.last_login) || 'Never' },
+                          { label: 'Last Activity', value: detail.account_info.days_inactive === null ? 'Never' : detail.account_info.days_inactive === 0 ? 'Today' : `${detail.account_info.days_inactive}d ago` },
+                          { label: 'Login Count', value: String(detail.analytics?.login_count ?? '—') },
+                        ].map(row => (
+                          <div key={row.label} className="flex items-center justify-between">
+                            <span className="text-gray-500">{row.label}</span>
+                            <span className="text-gray-300 font-medium">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#162844] rounded-xl p-4 border border-white/8 space-y-3">
+                      <h4 className="text-sm font-semibold text-gray-200 flex items-center gap-2"><Award className="w-4 h-4" /> Gamification</h4>
+                      <div className="space-y-2 text-sm">
+                        {[
+                          { label: 'Current Streak', value: `${detail.achievements.current_streak} days` },
+                          { label: 'Longest Streak', value: `${detail.achievements.longest_streak} days` },
+                          { label: 'Total Achievements', value: String(detail.achievements.total_achievements) },
+                          { label: 'Certificates', value: String(detail.certificates.length) },
+                        ].map(row => (
+                          <div key={row.label} className="flex items-center justify-between">
+                            <span className="text-gray-500">{row.label}</span>
+                            <span className="text-gray-300 font-medium">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-[#162844] rounded-xl p-4 border border-white/8 space-y-3">
+                      <h4 className="text-sm font-semibold text-gray-200 flex items-center gap-2"><BookOpen className="w-4 h-4" /> Study Materials</h4>
+                      <div className="space-y-2 text-sm">
+                        {[
+                          { label: 'Notes Created', value: String(detail.study_materials.notes_count) },
+                          { label: 'Bookmarks', value: String(detail.study_materials.bookmarks_count) },
+                          { label: 'Total Points', value: detail.achievements.total_points.toLocaleString() },
+                        ].map(row => (
+                          <div key={row.label} className="flex items-center justify-between">
+                            <span className="text-gray-500">{row.label}</span>
+                            <span className="text-gray-300 font-medium">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ═══ ENROLLMENTS ═══ */}
+              {tab === 'enrollments' && (
+                <div className="space-y-3">
+                  {detail.enrollments.length === 0 ? (
+                    <div className="text-center py-16 text-gray-500">
+                      <BookOpen className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      <p>No enrollments found</p>
+                    </div>
+                  ) : detail.enrollments.map(enr => {
+                    const isExpanded = expandedEnrollment === enr.id;
+                    const progColor = enr.progress >= 75 ? 'bg-emerald-500' : enr.progress >= 40 ? 'bg-amber-400' : 'bg-red-400';
+                    const statusCls: Record<string, string> = {
+                      active: 'bg-emerald-900/40 text-emerald-300',
+                      completed: 'bg-blue-900/40 text-blue-300',
+                      terminated: 'bg-red-900/40 text-red-300',
+                    };
+                    return (
+                      <div key={enr.id} className="bg-[#162844] rounded-xl border border-white/8 overflow-hidden">
+                        <button className="w-full text-left p-4" onClick={() => setExpandedEnrollment(isExpanded ? null : enr.id)}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-white text-sm truncate">{enr.course_title}</p>
+                              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${statusCls[enr.status] || 'bg-white/10 text-gray-400'}`}>{enr.status}</span>
+                                {enr.cohort_label && (
+                                  <span className="text-xs text-gray-400 flex items-center gap-1"><Layers className="w-3 h-3" />{enr.cohort_label}</span>
+                                )}
+                                <span className="text-xs text-gray-500">{fmtDate(enr.enrollment_date)}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <div className="text-right">
+                                <p className="text-sm font-bold text-white">{enr.progress}%</p>
+                                <p className="text-xs text-gray-400">{enr.lessons_completed}/{enr.total_lessons} lessons</p>
+                              </div>
+                              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                            </div>
+                          </div>
+                          <div className="mt-3 h-1.5 bg-white/8 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${progColor}`} style={{ width: `${Math.min(enr.progress, 100)}%` }} />
+                          </div>
+                        </button>
+                        {isExpanded && enr.module_progress.length > 0 && (
+                          <div className="border-t border-white/8 px-4 pb-4">
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mt-3 mb-2">Module Progress</p>
+                            <div className="space-y-2">
+                              {enr.module_progress.map(m => (
+                                <div key={m.module_id} className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-300 truncate flex-1 mr-2">{m.module_title}</span>
+                                  <div className="flex items-center gap-2 flex-shrink-0">
+                                    {m.module_score !== null && (
+                                      <span className="text-xs text-gray-400">{m.module_score}%</span>
+                                    )}
+                                    <span className={`px-1.5 py-0.5 rounded text-xs ${m.is_completed ? 'bg-emerald-900/40 text-emerald-300' : 'bg-white/8 text-gray-400'}`}>
+                                      {m.is_completed ? '✓ Done' : 'In Progress'}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ═══ QUIZ ═══ */}
+              {tab === 'quiz' && (
+                <div className="space-y-2">
+                  {detail.quiz_performance.length === 0 ? (
+                    <div className="text-center py-16 text-gray-500">
+                      <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      <p>No quiz attempts found</p>
+                    </div>
+                  ) : detail.quiz_performance.map(q => {
+                    const pct = q.max_score ? Math.round((q.score / q.max_score) * 100) : null;
+                    const scoreCls = pct === null ? 'text-gray-400' : pct >= 75 ? 'text-emerald-400' : pct >= 50 ? 'text-amber-400' : 'text-red-400';
+                    return (
+                      <div key={q.id} className="bg-[#162844] rounded-xl p-4 border border-white/8 flex items-center justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-white text-sm truncate">{q.quiz_title}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{fmtDate(q.submitted_at || q.created_at)}</p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className={`text-lg font-bold ${scoreCls}`}>{q.score}{q.max_score ? `/${q.max_score}` : ''}</p>
+                          {pct !== null && <p className="text-xs text-gray-400">{pct}%</p>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ═══ ACHIEVEMENTS ═══ */}
+              {tab === 'achievements' && (
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { label: 'Total Points', value: detail.achievements.total_points.toLocaleString(), icon: <Award className="w-4 h-4" />, color: 'text-yellow-400' },
+                      { label: 'Achievements', value: String(detail.achievements.total_achievements), icon: <BadgeCheck className="w-4 h-4" />, color: 'text-purple-400' },
+                      { label: 'Current Streak', value: `${detail.achievements.current_streak}d`, icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-400' },
+                      { label: 'Longest Streak', value: `${detail.achievements.longest_streak}d`, icon: <Clock className="w-4 h-4" />, color: 'text-blue-400' },
+                    ].map(s => (
+                      <div key={s.label} className="bg-[#162844] rounded-xl p-4 border border-white/8 text-center">
+                        <span className={`inline-block mb-1 ${s.color}`}>{s.icon}</span>
+                        <p className="text-xl font-bold text-white">{s.value}</p>
+                        <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {detail.certificates.length > 0 ? (
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-200 mb-3 flex items-center gap-2">
+                        <Award className="w-4 h-4 text-yellow-400" /> Certificates ({detail.certificates.length})
+                      </h4>
+                      <div className="space-y-2">
+                        {detail.certificates.map(cert => (
+                          <div key={cert.id} className="bg-[#162844] rounded-xl p-4 border border-white/8 flex items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium text-white text-sm truncate">{cert.course_title}</p>
+                              <p className="text-xs text-gray-400 mt-0.5">Issued {fmtDate(cert.issued_at || cert.created_at)}</p>
+                            </div>
+                            {cert.certificate_url && (
+                              <a href={cert.certificate_url} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center gap-1 px-2.5 py-1.5 bg-yellow-900/30 border border-yellow-700/40 rounded-lg text-xs text-yellow-300 hover:bg-yellow-900/50 transition-colors flex-shrink-0">
+                                <ExternalLink className="w-3 h-3" /> View
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-10 text-gray-500">
+                      <Award className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                      <p>No certificates yet</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Row Action Menu ───────────────────────────────────────────────────────────
 function RowActionMenu({ student, onView, onToggleStatus, onEnroll, onResetProgress, onMessage, onDeleteConfirm }: {
   student: StudentListItem; onView: () => void; onToggleStatus: () => void;
@@ -294,6 +672,10 @@ export default function StudentManagementPage() {
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean; title: string; description: string; confirmLabel?: string; danger?: boolean; onConfirm: () => void;
   }>({ open: false, title: '', description: '', onConfirm: () => {} });
+
+  const [viewModal, setViewModal] = useState<{ studentId: number | null; student: StudentListItem | null }>({
+    studentId: null, student: null,
+  });
 
   const [pagination, setPagination] = useState({
     current_page: 1, per_page: 20, total_pages: 1,
@@ -918,7 +1300,7 @@ export default function StudentManagementPage() {
                         onChange={() => setSelectedStudents(prev => prev.includes(student.id) ? prev.filter(id => id !== student.id) : [...prev, student.id])}
                         className="rounded border-white/15 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
                     </td>
-                    <td className="px-4 py-3 cursor-pointer" onClick={() => router.push(`/admin/students/${student.id}`)}>
+                    <td className="px-4 py-3 cursor-pointer" onClick={() => setViewModal({ studentId: student.id, student })}>
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#162844] to-[#0d1b2a] flex items-center justify-center text-white font-semibold text-sm flex-shrink-0 shadow-sm">
                           {(student.first_name?.[0] || student.username[0]).toUpperCase()}
@@ -986,7 +1368,7 @@ export default function StudentManagementPage() {
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <RowActionMenu
                         student={student}
-                        onView={() => router.push(`/admin/students/${student.id}`)}
+                        onView={() => setViewModal({ studentId: student.id, student })}
                         onToggleStatus={() => handleToggleStatus(student)}
                         onEnroll={() => setEnrollModal({ open: true, student })}
                         onResetProgress={() => handleResetProgress(student)}
@@ -1059,6 +1441,14 @@ export default function StudentManagementPage() {
         onClose={() => setEnrollModal({ open: false, student: null })} onSuccess={fetchStudents} />
       <MessageModal open={messageModal.open} recipients={messageModal.recipients}
         onClose={() => setMessageModal({ open: false, recipients: [] })} />
+      <ViewStudentModal
+        studentId={viewModal.studentId}
+        listItem={viewModal.student}
+        onClose={() => setViewModal({ studentId: null, student: null })}
+        onToggleStatus={(s) => { setViewModal({ studentId: null, student: null }); handleToggleStatus(s); }}
+        onEnroll={(s) => { setViewModal({ studentId: null, student: null }); setEnrollModal({ open: true, student: s }); }}
+        onMessage={(s) => { setViewModal({ studentId: null, student: null }); setMessageModal({ open: true, recipients: [{ id: s.id, name: getStudentName(s) }] }); }}
+      />
       <ConfirmDialog
         open={confirmDialog.open} title={confirmDialog.title} description={confirmDialog.description}
         confirmLabel={confirmDialog.confirmLabel} danger={confirmDialog.danger}
