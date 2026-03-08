@@ -958,6 +958,8 @@ class ModuleProgress(db.Model):
         - If no assessments: 100% Reading & Engagement
         - If only quizzes: 30% Reading, 70% Quiz
         - If only assignments: 30% Reading, 70% Assignments
+        - If quizzes + assignments (no final): 10% Reading, 50% Quiz, 40% Assignment
+          (the 20% that would go to Final Assessment is redistributed to Quiz)
         - If all available: 10% Reading, 30% Quiz, 40% Assignment, 20% Final
         
         Returns a score from 0-100.
@@ -1010,8 +1012,10 @@ class ModuleProgress(db.Model):
             # Quizzes and final exist, no assignments
             weighted_score = (course_contrib * 0.15) + (quiz * 0.55) + (final * 0.30)
         elif not has_final_assessment:
-            # Quizzes and assignments exist, no final
-            weighted_score = (course_contrib * 0.15) + (quiz * 0.40) + (assignment * 0.45)
+            # Quizzes and assignments exist, no final assessment
+            # The 20% that would go to Final Assessment is redistributed to Quiz (30%+20%=50%)
+            # Reading stays at 10%, Assignments stays at 40%
+            weighted_score = (course_contrib * 0.10) + (quiz * 0.50) + (assignment * 0.40)
         else:
             # All components exist - use default weights
             weighted_score = (

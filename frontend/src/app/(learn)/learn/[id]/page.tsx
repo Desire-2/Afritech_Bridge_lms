@@ -223,6 +223,20 @@ const LearningPage = () => {
   } | null>(null);
   const [lockedModuleEligibility, setLockedModuleEligibility] = useState<any | null>(null);
   const [lockedModuleEligibilityLoading, setLockedModuleEligibilityLoading] = useState(false);
+  const [lockedModulePrevScoreBreakdown, setLockedModulePrevScoreBreakdown] = useState<{
+    breakdown: {
+      course_contribution: { score: number; weight: number };
+      quizzes: { score: number; weight: number };
+      assignments: { score: number; weight: number };
+      final_assessment: { score: number; weight: number };
+    };
+    assessment_info?: {
+      has_quizzes: boolean;
+      has_assignments: boolean;
+      has_final_assessment: boolean;
+      is_reading_only: boolean;
+    };
+  } | null>(null);
   const [modalUnlocking, setModalUnlocking] = useState(false);
   
   // Module unlock error dialog state
@@ -1713,15 +1727,30 @@ const LearningPage = () => {
     setShowLockedModuleModal(true);
   }, [viewAsStudent]);
 
-  // When locked module modal opens, fetch enhanced eligibility for that target module
+  // When locked module modal opens, fetch enhanced eligibility and score breakdown for previous module
   useEffect(() => {
     const loadEligibility = async () => {
       if (!showLockedModuleModal || !lockedModuleInfo) return;
       try {
         setLockedModuleEligibilityLoading(true);
+        setLockedModulePrevScoreBreakdown(null);
+        // Fetch eligibility for target module (to unlock)
         const elig = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(lockedModuleInfo.moduleId);
         console.log('✅ Eligibility loaded for module', lockedModuleInfo.moduleId, ':', elig);
         setLockedModuleEligibility(elig);
+        // Fetch score breakdown for the previous module (the one that must be passed)
+        // This gives us the dynamic weights (e.g. quiz becomes 50% when no final assessment)
+        try {
+          const prevBreakdown = await ProgressApiService.getModuleScoreBreakdown(lockedModuleInfo.previousModuleId);
+          if (prevBreakdown?.breakdown) {
+            setLockedModulePrevScoreBreakdown({
+              breakdown: prevBreakdown.breakdown,
+              assessment_info: prevBreakdown.assessment_info
+            });
+          }
+        } catch (breakdownErr) {
+          console.warn('Could not fetch previous module score breakdown:', breakdownErr);
+        }
       } catch (e) {
         console.error('❌ Eligibility check failed:', e);
         setLockedModuleEligibility(null);
@@ -1881,6 +1910,33 @@ const LearningPage = () => {
         const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(nextModule.id);
         const fallbackMissing = Array.isArray(eligibility?.recommendations) ? eligibility.recommendations : [];
         const breakdown = moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, finalAssessment: 0 };
+
+        // Fetch dynamic weights so the modal reflects correct percentages
+        // (quiz becomes 50% when no final assessment is available)
+        let fallbackWeights = { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 };
+        let fallbackAssessmentInfo: { hasQuizzes: boolean; hasAssignments: boolean; hasFinalAssessment: boolean; isReadingOnly: boolean } | undefined;
+        try {
+          const scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(currentModuleId);
+          if (scoreBreakdown?.breakdown) {
+            fallbackWeights = {
+              courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
+              quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
+              assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
+              finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 0
+            };
+          }
+          if (scoreBreakdown?.assessment_info) {
+            fallbackAssessmentInfo = {
+              hasQuizzes: scoreBreakdown.assessment_info.has_quizzes,
+              hasAssignments: scoreBreakdown.assessment_info.has_assignments,
+              hasFinalAssessment: scoreBreakdown.assessment_info.has_final_assessment,
+              isReadingOnly: scoreBreakdown.assessment_info.is_reading_only
+            };
+          }
+        } catch (_weightErr) {
+          // Non-fatal: keep default weights
+        }
+
         setModuleProgressInfo({
           moduleName: currentModule?.title || 'Current Module',
           nextModuleName: nextModule?.title || 'Next Module',
@@ -1888,8 +1944,8 @@ const LearningPage = () => {
           requiredScore: passingThreshold,
           missingItems: fallbackMissing,
           breakdown,
-          weights: { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 },
-          assessmentInfo: undefined
+          weights: fallbackWeights,
+          assessmentInfo: fallbackAssessmentInfo
         });
         setShowModuleProgressModal(true);
       } catch (_) {
@@ -2894,6 +2950,68 @@ const LearningPage = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* Score Breakdown - same dynamic weights as "Almost There!" modal */}
+                  {lockedModulePrevScoreBreakdown && (
+                    <div className="mt-4">
+                      <h4 className="text-gray-300 text-xs sm:text-sm font-semibold mb-2 flex items-center gap-2 flex-wrap">
+                        <span>📊 Score Breakdown</span>
+                        {lockedModulePrevScoreBreakdown.assessment_info?.is_reading_only && (
+                          <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded-full">Reading Only</span>
+                        )}
+                      </h4>
+                      <div className="space-y-2 rounded-xl bg-gray-800/40 border border-gray-700/40 px-3 py-2.5">
+                        {(lockedModulePrevScoreBreakdown.breakdown.course_contribution.weight || 0) > 0 && (
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                              <span className="flex-shrink-0 text-base leading-none">🖥️</span>
+                              <span className="truncate">Reading &amp; Engagement</span>
+                              <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.course_contribution.weight}%)</span>
+                            </span>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.course_contribution.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                              {lockedModulePrevScoreBreakdown.breakdown.course_contribution.score.toFixed(0)}%
+                            </span>
+                          </div>
+                        )}
+                        {(lockedModulePrevScoreBreakdown.breakdown.quizzes.weight || 0) > 0 && (
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                              <span className="flex-shrink-0 text-base leading-none">📝</span>
+                              <span className="truncate">Quiz Score</span>
+                              <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.quizzes.weight}%)</span>
+                            </span>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.quizzes.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                              {lockedModulePrevScoreBreakdown.breakdown.quizzes.score.toFixed(0)}%
+                            </span>
+                          </div>
+                        )}
+                        {(lockedModulePrevScoreBreakdown.breakdown.assignments.weight || 0) > 0 && (
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                              <span className="flex-shrink-0 text-base leading-none">📋</span>
+                              <span className="truncate">Assignments</span>
+                              <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.assignments.weight}%)</span>
+                            </span>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.assignments.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                              {lockedModulePrevScoreBreakdown.breakdown.assignments.score.toFixed(0)}%
+                            </span>
+                          </div>
+                        )}
+                        {(lockedModulePrevScoreBreakdown.breakdown.final_assessment.weight || 0) > 0 && (
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                              <span className="flex-shrink-0 text-base leading-none">🎯</span>
+                              <span className="truncate">Final Assessment</span>
+                              <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.final_assessment.weight}%)</span>
+                            </span>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.final_assessment.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                              {lockedModulePrevScoreBreakdown.breakdown.final_assessment.score.toFixed(0)}%
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Detailed Action Items - Enhanced */}
                   <div className="mt-6 pt-4 border-t border-orange-700/30">

@@ -312,11 +312,13 @@ def get_module_score_breakdown(module_id):
                 'final_assessment': 30.0
             }
         elif not has_final_assessment:
-            # Quizzes and assignments exist, no final
+            # Quizzes and assignments exist, no final assessment
+            # The 20% that would go to Final Assessment is redistributed to Quiz (30%+20%=50%)
+            # Reading stays at 10%, Assignments stays at 40%
             weights = {
-                'course_contribution': 15.0,
-                'quizzes': 40.0,
-                'assignments': 45.0,
+                'course_contribution': 10.0,
+                'quizzes': 50.0,
+                'assignments': 40.0,
                 'final_assessment': 0.0
             }
         else:
