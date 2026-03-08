@@ -85,7 +85,7 @@ class LessonCompletion(db.Model):
         
         Enhanced Requirements:
         - Quiz must be passed (70%+ by default) to contribute to score
-        - Assignment must be graded and passed (70%+) to contribute to score
+        - Assignment must be graded and passed (60%+) to contribute to score
         - Reading progress below 90% significantly reduces overall score
         - Engagement below 60% reduces overall score
         
@@ -137,7 +137,7 @@ class LessonCompletion(db.Model):
                 # Calculate percentage score
                 points_possible = lesson_assignment.points_possible or 100
                 raw_assignment_score = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
-                assignment_passing_score = 70.0  # Standard assignment passing score
+                assignment_passing_score = 60.0  # Standard assignment passing score
                 assignment_passed = raw_assignment_score >= assignment_passing_score
                 
                 # Only use assignment score if passed, otherwise 0
@@ -268,7 +268,7 @@ class LessonCompletion(db.Model):
             if best_submission and best_submission.grade is not None:
                 points_possible = lesson_assignment.points_possible or 100
                 raw_assignment_score = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
-                assignment_passing_score = 70.0
+                assignment_passing_score = 60.0
                 assignment_passed = raw_assignment_score >= assignment_passing_score
                 assignment_score = raw_assignment_score
                 assignment_status = "passed" if assignment_passed else "failed"
@@ -322,7 +322,7 @@ class LessonCompletion(db.Model):
             },
             'passing_scores': {
                 'quiz': lesson_quiz.passing_score or 70.0 if has_quiz else None,
-                'assignment': 70.0 if has_assignment else None,
+                'assignment': 60.0 if has_assignment else None,
                 'reading_minimum': 90.0,
                 'engagement_minimum': 60.0,
                 'overall_minimum': 80.0
@@ -421,8 +421,8 @@ class LessonCompletion(db.Model):
             if best_submission and best_submission.grade is not None:
                 points_possible = lesson_assignment.points_possible or 100
                 assignment_percentage = (best_submission.grade / points_possible) * 100 if points_possible > 0 else 0.0
-                assignment_passing_score = 70.0
-                
+                assignment_passing_score = 60.0
+
                 # Assignment component only counts if passed
                 if assignment_percentage >= assignment_passing_score:
                     assignment_component = assignment_percentage

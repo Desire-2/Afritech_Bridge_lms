@@ -14,7 +14,7 @@ class LessonCompletionService:
     
     # Default passing scores
     DEFAULT_QUIZ_PASSING_SCORE = 70.0
-    DEFAULT_ASSIGNMENT_PASSING_SCORE = 70.0
+    DEFAULT_ASSIGNMENT_PASSING_SCORE = 60.0
     DEFAULT_LESSON_PASSING_SCORE = 80.0  # Overall lesson score requirement
     
     @staticmethod
@@ -186,7 +186,7 @@ class LessonCompletionService:
             if score_percentage >= LessonCompletionService.DEFAULT_ASSIGNMENT_PASSING_SCORE:
                 return True, score_percentage, f"Assignment passed with {score_percentage:.1f}%"
             else:
-                return False, score_percentage, f"Improve assignment '{assignment.title}' score to 70%+ (current: {score_percentage:.1f}%)"
+                return False, score_percentage, f"Improve assignment '{assignment.title}' score to 60%+ (current: {score_percentage:.1f}%)"
                 
         except Exception as e:
             current_app.logger.error(f"Error checking assignment requirements: {str(e)}")
