@@ -202,22 +202,21 @@ def list_students():
             # Resolve phone: prefer User.phone_number, fall back to CourseApplication.phone
             phone_number = getattr(student, 'phone_number', None)
             whatsapp_number = None
+            # Find linked application: first via enrollment application_id, then by email match
+            app = CourseApplication.query.join(
+                Enrollment, Enrollment.application_id == CourseApplication.id
+            ).filter(Enrollment.student_id == student.id).order_by(
+                CourseApplication.id.desc()
+            ).first()
+            if not app:
+                app = CourseApplication.query.filter(
+                    CourseApplication.email == student.email
+                ).order_by(CourseApplication.id.desc()).first()
             if not phone_number:
-                # Try to find a linked application via any enrollment
-                app = CourseApplication.query.join(
-                    Enrollment, Enrollment.application_id == CourseApplication.id
-                ).filter(Enrollment.student_id == student.id).order_by(
-                    CourseApplication.id.desc()
-                ).first()
                 if app:
                     phone_number = app.phone
                     whatsapp_number = app.whatsapp_number
             else:
-                app = CourseApplication.query.join(
-                    Enrollment, Enrollment.application_id == CourseApplication.id
-                ).filter(Enrollment.student_id == student.id).order_by(
-                    CourseApplication.id.desc()
-                ).first()
                 if app:
                     whatsapp_number = app.whatsapp_number
 
@@ -307,6 +306,26 @@ def get_student_detail(student_id):
             return jsonify({"error": "User is not a student"}), 400
 
         student_data = student.to_dict()
+
+        # Resolve phone: prefer User.phone_number, fall back to CourseApplication.phone
+        resolved_phone = student.phone_number
+        resolved_whatsapp = None
+        detail_app = CourseApplication.query.join(
+            Enrollment, Enrollment.application_id == CourseApplication.id
+        ).filter(Enrollment.student_id == student_id).order_by(
+            CourseApplication.id.desc()
+        ).first()
+        if not detail_app:
+            detail_app = CourseApplication.query.filter(
+                CourseApplication.email == student.email
+            ).order_by(CourseApplication.id.desc()).first()
+        if not resolved_phone and detail_app:
+            resolved_phone = detail_app.phone
+            resolved_whatsapp = detail_app.whatsapp_number
+        elif detail_app:
+            resolved_whatsapp = detail_app.whatsapp_number
+        student_data["phone_number"] = resolved_phone
+        student_data["whatsapp_number"] = resolved_whatsapp
 
         # --- Enrollments with course details ---
         enrollments = Enrollment.query.filter_by(student_id=student_id).all()
