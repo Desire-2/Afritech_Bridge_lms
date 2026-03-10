@@ -378,7 +378,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                   previousModuleScore: previousModuleProgress?.cumulativeScore || 0,
                   previousModuleLessonsCompleted: previousModuleProgress?.completedLessons || 0,
                   previousModuleTotalLessons: previousModuleProgress?.totalLessons || previousModule.lessons?.length || 0,
-                  requiredScore: 80
+                  requiredScore: 70
                 });
               }
             };

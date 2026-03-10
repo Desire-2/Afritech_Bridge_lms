@@ -1865,17 +1865,17 @@ const LearningPage = () => {
         missingItems.push(...eligibility.recommendations);
       } else {
         // Check each component and suggest improvements (only for available components)
-        if (weights.courseContribution > 0 && breakdown.courseContribution < 80) {
-          missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for 80%+)`);
+        if (weights.courseContribution > 0 && breakdown.courseContribution < 70) {
+          missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for 70%+)`);
         }
-        if (weights.quizzes > 0 && breakdown.quizzes < 80) {
-          missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for 80%+)`);
+        if (weights.quizzes > 0 && breakdown.quizzes < 70) {
+          missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for 70%+)`);
         }
-        if (weights.assignments > 0 && breakdown.assignments < 80) {
-          missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for 80%+)`);
+        if (weights.assignments > 0 && breakdown.assignments < 70) {
+          missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for 70%+)`);
         }
-        if (weights.finalAssessment > 0 && breakdown.finalAssessment < 80) {
-          missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for 80%+)`);
+        if (weights.finalAssessment > 0 && breakdown.finalAssessment < 70) {
+          missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for 70%+)`);
         }
       }
       
@@ -3161,7 +3161,7 @@ const LearningPage = () => {
                       <div className="w-2 h-2 rounded-full bg-blue-400 mt-2 shrink-0" />
                       <div>
                         <p className="text-sm sm:text-base text-blue-300 font-medium">Master the Quizzes</p>
-                        <p className="text-xs text-blue-400/70">Aim for 80%+ on all quiz attempts</p>
+                        <p className="text-xs text-blue-400/70">Aim for 70%+ on all quiz attempts</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
