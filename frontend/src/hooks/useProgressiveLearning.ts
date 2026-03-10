@@ -285,10 +285,10 @@ export const useModuleScoring = (moduleId: number) => {
         // If we got the detailed breakdown, use it directly (has dynamic weights)
         if (scoreBreakdown && scoreBreakdown.breakdown) {
           const weights = {
-            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
-            quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
-            assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
-            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 20,
+            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
+            quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
+            assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0,
           };
 
           setScoringState({
@@ -415,10 +415,10 @@ export const useModuleScoring = (moduleId: number) => {
       // If we got the detailed breakdown, use it directly (has dynamic weights)
       if (scoreBreakdown && scoreBreakdown.breakdown) {
         const weights = {
-          courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
-          quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
-          assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
-          finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 20,
+          courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
+          quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
+          assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+          finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0,
         };
 
         setScoringState({

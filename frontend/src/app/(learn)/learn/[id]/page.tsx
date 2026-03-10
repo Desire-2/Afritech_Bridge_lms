@@ -155,6 +155,8 @@ const LearningPage = () => {
   const [currentLessonQuizScore, setCurrentLessonQuizScore] = useState(0);
   const [currentLessonAssignmentScore, setCurrentLessonAssignmentScore] = useState(0);
   const [lessonScore, setLessonScore] = useState(0);
+  // Trigger to force sidebar to re-fetch module progress (incremented on score change)
+  const [sidebarProgressTrigger, setSidebarProgressTrigger] = useState(0);
   
   // Track completion attempts to prevent multiple simultaneous calls
   const completionAttemptRef = useRef<number | null>(null);
@@ -224,6 +226,7 @@ const LearningPage = () => {
   const [lockedModuleEligibility, setLockedModuleEligibility] = useState<any | null>(null);
   const [lockedModuleEligibilityLoading, setLockedModuleEligibilityLoading] = useState(false);
   const [lockedModulePrevScoreBreakdown, setLockedModulePrevScoreBreakdown] = useState<{
+    cumulative_score?: number;
     breakdown: {
       course_contribution: { score: number; weight: number };
       quizzes: { score: number; weight: number };
@@ -637,9 +640,9 @@ const LearningPage = () => {
       lessonId: currentLesson?.id
     });
     
-    // Recalculate module score
+    // Recalculate module score and refresh sidebar
     if (moduleScoring) {
-      moduleScoring.recalculate();
+      moduleScoring.recalculate().then(() => setSidebarProgressTrigger(n => n + 1));
     }
   }, [lessonQuiz?.id, currentLesson?.id, moduleScoring]);
 
@@ -652,14 +655,15 @@ const LearningPage = () => {
     
     // Recalculate module score and check for module unlock
     if (moduleScoring) {
-      moduleScoring.recalculate();
-      
-      // Check if module can be unlocked after assignment submission
-      setTimeout(() => {
-        if (checkAndUnlockNextModuleRef.current) {
-          checkAndUnlockNextModuleRef.current();
-        }
-      }, 1500);
+      moduleScoring.recalculate().then(() => {
+        setSidebarProgressTrigger(n => n + 1);
+        // Check if module can be unlocked after assignment submission
+        setTimeout(() => {
+          if (checkAndUnlockNextModuleRef.current) {
+            checkAndUnlockNextModuleRef.current();
+          }
+        }, 1500);
+      });
     }
   }, [moduleScoring]);
 
@@ -1752,9 +1756,14 @@ const LearningPage = () => {
         // Fetch score breakdown for the previous module (the one that must be passed)
         // This gives us the dynamic weights (e.g. quiz becomes 50% when no final assessment)
         try {
+          // First recalculate to ensure stored scores are fresh
+          try {
+            await ProgressApiService.recalculateModuleScore(lockedModuleInfo.previousModuleId);
+          } catch (_) { /* non-fatal */ }
           const prevBreakdown = await ProgressApiService.getModuleScoreBreakdown(lockedModuleInfo.previousModuleId);
           if (prevBreakdown?.breakdown) {
             setLockedModulePrevScoreBreakdown({
+              cumulative_score: prevBreakdown.cumulative_score,
               breakdown: prevBreakdown.breakdown,
               assessment_info: prevBreakdown.assessment_info
             });
@@ -1824,10 +1833,10 @@ const LearningPage = () => {
         const scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(currentModuleId);
         if (scoreBreakdown?.breakdown) {
           weights = {
-            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
-            quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
-            assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
-            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 20
+            courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
+            quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
+            assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+            finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0
           };
         }
         if (scoreBreakdown?.assessment_info) {
@@ -2534,6 +2543,7 @@ const LearningPage = () => {
           viewAsStudent={viewAsStudent}
           totalModuleCount={courseData?.course?.total_module_count}
           releasedModuleCount={courseData?.course?.released_module_count}
+          progressRefreshTrigger={sidebarProgressTrigger}
         />
 
         {currentLesson ? (
@@ -2932,16 +2942,16 @@ const LearningPage = () => {
                           <span className="text-sm sm:text-base text-gray-300 font-medium">Score</span>
                         </div>
                         <div className={`px-3 py-1 rounded-full text-xs sm:text-sm font-bold ${
-                          lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore 
+                          (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore 
                             ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
                             : 'bg-red-500/20 text-red-400 border border-red-500/30'
                         }`}>
-                          {lockedModuleInfo.previousModuleScore.toFixed(1)}%
+                          {(lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore).toFixed(1)}%
                         </div>
                       </div>
                       <div className="relative mb-2">
                         <Progress 
-                          value={Math.min(100, lockedModuleInfo.previousModuleScore)} 
+                          value={Math.min(100, lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore)} 
                           className="h-3 bg-gray-700"
                         />
                         {/* Enhanced threshold marker */}
@@ -3043,12 +3053,12 @@ const LearningPage = () => {
                           </div>
                         </div>
                       )}
-                      {lockedModuleInfo.previousModuleScore < lockedModuleInfo.requiredScore && (
+                      {(lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) < lockedModuleInfo.requiredScore && (
                         <div className="flex items-start gap-3 bg-orange-900/20 p-3 rounded-lg border border-orange-700/30">
                           <div className="w-2 h-2 rounded-full bg-orange-400 mt-2 shrink-0" />
                           <div>
                             <p className="text-sm sm:text-base text-orange-300 font-medium">
-                              Improve score by {(lockedModuleInfo.requiredScore - lockedModuleInfo.previousModuleScore).toFixed(1)}%
+                              Improve score by {(lockedModuleInfo.requiredScore - (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore)).toFixed(1)}%
                             </p>
                             <p className="text-xs text-orange-400/70">
                               Retake quizzes or improve assignments
@@ -3057,7 +3067,7 @@ const LearningPage = () => {
                         </div>
                       )}
                       {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                       lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
+                       (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore && (
                         <div className="flex items-start gap-3 bg-green-900/20 p-3 rounded-lg border border-green-700/30 sm:col-span-2">
                           <CheckCircle className="h-5 w-5 text-green-400 shrink-0 mt-0.5" />
                           <div>
@@ -3187,7 +3197,7 @@ const LearningPage = () => {
                 >
                   {/* Unlock Button - Show only when all requirements are met */}
                   {lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                   lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore && (
+                   (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore && (
                     <Button
                       className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-bold py-3 sm:py-4 text-sm sm:text-base transition-all duration-200 shadow-lg hover:shadow-xl"
                       disabled={modalUnlocking}
@@ -3243,7 +3253,7 @@ const LearningPage = () => {
                   <Button
                     className={`w-full font-medium py-3 sm:py-4 text-sm sm:text-base transition-all duration-200 ${
                       lockedModuleInfo.previousModuleLessonsCompleted === lockedModuleInfo.previousModuleTotalLessons && 
-                      lockedModuleInfo.previousModuleScore >= lockedModuleInfo.requiredScore
+                      (lockedModulePrevScoreBreakdown?.cumulative_score ?? lockedModuleInfo.previousModuleScore) >= lockedModuleInfo.requiredScore
                         ? 'bg-gray-700 hover:bg-gray-600 text-gray-300 border border-gray-600'
                         : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl'
                     }`}

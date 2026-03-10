@@ -59,6 +59,8 @@ interface LearningSidebarProps {
   // Module release info
   totalModuleCount?: number;
   releasedModuleCount?: number;
+  // Trigger sidebar to re-fetch module progress (e.g. after quiz completion)
+  progressRefreshTrigger?: number;
 }
 
 export const LearningSidebar: React.FC<LearningSidebarProps> = ({
@@ -78,7 +80,8 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   setSidebarOpen,
   viewAsStudent = false,
   totalModuleCount,
-  releasedModuleCount
+  releasedModuleCount,
+  progressRefreshTrigger
 }) => {
   const allLessons = modules?.reduce((total, module) => total + (module.lessons?.length || 0), 0) || 0;
   
@@ -197,7 +200,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
     };
     
     fetchModuleProgress();
-  }, [modules, lessonCompletionStatus]);
+  }, [modules, lessonCompletionStatus, progressRefreshTrigger]);
 
   // Helper function to get icon for assessment type
   const getAssessmentIcon = (type: string, size: string = 'h-3 w-3') => {

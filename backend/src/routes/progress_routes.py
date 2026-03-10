@@ -325,8 +325,12 @@ def get_module_score_breakdown(module_id):
             # All components exist - use default weights
             weights = base_weights.copy()
         
-        # Calculate weighted scores with dynamic weights
-        course_contribution_weighted = (module_progress.course_contribution_score or 0.0) * (weights['course_contribution'] / 100)
+        # Always recalculate lesson average to ensure course_contribution_score is fresh
+        fresh_lessons_avg = module_progress.calculate_lessons_average_score()
+        module_progress.course_contribution_score = fresh_lessons_avg
+
+        # Calculate weighted scores with dynamic weights (using fresh lesson average)
+        course_contribution_weighted = fresh_lessons_avg * (weights['course_contribution'] / 100)
         quiz_weighted = (module_progress.quiz_score or 0.0) * (weights['quizzes'] / 100)
         assignment_weighted = (module_progress.assignment_score or 0.0) * (weights['assignments'] / 100)
         final_weighted = (module_progress.final_assessment_score or 0.0) * (weights['final_assessment'] / 100)
@@ -341,7 +345,7 @@ def get_module_score_breakdown(module_id):
         # Build breakdown with dynamic weights
         breakdown = {
             "course_contribution": {
-                "score": module_progress.course_contribution_score or 0.0,
+                "score": fresh_lessons_avg,
                 "weight": weights['course_contribution'],
                 "weighted_score": course_contribution_weighted,
                 "description": "Lesson completion and engagement" if weights['course_contribution'] == 100 else "Reading & engagement score",
