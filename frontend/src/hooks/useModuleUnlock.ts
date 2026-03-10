@@ -79,8 +79,8 @@ export const useModuleUnlock = ({
       const result = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(moduleId);
       setEligibility(result);
       
-      // Check for pre-unlock warning (85%+ progress)
-      if (result.total_score >= 85 && result.total_score < result.required_score) {
+      // Check for pre-unlock warning (60%+ progress, approaching 70% threshold)
+      if (result.total_score >= 60 && result.total_score < result.required_score) {
         setPreUnlockWarning(true);
       } else {
         setPreUnlockWarning(false);

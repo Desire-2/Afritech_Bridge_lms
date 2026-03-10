@@ -112,7 +112,7 @@ const LearningPage = () => {
     totalAssignments: 0,
     completedAssignments: 0,
     overallScore: 0,
-    passingThreshold: 80
+    passingThreshold: 70
   });
   const [newBadgesEarned, setNewBadgesEarned] = useState<string[]>([]);
   const [showCertificateNotification, setShowCertificateNotification] = useState(false);
@@ -591,7 +591,7 @@ const LearningPage = () => {
     if (!moduleScoring?.cumulativeScore || !checkAndUnlockNextModuleRef.current) return;
     if (!courseData?.course?.modules || !currentModuleId) return;
     
-    const passingThreshold = 80;
+    const passingThreshold = 70;
     const currentScore = moduleScoring.cumulativeScore;
     
     // Check if passing
@@ -1058,7 +1058,7 @@ const LearningPage = () => {
         totalAssignments: progressData.total_assignments || 0,
         completedAssignments: progressData.completed_assignments || 0,
         overallScore,
-        passingThreshold: 80
+        passingThreshold: 70
       };
 
       setCourseCompletion(completion);
@@ -1798,7 +1798,7 @@ const LearningPage = () => {
       await moduleScoring.recalculate();
     }
     
-    const passingThreshold = 80;
+    const passingThreshold = 70;
     const currentScore = moduleScoring?.cumulativeScore || 0;
     const isPassing = currentScore >= passingThreshold;
     
@@ -2187,11 +2187,11 @@ const LearningPage = () => {
     return isLast;
   }, [courseData?.course?.modules, currentModuleId]);
 
-  // Check if user can unlock next module (last lesson completed + score >= 80%)
+  // Check if user can unlock next module (last lesson completed + score >= 70%)
   const canUnlockNextModule = useMemo(() => {
     if (!isLastLessonInModule || !nextModuleInfo) return false;
     const score = moduleScoring?.cumulativeScore ?? 0;
-    return isLessonCompleted && score >= 80;
+    return isLessonCompleted && score >= 70;
   }, [isLastLessonInModule, nextModuleInfo, moduleScoring?.cumulativeScore, isLessonCompleted]);
 
   // Calculate hasNextLesson after canUnlockNextModule is defined
@@ -2730,7 +2730,7 @@ const LearningPage = () => {
                           <span className="truncate">Reading & Engagement</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.courseContribution || 10}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.courseContribution >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.courseContribution >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.courseContribution.toFixed(0)}%
                         </span>
                       </div>
@@ -2744,7 +2744,7 @@ const LearningPage = () => {
                           <span className="truncate">Quiz Score</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.quizzes || 30}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.quizzes >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.quizzes >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.quizzes.toFixed(0)}%
                         </span>
                       </div>
@@ -2758,7 +2758,7 @@ const LearningPage = () => {
                           <span className="truncate">Assignments</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.assignments || 40}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.assignments >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.assignments >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.assignments.toFixed(0)}%
                         </span>
                       </div>
@@ -2772,7 +2772,7 @@ const LearningPage = () => {
                           <span className="truncate">Final Assessment</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.finalAssessment || 20}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.finalAssessment >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.finalAssessment >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.finalAssessment.toFixed(0)}%
                         </span>
                       </div>
@@ -2989,7 +2989,7 @@ const LearningPage = () => {
                               <span className="truncate">Reading &amp; Engagement</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.course_contribution.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.course_contribution.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.course_contribution.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.course_contribution.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3001,7 +3001,7 @@ const LearningPage = () => {
                               <span className="truncate">Quiz Score</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.quizzes.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.quizzes.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.quizzes.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.quizzes.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3013,7 +3013,7 @@ const LearningPage = () => {
                               <span className="truncate">Assignments</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.assignments.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.assignments.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.assignments.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.assignments.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3025,7 +3025,7 @@ const LearningPage = () => {
                               <span className="truncate">Final Assessment</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.final_assessment.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.final_assessment.score >= 80 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.final_assessment.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.final_assessment.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3111,7 +3111,7 @@ const LearningPage = () => {
                           {lockedModuleEligibility.eligible ? 'Eligible' : 'Not Eligible'}
                         </span>
                         <span className="px-2 py-1 text-xs rounded border bg-slate-700/40 text-slate-300 border-slate-600/40">
-                          Score: {Math.round(lockedModuleEligibility.total_score || 0)}% / {Math.round(lockedModuleEligibility.required_score || 80)}%
+                          Score: {Math.round(lockedModuleEligibility.total_score || 0)}% / {Math.round(lockedModuleEligibility.required_score || 70)}%
                         </span>
                         {lockedModuleEligibility.can_preview && (
                           <span className="px-2 py-1 text-xs rounded border bg-blue-500/10 text-blue-300 border-blue-600/30">Preview Allowed</span>

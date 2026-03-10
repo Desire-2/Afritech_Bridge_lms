@@ -1039,14 +1039,14 @@ class ModuleProgress(db.Model):
         
         Requirements:
         1. Module status must be 'completed' 
-        2. Cumulative score >= 80%
+        2. Cumulative score >= 70%
         3. ALL lessons in module must satisfy their individual requirements
         4. No critical failures in any lesson
         """
         if self.status != 'completed':
             return False
             
-        if (self.cumulative_score or 0) < 80.0:
+        if (self.cumulative_score or 0) < 70.0:
             return False
         
         # STRICT CHECK: Verify ALL lessons in module meet requirements
@@ -1096,9 +1096,9 @@ class ModuleProgress(db.Model):
             recommendations.append("Complete all module requirements to change status")
         
         current_score = self.cumulative_score or 0
-        if current_score < 80.0:
-            gap = 80.0 - current_score
-            blockers.append(f"Module score {current_score:.1f}% is below 80% requirement")
+        if current_score < 70.0:
+            gap = 70.0 - current_score
+            blockers.append(f"Module score {current_score:.1f}% is below 70% requirement")
             recommendations.append(f"Increase module score by {gap:.1f}% points")
         
         # Check lesson-level requirements

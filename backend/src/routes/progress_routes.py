@@ -375,7 +375,7 @@ def get_module_score_breakdown(module_id):
         }
         
         # Calculate what's needed to pass
-        passing_threshold = 80.0
+        passing_threshold = 70.0
         points_needed = max(0, passing_threshold - cumulative_score)
         
         # Generate dynamic recommendations based on available components
