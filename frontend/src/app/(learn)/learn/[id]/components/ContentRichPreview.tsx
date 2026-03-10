@@ -2228,29 +2228,29 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       )}
       
       {/* Content Header */}
-      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg p-6 border border-blue-800/50 w-full">
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex-1">
-            <h3 className="text-xl font-semibold text-white mb-2">
+      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg p-4 sm:p-5 md:p-6 border border-blue-800/50 w-full">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 mb-4">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg sm:text-xl font-semibold text-white mb-1 sm:mb-2 break-words leading-snug">
               {lesson.title}
             </h3>
             {lesson.description && (
-              <p className="text-gray-300">{lesson.description}</p>
+              <p className="text-gray-300 text-sm sm:text-base">{lesson.description}</p>
             )}
           </div>
           
-          <div className="flex items-center space-x-2 flex-wrap">
-            <Badge variant="secondary" className="flex items-center space-x-1 bg-gray-700 text-gray-200">
-              {lesson.content_type === 'text' && <FileText className="h-3 w-3" />}
-              {lesson.content_type === 'video' && <Video className="h-3 w-3" />}
-              {lesson.content_type === 'pdf' && <FileText className="h-3 w-3" />}
-              {lesson.content_type === 'mixed' && <BookOpen className="h-3 w-3" />}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0">
+            <Badge variant="secondary" className="flex items-center gap-1 bg-gray-700 text-gray-200 text-xs sm:text-sm px-2 py-1">
+              {lesson.content_type === 'text' && <FileText className="h-3 w-3 flex-shrink-0" />}
+              {lesson.content_type === 'video' && <Video className="h-3 w-3 flex-shrink-0" />}
+              {lesson.content_type === 'pdf' && <FileText className="h-3 w-3 flex-shrink-0" />}
+              {lesson.content_type === 'mixed' && <BookOpen className="h-3 w-3 flex-shrink-0" />}
               <span className="capitalize">{lesson.content_type}</span>
             </Badge>
             
             {lesson.duration_minutes && (
-              <Badge variant="outline" className="flex items-center space-x-1 border-gray-600 text-gray-300">
-                <Clock className="h-3 w-3" />
+              <Badge variant="outline" className="flex items-center gap-1 border-gray-600 text-gray-300 text-xs sm:text-sm px-2 py-1">
+                <Clock className="h-3 w-3 flex-shrink-0" />
                 <span>{lesson.duration_minutes} min</span>
               </Badge>
             )}
