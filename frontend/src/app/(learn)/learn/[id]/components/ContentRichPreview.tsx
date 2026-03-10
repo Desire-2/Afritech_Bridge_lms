@@ -221,6 +221,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const [mixedContentError, setMixedContentError] = useState<string | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
+  // Per-video progress tracking for mixed content (videoIndex -> progress 0-100)
+  const [mixedVideoProgressMap, setMixedVideoProgressMap] = useState<Record<number, number>>({});
+  const [mixedVideoWatchedMap, setMixedVideoWatchedMap] = useState<Record<number, boolean>>({});
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -555,7 +558,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           
           // Always call onVideoProgress for both main video and mixed content
           if (onVideoProgress) {
-            onVideoProgress(progress, data.seconds, duration);
+            onVideoProgress(progress, data.seconds, data.duration);
           }
           
           // Mark as watched if >= 90% completed
@@ -604,159 +607,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       });
     };
   }, []);
-
-  // Initialize YouTube player for MAIN video lessons
-  useEffect(() => {
-    if (lesson.content_type !== 'video') return;
-    if (!lesson.content_data || !(window as any).YT || !(window as any).YT.Player) return;
-    
-    const videoUrl = lesson.content_data.trim();
-    const isYouTube = videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be');
-    
-    if (!isYouTube) return;
-    
-    console.log('🎬 Initializing MAIN YouTube video player');
-    
-    const timeoutId = setTimeout(() => {
-      const iframe = document.getElementById('main-youtube-video');
-      if (!iframe) {
-        console.warn('❌ Main YouTube iframe not found');
-        return;
-      }
-      
-      try {
-        const player = new (window as any).YT.Player('main-youtube-video', {
-          events: {
-            onReady: (event: any) => {
-              console.log('✅ Main YouTube player ready');
-              youtubePlayerRef.current = player;
-              
-              // Start tracking progress
-              const interval = setInterval(() => {
-                try {
-                  const currentTime = event.target.getCurrentTime();
-                  const duration = event.target.getDuration();
-                  
-                  if (duration > 0) {
-                    const progress = (currentTime / duration) * 100;
-                    
-                    // Update local state for UI display
-                    setVideoProgress(progress);
-                    setCurrentTime(currentTime);
-                    setVideoDuration(duration);
-                    
-                    if (typeof onVideoProgress === 'function' && progress > 0) {
-                      console.log(`📊 Main video progress:`, progress.toFixed(1) + '%', { currentTime, duration });
-                      onVideoProgress(progress, currentTime, duration);
-                    }
-                    
-                    // Mark as complete at 90%
-                    if (progress >= 90 && typeof onVideoComplete === 'function') {
-                      console.log('✅ Main video completed');
-                      setVideoWatched(true);
-                      onVideoComplete();
-                      clearInterval(interval);
-                    }
-                  }
-                } catch (error) {
-                  console.error('Error tracking main YouTube video:', error);
-                }
-              }, 2000);
-              
-              progressIntervalRef.current = interval;
-            },
-            onError: (event: any) => {
-              console.error('❌ Main YouTube player error:', event.data);
-            }
-          }
-        });
-      } catch (error) {
-        console.error('Failed to initialize main YouTube player:', error);
-      }
-    }, 1000);
-    
-    return () => {
-      clearTimeout(timeoutId);
-      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
-      if (youtubePlayerRef.current?.destroy) youtubePlayerRef.current.destroy();
-    };
-  }, [lesson.content_type, lesson.content_data, lesson.title, onVideoProgress, onVideoComplete]);
-
-  // Initialize Vimeo player for MAIN video lessons
-  useEffect(() => {
-    if (lesson.content_type !== 'video') return;
-    if (!lesson.content_data || typeof window === 'undefined' || !(window as any).Vimeo) return;
-    
-    const videoUrl = lesson.content_data.trim();
-    const isVimeo = videoUrl.includes('vimeo.com');
-    
-    if (!isVimeo) return;
-    
-    console.log('🎬 Initializing MAIN Vimeo video player');
-    
-    const timeoutId = setTimeout(() => {
-      const iframe = document.getElementById('main-vimeo-video');
-      if (!iframe) {
-        console.warn('❌ Main Vimeo iframe not found');
-        return;
-      }
-      
-      try {
-        const player = new (window as any).Vimeo.Player(iframe);
-        vimeoPlayerRef.current = player;
-        
-        player.on('loaded', () => {
-          console.log('📺 Main Vimeo player ready');
-        });
-        
-        player.on('timeupdate', async (data: any) => {
-          try {
-            const progress = (data.percent || 0) * 100;
-            
-            // Update local state for UI display
-            setVideoProgress(progress);
-            setCurrentTime(data.seconds || 0);
-            
-            // Get duration if not set
-            if (videoDuration === 0 && player) {
-              player.getDuration().then((duration: number) => {
-                setVideoDuration(duration);
-              });
-            }
-            
-            if (typeof onVideoProgress === 'function') {
-              console.log(`📊 Main Vimeo video progress:`, progress.toFixed(1) + '%', { seconds: data.seconds, duration });
-              onVideoProgress(progress, data.seconds, duration);
-            }
-            
-            // Check for completion (90% threshold)
-            if (progress >= 90 && typeof onVideoComplete === 'function') {
-              console.log('✅ Main Vimeo video completed');
-              setVideoWatched(true);
-              onVideoComplete();
-            }
-          } catch (error) {
-            console.error('Error tracking main Vimeo video:', error);
-          }
-        });
-        
-        player.on('error', (error: any) => {
-          console.error('❌ Main Vimeo player error:', error);
-        });
-      } catch (error) {
-        console.error('Failed to initialize main Vimeo player:', error);
-      }
-    }, 1000);
-    
-    return () => {
-      clearTimeout(timeoutId);
-      if (vimeoPlayerRef.current?.off) {
-        vimeoPlayerRef.current.off('timeupdate');
-        vimeoPlayerRef.current.off('loaded');
-        vimeoPlayerRef.current.off('error');
-      }
-    };
-  }, [lesson.content_type, lesson.content_data, lesson.title, onVideoProgress, onVideoComplete]);
 
   // Initialize YouTube players for mixed content videos
   useEffect(() => {
@@ -835,6 +685,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                       // Track progress for mixed content videos
                       console.log(`📊 Mixed YouTube video ${index} progress:`, progress.toFixed(1));
                       
+                      // Update local per-video progress state for UI display
+                      setMixedVideoProgressMap(prev => ({ ...prev, [index]: progress }));
+                      
                       if (typeof onMixedContentVideoProgress === 'function') {
                         try {
                           onMixedContentVideoProgress(index, progress);
@@ -846,6 +699,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                       // Mark as watched if >= 90%
                       if (progress >= 90) {
                         console.log(`✅ Mixed YouTube video ${index} completed (90% threshold)`);
+                        setMixedVideoWatchedMap(prev => ({ ...prev, [index]: true }));
                         
                         if (typeof onMixedContentVideoComplete === 'function') {
                           try {
@@ -908,10 +762,12 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     const timeoutId = setTimeout(() => {
       try {
         const content = JSON.parse(lesson.content_data);
-      if (!Array.isArray(content.sections)) return;
+        // Handle both root-level arrays and { sections: [...] } structures
+        const sections = Array.isArray(content) ? content : (content.sections || content.content || []);
+        if (!Array.isArray(sections) || sections.length === 0) return;
 
       // Find all video sections with Vimeo URLs
-      const vimeoSections = content.sections
+      const vimeoSections = sections
         .map((section: any, index: number) => {
           const videoUrl = (section.url || section.metadata?.url || section.content || '').trim();
           return { section, index, videoUrl };
@@ -948,6 +804,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               
               console.log(`📊 Mixed Vimeo video ${index} progress:`, progress.toFixed(1) + '%');
               
+              // Update local per-video progress state for UI display
+              setMixedVideoProgressMap(prev => ({ ...prev, [index]: progress }));
+              
               if (typeof onMixedContentVideoProgress === 'function') {
                 try {
                   onMixedContentVideoProgress(index, progress);
@@ -959,6 +818,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               // Check for completion (90% threshold)
               if (progress >= 90) {
                 console.log(`✅ Mixed Vimeo video ${index} completed (90% threshold)`);
+                setMixedVideoWatchedMap(prev => ({ ...prev, [index]: true }));
                 
                 if (typeof onMixedContentVideoComplete === 'function') {
                   try {
@@ -1268,7 +1128,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           >
             <iframe
               id={mixedContentIndex !== undefined ? `mixed-youtube-${mixedContentIndex}` : 'main-youtube-video'}
-              ref={iframeRef}
+              ref={mixedContentIndex === undefined ? iframeRef : undefined}
               src={`https://www.youtube.com/embed/${videoId}?enablejsapi=1&origin=${window.location.origin}`}
               className="absolute inset-0 w-full h-full"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -1276,11 +1136,13 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               title={`YouTube video: ${lesson.title}`}
               onLoad={() => {
                 console.log('🎬 YouTube iframe loaded' + (mixedContentIndex !== undefined ? ` (mixed ${mixedContentIndex})` : ''));
-                // Short delay to ensure iframe is fully initialized
-                setTimeout(() => {
-                  console.log('🎬 Setting playerReady to true' + (mixedContentIndex !== undefined ? ` (mixed ${mixedContentIndex})` : ''));
-                  setPlayerReady(true);
-                }, 1000);
+                // For main video: short delay to ensure iframe is fully initialized
+                if (mixedContentIndex === undefined) {
+                  setTimeout(() => {
+                    console.log('🎬 Setting playerReady to true');
+                    setPlayerReady(true);
+                  }, 1000);
+                }
               }}
             />
             
@@ -1311,72 +1173,68 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           </div>
           
           {/* YouTube Progress Tracker */}
-          <Card 
-            className={`border-2 ${videoWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}
-            role="status"
-            aria-live="polite"
-          >
-            <div className="p-3 sm:p-4 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0">
-                <div className="flex items-center space-x-2">
-                  <Video className={`h-4 w-4 ${videoWatched ? 'text-green-400' : 'text-blue-400'}`} aria-hidden="true" />
-                  <span className={`text-sm font-medium ${videoWatched ? 'text-green-200' : 'text-blue-200'}`}>
-                    Video Progress
-                  </span>
+          {(() => {
+            const displayProgress = mixedContentIndex !== undefined 
+              ? (mixedVideoProgressMap[mixedContentIndex] || 0) 
+              : videoProgress;
+            const isWatched = mixedContentIndex !== undefined 
+              ? (mixedVideoWatchedMap[mixedContentIndex] || false)
+              : videoWatched;
+            return (
+            <Card 
+              className={`border-2 ${isWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}
+              role="status"
+              aria-live="polite"
+            >
+              <div className="p-3 sm:p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0">
+                  <div className="flex items-center space-x-2">
+                    <Video className={`h-4 w-4 ${isWatched ? 'text-green-400' : 'text-blue-400'}`} aria-hidden="true" />
+                    <span className={`text-sm font-medium ${isWatched ? 'text-green-200' : 'text-blue-200'}`}>
+                      Video Progress
+                    </span>
+                  </div>
+                  {isWatched ? (
+                    <Badge className="bg-green-600 w-fit">
+                      <CheckCircle className="h-3 w-3 mr-1" aria-hidden="true" />
+                      Completed
+                    </Badge>
+                  ) : (
+                    <span className="text-sm text-gray-300" aria-label={`Video watched: ${Math.round(displayProgress)} percent`}>
+                      {Math.round(displayProgress)}% watched
+                    </span>
+                  )}
                 </div>
-                {videoWatched ? (
-                  <Badge className="bg-green-600 w-fit">
-                    <CheckCircle className="h-3 w-3 mr-1" aria-hidden="true" />
-                    Completed
-                  </Badge>
-                ) : (
-                  <span className="text-sm text-gray-300" aria-label={`Video watched: ${Math.round(videoProgress)} percent`}>
-                    {Math.round(videoProgress)}% watched
-                  </span>
+                
+                <Progress 
+                  value={displayProgress} 
+                  className="h-2" 
+                  aria-label="Video progress"
+                  aria-valuenow={Math.round(displayProgress)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                />
+                
+                <div className="flex items-center justify-between text-xs text-gray-400">
+                  <span aria-label={`Current time: ${formatTime(currentTime)}`}>{formatTime(currentTime)}</span>
+                  <span aria-label={`Total duration: ${formatTime(videoDuration)}`}>{formatTime(videoDuration)}</span>
+                </div>
+                
+                {!isWatched && displayProgress > 0 && (
+                  <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded" role="alert">
+                    <Lock className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                    <span>Watch at least 90% to unlock next lesson</span>
+                  </div>
                 )}
               </div>
-              
-              <Progress 
-                value={videoProgress} 
-                className="h-2" 
-                aria-label="Video progress"
-                aria-valuenow={Math.round(videoProgress)}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              />
-              
-              <div className="flex items-center justify-between text-xs text-gray-400">
-                <span aria-label={`Current time: ${formatTime(currentTime)}`}>{formatTime(currentTime)}</span>
-                <span aria-label={`Total duration: ${formatTime(videoDuration)}`}>{formatTime(videoDuration)}</span>
-              </div>
-              
-              {!videoWatched && videoProgress > 0 && (
-                <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded" role="alert">
-                  <Lock className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-                  <span>Watch at least 90% to unlock next lesson</span>
-                </div>
-              )}
-            </div>
-          </Card>
+            </Card>
+            );
+          })()}
         </div>
       );
     } else if (isVimeo) {
       // Extract Vimeo video ID
       const videoId = videoUrl.match(/vimeo\.com\/(\d+)/)?.[1];
-      
-      // Set loading state for Vimeo
-      setVideoLoading(true);
-      
-      // Fallback timeout to hide loading after 8 seconds
-      const timeout = setTimeout(() => {
-        console.warn('⏱️ Vimeo loading timeout - forcing videoLoading false');
-        setVideoLoading(false);
-      }, 8000);
-      
-      // Cleanup timeout on unmount
-      useEffect(() => {
-        return () => clearTimeout(timeout);
-      }, []);
       
       if (!videoId) {
         setVideoError('Invalid Vimeo URL format');
@@ -1402,7 +1260,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           >
             <iframe
               id={mixedContentIndex !== undefined ? `mixed-vimeo-${mixedContentIndex}` : 'main-vimeo-video'}
-              ref={iframeRef}
+              ref={mixedContentIndex === undefined ? iframeRef : undefined}
               src={`https://player.vimeo.com/video/${videoId}`}
               className="absolute inset-0 w-full h-full"
               allow="autoplay; fullscreen; picture-in-picture"
@@ -1410,7 +1268,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               title="Vimeo video player"
               onLoad={() => {
                 console.log('🎬 Vimeo iframe loaded' + (mixedContentIndex !== undefined ? ` (mixed ${mixedContentIndex})` : ''));
-                setVideoLoading(false);
+                if (mixedContentIndex === undefined) setVideoLoading(false);
               }}
             />
             
@@ -1440,42 +1298,52 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
           </div>
           
           {/* Vimeo Progress Tracker */}
-          <Card className={`border-2 ${videoWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}>
-            <div className="p-3 sm:p-4 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0">
-                <div className="flex items-center space-x-2">
-                  <Video className={`h-4 w-4 ${videoWatched ? 'text-green-400' : 'text-blue-400'}`} />
-                  <span className={`text-sm font-medium ${videoWatched ? 'text-green-200' : 'text-blue-200'}`}>
-                    Video Progress
-                  </span>
+          {(() => {
+            const displayProgress = mixedContentIndex !== undefined 
+              ? (mixedVideoProgressMap[mixedContentIndex] || 0) 
+              : videoProgress;
+            const isWatched = mixedContentIndex !== undefined 
+              ? (mixedVideoWatchedMap[mixedContentIndex] || false)
+              : videoWatched;
+            return (
+            <Card className={`border-2 ${isWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}>
+              <div className="p-3 sm:p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0">
+                  <div className="flex items-center space-x-2">
+                    <Video className={`h-4 w-4 ${isWatched ? 'text-green-400' : 'text-blue-400'}`} />
+                    <span className={`text-sm font-medium ${isWatched ? 'text-green-200' : 'text-blue-200'}`}>
+                      Video Progress
+                    </span>
+                  </div>
+                  {isWatched ? (
+                    <Badge className="bg-green-600 w-fit">
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      Completed
+                    </Badge>
+                  ) : (
+                    <span className="text-sm text-gray-300">
+                      {Math.round(displayProgress)}% watched
+                    </span>
+                  )}
                 </div>
-                {videoWatched ? (
-                  <Badge className="bg-green-600 w-fit">
-                    <CheckCircle className="h-3 w-3 mr-1" />
-                    Completed
-                  </Badge>
-                ) : (
-                  <span className="text-sm text-gray-300">
-                    {Math.round(videoProgress)}% watched
-                  </span>
+                
+                <Progress value={displayProgress} className="h-2" />
+                
+                <div className="flex items-center justify-between text-xs text-gray-400">
+                  <span>{formatTime(currentTime)}</span>
+                  <span>{formatTime(videoDuration)}</span>
+                </div>
+                
+                {!isWatched && displayProgress > 0 && (
+                  <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded">
+                    <Lock className="h-3 w-3 flex-shrink-0" />
+                    <span>Watch at least 90% to unlock next lesson</span>
+                  </div>
                 )}
               </div>
-              
-              <Progress value={videoProgress} className="h-2" />
-              
-              <div className="flex items-center justify-between text-xs text-gray-400">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(videoDuration)}</span>
-              </div>
-              
-              {!videoWatched && videoProgress > 0 && (
-                <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded">
-                  <Lock className="h-3 w-3 flex-shrink-0" />
-                  <span>Watch at least 90% to unlock next lesson</span>
-                </div>
-              )}
-            </div>
-          </Card>
+            </Card>
+            );
+          })()}
         </div>
       );
     }
@@ -1506,6 +1374,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     const progress = (el.currentTime / el.duration) * 100;
                     console.log(`📊 Mixed direct video ${mixedContentIndex} progress:`, progress.toFixed(1) + '%');
                     
+                    // Update local per-video progress state for UI display
+                    setMixedVideoProgressMap(prev => ({ ...prev, [mixedContentIndex]: progress }));
+                    
                     if (typeof onMixedContentVideoProgress === 'function') {
                       try {
                         onMixedContentVideoProgress(mixedContentIndex, progress);
@@ -1517,6 +1388,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     // Check for completion (90% threshold)
                     if (progress >= 90) {
                       console.log(`✅ Mixed direct video ${mixedContentIndex} completed (90% threshold)`);
+                      setMixedVideoWatchedMap(prev => ({ ...prev, [mixedContentIndex]: true }));
                       
                       if (typeof onMixedContentVideoComplete === 'function') {
                         try {

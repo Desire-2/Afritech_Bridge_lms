@@ -759,10 +759,17 @@ const LearningPage = () => {
   // Mixed content video progress handlers
   const handleMixedContentVideoProgress = useCallback((videoIndex: number, progress: number) => {
     console.log(`📹 Mixed content video ${videoIndex} progress: ${progress.toFixed(1)}%`);
-    setMixedContentVideoProgress(prev => ({
-      ...prev,
-      [videoIndex]: progress
-    }));
+    setMixedContentVideoProgress(prev => {
+      const updated = { ...prev, [videoIndex]: progress };
+      return updated;
+    });
+    // Propagate max video progress to the shared videoProgress state so the
+    // progress-tracking hook correctly weighs video engagement in mixed lessons.
+    // Use functional update with mixedContentVideoProgress to get latest values.
+    setVideoProgress(prev => {
+      // prev is current max; update if current video is higher
+      return Math.max(prev, progress);
+    });
     
     // Track interaction for engagement
     trackInteraction('mixed_video_progress', {
@@ -775,6 +782,10 @@ const LearningPage = () => {
   const handleMixedContentVideoComplete = useCallback((videoIndex: number) => {
     console.log(`✅ Mixed content video ${videoIndex} completed`);
     setMixedContentVideosCompleted(prev => new Set([...prev, videoIndex]));
+    // Mark video as completed in the shared state so the progress-tracking hook
+    // can trigger auto-completion for mixed content lessons with videos
+    setVideoCompleted(true);
+    setVideoProgress(100);
     
     // Track interaction for engagement
     trackInteraction('mixed_video_completed', {

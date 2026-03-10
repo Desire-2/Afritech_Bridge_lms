@@ -463,6 +463,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               <TabsContent value="content" className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
                 {/* Enhanced Content Viewer with Rich Media Support */}
                 <ContentRichPreview
+                  key={currentLesson.id ?? currentLessonIndex}
                   lesson={{
                     title: currentLesson.title,
                     content_type: currentLesson.content_type || 'text',
