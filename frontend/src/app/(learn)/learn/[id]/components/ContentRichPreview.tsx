@@ -41,6 +41,119 @@ import {
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
+// Separate CodeBlock component to properly handle state
+const CodeBlock: React.FC<{
+  inline?: boolean;
+  className?: string;
+  children: React.ReactNode;
+  [key: string]: any;
+}> = ({ inline, className, children, ...props }) => {
+  const [copied, setCopied] = useState(false);
+  const match = /language-(\w+)/.exec(className || '');
+  const codeContent = String(children).replace(/\n$/, '');
+  
+  // Smart detection: treat as inline if content is short and single-line
+  const shouldBeInline = inline || 
+    (!codeContent.includes('\n') && codeContent.length < 60 && !match);
+  
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(codeContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy code:', err);
+      // Fallback for older browsers
+      const textArea = document.createElement('textarea');
+      textArea.value = codeContent;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      try {
+        document.execCommand('copy');
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (fallbackErr) {
+        console.error('Fallback copy failed:', fallbackErr);
+      }
+      document.body.removeChild(textArea);
+    }
+  };
+  
+  if (!shouldBeInline) {
+    return (
+      <div className="my-6 rounded-xl overflow-hidden border border-gray-700/50 shadow-2xl bg-gradient-to-br from-gray-900 to-gray-800">
+        {/* Code header with language badge */}
+        <div className="bg-gradient-to-r from-gray-800 to-gray-750 px-4 py-3 border-b border-gray-700/70 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            {/* Color-coded language indicator */}
+            <div className="flex items-center space-x-2">
+              <div className={`h-3 w-3 rounded-full ${
+                match?.[1] === 'python' ? 'bg-blue-500' :
+                match?.[1] === 'javascript' || match?.[1] === 'js' ? 'bg-yellow-500' :
+                match?.[1] === 'typescript' || match?.[1] === 'ts' ? 'bg-blue-600' :
+                match?.[1] === 'html' ? 'bg-orange-500' :
+                match?.[1] === 'css' ? 'bg-blue-400' :
+                match?.[1] === 'java' ? 'bg-red-500' :
+                match?.[1] === 'cpp' || match?.[1] === 'c' ? 'bg-purple-500' :
+                match?.[1] === 'bash' || match?.[1] === 'sh' ? 'bg-green-500' :
+                match?.[1] === 'sql' ? 'bg-orange-600' :
+                match?.[1] === 'json' ? 'bg-yellow-400' :
+                'bg-gray-500'
+              }`} />
+              <span className="text-sm font-semibold text-gray-300 font-mono tracking-wide">
+                {match ? match[1].toUpperCase() : 'CODE'}
+              </span>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 px-3 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 transition-all duration-200"
+            onClick={handleCopy}
+            type="button"
+          >
+            {copied ? (
+              <>
+                <CheckCircle className="h-3.5 w-3.5 mr-1.5 text-green-400" />
+                <span className="text-green-400">Copied!</span>
+              </>
+            ) : (
+              <>
+                <svg className="h-3.5 w-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy Code
+              </>
+            )}
+          </Button>
+        </div>
+        {/* Code content */}
+        <div className="relative">
+          <pre className="bg-[#0d1117] p-6 overflow-x-auto text-sm leading-relaxed font-mono">
+            <code className={className} {...props}>
+              {children}
+            </code>
+          </pre>
+          {/* Subtle gradient overlay for depth */}
+          <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-transparent to-gray-900/10" />
+        </div>
+      </div>
+    );
+  }
+  
+  return (
+    <code 
+      className="inline-flex items-center bg-gray-800/80 text-blue-300 px-2.5 py-0.5 rounded-md text-[0.88em] font-mono border border-gray-700/50 shadow-sm hover:bg-gray-700/80 transition-colors" 
+      {...props}
+    >
+      {children}
+    </code>
+  );
+};
+
 interface ContentRichPreviewProps {
   lesson: {
     title: string;
@@ -951,7 +1064,40 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Sanitize and improve markdown content
+  const sanitizeMarkdown = (content: string): string => {
+    if (!content) return '';
+    
+    // Fix common markdown issues
+    let sanitized = content;
+    
+    // Replace triple backticks with single backticks for single words/short phrases
+    // This regex finds ```word``` or ```short phrase``` and converts to `word` or `short phrase`
+    sanitized = sanitized.replace(/```([^`\n]{1,50})```/g, '`$1`');
+    
+    // Remove empty code blocks
+    sanitized = sanitized.replace(/```\s*```/g, '');
+    sanitized = sanitized.replace(/```[\w]*\s*\n\s*```/g, '');
+    
+    // Fix consecutive code blocks without proper spacing
+    sanitized = sanitized.replace(/```\n```/g, '```\n\n```');
+    
+    // Ensure proper spacing around headings
+    sanitized = sanitized.replace(/(\n|^)(#{1,6}\s)/g, '\n\n$2');
+    
+    // Fix multiple consecutive newlines (max 2)
+    sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
+    
+    // Ensure paragraphs have proper spacing
+    sanitized = sanitized.replace(/([^\n])\n([A-Z])/g, '$1\n\n$2');
+    
+    return sanitized.trim();
+  };
+
   const renderTextContent = (content: string) => {
+    // Sanitize content before rendering
+    const cleanContent = sanitizeMarkdown(content);
+    
     return (
       <div className="prose prose-invert prose-lg max-w-none">
         <ReactMarkdown
@@ -977,94 +1123,35 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             h6: ({ node, ...props }) => (
               <h6 className="text-sm sm:text-base font-semibold text-gray-400 mb-2 mt-3" {...props} />
             ),
-            // Paragraphs
-            p: ({ node, ...props }) => (
-              <p className="text-gray-200 leading-relaxed mb-4 text-base sm:text-lg" {...props} />
-            ),
-            // Lists
-            ul: ({ node, ...props }) => (
-              <ul className="list-disc list-inside space-y-2 mb-4 text-gray-200 ml-4" {...props} />
-            ),
-            ol: ({ node, ...props }) => (
-              <ol className="list-decimal list-inside space-y-2 mb-4 text-gray-200 ml-4" {...props} />
-            ),
-            li: ({ node, ...props }) => (
-              <li className="text-gray-200 leading-relaxed text-base sm:text-lg" {...props} />
-            ),
-            // Code blocks
-            code: ({ node, inline, className, children, ...props }: any) => {
-              const match = /language-(\w+)/.exec(className || '');
-              const [copied, setCopied] = useState(false);
+            // Paragraphs with improved spacing
+            p: ({ node, children, ...props }) => {
+              // Skip rendering empty paragraphs
+              const content = String(children).trim();
+              if (!content || content === '') return null;
               
-              const handleCopy = () => {
-                navigator.clipboard.writeText(String(children).replace(/\n$/, ''));
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              };
-              
-              return !inline ? (
-                <div className="my-6 rounded-xl overflow-hidden border border-gray-700/50 shadow-2xl bg-gradient-to-br from-gray-900 to-gray-800">
-                  {/* Code header with language badge */}
-                  <div className="bg-gradient-to-r from-gray-800 to-gray-750 px-4 py-3 border-b border-gray-700/70 flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                      {/* Color-coded language indicator */}
-                      <div className="flex items-center space-x-2">
-                        <div className={`h-3 w-3 rounded-full ${
-                          match?.[1] === 'python' ? 'bg-blue-500' :
-                          match?.[1] === 'javascript' || match?.[1] === 'js' ? 'bg-yellow-500' :
-                          match?.[1] === 'typescript' || match?.[1] === 'ts' ? 'bg-blue-600' :
-                          match?.[1] === 'html' ? 'bg-orange-500' :
-                          match?.[1] === 'css' ? 'bg-blue-400' :
-                          match?.[1] === 'java' ? 'bg-red-500' :
-                          match?.[1] === 'cpp' || match?.[1] === 'c' ? 'bg-purple-500' :
-                          match?.[1] === 'bash' || match?.[1] === 'sh' ? 'bg-green-500' :
-                          match?.[1] === 'sql' ? 'bg-orange-600' :
-                          match?.[1] === 'json' ? 'bg-yellow-400' :
-                          'bg-gray-500'
-                        }`} />
-                        <span className="text-sm font-semibold text-gray-300 font-mono tracking-wide">
-                          {match ? match[1].toUpperCase() : 'CODE'}
-                        </span>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-3 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 transition-all duration-200"
-                      onClick={handleCopy}
-                    >
-                      {copied ? (
-                        <>
-                          <CheckCircle className="h-3.5 w-3.5 mr-1.5 text-green-400" />
-                          <span className="text-green-400">Copied!</span>
-                        </>
-                      ) : (
-                        <>
-                          <svg className="h-3.5 w-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                          Copy Code
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  {/* Code content with line numbers */}
-                  <div className="relative">
-                    <pre className="bg-[#0d1117] p-6 overflow-x-auto text-sm leading-relaxed font-mono">
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    </pre>
-                    {/* Subtle gradient overlay for depth */}
-                    <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-transparent via-transparent to-gray-900/10" />
-                  </div>
-                </div>
-              ) : (
-                <code className="bg-gray-800/80 text-blue-300 px-2.5 py-1 rounded-md text-[0.9em] font-mono border border-gray-700/50 shadow-sm" {...props}>
+              return (
+                <p className="text-gray-200 leading-relaxed mb-4 text-base sm:text-lg" {...props}>
                   {children}
-                </code>
+                </p>
               );
             },
+            // Enhanced Lists with better nesting support
+            ul: ({ node, ...props }) => (
+              <ul className="list-disc list-outside space-y-2 mb-4 text-gray-200 ml-6 pl-2" {...props} />
+            ),
+            ol: ({ node, ...props }) => (
+              <ol className="list-decimal list-outside space-y-2 mb-4 text-gray-200 ml-6 pl-2" {...props} />
+            ),
+            li: ({ node, children, ...props }) => {
+              // Handle nested lists properly
+              return (
+                <li className="text-gray-200 leading-relaxed text-base sm:text-lg marker:text-blue-400" {...props}>
+                  <span className="inline-block">{children}</span>
+                </li>
+              );
+            },
+            // Code blocks with improved inline detection
+            code: CodeBlock,
             // Blockquotes
             blockquote: ({ node, ...props }) => (
               <blockquote className="border-l-4 border-blue-500 bg-blue-900/20 pl-4 py-2 my-4 italic text-gray-300" {...props} />
@@ -1112,7 +1199,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             ),
           }}
         >
-          {content}
+          {cleanContent}
         </ReactMarkdown>
       </div>
     );
