@@ -14,8 +14,7 @@
     "lint": "next lint",
     "build:worker": "opennextjs-cloudflare",
     "preview": "opennextjs-cloudflare && wrangler dev",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv env.d.ts",
-    "postinstall": "npm run cf-typegen"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv env.d.ts || true"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
