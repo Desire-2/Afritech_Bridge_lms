@@ -475,11 +475,12 @@ class AnalyticsService:
                     
                     # Simplified performance data to avoid timeouts
                     course_analytics.append({
-                        "course": course.to_dict(),
+                        "course": course.to_dict() or {},
                         "total_enrolled": len(course_student_ids),
                         "completion_rate": AnalyticsService._safe_calculate_completion_rate(course.id) if course_student_ids else 0,
                         "average_progress": AnalyticsService._safe_calculate_average_progress(course.id, course_student_ids) if course_student_ids else 0,
-                        "modules_performance": modules_performance[:10] if modules_performance else []  # Limit to 10
+                        "modules_performance": modules_performance[:10] if modules_performance else [],  # Limit to 10
+                        "grade_distribution": {}  # Always include grade_distribution (even if empty) to prevent null errors
                     })
                 except Exception as e:
                     current_app.logger.warning(f"Course {course.id} analytics error: {str(e)}")

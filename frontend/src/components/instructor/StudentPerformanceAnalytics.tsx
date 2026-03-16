@@ -97,7 +97,10 @@ const StudentPerformanceAnalytics: React.FC<StudentPerformanceAnalyticsProps> = 
     }
   };
 
-  const prepareGradeDistributionData = (distribution: Record<string, number>) => {
+  const prepareGradeDistributionData = (distribution: Record<string, number> | undefined | null) => {
+    if (!distribution) {
+      return [{name: 'No data', value: 0}];
+    }
     return Object.entries(distribution).map(([grade, count]) => ({
       name: grade,
       value: count
@@ -166,7 +169,14 @@ const StudentPerformanceAnalytics: React.FC<StudentPerformanceAnalyticsProps> = 
       total_courses: 0,
       activity_rate: 0
     },
-    course_analytics: analytics.course_analytics || [],
+    course_analytics: (analytics.course_analytics || []).map((course: any) => ({
+      ...course,
+      course: course.course || {},
+      completion_rate: course.completion_rate ?? 0,
+      average_progress: course.average_progress ?? 0,
+      modules_performance: course.modules_performance || [],
+      grade_distribution: course.grade_distribution || {}
+    })),
     students_performance: analytics.students_performance || [],
     struggling_students: analytics.struggling_students || [],
     top_performers: analytics.top_performers || [],
@@ -302,10 +312,15 @@ const StudentPerformanceAnalytics: React.FC<StudentPerformanceAnalyticsProps> = 
                     <Pie
                       data={(() => {
                         const statusCount: Record<string, number> = {};
-                        safeAnalytics.students_performance.forEach(student => {
-                          statusCount[student.status] = (statusCount[student.status] || 0) + 1;
+                        (safeAnalytics.students_performance || []).forEach((student: any) => {
+                          const status = student?.status || 'unknown';
+                          statusCount[status] = (statusCount[status] || 0) + 1;
                         });
-                        return Object.entries(statusCount).map(([status, count]) => ({
+                        const entries = Object.entries(statusCount);
+                        if (entries.length === 0) {
+                          return [{name: 'No data', value: 1}];
+                        }
+                        return entries.map(([status, count]) => ({
                           name: status.charAt(0).toUpperCase() + status.slice(1),
                           value: count
                         }));
@@ -320,10 +335,15 @@ const StudentPerformanceAnalytics: React.FC<StudentPerformanceAnalyticsProps> = 
                     >
                       {(() => {
                         const statusCount: Record<string, number> = {};
-                        safeAnalytics.students_performance.forEach(student => {
-                          statusCount[student.status] = (statusCount[student.status] || 0) + 1;
+                        (safeAnalytics.students_performance || []).forEach((student: any) => {
+                          const status = student?.status || 'unknown';
+                          statusCount[status] = (statusCount[status] || 0) + 1;
                         });
-                        return Object.entries(statusCount).map(([status, count], index) => (
+                        const entries = Object.entries(statusCount);
+                        if (entries.length === 0) {
+                          return [<Cell key="cell-0" fill={COLORS[0]} />];
+                        }
+                        return entries.map(([status, count], index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ));
                       })()}
