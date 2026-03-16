@@ -122,8 +122,10 @@ class CertificateService:
             if eligible:
                 return True, "Eligible for certificate", requirements_status
             else:
-                reason = CertificateService._get_ineligibility_reason(requirements_status, passing_score)
-                return False, reason, requirements_status
+                # Get detailed ineligibility information
+                ineligibility_info = CertificateService._get_ineligibility_reason(requirements_status, passing_score)
+                # Return the summarized message as string for backwards compatibility, but include full details
+                return False, ineligibility_info["summary_message"], ineligibility_info
                 
         except Exception as e:
             current_app.logger.error(f"Certificate eligibility check error: {str(e)}")
@@ -618,25 +620,141 @@ class CertificateService:
         return list(set(skills))[:10]  # Limit to 10 skills
     
     @staticmethod
-    def _get_ineligibility_reason(requirements: Dict, passing_score: float) -> str:
-        """Get detailed reason for certificate ineligibility"""
-        reasons = []
+    def _get_ineligibility_reason(requirements: Dict, passing_score: float) -> Dict:
+        """
+        Get detailed reason for certificate ineligibility with specific module breakdown
         
+        Args:
+            requirements: Dictionary containing requirements status
+            passing_score: Required passing score percentage
+            
+        Returns:
+            Dictionary with detailed failure information
+        """
+        failures = []
+        details = {}
+        
+        # Check module completion
         if requirements["completed_modules"] < requirements["total_modules"]:
             remaining = requirements["total_modules"] - requirements["completed_modules"]
-            reasons.append(f"{remaining} modules not completed")
+            failures.append(f"incomplete_modules")
+            details["incomplete_modules"] = {
+                "completed": requirements["completed_modules"],
+                "total": requirements["total_modules"],
+                "remaining": remaining,
+                "message": f"You have completed {requirements['completed_modules']}/{requirements['total_modules']} modules. "
+                          f"You need to complete {remaining} more module(s) to be eligible for a certificate."
+            }
         
+        # Check for failed modules
         if requirements["failed_modules"] > 0:
-            reasons.append(f"{requirements['failed_modules']} modules failed")
+            failures.append("failed_modules")
+            details["failed_modules"] = {
+                "count": requirements["failed_modules"],
+                "message": f"You have {requirements['failed_modules']} module(s) with failing scores. "
+                          f"You need to retake and pass these modules."
+            }
         
+        # Check overall score
         if requirements["overall_score"] < passing_score:
-            reasons.append(f"Overall score {requirements['overall_score']:.1f}% below required {passing_score}%")
+            current_score = requirements["overall_score"]
+            score_gap = passing_score - current_score
+            failures.append("insufficient_score")
+            details["insufficient_score"] = {
+                "current_score": round(current_score, 1),
+                "required_score": passing_score,
+                "score_gap": round(score_gap, 1),
+                "message": f"Your current overall score is {current_score:.1f}%. "
+                          f"The minimum required score for a certificate is {passing_score}%. "
+                          f"You need to improve your score by {score_gap:.1f} percentage points."
+            }
         
-        # Portfolio items are now optional, not required for certificate
-        # if requirements.get("portfolio_items", 0) == 0:
-        #     reasons.append("No portfolio items completed")
+        # Build module-specific details for additional context
+        module_details = []
+        for module_info in requirements.get("module_details", []):
+            module_status = {
+                "module_name": module_info.get("module"),
+                "status": module_info.get("status"),
+                "score": module_info.get("score", 0),
+                "attempts": module_info.get("attempts", 0),
+                "is_passing": module_info.get("score", 0) >= passing_score,
+                "feedback": CertificateService._get_module_feedback(
+                    module_info.get("status"),
+                    module_info.get("score", 0),
+                    passing_score
+                )
+            }
+            module_details.append(module_status)
         
-        return "; ".join(reasons) if reasons else "Unknown reason"
+        if module_details:
+            details["module_breakdown"] = module_details
+        
+        return {
+            "eligible": False,
+            "failure_reasons": failures,
+            "summary_message": CertificateService._build_summary_message(failures, details),
+            "details": details,
+            "overall_score": round(requirements["overall_score"], 1),
+            "required_score": passing_score,
+            "completed_modules": requirements["completed_modules"],
+            "total_modules": requirements["total_modules"]
+        }
+    
+    @staticmethod
+    def _get_module_feedback(status: str, score: float, passing_score: float) -> str:
+        """
+        Get specific feedback for a module based on its status and score
+        
+        Args:
+            status: Module status (completed, in_progress, failed, not_started)
+            score: Module score percentage
+            passing_score: Required passing score
+            
+        Returns:
+            Feedback message for the module
+        """
+        if status == "completed":
+            return f"✓ Passed with {score:.1f}%"
+        elif status == "failed":
+            return f"✗ Failed with {score:.1f}% (required: {passing_score}%)"
+        elif status == "in_progress":
+            gap = passing_score - score
+            return f"In Progress - {score:.1f}% (need {gap:.1f}% more to pass)"
+        elif status == "not_started":
+            return "Not started - Complete all lessons and assessments in this module"
+        else:
+            return f"Unknown status: {status}"
+    
+    @staticmethod
+    def _build_summary_message(failure_reasons: List[str], details: Dict) -> str:
+        """
+        Build a human-friendly summary message from failure reasons
+        
+        Args:
+            failure_reasons: List of failure reason codes
+            details: Dictionary containing detailed information
+            
+        Returns:
+            Human-friendly summary message
+        """
+        if not failure_reasons:
+            return "All requirements met"
+        
+        message_parts = []
+        
+        if "incomplete_modules" in failure_reasons:
+            incomplete = details.get("incomplete_modules", {})
+            message_parts.append(f"Complete {incomplete.get('remaining', 0)} remaining module(s)")
+        
+        if "insufficient_score" in failure_reasons:
+            score_info = details.get("insufficient_score", {})
+            message_parts.append(f"Improve your score by {score_info.get('score_gap', 0):.1f}%")
+        
+        if "failed_modules" in failure_reasons:
+            failed = details.get("failed_modules", {})
+            message_parts.append(f"Retake {failed.get('count', 0)} failed module(s)")
+        
+        return " & ".join(message_parts) if message_parts else "Requirements not met"
     
     @staticmethod
     def _update_student_transcript(student_id: int):
