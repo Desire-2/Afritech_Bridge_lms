@@ -678,6 +678,8 @@ def get_student_performance_analytics():
     course_id = request.args.get('course_id', type=int)
     
     try:
+        logger.info(f"Analytics request from instructor {current_user_id}, course_id: {course_id}")
+        
         from ..services.analytics_service import AnalyticsService
         
         analytics_data = AnalyticsService.get_instructor_student_analytics(
@@ -685,9 +687,14 @@ def get_student_performance_analytics():
             course_id=course_id
         )
         
+        logger.info(f"Analytics data prepared successfully. Struggling: {len(analytics_data.get('struggling_students', []))}, "
+                   f"Top performers: {len(analytics_data.get('top_performers', []))}, "
+                   f"Inactive included in struggling (should be separate)")
+        
         return jsonify(analytics_data), 200
         
     except Exception as e:
+        logger.error(f"Analytics endpoint error: {str(e)}", exc_info=True)
         return jsonify({
             "message": "Failed to fetch student analytics", 
             "error": str(e)

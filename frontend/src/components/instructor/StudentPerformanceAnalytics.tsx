@@ -486,7 +486,7 @@ const StudentPerformanceAnalytics: React.FC<StudentPerformanceAnalyticsProps> = 
                           <Badge variant="destructive">{student.status}</Badge>
                         </div>
                         <div className="text-sm text-slate-600 dark:text-slate-400 mb-3">
-                          Average: {student.overall_average.toFixed(1)}% | Recent Activity: {student.recent_activity} days
+                          Average: {student.overall_average.toFixed(1)}% | Recent Activity: {student.recent_activity === 0 ? 'Inactive' : `${student.recent_activity} interactions`}
                         </div>
                         {student.support_needed && (
                           <div className="space-y-1">
@@ -540,7 +540,7 @@ const StudentPerformanceAnalytics: React.FC<StudentPerformanceAnalyticsProps> = 
                     </div>
                     <div className="text-xs text-slate-600 dark:text-slate-400">
                       {student.courses_enrolled} course{student.courses_enrolled !== 1 ? 's' : ''} • 
-                      {student.recent_activity} recent activities
+                      {student.recent_activity === 0 ? 'No recent activity' : `${student.recent_activity} recent interactions`}
                     </div>
                   </div>
                 ))}

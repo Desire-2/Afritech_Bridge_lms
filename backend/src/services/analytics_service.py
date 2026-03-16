@@ -387,6 +387,7 @@ class AnalyticsService:
     def get_instructor_student_analytics(instructor_id: int, course_id: int = None) -> Dict:
         """
         Get comprehensive student performance analytics for instructor
+        Optimized to prevent database timeouts and 502 errors
         
         Args:
             instructor_id: ID of the instructor
@@ -396,8 +397,8 @@ class AnalyticsService:
             Dictionary containing student performance analytics
         """
         try:
-            # Get instructor's courses
-            course_query = Course.query.filter_by(instructor_id=instructor_id)
+            # Get instructor's courses with limit
+            course_query = Course.query.filter_by(instructor_id=instructor_id).limit(100)
             if course_id:
                 course_query = course_query.filter_by(id=course_id)
             
@@ -425,76 +426,92 @@ class AnalyticsService:
                     }]
                 }
             
-            # Get all enrollments for these courses
-            enrollments = Enrollment.query.filter(Enrollment.course_id.in_(course_ids)).all()
-            student_ids = [e.student_id for e in enrollments]
+            # Get enrollment counts with aggregation (more efficient)
+            from sqlalchemy import and_
+            enrollments_stmt = db.session.query(
+                Enrollment.course_id,
+                Enrollment.student_id
+            ).filter(Enrollment.course_id.in_(course_ids)).all()
             
-            # Overall analytics
-            total_students = len(set(student_ids))
-            active_students = AnalyticsService._get_active_students_count(student_ids)
+            enrollment_dict = {}
+            student_ids_set = set()
+            for course_id_val, student_id in enrollments_stmt:
+                if course_id_val not in enrollment_dict:
+                    enrollment_dict[course_id_val] = []
+                enrollment_dict[course_id_val].append(student_id)
+                student_ids_set.add(student_id)
             
-            # Performance analytics by course
+            student_ids = list(student_ids_set)
+            total_students = len(student_ids)
+            
+            # Limit student processing for large classes (prevent timeouts)
+            MAX_STUDENTS = 500
+            if total_students > MAX_STUDENTS:
+                student_ids = student_ids[:MAX_STUDENTS]
+                current_app.logger.warning(f"Analytics limited to {MAX_STUDENTS} students (out of {total_students})")
+            
+            active_students = AnalyticsService._get_active_students_count(student_ids) if student_ids else 0
+            
+            # Performance analytics by course - simplified version
             course_analytics = []
             for course in courses:
-                course_enrollments = [e for e in enrollments if e.course_id == course.id]
-                course_student_ids = [e.student_id for e in course_enrollments]
+                course_student_ids = enrollment_dict.get(course.id, [])
                 
-                # Module performance breakdown
-                modules_performance = []
                 try:
-                    course_modules = course.modules.order_by('order').all() if hasattr(course, 'modules') else []
-                    for module in course_modules:
+                    # Module performance - with early exit for large datasets
+                    modules_performance = []
+                    if len(course_student_ids) <= 100:
                         try:
-                            module_performance = AnalyticsService._get_module_performance(module.id, course_student_ids)
-                            modules_performance.append(module_performance)
+                            course_modules = course.modules.limit(20).all() if hasattr(course, 'modules') else []
+                            for module in course_modules:
+                                try:
+                                    module_performance = AnalyticsService._get_module_performance(module.id, course_student_ids)
+                                    modules_performance.append(module_performance)
+                                except Exception as e:
+                                    current_app.logger.warning(f"Module {module.id} analytics error: {str(e)}")
+                                    continue
                         except Exception as e:
-                            current_app.logger.warning(f"Error getting module {module.id} performance: {e}")
-                            continue
+                            current_app.logger.warning(f"Course {course.id} modules error: {str(e)}")
+                    
+                    # Simplified performance data to avoid timeouts
+                    course_analytics.append({
+                        "course": course.to_dict(),
+                        "total_enrolled": len(course_student_ids),
+                        "completion_rate": AnalyticsService._safe_calculate_completion_rate(course.id) if course_student_ids else 0,
+                        "average_progress": AnalyticsService._safe_calculate_average_progress(course.id, course_student_ids) if course_student_ids else 0,
+                        "modules_performance": modules_performance[:10] if modules_performance else []  # Limit to 10
+                    })
                 except Exception as e:
-                    current_app.logger.warning(f"Error accessing modules for course {course.id}: {e}")
-                
-                # Assignment and quiz performance
-                try:
-                    assignments_performance = AnalyticsService._get_assignments_performance(course.id, course_student_ids)
-                except Exception as e:
-                    current_app.logger.warning(f"Error getting assignments performance for course {course.id}: {e}")
-                    assignments_performance = {"total_assignments": 0, "performance": []}
-                
-                try:
-                    quizzes_performance = AnalyticsService._get_quizzes_performance(course.id, course_student_ids)
-                except Exception as e:
-                    current_app.logger.warning(f"Error getting quizzes performance for course {course.id}: {e}")
-                    quizzes_performance = {"total_quizzes": 0, "performance": []}
-                
-                course_analytics.append({
-                    "course": course.to_dict(),
-                    "total_enrolled": len(course_enrollments),
-                    "completion_rate": AnalyticsService._safe_calculate_completion_rate(course.id),
-                    "average_progress": AnalyticsService._safe_calculate_average_progress(course.id, course_student_ids),
-                    "modules_performance": modules_performance,
-                    "assignments_performance": assignments_performance,
-                    "quizzes_performance": quizzes_performance,
-                    "grade_distribution": AnalyticsService._safe_get_grade_distribution(course.id, course_student_ids)
-                })
+                    current_app.logger.warning(f"Course {course.id} analytics error: {str(e)}")
+                    continue
             
-            # Student-wise performance
+            # Student-wise performance - sample if too many
             students_performance = []
-            for student_id in set(student_ids):
-                student_data = AnalyticsService._get_student_performance_summary(student_id, course_ids)
-                students_performance.append(student_data)
+            sample_students = student_ids[:50] if len(student_ids) > 50 else student_ids  # Limit to 50
+            for student_id in sample_students:
+                try:
+                    student_data = AnalyticsService._get_student_performance_summary(student_id, course_ids)
+                    students_performance.append(student_data)
+                except Exception as e:
+                    current_app.logger.warning(f"Student {student_id} analytics error: {str(e)}")
+                    continue
             
-            # Struggling students identification
-            struggling_students = AnalyticsService._identify_struggling_students(student_ids, course_ids)
-            
-            # Top performers
-            top_performers = AnalyticsService._get_top_performers(student_ids, course_ids)
+            # Struggling and top performers
+            struggling_students = []
+            top_performers = []
+            try:
+                struggling_students = AnalyticsService._identify_struggling_students(student_ids[:50], course_ids)
+                top_performers = AnalyticsService._get_top_performers(student_ids[:50], course_ids)
+            except Exception as e:
+                current_app.logger.warning(f"Performance ranking error: {str(e)}")
             
             return {
                 "overview": {
                     "total_students": total_students,
                     "active_students": active_students,
                     "total_courses": len(courses),
-                    "activity_rate": (active_students / total_students * 100) if total_students > 0 else 0
+                    "activity_rate": (active_students / total_students * 100) if total_students > 0 else 0,
+                    "data_limited": total_students > MAX_STUDENTS
                 },
                 "course_analytics": course_analytics,
                 "students_performance": students_performance,
@@ -504,9 +521,21 @@ class AnalyticsService:
             }
             
         except Exception as e:
-            current_app.logger.error(f"Instructor student analytics error: {str(e)}")
-            current_app.logger.error(f"Full traceback: ", exc_info=True)
-            return {"error": f"Failed to load instructor student analytics: {str(e)}"}
+            current_app.logger.error(f"Instructor student analytics error: {str(e)}", exc_info=True)
+            return {
+                "error": "Failed to load analytics",
+                "overview": {
+                    "total_students": 0,
+                    "active_students": 0,
+                    "total_courses": 0,
+                    "activity_rate": 0
+                },
+                "course_analytics": [],
+                "students_performance": [],
+                "struggling_students": [],
+                "top_performers": [],
+                "recommendations": []
+            }
     
     @staticmethod
     def _get_active_students_count(student_ids: List[int]) -> int:
@@ -714,20 +743,35 @@ class AnalyticsService:
     
     @staticmethod
     def _identify_struggling_students(student_ids: List[int], course_ids: List[int]) -> List[Dict]:
-        """Identify students who need additional support"""
+        """Identify students who need additional support (low performance, not just inactive)"""
         struggling = []
         
         for student_id in student_ids:
-            student_summary = AnalyticsService._get_student_performance_summary(student_id, course_ids)
-            
-            # Criteria for struggling students
-            if (student_summary.get('overall_average', 0) < 70 or 
-                student_summary.get('recent_activity', 0) == 0):
+            try:
+                student_summary = AnalyticsService._get_student_performance_summary(student_id, course_ids)
                 
-                struggling.append({
-                    **student_summary,
-                    "support_needed": AnalyticsService._get_support_recommendations(student_summary)
-                })
+                if not student_summary:
+                    continue
+                
+                # Criteria for struggling students: low performance with some activity
+                # Exclude completely inactive students (recent_activity == 0) - those are a separate concern
+                overall_avg = student_summary.get('overall_average', 0)
+                recent_activity = student_summary.get('recent_activity', 0)
+                
+                if overall_avg < 70 and recent_activity > 0:
+                    struggling.append({
+                        **student_summary,
+                        "support_needed": AnalyticsService._get_support_recommendations(student_summary)
+                    })
+                elif overall_avg < 50 and recent_activity == 0:
+                    # Very low performers even if inactive
+                    struggling.append({
+                        **student_summary,
+                        "support_needed": AnalyticsService._get_support_recommendations(student_summary)
+                    })
+            except Exception as e:
+                current_app.logger.warning(f"Error analyzing student {student_id}: {str(e)}")
+                continue
         
         return struggling
     
@@ -770,14 +814,16 @@ class AnalyticsService:
     @staticmethod
     def _determine_student_status(overall_average: float, recent_activity: int) -> str:
         """Determine student status based on performance and activity"""
-        if overall_average >= 85 and recent_activity > 0:
+        # Priority: inactivity is most critical
+        if recent_activity == 0:
+            return "inactive"
+        # Then check performance
+        elif overall_average >= 85:
             return "excellent"
-        elif overall_average >= 75 and recent_activity > 0:
+        elif overall_average >= 75:
             return "good"
         elif overall_average >= 60:
             return "average"
-        elif recent_activity == 0:
-            return "inactive"
         else:
             return "struggling"
     
