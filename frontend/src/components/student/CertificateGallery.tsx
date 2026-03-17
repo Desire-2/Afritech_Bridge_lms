@@ -493,8 +493,8 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Download failed' }));
-        throw new Error(errorData.error || 'Failed to download image');
+        const errorData = (await response.json().catch(() => ({ error: 'Download failed' }))) as { error?: string };
+        throw new Error(errorData?.error || 'Failed to download image');
       }
 
       // Get the blob and create download link

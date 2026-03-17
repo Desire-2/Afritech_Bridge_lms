@@ -613,8 +613,36 @@ export class StudentApiService {
   }
 
   static async getBadges(): Promise<SkillBadge[]> {
-    const response = await api.get('/student/certificate/badges');
-    return response.data.badges;
+    try {
+      const response = await api.get('/student/certificate/my-badges');
+      console.log('🎖️ Badges API Response:', response.data);
+      
+      // Handle both response formats
+      const badgesData = response.data.data?.badges || response.data.badges || [];
+      console.log(`✅ Found ${badgesData.length} badges`);
+      
+      // Transform badges: flatten nested structure and map earned_at to earned_date
+      const transformedBadges = badgesData.map((item: any) => {
+        // Handle both earned badges (with nested badge) and simple badge data
+        const badge = item.badge || item;
+        return {
+          id: badge.id,
+          name: badge.name,
+          description: badge.description,
+          icon_url: badge.icon_url,
+          category: badge.category,
+          difficulty_level: badge.difficulty_level,
+          earned_date: item.earned_at, // Map earned_at to earned_date for compatibility
+          verification_code: item.id?.toString() || badge.id?.toString()
+        };
+      });
+      
+      console.log('📦 Transformed Badges:', transformedBadges);
+      return transformedBadges;
+    } catch (error: any) {
+      console.error('❌ Error fetching badges:', error.response?.data || error.message);
+      return [];
+    }
   }
 
   // Check for newly earned badges
