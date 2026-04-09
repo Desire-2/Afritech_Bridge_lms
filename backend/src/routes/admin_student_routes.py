@@ -16,6 +16,7 @@ from ..models.student_models import (
     LessonCompletion, UserProgress, ModuleProgress, StudentNote,
     StudentBookmark, Certificate, LearningAnalytics
 )
+from ..services.certificate_service import CertificateService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -1512,3 +1513,462 @@ def get_available_courses():
     except Exception as e:
         logger.error(f"Error getting available courses: {str(e)}")
         return jsonify({"error": "Failed to get courses"}), 500
+
+
+# ============================================================
+# CERTIFICATE MANAGEMENT - ADMIN VALIDATION
+# ============================================================
+
+@admin_student_bp.route("/<int:student_id>/certificates/all-eligibility", methods=["GET"])
+@admin_required
+def get_student_all_certificates_eligibility(student_id):
+    """Get certificate eligibility for ALL enrolled courses of a student"""
+    try:
+        student = User.query.get(student_id)
+        if not student:
+            return jsonify({"error": "Student not found"}), 404
+        
+        # Get all enrollments for this student
+        enrollments = Enrollment.query.filter_by(student_id=student_id).all()
+        
+        certificates_data = []
+        for enrollment in enrollments:
+            try:
+                course = Course.query.get(enrollment.course_id)
+                if not course:
+                    continue
+                
+                eligible, reason, requirements_raw = CertificateService.check_certificate_eligibility(
+                    student_id, course.id
+                )
+                
+                # Normalize requirements structure for consistent frontend handling
+                if isinstance(requirements_raw, dict):
+                    # When eligible: requirements_raw is requirements_status dict
+                    # When ineligible: requirements_raw is ineligibility_info dict with nested 'details'
+                    if eligible:
+                        # Eligible case
+                        requirements = {
+                            "completed_modules": requirements_raw.get("completed_modules", 0),
+                            "total_modules": requirements_raw.get("total_modules", 0),
+                            "failed_modules": requirements_raw.get("failed_modules", 0),
+                            "overall_score": requirements_raw.get("overall_score", 0),
+                            "passing_score": requirements_raw.get("passing_score", 80),
+                            "module_details": requirements_raw.get("module_details", []),
+                            "portfolio_items": requirements_raw.get("portfolio_items", 0),
+                        }
+                    else:
+                        # Ineligible case - has nested 'details' structure
+                        details = requirements_raw.get("details", {})
+                        module_breakdown = details.get("module_breakdown", [])
+                        
+                        # Normalize module_breakdown to match expected format
+                        module_details = []
+                        for mod in module_breakdown:
+                            module_details.append({
+                                "module_id": mod.get("module_id"),
+                                "module": mod.get("module_name", "Unknown"),
+                                "status": mod.get("status", "unknown"),
+                                "score": mod.get("score", 0),
+                                "attempts": mod.get("attempts", 0),
+                            })
+                        
+                        # Fallback to enrollment's course_score if available and score is 0
+                        overall_score = requirements_raw.get("overall_score", 0)
+                        if overall_score == 0 and hasattr(enrollment, 'course_score') and enrollment.course_score:
+                            overall_score = float(enrollment.course_score)
+                        
+                        requirements = {
+                            "completed_modules": requirements_raw.get("completed_modules", 0),
+                            "total_modules": requirements_raw.get("total_modules", 0),
+                            "failed_modules": details.get("failed_modules", {}).get("count", 0) if isinstance(details.get("failed_modules"), dict) else 0,
+                            "overall_score": overall_score,
+                            "passing_score": requirements_raw.get("required_score", 80),
+                            "module_details": module_details,
+                            "portfolio_items": 0,
+                            "failure_reasons": requirements_raw.get("failure_reasons", []),
+                            "summary_details": requirements_raw.get("details", {}),
+                        }
+                else:
+                    requirements = {}
+                
+                # Check if certificate already exists
+                existing_cert = Certificate.query.filter_by(
+                    student_id=student_id,
+                    course_id=course.id,
+                    enrollment_id=enrollment.id
+                ).first()
+                
+                certificates_data.append({
+                    "course_id": course.id,
+                    "course_title": course.title,
+                    "enrollment_id": enrollment.id,
+                    "enrollment_status": enrollment.status,
+                    "enrollment_progress": float(enrollment.progress) if enrollment.progress else 0.0,
+                    "enrollment_course_score": float(enrollment.course_score) if hasattr(enrollment, 'course_score') and enrollment.course_score else 0.0,
+                    "eligible": eligible,
+                    "reason": str(reason),
+                    "requirements": requirements,
+                    "certificate_exists": existing_cert is not None,
+                    "certificate_id": existing_cert.id if existing_cert else None,
+                    "certificate_issued_at": existing_cert.issued_at.isoformat() if existing_cert and existing_cert.issued_at else None,
+                })
+            except Exception as inner_e:
+                logger.warning(f"Error checking eligibility for course {enrollment.course_id} for student {student_id}: {str(inner_e)}", exc_info=True)
+                # Still include the enrollment but with error status
+                # Try to get the enrollment's actual course_score
+                fallback_score = 0.0
+                if hasattr(enrollment, 'course_score') and enrollment.course_score:
+                    fallback_score = float(enrollment.course_score)
+                
+                certificates_data.append({
+                    "course_id": enrollment.course_id,
+                    "course_title": "Unknown Course",
+                    "enrollment_id": enrollment.id,
+                    "enrollment_status": enrollment.status,
+                    "enrollment_progress": float(enrollment.progress) if enrollment.progress else 0.0,
+                    "enrollment_course_score": fallback_score,
+                    "eligible": False,
+                    "reason": "Error checking eligibility",
+                    "requirements": {
+                        "error": str(inner_e),
+                        "module_details": [],
+                        "overall_score": fallback_score,
+                    },
+                    "certificate_exists": False,
+                    "certificate_id": None,
+                    "certificate_issued_at": None,
+                })
+        
+        return jsonify({
+            "success": True,
+            "student_id": student_id,
+            "student_name": student.full_name or student.username,
+            "total_enrollments": len(enrollments),
+            "certificates": certificates_data
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting certificate eligibility for student {student_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": f"Failed to get certificate eligibility: {str(e)}"
+        }), 500
+
+
+@admin_student_bp.route("/<int:student_id>/certificates/validate/<int:course_id>", methods=["POST"])
+@admin_required
+def validate_certificate_admin(student_id, course_id):
+    """
+    Admin endpoint to manually validate and award certificate to a student.
+    This bypasses normal eligibility checks.
+    """
+    try:
+        student = User.query.get(student_id)
+        if not student:
+            return jsonify({"error": "Student not found"}), 404
+        
+        course = Course.query.get(course_id)
+        if not course:
+            return jsonify({"error": "Course not found"}), 404
+        
+        # Get enrollment
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id, course_id=course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Student not enrolled in this course"}), 400
+        
+        # Get request data
+        data = request.get_json() or {}
+        admin_reason = data.get("reason", "Manually validated by admin")
+        override_incomplete = data.get("force_override", False)
+        
+        # If force_override, mark enrollment as completed first
+        if override_incomplete and enrollment.status != 'completed':
+            enrollment.status = 'completed'
+            enrollment.completed_at = datetime.utcnow()
+            enrollment.progress = 1.0
+            db.session.flush()
+        
+        # Now generate certificate (should be eligible after status update)
+        success, message, certificate_data = CertificateService.generate_certificate(
+            student_id, course_id
+        )
+        
+        if success:
+            return jsonify({
+                "success": True,
+                "message": f"Certificate validated and awarded: {message}",
+                "admin_action": {
+                    "validated_by_admin": True,
+                    "reason": admin_reason,
+                    "validated_at": datetime.utcnow().isoformat(),
+                    "override_used": override_incomplete
+                },
+                "certificate": certificate_data
+            }), 200
+        else:
+            return jsonify({
+                "success": False,
+                "error": f"Could not generate certificate: {message}"
+            }), 400
+    
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error validating certificate for student {student_id}: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": "Failed to validate certificate"
+        }), 500
+
+
+# ============================================================
+# MODULE GRADING - MANUAL GRADING OF NON-COMPLETED MODULES
+# ============================================================
+
+@admin_student_bp.route("/<int:student_id>/modules/<int:module_id>/grade", methods=["POST"])
+@admin_required
+def grade_module_manual(student_id, module_id):
+    """
+    Manually grade a non-completed module for a student.
+    Score is applied to all quizzes, assignments, and projects in the module.
+    """
+    try:
+        student = User.query.get(student_id)
+        if not student:
+            return jsonify({"error": "Student not found"}), 404
+        
+        module = Module.query.get(module_id)
+        if not module:
+            return jsonify({"error": "Module not found"}), 404
+        
+        # Get request data
+        data = request.get_json() or {}
+        score = data.get("score")
+        reason = data.get("reason", "Manually graded by admin")
+        
+        # Validate score
+        if score is None or not isinstance(score, (int, float)):
+            return jsonify({"error": "Score must be a number between 0 and 100"}), 400
+        
+        score = float(score)
+        if score < 0 or score > 100:
+            return jsonify({"error": "Score must be between 0 and 100"}), 400
+        
+        # Get all quizzes in this module
+        quizzes = Quiz.query.filter_by(module_id=module_id).all()
+        updated_count = 0
+        
+        # Update all quiz submissions for this student
+        for quiz in quizzes:
+            submissions = Submission.query.filter_by(
+                student_id=student_id,
+                quiz_id=quiz.id
+            ).all()
+            
+            for submission in submissions:
+                submission.score = score
+                submission.graded_at = datetime.utcnow()
+                submission.graded_by = get_jwt_identity()  # Admin user ID
+                db.session.add(submission)
+                updated_count += 1
+        
+        # Get all assignments in this module
+        assignments = Assignment.query.filter_by(module_id=module_id).all()
+        
+        # Update all assignment submissions for this student
+        for assignment in assignments:
+            submissions = AssignmentSubmission.query.filter_by(
+                student_id=student_id,
+                assignment_id=assignment.id
+            ).all()
+            
+            for submission in submissions:
+                submission.grade = score
+                submission.graded_at = datetime.utcnow()
+                submission.graded_by = get_jwt_identity()  # Admin user ID
+                db.session.add(submission)
+                updated_count += 1
+        
+        # Get all projects in this module (projects can span multiple modules via JSON module_ids)
+        course = module.course
+        all_projects = Project.query.filter_by(course_id=course.id).all()
+        
+        # Update all project submissions for this student that include this module
+        for project in all_projects:
+            # Check if this project includes the current module
+            project_modules = project.get_modules()  # Returns list of module IDs
+            if module_id not in project_modules:
+                continue  # Skip projects that don't include this module
+            
+            submissions = ProjectSubmission.query.filter_by(
+                student_id=student_id,
+                project_id=project.id
+            ).all()
+            
+            for submission in submissions:
+                submission.grade = score
+                submission.graded_at = datetime.utcnow()
+                submission.graded_by = get_jwt_identity()  # Admin user ID
+                db.session.add(submission)
+                updated_count += 1
+        
+        # Get or create ModuleProgress
+        # Find the enrollment for this student in the course containing this module
+        course = module.course
+        enrollment = Enrollment.query.filter_by(
+            student_id=student_id,
+            course_id=course.id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"error": "Student not enrolled in this course"}), 400
+        
+        module_progress = ModuleProgress.query.filter_by(
+            student_id=student_id,
+            module_id=module_id,
+            enrollment_id=enrollment.id
+        ).first()
+        
+        if not module_progress:
+            module_progress = ModuleProgress(
+                student_id=student_id,
+                module_id=module_id,
+                enrollment_id=enrollment.id
+            )
+            db.session.add(module_progress)
+        
+        # Update module progress with manual grade
+        module_progress.cumulative_score = score
+        module_progress.status = 'completed'
+        module_progress.completed_at = datetime.utcnow()
+        module_progress.is_manually_graded = True
+        db.session.add(module_progress)
+        
+        # Commit all changes
+        db.session.commit()
+        
+        # Prepare response with details
+        return jsonify({
+            "success": True,
+            "message": f"Module '{module.title}' manually graded successfully",
+            "admin_action": {
+                "graded_by_admin": True,
+                "reason": reason,
+                "graded_at": datetime.utcnow().isoformat(),
+                "score": score,
+                "assessments_updated": updated_count
+            },
+            "module_progress": {
+                "module_id": module_id,
+                "module_title": module.title,
+                "score": score,
+                "status": "completed",
+                "is_manually_graded": True,
+                "completed_at": datetime.utcnow().isoformat()
+            }
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error grading module {module_id} for student {student_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": f"Failed to grade module: {str(e)}"
+        }), 500
+
+
+@admin_student_bp.route("/<int:student_id>/modules/<int:module_id>/assessments", methods=["GET"])
+@admin_required
+def get_module_assessments(student_id, module_id):
+    """
+    Get all assessments (quizzes, assignments, projects) in a module for a student.
+    Shows what will be graded when manually grading a module.
+    """
+    try:
+        student = User.query.get(student_id)
+        if not student:
+            return jsonify({"error": "Student not found"}), 404
+        
+        module = Module.query.get(module_id)
+        if not module:
+            return jsonify({"error": "Module not found"}), 404
+        
+        # Get quizzes in module
+        quizzes = Quiz.query.filter_by(module_id=module_id).all()
+        quiz_data = []
+        for quiz in quizzes:
+            submission = Submission.query.filter_by(
+                student_id=student_id,
+                quiz_id=quiz.id
+            ).first()
+            quiz_data.append({
+                "id": quiz.id,
+                "title": quiz.title,
+                "type": "quiz",
+                "current_score": submission.score if submission else None,
+                "submission_exists": submission is not None,
+                "submission_date": submission.submission_date.isoformat() if submission and submission.submission_date else None
+            })
+        
+        # Get assignments in module
+        assignments = Assignment.query.filter_by(module_id=module_id).all()
+        assignment_data = []
+        for assignment in assignments:
+            submission = AssignmentSubmission.query.filter_by(
+                student_id=student_id,
+                assignment_id=assignment.id
+            ).first()
+            assignment_data.append({
+                "id": assignment.id,
+                "title": assignment.title,
+                "type": "assignment",
+                "current_score": submission.grade if submission else None,
+                "submission_exists": submission is not None,
+                "submission_date": submission.submitted_at.isoformat() if submission and submission.submitted_at else None
+            })
+        
+        # Get projects in module (projects can span multiple modules via JSON module_ids)
+        course = module.course
+        all_projects = Project.query.filter_by(course_id=course.id).all()
+        project_data = []
+        
+        for project in all_projects:
+            # Check if this project includes the current module
+            project_modules = project.get_modules()  # Returns list of module IDs
+            if module_id not in project_modules:
+                continue  # Skip projects that don't include this module
+            
+            submission = ProjectSubmission.query.filter_by(
+                student_id=student_id,
+                project_id=project.id
+            ).first()
+            project_data.append({
+                "id": project.id,
+                "title": project.title,
+                "type": "project",
+                "current_score": submission.grade if submission else None,
+                "submission_exists": submission is not None,
+                "submission_date": submission.submitted_at.isoformat() if submission and submission.submitted_at else None
+            })
+        
+        return jsonify({
+            "success": True,
+            "module_id": module_id,
+            "module_title": module.title,
+            "assessments": {
+                "quizzes": quiz_data,
+                "assignments": assignment_data,
+                "projects": project_data
+            },
+            "total_assessments": len(quiz_data) + len(assignment_data) + len(project_data)
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Error getting assessments for module {module_id}: {str(e)}", exc_info=True)
+        return jsonify({
+            "success": False,
+            "error": f"Failed to get module assessments: {str(e)}"
+        }), 500

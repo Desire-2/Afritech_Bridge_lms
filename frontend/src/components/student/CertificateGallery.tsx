@@ -1232,17 +1232,44 @@ const CertificateGallery: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState('certificates');
   const [newCertificateAlert, setNewCertificateAlert] = useState(false);
   const [downloadingCertId, setDownloadingCertId] = useState<number | null>(null);
+  const [availableCourses, setAvailableCourses] = useState<any[]>([]);
+  const [generatingCertId, setGeneratingCertId] = useState<number | null>(null);
+  const [eligibilityCache, setEligibilityCache] = useState<Record<number, any>>({});
 
   const fetchData = useCallback(async () => {
     try {
-      console.log('📥 Fetching certificates and badges...');
-      const [certsData, badgesData] = await Promise.all([
+      console.log('📥 Fetching certificates, badges, and learning data...');
+      const [certsData, badgesData, learningData] = await Promise.all([
         StudentApiService.getCertificates(),
-        StudentApiService.getBadges()
+        StudentApiService.getBadges(),
+        StudentApiService.getLearningData()
       ]);
       
       console.log('📦 Certificates Data:', certsData);
       console.log('📦 Badges Data:', badgesData);
+      console.log('� Learning Data:', learningData);
+      
+      const activeCoursesRaw = Array.isArray(learningData?.active_courses)
+        ? learningData.active_courses
+        : [];
+      const completedCoursesRaw = Array.isArray(learningData?.completed_courses)
+        ? learningData.completed_courses
+        : [];
+      const allCoursesRaw = [...activeCoursesRaw, ...completedCoursesRaw];
+      
+      const candidateCourses = allCoursesRaw
+        .map((item: any) => {
+          const course = item?.course ?? item;
+          const progress = item?.progress?.completion_percentage ?? 0;
+          const enrollment = item?.enrollment ?? {};
+          return {
+            course,
+            progress,
+            enrollment
+          };
+        })
+        .filter((item: any) => item.course?.id);
+      console.log('✅ Parsed Learning Courses:', candidateCourses);
       
       // Check for new certificates
       const newCerts = Array.isArray(certsData) ? certsData : [];
@@ -1255,8 +1282,23 @@ const CertificateGallery: React.FC = () => {
       
       setCertificates(newCerts);
       setBadges(Array.isArray(badgesData) ? badgesData : []);
+      
+      // Filter eligible courses without certificates yet
+      const coursesWithoutCerts = candidateCourses
+        .filter((item: any) => {
+          const hasCertificate = newCerts.some(cert => cert.course_id === item.course.id);
+          return !hasCertificate;
+        })
+        .map((item: any) => ({
+          ...item.course,
+          completion_percentage: item.progress,
+          enrollment_status: item.enrollment?.status
+        }));
+      console.log('📋 Courses Available for Certificate Generation:', coursesWithoutCerts);
+      setAvailableCourses(coursesWithoutCerts);
     } catch (error) {
       console.error('❌ Failed to fetch certificate data:', error);
+      setAvailableCourses([]);
     } finally {
       setLoading(false);
     }
@@ -1305,6 +1347,54 @@ const CertificateGallery: React.FC = () => {
   const handleShareCertificate = (certificate: Certificate) => {
     setSelectedCertificate(certificate);
     setShowShareDialog(true);
+  };
+
+  const handleCheckEligibility = async (courseId: number) => {
+    try {
+      if (eligibilityCache[courseId]) {
+        return eligibilityCache[courseId];
+      }
+      const eligibility = await StudentApiService.checkCertificateEligibility(courseId);
+      setEligibilityCache(prev => ({ ...prev, [courseId]: eligibility }));
+      return eligibility;
+    } catch (error) {
+      console.error('❌ Error checking eligibility:', error);
+      return { eligible: false, message: 'Failed to check eligibility' };
+    }
+  };
+
+  const handleGenerateCertificate = async (courseId: number) => {
+    try {
+      setGeneratingCertId(courseId);
+      
+      // Check eligibility first
+      const eligibility = await handleCheckEligibility(courseId);
+      
+      if (!eligibility.eligible) {
+        alert(`Certificate not available: ${eligibility.message || 'Requirements not met'}`);
+        setGeneratingCertId(null);
+        return;
+      }
+      
+      // Generate certificate
+      console.log('🎓 Generating certificate for course:', courseId);
+      const result = await StudentApiService.generateCertificate(courseId);
+      
+      if (result.success) {
+        console.log('✅ Certificate generated successfully');
+        setNewCertificateAlert(true);
+        setTimeout(() => setNewCertificateAlert(false), 5000);
+        // Refresh certificates data
+        await fetchData();
+      } else {
+        alert('Failed to generate certificate. Please try again.');
+      }
+    } catch (error: any) {
+      console.error('❌ Error generating certificate:', error);
+      alert(error.response?.data?.message || 'Error generating certificate. Please try again.');
+    } finally {
+      setGeneratingCertId(null);
+    }
   };
 
   const earnedBadges = (badges || []).filter(badge => badge.earned_date);
@@ -1392,7 +1482,7 @@ const CertificateGallery: React.FC = () => {
                 </div>
               </div>
               <h3 className="text-2xl font-bold">
-                {Math.round((earnedBadges.length / badges.length) * 100)}%
+                {badges.length > 0 ? Math.round((earnedBadges.length / badges.length) * 100) : 0}%
               </h3>
               <p className="text-muted-foreground">Completion Rate</p>
             </CardContent>
@@ -1427,12 +1517,88 @@ const CertificateGallery: React.FC = () => {
                 ))}
               </motion.div>
             ) : (
-              <div className="text-center py-12">
-                <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-medium mb-2">No certificates yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Complete courses to earn your first certificate
-                </p>
+              <div className="space-y-8">
+                {/* No Certificates Yet Section */}
+                <div className="text-center py-12">
+                  <Award className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-medium mb-2">No certificates yet</h3>
+                  <p className="text-muted-foreground mb-4">
+                    {availableCourses && availableCourses.length > 0 
+                      ? 'You have completed courses that are eligible for certificates!' 
+                      : 'Complete courses to earn your first certificate'
+                    }
+                  </p>
+                </div>
+
+                {/* Available Courses for Certificate Generation */}
+                {availableCourses && availableCourses.length > 0 ? (
+                  <div>
+                    <h3 className="text-2xl font-bold mb-6 flex items-center">
+                      <GraduationCap className="h-6 w-6 mr-2 text-blue-500" />
+                      Generate Certificates ({availableCourses.length})
+                    </h3>
+                    <motion.div
+                      variants={containerVariants}
+                      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+                    >
+                      {availableCourses.map((course) => (
+                        <motion.div key={course.id} variants={itemVariants}>
+                          <Card className="hover:shadow-lg transition-all duration-300 h-full flex flex-col border-l-4 border-blue-500">
+                            <CardContent className="p-6 flex-1 flex flex-col">
+                              <div className="mb-4">
+                                <h4 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
+                                  {course.title}
+                                </h4>
+                                <p className="text-sm text-muted-foreground line-clamp-2">
+                                  {course.description}
+                                </p>
+                              </div>
+
+                              <div className="mt-auto space-y-3">
+                                <Badge className="bg-green-100 text-green-800 border-green-200 w-fit">
+                                  <Check className="h-3 w-3 mr-1" />
+                                  {course.completion_percentage >= 100 ? 'Course Completed' : 'In Progress'}
+                                </Badge>
+
+                                <p className="text-sm text-muted-foreground">
+                                  {course.completion_percentage >= 100
+                                    ? 'Ready to generate your certificate'
+                                    : `Progress: ${Math.round(course.completion_percentage || 0)}%`
+                                  }
+                                </p>
+
+                                <Button
+                                  onClick={() => handleGenerateCertificate(course.id)}
+                                  disabled={generatingCertId === course.id}
+                                  className="w-full bg-blue-600 hover:bg-blue-700"
+                                >
+                                  {generatingCertId === course.id ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                      Checking...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Trophy className="h-4 w-4 mr-2" />
+                                      Check Eligibility
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </motion.div>
+                      ))}
+                    </motion.div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <BookOpen className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+                    <p className="text-muted-foreground">
+                      Enroll in courses and complete them to generate certificates.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </TabsContent>

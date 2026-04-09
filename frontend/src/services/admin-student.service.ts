@@ -535,4 +535,181 @@ export class AdminStudentService {
       throw ApiErrorHandler.handleError(error);
     }
   }
+
+  // ============================================================
+  // CERTIFICATE MANAGEMENT
+  // ============================================================
+
+  /**
+   * Get certificate eligibility for ALL enrolled courses of a student
+   */
+  static async getStudentCertificatesEligibility(studentId: number): Promise<{
+    success: boolean;
+    student_id: number;
+    student_name: string;
+    total_enrollments: number;
+    certificates: Array<{
+      course_id: number;
+      course_title: string;
+      enrollment_id: number;
+      enrollment_status: string;
+      enrollment_progress: number;
+      eligible: boolean;
+      reason: string;
+      requirements: {
+        completed_modules?: number;
+        total_modules?: number;
+        overall_score?: number;
+        passing_score?: number;
+        module_details?: Array<{
+          module_id?: number;
+          module: string;
+          status: string;
+          score: number;
+          attempts: number;
+        }>;
+        [key: string]: any;
+      };
+      certificate_exists: boolean;
+      certificate_id: number | null;
+      certificate_issued_at: string | null;
+    }>;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE}/${studentId}/certificates/all-eligibility`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Admin endpoint - Manually validate and award certificate to a student
+   */
+  static async validateCertificateAdmin(
+    studentId: number,
+    courseId: number,
+    options?: {
+      reason?: string;
+      force_override?: boolean;
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    admin_action: {
+      validated_by_admin: boolean;
+      reason: string;
+      validated_at: string;
+      override_used: boolean;
+    };
+    certificate: any;
+  }> {
+    try {
+      const response = await apiClient.post(
+        `${this.BASE}/${studentId}/certificates/validate/${courseId}`,
+        {
+          reason: options?.reason || 'Manually validated by admin',
+          force_override: options?.force_override || false,
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  // ============================================================
+  // MODULE GRADING
+  // ============================================================
+
+  /**
+   * Get all assessments (quizzes, assignments, projects) in a module
+   */
+  static async getModuleAssessments(
+    studentId: number,
+    moduleId: number
+  ): Promise<{
+    success: boolean;
+    module_id: number;
+    module_title: string;
+    assessments: {
+      quizzes: Array<{
+        id: number;
+        title: string;
+        type: string;
+        current_score: number | null;
+        submission_exists: boolean;
+        submission_date: string | null;
+      }>;
+      assignments: Array<{
+        id: number;
+        title: string;
+        type: string;
+        current_score: number | null;
+        submission_exists: boolean;
+        submission_date: string | null;
+      }>;
+      projects: Array<{
+        id: number;
+        title: string;
+        type: string;
+        current_score: number | null;
+        submission_exists: boolean;
+        submission_date: string | null;
+      }>;
+    };
+    total_assessments: number;
+  }> {
+    try {
+      const response = await apiClient.get(
+        `${this.BASE}/${studentId}/modules/${moduleId}/assessments`
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Manually grade a module for a student
+   */
+  static async gradeModuleManual(
+    studentId: number,
+    moduleId: number,
+    options: {
+      score: number;
+      reason?: string;
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    admin_action: {
+      graded_by_admin: boolean;
+      reason: string;
+      graded_at: string;
+      score: number;
+      assessments_updated: number;
+    };
+    module_progress: {
+      module_id: number;
+      module_title: string;
+      score: number;
+      status: string;
+      is_manually_graded: boolean;
+      completed_at: string;
+    };
+  }> {
+    try {
+      const response = await apiClient.post(
+        `${this.BASE}/${studentId}/modules/${moduleId}/grade`,
+        {
+          score: options.score,
+          reason: options.reason || 'Manually graded by admin',
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
 }

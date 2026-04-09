@@ -341,25 +341,53 @@ export class StudentApiService {
 
   // Learning APIs
   static async getActiveCourses(): Promise<any> {
-    const response = await api.get('/student/learning/courses/active');
-    return response.data;
+    try {
+      const response = await api.get('/student/learning/active-courses');
+      // Extract active courses from response
+      const activeCourses = response.data?.data?.active_courses || response.data || [];
+      console.log('📚 Active Courses:', activeCourses);
+      return activeCourses;
+    } catch (error) {
+      console.error('❌ Error fetching active courses:', error);
+      return [];
+    }
   }
 
   static async getCompletedCourses(): Promise<any> {
-    const response = await api.get('/student/learning/courses/completed');
-    return response.data;
+    try {
+      const response = await api.get('/student/learning/completed-courses');
+      // Extract completed courses from nested response
+      const completedCourses = response.data?.data?.completed_courses || response.data?.completed_courses || [];
+      console.log('✅ Completed Courses:', completedCourses);
+      return completedCourses;
+    } catch (error) {
+      console.error('❌ Error fetching completed courses:', error);
+      return [];
+    }
+  }
+
+  static async getLearningData(): Promise<any> {
+    try {
+      const response = await api.get('/student/learning/');
+      const learningData = response.data?.data || {};
+      console.log('📘 Learning Data:', learningData);
+      return learningData;
+    } catch (error) {
+      console.error('❌ Error fetching learning data:', error);
+      return {};
+    }
   }
 
   static async getEnrolledCourses(): Promise<any> {
     try {
       // Get both active and completed courses
       const [activeResponse, completedResponse] = await Promise.all([
-        api.get('/student/learning/courses/active'),
-        api.get('/student/learning/courses/completed')
+        api.get('/student/learning/active-courses'),
+        api.get('/student/learning/completed-courses')
       ]);
       
-      const activeCourses = activeResponse.data.courses || [];
-      const completedCourses = completedResponse.data.courses || [];
+      const activeCourses = activeResponse.data?.data?.active_courses || activeResponse.data || [];
+      const completedCourses = completedResponse.data?.data?.completed_courses || completedResponse.data || [];
       
       // Combine and format the courses
       const allCourses = [
@@ -678,7 +706,7 @@ export class StudentApiService {
   }
 
   static async checkCertificateEligibility(courseId: number): Promise<any> {
-    const response = await api.get(`/student/certificate/courses/${courseId}/eligibility`);
+    const response = await api.get(`/student/certificate/eligibility/${courseId}`);
     return response.data;
   }
 

@@ -7,7 +7,7 @@ import hashlib
 import random
 
 from ..models.user_models import db, User
-from ..models.course_models import Course, Enrollment
+from ..models.course_models import Course, Enrollment, Module
 from ..models.student_models import (
     Certificate, SkillBadge, StudentSkillBadge, StudentTranscript,
     ModuleProgress, AssessmentAttempt
@@ -73,6 +73,7 @@ class CertificateService:
                 
                 if not module_progress:
                     requirements_status["module_details"].append({
+                        "module_id": module.id,
                         "module": module.title,
                         "status": "not_started",
                         "score": 0
@@ -80,6 +81,7 @@ class CertificateService:
                     continue
                 
                 module_detail = {
+                    "module_id": module.id,
                     "module": module.title,
                     "status": module_progress.status,
                     "score": module_progress.cumulative_score or 0,
@@ -673,6 +675,7 @@ class CertificateService:
         module_details = []
         for module_info in requirements.get("module_details", []):
             module_status = {
+                "module_id": module_info.get("module_id"),
                 "module_name": module_info.get("module"),
                 "status": module_info.get("status"),
                 "score": module_info.get("score", 0),
