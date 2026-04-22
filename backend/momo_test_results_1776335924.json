@@ -1,0 +1,41 @@
+{
+  "timestamp": "2026-04-16 12:38:44",
+  "api_url": "http://localhost:5000/api/v1",
+  "results": [
+    {
+      "ID": "MOMO-001",
+      "Name": "Backend Connectivity",
+      "Status": "PASS",
+      "Message": "API responding"
+    },
+    {
+      "ID": "MOMO-002",
+      "Name": "Account Validation",
+      "Status": "FAIL",
+      "Message": "HTTP 404"
+    },
+    {
+      "ID": "MOMO-003",
+      "Name": "Payment Initiation",
+      "Status": "FAIL",
+      "Message": "Course not found"
+    },
+    {
+      "ID": "MOMO-005a",
+      "Name": "Error Handling - Missing Phone",
+      "Status": "FAIL",
+      "Message": "No validation"
+    },
+    {
+      "ID": "MOMO-005b",
+      "Name": "Error Handling - Negative Amount",
+      "Status": "FAIL",
+      "Message": "No validation"
+    }
+  ],
+  "summary": {
+    "total": 5,
+    "passed": 1,
+    "failed": 4
+  }
+}
