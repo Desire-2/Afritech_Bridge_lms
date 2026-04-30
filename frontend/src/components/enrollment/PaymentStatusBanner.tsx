@@ -14,6 +14,9 @@ interface PaymentStatusBannerProps {
   enrollmentStatus?: string;
   courseName?: string;
   cohortLabel?: string;
+  cohortPrice?: number | null;
+  cohortCurrency?: string;
+  migratedFromWindowId?: number | null;
 }
 
 /**
@@ -29,7 +32,14 @@ export default function PaymentStatusBanner({
   enrollmentStatus,
   courseName,
   cohortLabel,
+  cohortPrice,
+  cohortCurrency,
+  migratedFromWindowId,
 }: PaymentStatusBannerProps) {
+  const displayCourseName = courseName || 'this course';
+  const displayCohortLabel = cohortLabel ? ` (${cohortLabel})` : '';
+  const displayPrice = cohortPrice != null ? `${cohortCurrency || 'USD'} ${cohortPrice.toLocaleString()}` : null;
+
   // Don't show anything if no payment is required or payment is verified
   if (!paymentRequired && accessAllowed !== false) return null;
   if (paymentVerified && accessAllowed) return null;
@@ -42,8 +52,8 @@ export default function PaymentStatusBanner({
         <AlertTitle className="text-blue-800">Payment Under Review</AlertTitle>
         <AlertDescription className="text-blue-700">
           <p>
-            Your payment for <strong>{courseName}</strong>
-            {cohortLabel && <> ({cohortLabel})</>} has been received and is being verified.
+            Your payment for <strong>{displayCourseName}</strong>
+            {displayCohortLabel} has been received and is being verified.
             You&apos;ll get full access once an admin confirms it.
           </p>
           <div className="mt-2 flex items-center gap-2">
@@ -63,7 +73,7 @@ export default function PaymentStatusBanner({
         <CheckCircle2 className="h-4 w-4 text-green-600" />
         <AlertTitle className="text-green-800">Payment Waived</AlertTitle>
         <AlertDescription className="text-green-700">
-          Your payment for <strong>{courseName}</strong> has been waived. You have full access.
+          Your payment for <strong>{displayCourseName}</strong>{displayCohortLabel} has been waived. You have full access.
         </AlertDescription>
       </Alert>
     );
@@ -82,13 +92,20 @@ export default function PaymentStatusBanner({
         </AlertTitle>
         <AlertDescription className="text-amber-700">
           <p>
-            Your enrollment in <strong>{courseName}</strong>
-            {cohortLabel && <> ({cohortLabel})</>} requires payment before you can access the course content.
+            Your enrollment in <strong>{displayCourseName}</strong>
+            {displayCohortLabel} requires payment before you can access the course content.
           </p>
           <p className="mt-2 text-sm">
-            Please complete your payment to unlock the learning materials.
+            {displayPrice
+              ? `Please complete your payment of ${displayPrice} to unlock the learning materials.`
+              : 'Please complete your payment to unlock the learning materials.'}
             If you&apos;ve already paid, contact support so an admin can verify your payment.
           </p>
+          {migratedFromWindowId != null && (
+            <p className="mt-1 text-xs text-amber-600 italic">
+              This enrollment was moved from a previous cohort; the current cohort details above are the active ones.
+            </p>
+          )}
           {accessReason && (
             <p className="mt-1 text-xs text-amber-600 italic">{accessReason}</p>
           )}
@@ -105,7 +122,7 @@ export default function PaymentStatusBanner({
         <AlertTitle className="text-red-800">Payment Failed</AlertTitle>
         <AlertDescription className="text-red-700">
           <p>
-            Your payment for <strong>{courseName}</strong> could not be processed.
+            Your payment for <strong>{displayCourseName}</strong>{displayCohortLabel} could not be processed.
             Please try again or contact support for assistance.
           </p>
         </AlertDescription>

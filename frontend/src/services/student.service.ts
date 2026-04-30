@@ -30,6 +30,7 @@ export interface EnrolledCourse {
   cohort_start_date?: string | null;
   cohort_end_date?: string | null;
   application_window_id?: number | null;
+  migrated_from_window_id?: number | null;
   // Payment / access gate fields
   enrollment_status?: string;
   payment_status?: string | null;

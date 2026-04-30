@@ -3,7 +3,11 @@ Email notification helpers for Afritec Bridge LMS
 Centralizes email sending for various events
 """
 import logging
+import os
 from datetime import datetime
+from pathlib import Path
+
+from jinja2 import Template
 from ..utils.email_templates import (
     assignment_graded_email,
     quiz_graded_email,
@@ -62,6 +66,136 @@ def _get_unsub_token(user) -> str | None:
     except Exception as e:
         logger.debug(f"Could not get unsubscribe token for user {user.id}: {e}")
         return None
+
+
+def _render_cohort_end_migration_template(context: dict) -> str:
+    """Render the cohort-end migration email template from disk."""
+    template_path = Path(__file__).resolve().parents[1] / "templates" / "emails" / "cohort_end_migration.html"
+    try:
+        template_text = template_path.read_text(encoding="utf-8")
+        return Template(template_text).render(**context)
+    except Exception as e:
+        logger.error(f"❌ Failed to render cohort-end migration template: {str(e)}")
+        return f"""
+        <html>
+          <body style="font-family: Arial, sans-serif; color: #1f2937;">
+            <h2>AfriTech Bridge</h2>
+            <p>Hello {context.get('student_name', 'Student')},</p>
+            <p>Your cohort <strong>{context.get('old_cohort_label', 'previous cohort')}</strong> has ended and you have been moved to <strong>{context.get('new_cohort_label', 'the next cohort')}</strong>.</p>
+          </body>
+        </html>
+        """
+
+
+def send_cohort_end_migration_email(enrollment, old_window, new_window):
+    """Send migration notification to student after cohort-end auto-migration."""
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send cohort-end migration email")
+            return False
+
+        student = enrollment.student if getattr(enrollment, 'student', None) else None
+        if not student and getattr(enrollment, 'student_id', None):
+            from ..models.user_models import User
+            student = User.query.get(enrollment.student_id)
+
+        if not student or not student.email:
+            logger.warning(f"Cannot send cohort-end migration email for enrollment {getattr(enrollment, 'id', None)}: missing student email")
+            return False
+
+        if not _should_send_email(student, 'enrollment'):
+            return False
+
+        student_name = f"{student.first_name} {student.last_name}".strip() if getattr(student, 'first_name', None) or getattr(student, 'last_name', None) else student.username
+        unsub_token = _get_unsub_token(student)
+
+        effective_type = new_window.get_effective_enrollment_type()
+        effective_price = new_window.get_effective_price()
+        currency = new_window.get_effective_currency()
+        requires_payment = effective_type == 'paid' and bool(effective_price and effective_price > 0)
+
+        progress = getattr(enrollment, 'progress', 0) or 0
+        if progress <= 1:
+            progress = round(progress * 100, 2)
+
+        context = {
+            'student_name': student_name,
+            'course_title': enrollment.course.title if enrollment.course else 'Course',
+            'old_cohort_label': old_window.cohort_label or 'Previous Cohort',
+            'new_cohort_label': new_window.cohort_label or 'Next Cohort',
+            'new_cohort_start': new_window.cohort_start.strftime('%b %d, %Y') if new_window.cohort_start else 'TBA',
+            'new_cohort_end': new_window.cohort_end.strftime('%b %d, %Y') if new_window.cohort_end else 'TBA',
+            'progress': int(round(progress)),
+            'requires_payment': requires_payment,
+            'cohort_price': f"{effective_price:,.2f}" if effective_price is not None else '0.00',
+            'currency': currency,
+            'dashboard_url': f"{os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')}/student/dashboard",
+            'footer_html': get_email_footer(unsubscribe_token=unsub_token, email_category='enrollment'),
+            'unsubscribe_token': unsub_token,
+        }
+
+        email_html = _render_cohort_end_migration_template(context)
+        subject = f"📚 Cohort Update: {context['new_cohort_label']}"
+        return brevo_service.send_email(
+            to_emails=[student.email],
+            subject=subject,
+            html_content=email_html,
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to send cohort-end migration email: {str(e)}")
+        return False
+
+
+def send_admin_alert_no_next_cohort(course, cohort_label, affected_student_count, cohort_end_date):
+    """Send admin alert when no next cohort exists for migrated students."""
+    try:
+        from ..models.user_models import User, Role
+
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send no-next-cohort admin alert")
+            return False
+
+        admin_role = Role.query.filter_by(name='admin').first()
+        if not admin_role:
+            logger.warning("No admin role found - cannot send alert email")
+            return False
+
+        admins = User.query.filter_by(role_id=admin_role.id).all()
+        admin_emails = [admin.email for admin in admins if admin.email]
+        if not admin_emails:
+            logger.warning("No admin users with emails found - cannot send alert")
+            return False
+
+        admin_panel_url = f"{os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')}/admin/waitlist"
+        email_html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Cohort End Alert</title>
+        </head>
+        <body style="margin:0;padding:0;background:#2c3e50;font-family:Arial,sans-serif;">
+          <div style="max-width:600px;margin:0 auto;background:#34495e;color:#e5e7eb;padding:32px;border-radius:18px;">
+            <h2 style="color:#fff;margin-top:0;">⚠️ Cohort End Alert</h2>
+            <p>Course: <strong>{course.title if course else 'Unknown Course'}</strong></p>
+            <p>Closing cohort: <strong>{cohort_label}</strong></p>
+            <p>Non-completed students affected: <strong>{affected_student_count}</strong></p>
+            <p>Cohort end date: <strong>{cohort_end_date.strftime('%b %d, %Y') if cohort_end_date else 'TBA'}</strong></p>
+            <p><a href="{admin_panel_url}" style="display:inline-block;background:#f59e0b;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:700;">Open Admin Panel</a></p>
+          </div>
+        </body>
+        </html>
+        """
+
+        return brevo_service.send_email(
+            to_emails=admin_emails,
+            subject=f"⚠️ Cohort End Alert: {cohort_label} ({course.title if course else 'Course'})",
+            html_content=email_html,
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to send admin alert email: {str(e)}")
+        return False
 
 def send_grade_notification(submission, assignment, student, grade, feedback):
     """
@@ -824,4 +958,110 @@ def send_full_credit_notification(student, module, course, instructor, reason=No
             
     except Exception as e:
         logger.error(f"❌ Failed to send full credit notification: {str(e)}")
+        return False
+
+
+def send_cohort_end_migration_email_legacy(student, enrollment, old_cohort_label, new_cohort_label, new_cohort_start, new_cohort_end, requires_payment, cohort_price, currency):
+    """
+    Send cohort-end auto-migration email to student.
+    
+    Args:
+        student: User object
+        enrollment: Enrollment object (migrated enrollment)
+        old_cohort_label: Label of closing cohort
+        new_cohort_label: Label of new cohort
+        new_cohort_start: Start datetime of new cohort
+        new_cohort_end: End datetime of new cohort
+        requires_payment: Boolean - whether new cohort requires payment
+        cohort_price: Price of new cohort (if paid)
+        currency: Currency code
+    
+    Returns:
+        Boolean - success
+    """
+    try:
+        # Check user preference
+        if not _should_send_email(student, 'course'):
+            return False
+        
+        from ..utils.email_templates import cohort_end_migration_email
+        
+        student_name = f"{student.first_name} {student.last_name}" if student.first_name else student.username
+        unsub_token = _get_unsub_token(student)
+        
+        # Calculate progress percentage
+        progress_percentage = int((enrollment.progress or 0) * 100) if enrollment.progress else 0
+        
+        email_html = cohort_end_migration_email(
+            student_name=student_name,
+            course_title=enrollment.course.title if enrollment.course else "Course",
+            old_cohort_label=old_cohort_label,
+            new_cohort_label=new_cohort_label,
+            new_cohort_start=new_cohort_start,
+            new_cohort_end=new_cohort_end,
+            progress_percentage=progress_percentage,
+            requires_payment=requires_payment,
+            cohort_price=cohort_price,
+            currency=currency,
+            unsubscribe_token=unsub_token
+        )
+        
+        return brevo_service.send_email(
+            to_emails=[student.email],
+            subject=f"📚 Cohort Update: {new_cohort_label}",
+            html_content=email_html
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to send cohort-end migration email: {str(e)}")
+        return False
+
+
+def send_admin_alert_no_next_cohort(course, cohort_label, affected_student_count, cohort_end_date):
+    """
+    Send admin alert when cohort ends but no next cohort exists.
+    
+    Args:
+        course: Course object
+        cohort_label: Label of closing cohort
+        affected_student_count: Count of non-completed students
+        cohort_end_date: End datetime of closing cohort
+    
+    Returns:
+        Boolean - success
+    """
+    try:
+        from ..utils.email_templates import admin_alert_no_next_cohort_email
+        from ..models.user_models import User, Role
+        
+        # Get all admin emails
+        admin_role = Role.query.filter_by(name='admin').first()
+        if not admin_role:
+            logger.warning("No admin role found - cannot send alert email")
+            return False
+        
+        admins = User.query.filter_by(role_id=admin_role.id).all()
+        admin_emails = [admin.email for admin in admins if admin.email]
+        
+        if not admin_emails:
+            logger.warning("No admin users with emails found - cannot send alert")
+            return False
+        
+        email_html = admin_alert_no_next_cohort_email(
+            course_title=course.title if course else "Unknown Course",
+            cohort_label=cohort_label,
+            affected_student_count=affected_student_count,
+            cohort_end_date=cohort_end_date
+        )
+        
+        success = brevo_service.send_email(
+            to_emails=admin_emails,
+            subject=f"⚠️ Cohort End Alert: {cohort_label} ({course.title if course else 'Course'})",
+            html_content=email_html
+        )
+        
+        if success:
+            logger.info(f"✅ Admin alert email sent to {len(admin_emails)} admins")
+        return success
+    except Exception as e:
+        logger.error(f"❌ Failed to send admin alert email: {str(e)}")
         return False

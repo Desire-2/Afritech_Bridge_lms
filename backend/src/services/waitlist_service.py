@@ -656,6 +656,222 @@ class WaitlistService:
             "total_waitlisted": sum(c["waitlisted_count"] for c in cohort_summary),
         }
 
+    # ─────────────────────────────────────────────────────────
+    # COHORT-END AUTO-MIGRATION
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def auto_migrate_cohort_end_students(window_id: int) -> Dict:
+        """
+        Auto-migrate students when a cohort ends at 21:59.
+        
+        Called by scheduler when cohort_end date is reached.
+        - Identifies all students in cohort (via application_window_id)
+        - Separates completers (progress >= 100 or status = 'completed') from non-completers
+        - Leaves completers in closing cohort (no action)
+        - Migrates non-completers to next available cohort
+        - Applies next cohort payment settings
+        - Preserves student progress
+        - Sends email notifications
+        
+        Returns: {
+            'success': bool,
+            'migrated': int,
+            'skipped_completed': int,
+            'failed': int,
+            'target_cohort_label': str or None,
+            'error': str or None
+        }
+        """
+        try:
+            # Load the closing cohort
+            window = ApplicationWindow.query.get(window_id)
+            if not window:
+                msg = f"ApplicationWindow {window_id} not found"
+                logger.error(f"❌ Cohort-end migration failed: {msg}")
+                return {
+                    'success': False,
+                    'migrated': 0,
+                    'skipped_completed': 0,
+                    'failed': 0,
+                    'target_cohort_label': None,
+                    'error': msg
+                }
+
+            logger.info(f"⏰ Starting cohort-end migration for window {window_id} ({window.cohort_label})")
+
+            # Get all enrollments in this cohort
+            all_enrollments = Enrollment.query.filter_by(
+                application_window_id=window_id
+            ).all()
+
+            logger.info(f"📋 Found {len(all_enrollments)} enrollments in cohort {window.cohort_label}")
+
+            # Split into completers and non-completers
+            completers = []
+            non_completers = []
+
+            for enrollment in all_enrollments:
+                is_completed = (enrollment.status == 'completed' or 
+                              (enrollment.progress is not None and enrollment.progress >= 100))
+                if is_completed:
+                    completers.append(enrollment)
+                else:
+                    non_completers.append(enrollment)
+
+            logger.info(
+                f"✅ {len(completers)} completers will stay in closing cohort, "
+                f"⬜ {len(non_completers)} non-completers need migration"
+            )
+
+            # If no non-completers, return early
+            if not non_completers:
+                return {
+                    'success': True,
+                    'migrated': 0,
+                    'skipped_completed': len(completers),
+                    'failed': 0,
+                    'target_cohort_label': None,
+                    'message': f"No non-completed students to migrate. {len(completers)} students remain in closing cohort."
+                }
+
+            # Find next available cohort
+            next_cohort = WaitlistService.get_next_cohort(
+                course_id=window.course_id,
+                current_window_id=window_id
+            )
+
+            if not next_cohort:
+                # No next cohort available — send admin alert
+                msg = f"No next cohort available for {len(non_completers)} non-completed students"
+                logger.warning(f"⚠️ {msg}")
+                try:
+                    _send_admin_alert_no_next_cohort(
+                        course=window.course,
+                        closing_window=window,
+                        affected_student_count=len(non_completers)
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send admin alert: {str(e)}")
+                
+                return {
+                    'success': False,
+                    'migrated': 0,
+                    'skipped_completed': len(completers),
+                    'failed': len(non_completers),
+                    'target_cohort_label': None,
+                    'error': msg
+                }
+
+            logger.info(f"🎯 Target cohort: {next_cohort.cohort_label} (ID: {next_cohort.id})")
+
+            # Migrate each non-completer
+            migrated_count = 0
+            failed_count = 0
+            migrated_enrollments = []
+
+            for enrollment in non_completers:
+                try:
+                    # Store old window ID
+                    old_window_id = enrollment.application_window_id
+
+                    # Update enrollment to new cohort
+                    enrollment.application_window_id = next_cohort.id
+                    enrollment.migrated_from_window_id = old_window_id
+                    
+                    # Update cohort snapshot
+                    enrollment.cohort_label = next_cohort.cohort_label
+                    enrollment.cohort_start_date = next_cohort.cohort_start
+                    enrollment.cohort_end_date = next_cohort.cohort_end
+
+                    # Apply next cohort's payment settings
+                    enrollment_type = next_cohort.get_effective_enrollment_type()
+                    effective_price = next_cohort.get_effective_price()
+
+                    if enrollment_type in ('free', 'scholarship') or not effective_price or effective_price <= 0:
+                        enrollment.payment_status = 'waived'
+                        enrollment.payment_verified = True
+                        enrollment.payment_verified_at = datetime.utcnow()
+                    else:
+                        enrollment.payment_status = 'pending'
+                        enrollment.payment_verified = False
+                        enrollment.payment_verified_at = None
+
+                    # Do not change progress field — preserve it
+                    # Keep status as 'active' in new cohort
+                    enrollment.status = 'active'
+
+                    db.session.add(enrollment)
+                    migrated_enrollments.append(enrollment)
+                    migrated_count += 1
+
+                    db.session.commit()
+
+                    logger.info(
+                        f"✅ Migrated enrollment {enrollment.id} "
+                        f"(student {enrollment.student_id}) "
+                        f"from window {old_window_id} to {next_cohort.id}"
+                    )
+
+                except Exception as e:
+                    db.session.rollback()
+                    failed_count += 1
+                    logger.error(
+                        f"❌ Failed to migrate enrollment {enrollment.id}: {str(e)}"
+                    )
+
+            logger.info(f"✅ Committed {migrated_count} migration(s)")
+
+            # Send notification emails to migrated students
+            email_count = 0
+            email_failed = 0
+            for enrollment in migrated_enrollments:
+                try:
+                    _send_cohort_end_migration_email(
+                        enrollment=enrollment,
+                        old_window=window,
+                        new_window=next_cohort
+                    )
+                    email_count += 1
+                except Exception as e:
+                    email_failed += 1
+                    logger.error(
+                        f"Failed to send migration email to student {enrollment.student_id}: {str(e)}"
+                    )
+
+            logger.info(
+                f"📧 Migration emails: {email_count} sent, {email_failed} failed"
+            )
+
+            result = {
+                'success': True,
+                'migrated': migrated_count,
+                'skipped_completed': len(completers),
+                'failed': failed_count,
+                'target_cohort_label': next_cohort.cohort_label,
+                'target_cohort_id': next_cohort.id,
+                'emails_sent': email_count,
+                'emails_failed': email_failed,
+            }
+
+            logger.info(
+                f"✅ Cohort-end migration completed: {migrated_count} migrated, "
+                f"{len(completers)} stayed, {failed_count} failed"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Unexpected error in auto_migrate_cohort_end_students: {str(e)}")
+            return {
+                'success': False,
+                'migrated': 0,
+                'skipped_completed': 0,
+                'failed': 0,
+                'target_cohort_label': None,
+                'error': f"Unexpected error: {str(e)}"
+            }
+
 
 # ─────────────────────────────────────────────────────────
 # HELPERS
@@ -669,3 +885,60 @@ def _cohort_requires_payment(window: ApplicationWindow) -> bool:
     if etype == 'scholarship' and window.scholarship_type == 'partial':
         return True
     return False
+
+
+def _send_cohort_end_migration_email(enrollment: Enrollment, old_window: ApplicationWindow, new_window: ApplicationWindow) -> bool:
+    """
+    Send email notification to student after cohort-end auto-migration.
+    
+    Args:
+        enrollment: Migrated Enrollment object
+        old_window: Original ApplicationWindow (closing cohort)
+        new_window: Target ApplicationWindow (new cohort)
+    
+    Returns:
+        True if email was sent successfully
+    """
+    try:
+        from ..utils.email_notifications import send_cohort_end_migration_email
+        
+        if not enrollment.student:
+            logger.warning(f"Cannot send email: Student for enrollment {enrollment.id} not found")
+            return False
+        
+        student = enrollment.student
+        success = send_cohort_end_migration_email(enrollment, old_window, new_window)
+        
+        return success
+    except Exception as e:
+        logger.error(f"Error in _send_cohort_end_migration_email: {str(e)}")
+        return False
+
+
+def _send_admin_alert_no_next_cohort(course, closing_window, affected_student_count: int) -> bool:
+    """
+    Send alert email to admins when a cohort ends but no next cohort exists.
+    
+    Args:
+        course: Course object
+        closing_window: ApplicationWindow (closing cohort)
+        affected_student_count: Number of non-completed students affected
+    
+    Returns:
+        True if email was sent successfully
+    """
+    try:
+        from ..utils.email_notifications import send_admin_alert_no_next_cohort
+        
+        success = send_admin_alert_no_next_cohort(
+            course=course,
+            cohort_label=closing_window.cohort_label or "Unknown Cohort",
+            affected_student_count=affected_student_count,
+            cohort_end_date=closing_window.cohort_end
+        )
+        
+        return success
+    except Exception as e:
+        logger.error(f"Error in _send_admin_alert_no_next_cohort: {str(e)}")
+        return False
+

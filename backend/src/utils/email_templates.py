@@ -2469,3 +2469,56 @@ def maintenance_completed_email(recipient_name, downtime_duration=None, improvem
     </div>
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='system')}
     """
+
+def cohort_end_migration_email(
+    student_name,
+    course_title,
+    old_cohort_label,
+    new_cohort_label,
+    new_cohort_start=None,
+    new_cohort_end=None,
+    progress_percentage=0,
+    requires_payment=False,
+    cohort_price=None,
+    currency='USD',
+    unsubscribe_token=None
+):
+    """Email template for cohort-end auto-migration notification."""
+    start_date_str = new_cohort_start.strftime('%B %d, %Y') if new_cohort_start else 'TBD'
+    end_date_str = new_cohort_end.strftime('%B %d, %Y') if new_cohort_end else 'TBD'
+    
+    if requires_payment and cohort_price and cohort_price > 0:
+        payment_section = f"""<div style="background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%); border-radius: 16px; padding: 30px; margin: 30px 0; border-left: 6px solid #d97706;"><h3 style="margin: 0; color: #92400e; font-size: 20px; font-weight: 700;">💳 Payment Required</h3><p style="color: #78350f; font-size: 15px; line-height: 1.8; margin: 10px 0;">This cohort requires {currency} {cohort_price:.2f} to access content.</p></div>"""
+    else:
+        payment_section = """<div style="background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); border-radius: 16px; padding: 30px; margin: 30px 0; border-left: 6px solid #10b981;"><h3 style="margin: 0; color: #065f46; font-size: 20px; font-weight: 700;">✅ No Payment Required</h3><p style="color: #064e3b; font-size: 15px; line-height: 1.8; margin: 10px 0;">This cohort is free or scholarship-based!</p></div>"""
+    
+    return f"""
+    {get_email_header()}
+    <div class="email-content">
+        <div style="text-align: center; margin-bottom: 35px;"><div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); width: 100px; height: 100px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px;"><span style="font-size: 50px;">📚</span></div><h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0 0 15px 0;">Cohort Update</h1><p style="color: #667eea; font-size: 18px; font-weight: 600; margin: 0;">You've been moved to a new cohort</p></div>
+        <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">Hi <strong>{student_name}</strong> 👋</p>
+        <div style="background: rgba(102, 126, 234, 0.1); border-radius: 16px; padding: 30px; margin: 30px 0; border-left: 6px solid #667eea;"><p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0;">Your previous cohort for <strong>{course_title}</strong> ({old_cohort_label}) has ended. We're moving you to the next cohort to continue your learning!</p></div>
+        <div style="background: #34495e; border-radius: 16px; padding: 30px; margin: 30px 0;"><h3 style="color: #ffffff; font-size: 20px; font-weight: 700; margin: 0 0 25px 0; text-align: center;">📅 New Cohort Details</h3><table style="width: 100%; color: #e5e7eb;"><tr><td style="padding: 15px 0; font-weight: 600; width: 40%;">Cohort:</td><td style="padding: 15px 0; color: #60a5fa;">{new_cohort_label}</td></tr><tr><td style="padding: 15px 0; font-weight: 600;">Starts:</td><td style="padding: 15px 0; color: #10b981;">{start_date_str}</td></tr><tr><td style="padding: 15px 0; font-weight: 600;">Ends:</td><td style="padding: 15px 0; color: #f87171;">{end_date_str}</td></tr></table></div>
+        <div style="background: #34495e; border-radius: 12px; padding: 20px; margin: 30px 0;"><p style="color: #e5e7eb; font-size: 14px; font-weight: 600; margin: 0 0 12px 0;">Your Progress: <span style="color: #60a5fa;">{progress_percentage}%</span></p><div style="background: #2c3e50; border-radius: 8px; height: 20px; overflow: hidden;"><div style="background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); height: 100%; width: {progress_percentage}%; border-radius: 8px;"></div></div></div>
+        {payment_section}
+        <div style="text-align: center; margin: 40px 0;"><a href="{_frontend_url('student/mylearning')}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px 50px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 18px;">📖 Continue Learning</a></div>
+        <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin-top: 40px; text-align: center;">We're excited to have you continue with us! 🚀</p>
+    </div>
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='course')}
+    """
+
+
+def admin_alert_no_next_cohort_email(course_title, cohort_label, affected_student_count, cohort_end_date=None):
+    """Email template for admin alert when no next cohort exists."""
+    cohort_end_str = cohort_end_date.strftime('%B %d, %Y') if cohort_end_date else 'Today'
+    
+    return f"""
+    {get_email_header()}
+    <div class="email-content">
+        <div style="text-align: center; margin-bottom: 35px;"><div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); width: 100px; height: 100px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 25px;"><span style="font-size: 50px;">⚠️</span></div><h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0 0 15px 0;">Cohort End Alert</h1><p style="color: #ef4444; font-size: 18px; font-weight: 600; margin: 0;">Action Required: No Next Cohort Available</p></div>
+        <div style="background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); border-radius: 16px; padding: 30px; margin: 30px 0; border-left: 6px solid #dc2626;"><p style="color: #7f1d1d; font-size: 16px; line-height: 1.8; margin: 0;"><strong>⚠️ Important:</strong> The cohort <strong>{cohort_label}</strong> for <strong>{course_title}</strong> ended on <strong>{cohort_end_str}</strong>, but there is no next cohort to automatically migrate students to.</p></div>
+        <div style="background: #34495e; border-radius: 12px; padding: 25px; margin: 30px 0; border-left: 4px solid #ef4444;"><h3 style="color: #fecaca; font-size: 18px; font-weight: 700; margin: 0 0 20px 0;">📊 Impact Summary</h3><div style="background: rgba(239, 68, 68, 0.1); border-radius: 10px; padding: 20px; margin-bottom: 20px; text-align: center;"><div style="font-size: 48px; font-weight: 900; color: #fecaca; margin-bottom: 10px;">{affected_student_count}</div><p style="color: #e5e7eb; font-size: 16px; margin: 0;">Non-completed students affected</p></div></div>
+        <div style="text-align: center; margin: 40px 0;"><a href="{_frontend_url('admin/courses')}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 18px 50px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 18px;">🛠️ Go to Admin Panel</a></div>
+    </div>
+    {get_email_footer()}
+    """

@@ -1,0 +1,251 @@
+{
+  "timestamp": "2026-04-22T16:24:07.497919",
+  "backend_url": "http://localhost:5001/api/v1",
+  "total_tests": 14,
+  "passed": 9,
+  "failed": 5,
+  "success_rate": 64.28571428571429,
+  "tests": [
+    {
+      "id": "MOMO-001",
+      "name": "Backend Connectivity",
+      "endpoint": "/courses",
+      "method": "GET",
+      "status": "FAIL",
+      "error": "HTTPConnectionPool(host='localhost', port=5001): Read timed out. (read timeout=5)",
+      "duration_ms": 5009.186744689941,
+      "timestamp": "2026-04-22T16:23:53.878400"
+    },
+    {
+      "id": "MOMO-002a",
+      "name": "Account Validation - Valid Phone",
+      "endpoint": "/applications/validate-momo-account",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200
+      ],
+      "duration_ms": 7.256269454956055,
+      "timestamp": "2026-04-22T16:23:53.885785",
+      "response": {
+        "message": "Verified MoMo account.",
+        "name": null,
+        "valid": true
+      }
+    },
+    {
+      "id": "MOMO-002b",
+      "name": "Account Validation - Invalid Phone",
+      "endpoint": "/applications/validate-momo-account",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200,
+        400
+      ],
+      "duration_ms": 5.897998809814453,
+      "timestamp": "2026-04-22T16:23:53.891865",
+      "response": {
+        "message": "Verified MoMo account.",
+        "name": null,
+        "valid": true
+      }
+    },
+    {
+      "id": "MOMO-003a",
+      "name": "Payment Initiation - Course 1",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200,
+        404
+      ],
+      "duration_ms": 3650.500535964966,
+      "timestamp": "2026-04-22T16:23:57.542573",
+      "response": {
+        "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=7UY251118T249440V",
+        "message": "Redirect to PayPal to complete payment.",
+        "order_id": "7UY251118T249440V",
+        "payment_method": "paypal",
+        "status": "pending"
+      }
+    },
+    {
+      "id": "MOMO-003b",
+      "name": "Payment Initiation - Course 2",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200,
+        404
+      ],
+      "duration_ms": 3660.9506607055664,
+      "timestamp": "2026-04-22T16:24:01.203846",
+      "response": {
+        "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=00495291SA717002V",
+        "message": "Redirect to PayPal to complete payment.",
+        "order_id": "00495291SA717002V",
+        "payment_method": "paypal",
+        "status": "pending"
+      }
+    },
+    {
+      "id": "MOMO-003c",
+      "name": "Payment Initiation - Course 3",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200,
+        404
+      ],
+      "duration_ms": 2300.8973598480225,
+      "timestamp": "2026-04-22T16:24:03.504972",
+      "response": {
+        "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=27L4528640879964N",
+        "message": "Redirect to PayPal to complete payment.",
+        "order_id": "27L4528640879964N",
+        "payment_method": "paypal",
+        "status": "pending"
+      }
+    },
+    {
+      "id": "MOMO-004",
+      "name": "Payment Verification",
+      "endpoint": "/applications/verify-payment",
+      "method": "POST",
+      "status": "FAIL",
+      "code": null,
+      "expected_codes": [
+        200,
+        404,
+        400
+      ],
+      "duration_ms": 6.281137466430664,
+      "timestamp": "2026-04-22T16:24:03.511504"
+    },
+    {
+      "id": "MOMO-005a",
+      "name": "Error - Negative Amount",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "FAIL",
+      "code": null,
+      "expected_codes": [
+        400
+      ],
+      "duration_ms": 7.16710090637207,
+      "timestamp": "2026-04-22T16:24:03.518941"
+    },
+    {
+      "id": "MOMO-005b",
+      "name": "Error - Zero Amount",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "FAIL",
+      "code": null,
+      "expected_codes": [
+        400,
+        200
+      ],
+      "duration_ms": 5.809307098388672,
+      "timestamp": "2026-04-22T16:24:03.525043"
+    },
+    {
+      "id": "MOMO-005c",
+      "name": "Error - Missing Phone",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        400,
+        200
+      ],
+      "duration_ms": 2678.0197620391846,
+      "timestamp": "2026-04-22T16:24:06.203200",
+      "response": {
+        "approval_url": "https://www.sandbox.paypal.com/checkoutnow?token=9D314639GL335690X",
+        "message": "Redirect to PayPal to complete payment.",
+        "order_id": "9D314639GL335690X",
+        "payment_method": "paypal",
+        "status": "pending"
+      }
+    },
+    {
+      "id": "MOMO-005d",
+      "name": "Error - Invalid Course",
+      "endpoint": "/applications/initiate-payment",
+      "method": "POST",
+      "status": "FAIL",
+      "code": null,
+      "expected_codes": [
+        404,
+        400
+      ],
+      "duration_ms": 1270.8373069763184,
+      "timestamp": "2026-04-22T16:24:07.474254"
+    },
+    {
+      "id": "MOMO-006a",
+      "name": "Rapid Requests - Request 1",
+      "endpoint": "/applications/validate-momo-account",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200
+      ],
+      "duration_ms": 7.2765350341796875,
+      "timestamp": "2026-04-22T16:24:07.481751",
+      "response": {
+        "message": "Verified MoMo account.",
+        "name": null,
+        "valid": true
+      }
+    },
+    {
+      "id": "MOMO-006b",
+      "name": "Rapid Requests - Request 2",
+      "endpoint": "/applications/validate-momo-account",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200
+      ],
+      "duration_ms": 7.671356201171875,
+      "timestamp": "2026-04-22T16:24:07.489661",
+      "response": {
+        "message": "Verified MoMo account.",
+        "name": null,
+        "valid": true
+      }
+    },
+    {
+      "id": "MOMO-006c",
+      "name": "Rapid Requests - Request 3",
+      "endpoint": "/applications/validate-momo-account",
+      "method": "POST",
+      "status": "PASS",
+      "code": 200,
+      "expected_codes": [
+        200
+      ],
+      "duration_ms": 7.659196853637695,
+      "timestamp": "2026-04-22T16:24:07.497564",
+      "response": {
+        "message": "Verified MoMo account.",
+        "name": null,
+        "valid": true
+      }
+    }
+  ]
+}

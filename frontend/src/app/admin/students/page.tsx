@@ -11,6 +11,7 @@ import {
   CourseStats,
   CohortStats,
 } from '@/services/admin-student.service';
+import waitlistService from '@/services/api/waitlist.service';
 import { toast } from 'sonner';
 import {
   RefreshCw, Search, Download, GraduationCap, Users, TrendingUp,
@@ -18,7 +19,7 @@ import {
   ChevronRight, Eye, UserCheck, UserX, BookOpen, Filter, BarChart3,
   Mail, RotateCcw, MoreVertical, BookPlus, MessageSquare, UserPlus,
   Trash2, ChevronDown, Send, X, ShieldAlert, ArrowLeft, Calendar,
-  Building2, Layers, Lock, Unlock, Users2, BadgeCheck, Phone,
+  Building2, Layers, Lock, Unlock, Users2, BadgeCheck, Phone, ArrowRightLeft,
   User, ExternalLink,
 } from 'lucide-react';
 
@@ -186,9 +187,10 @@ function MessageModal({ open, recipients, onClose }: {
 }
 
 // ─── View Student Modal ────────────────────────────────────────────────────────
-function ViewStudentModal({ studentId, listItem, onClose, onToggleStatus, onEnroll, onMessage }: {
+function ViewStudentModal({ studentId, listItem, allowEnrollAction, onClose, onToggleStatus, onEnroll, onMessage }: {
   studentId: number | null;
   listItem: StudentListItem | null;
+  allowEnrollAction: boolean;
   onClose: () => void;
   onToggleStatus: (s: StudentListItem) => void;
   onEnroll: (s: StudentListItem) => void;
@@ -266,10 +268,12 @@ function ViewStudentModal({ studentId, listItem, onClose, onToggleStatus, onEnro
               className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-purple-300 transition-colors">
               <Mail className="w-4 h-4" />
             </button>
-            <button onClick={() => onEnroll(listItem)} title="Enroll in course"
-              className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-emerald-300 transition-colors">
-              <BookPlus className="w-4 h-4" />
-            </button>
+            {allowEnrollAction && (
+              <button onClick={() => onEnroll(listItem)} title="Enroll in course"
+                className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-emerald-300 transition-colors">
+                <BookPlus className="w-4 h-4" />
+              </button>
+            )}
             <button onClick={() => onToggleStatus(listItem)} title={listItem.is_active ? 'Deactivate' : 'Activate'}
               className={`p-2 hover:bg-white/10 rounded-lg transition-colors ${listItem.is_active ? 'text-gray-400 hover:text-orange-300' : 'text-gray-400 hover:text-emerald-300'}`}>
               {listItem.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
@@ -562,8 +566,9 @@ function ViewStudentModal({ studentId, listItem, onClose, onToggleStatus, onEnro
 }
 
 // ─── Row Action Menu ───────────────────────────────────────────────────────────
-function RowActionMenu({ student, onView, onToggleStatus, onEnroll, onResetProgress, onMessage, onDeleteConfirm }: {
+function RowActionMenu({ student, allowEnrollAction, onView, onToggleStatus, onEnroll, onResetProgress, onMessage, onDeleteConfirm }: {
   student: StudentListItem; onView: () => void; onToggleStatus: () => void;
+  allowEnrollAction: boolean;
   onEnroll: () => void; onResetProgress: () => void; onMessage: () => void; onDeleteConfirm: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -589,7 +594,7 @@ function RowActionMenu({ student, onView, onToggleStatus, onEnroll, onResetProgr
       {open && (
         <div className="absolute right-0 top-9 bg-[#162844] border border-white/20 rounded-xl shadow-lg z-20 min-w-[180px] py-1.5 px-1">
           {btn(<Eye className="w-4 h-4 text-[#0d1b2a]" />, 'View Profile', onView)}
-          {btn(<BookPlus className="w-4 h-4 text-green-500" />, 'Enroll in Course', onEnroll)}
+          {allowEnrollAction && btn(<BookPlus className="w-4 h-4 text-green-500" />, 'Enroll in Course', onEnroll)}
           {btn(student.is_active ? <UserX className="w-4 h-4 text-orange-500" /> : <UserCheck className="w-4 h-4 text-green-500" />,
             student.is_active ? 'Deactivate' : 'Activate', onToggleStatus,
             student.is_active ? 'text-orange-700' : 'text-green-700')}
@@ -649,22 +654,26 @@ export default function StudentManagementPage() {
   // ── Courses view state ─────────────────────────────────────────────
   const [courses, setCourses] = useState<CourseStats[]>([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
+  const [coursesError, setCoursesError] = useState<string | null>(null);
   const [courseSearch, setCourseSearch] = useState('');
 
   // ── Cohorts view state ─────────────────────────────────────────────
   const [selectedCourse, setSelectedCourse] = useState<CourseStats | null>(null);
   const [cohorts, setCohorts] = useState<CohortStats[]>([]);
   const [cohortsLoading, setCohortsLoading] = useState(false);
+  const [cohortsError, setCohortsError] = useState<string | null>(null);
 
   // ── Students view state ────────────────────────────────────────────
   const [selectedCohort, setSelectedCohort] = useState<CohortStats | null>(null);
   const [students, setStudents] = useState<StudentListItem[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsError, setStudentsError] = useState<string | null>(null);
   const [stats, setStats] = useState<StudentStats | null>(null);
   const [availableCourses, setAvailableCourses] = useState<AvailableCourse[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<number[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [cohortMigrationLoading, setCohortMigrationLoading] = useState(false);
 
   // Modals
   const [enrollModal, setEnrollModal] = useState<{ open: boolean; student: StudentListItem | null }>({ open: false, student: null });
@@ -691,9 +700,14 @@ export default function StudentManagementPage() {
   // ── Load courses on mount ─────────────────────────────────────────
   useEffect(() => {
     setCoursesLoading(true);
+    setCoursesError(null);
     AdminStudentService.getCourses()
       .then(r => setCourses(r.courses))
-      .catch(err => toast.error(err.message || 'Failed to load courses'))
+      .catch(err => {
+        const message = err.message || 'Failed to load courses';
+        setCoursesError(message);
+        toast.error(message);
+      })
       .finally(() => setCoursesLoading(false));
     AdminStudentService.getStats().then(setStats).catch(console.error);
     AdminStudentService.getAvailableCourses().then(r => setAvailableCourses(r.courses)).catch(console.error);
@@ -702,11 +716,14 @@ export default function StudentManagementPage() {
   // ── Load cohorts when course selected ────────────────────────────
   const loadCohorts = useCallback(async (course: CourseStats) => {
     setCohortsLoading(true);
+    setCohortsError(null);
     try {
       const res = await AdminStudentService.getCohortsForCourse(course.id);
       setCohorts(res.cohorts);
     } catch (err: any) {
-      toast.error(err.message || 'Failed to load cohorts');
+      const message = err.message || 'Failed to load cohorts';
+      setCohortsError(message);
+      toast.error(message);
     } finally {
       setCohortsLoading(false);
     }
@@ -716,6 +733,7 @@ export default function StudentManagementPage() {
   const fetchStudents = useCallback(async () => {
     if (!selectedCourse || !selectedCohort) return;
     setStudentsLoading(true);
+    setStudentsError(null);
     try {
       const res = await AdminStudentService.listStudents({
         page: pagination.current_page,
@@ -732,7 +750,9 @@ export default function StudentManagementPage() {
       setStudents(res.students);
       setPagination(prev => ({ ...prev, ...res.pagination }));
     } catch (err: any) {
-      toast.error(err.message || 'Failed to load students');
+      const message = err.message || 'Failed to load students';
+      setStudentsError(message);
+      toast.error(message);
     } finally {
       setStudentsLoading(false);
     }
@@ -747,7 +767,12 @@ export default function StudentManagementPage() {
   // ── Navigation helpers ───────────────────────────────────────────
   const goToCohorts = (course: CourseStats) => {
     setSelectedCourse(course);
+    setSelectedCohort(null);
     setCohorts([]);
+    setStudents([]);
+    setSelectedStudents([]);
+    setCohortsError(null);
+    setStudentsError(null);
     setView('cohorts');
     loadCohorts(course);
   };
@@ -756,6 +781,7 @@ export default function StudentManagementPage() {
     setSelectedCohort(cohort);
     setStudents([]);
     setSelectedStudents([]);
+    setStudentsError(null);
     setPagination(p => ({ ...p, current_page: 1 }));
     setView('students');
   };
@@ -764,12 +790,15 @@ export default function StudentManagementPage() {
     setView('courses');
     setSelectedCourse(null);
     setSelectedCohort(null);
+    setStudents([]);
+    setSelectedStudents([]);
   };
 
   const goBackToCohorts = () => {
     setView('cohorts');
     setSelectedCohort(null);
     setStudents([]);
+    setSelectedStudents([]);
   };
 
   // ── Student actions ───────────────────────────────────────────────
@@ -828,6 +857,33 @@ export default function StudentManagementPage() {
     } catch { toast.error('Export failed'); } finally { setIsExporting(false); }
   };
 
+  const handleCohortEndMigration = async () => {
+    if (!selectedCohort || selectedCohort.status !== 'closed') {
+      toast.error('Select a closed cohort to migrate incomplete students');
+      return;
+    }
+
+    const cohortLabel = selectedCohort.cohort_label || `Window #${selectedCohort.id}`;
+    if (!confirm(`Bulk migrate incomplete students from ${cohortLabel} to the next available cohort and send emails?`)) {
+      return;
+    }
+
+    try {
+      setCohortMigrationLoading(true);
+      const res = await waitlistService.triggerCohortEndMigration(selectedCohort.id);
+      toast.success(
+        `Migrated ${res.data.migrated} student(s) from ${cohortLabel}. ` +
+        `Skipped completed: ${res.data.skipped_completed}. ` +
+        `Emails sent: ${res.data.emails_sent ?? 0}.`
+      );
+      await fetchStudents();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.error || e.message || 'Cohort migration failed');
+    } finally {
+      setCohortMigrationLoading(false);
+    }
+  };
+
   const handleFilterChange = (key: string, value: string) => {
     setFilters(prev => ({ ...prev, [key]: value }));
     setPagination(prev => ({ ...prev, current_page: 1 }));
@@ -845,6 +901,137 @@ export default function StudentManagementPage() {
   );
 
   const activeFilterCount = [filters.search, filters.status, filters.enrollment_status, filters.performance].filter(Boolean).length;
+  const allowEnrollAction = selectedCohort?.status !== 'closed';
+  const cohortStudents = students;
+  const migratedInStudents = cohortStudents.filter(student => student.cohort_enrollment?.migrated_from_window_id != null);
+  const cohortOriginalStudents = cohortStudents.filter(student => student.cohort_enrollment?.migrated_from_window_id == null);
+  const hasClosedCohortGrouping = selectedCohort?.status === 'closed';
+
+  const renderStudentRow = (student: StudentListItem) => {
+    const perf = student.performance_level;
+    const perfCls = { high: 'bg-emerald-100 text-emerald-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-red-100 text-red-700' }[perf] || '';
+    const progressValue = student.progress_summary.avg_progress;
+    const progColor = progressValue >= 75 ? 'bg-emerald-500' : progressValue >= 40 ? 'bg-amber-400' : 'bg-red-400';
+    const daysCls = student.activity.days_inactive === null ? 'text-gray-500' : student.activity.days_inactive === 0 ? 'text-emerald-600' : student.activity.days_inactive <= 7 ? 'text-green-600' : student.activity.days_inactive <= 14 ? 'text-orange-500' : 'text-red-500';
+
+    return (
+      <tr key={student.id}
+        className={`hover:bg-white/5 transition-colors ${selectedStudents.includes(student.id) ? 'bg-white/8' : ''}`}>
+        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+          <input type="checkbox" checked={selectedStudents.includes(student.id)}
+            onChange={() => setSelectedStudents(prev => prev.includes(student.id) ? prev.filter(id => id !== student.id) : [...prev, student.id])}
+            className="rounded border-white/15 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
+        </td>
+        <td className="px-4 py-3 cursor-pointer" onClick={() => setViewModal({ studentId: student.id, student })}>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#162844] to-[#0d1b2a] flex items-center justify-center text-white font-semibold text-sm flex-shrink-0 shadow-sm">
+              {(student.first_name?.[0] || student.username[0]).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-white truncate">{getStudentName(student)}</p>
+              <p className="text-xs text-gray-500 truncate">{student.email}</p>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                {student.cohort_enrollment?.cohort_label && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-white/10 text-gray-200">
+                    <Layers className="w-3 h-3" />
+                    {student.cohort_enrollment.cohort_label}
+                  </span>
+                )}
+                {student.cohort_enrollment?.migrated_from_window_id != null && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-900/40 text-blue-300">
+                    <ArrowRightLeft className="w-3 h-3" />
+                    Migrated in
+                  </span>
+                )}
+              </div>
+              {student.phone_number && (
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <a href={`tel:${student.phone_number}`}
+                    onClick={e => e.stopPropagation()}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#0d1b2a]">
+                    <Phone className="w-3 h-3 flex-shrink-0" />
+                    <span>{student.phone_number}</span>
+                  </a>
+                  {student.whatsapp_number && (
+                    <a href={`https://wa.me/${student.whatsapp_number.replace(/\D/g,'')}`}
+                      target="_blank" rel="noopener noreferrer"
+                      onClick={e => e.stopPropagation()}
+                      className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700">
+                      <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1 rounded">WA</span>
+                      {student.whatsapp_number !== student.phone_number && (
+                        <span>{student.whatsapp_number}</span>
+                      )}
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${student.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+              {student.is_active ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+              {student.is_active ? 'Active' : 'Inactive'}
+            </span>
+            {student.cohort_enrollment?.migration_state === 'migrated_in' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-900/40 text-blue-300">
+                <ArrowRightLeft className="w-3 h-3" />
+                Migrated
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="px-4 py-3 text-center">
+          <div className="flex flex-col items-center gap-1">
+            <span className="text-sm font-semibold text-gray-100">{progressValue}%</span>
+            <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div className={`h-full rounded-full ${progColor}`}
+                style={{ width: `${Math.min(progressValue, 100)}%` }} />
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-3 text-center">
+          {perfCls && (
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${perfCls}`}>
+              {perf === 'high' ? <TrendingUp className="w-3 h-3" /> : perf === 'low' ? <AlertTriangle className="w-3 h-3" /> : <BarChart3 className="w-3 h-3" />}
+              {perf.charAt(0).toUpperCase() + perf.slice(1)}
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-3 text-center hidden md:table-cell">
+          <span className={`text-xs font-medium ${daysCls}`}>
+            {student.activity.days_inactive === null ? 'Never' : student.activity.days_inactive === 0 ? 'Today' : `${student.activity.days_inactive}d ago`}
+          </span>
+          {student.activity.days_inactive !== null && student.activity.days_inactive > 14 && (
+            <p className="text-xs text-red-400 flex items-center justify-center gap-0.5 mt-0.5">
+              <ShieldAlert className="w-3 h-3" /> At risk
+            </p>
+          )}
+        </td>
+        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+          <RowActionMenu
+            student={student}
+            allowEnrollAction={allowEnrollAction}
+            onView={() => setViewModal({ studentId: student.id, student })}
+            onToggleStatus={() => handleToggleStatus(student)}
+            onEnroll={() => setEnrollModal({ open: true, student })}
+            onResetProgress={() => handleResetProgress(student)}
+            onMessage={() => setMessageModal({ open: true, recipients: [{ id: student.id, name: getStudentName(student) }] })}
+            onDeleteConfirm={() => setConfirmDialog({
+              open: true, title: 'Remove Student',
+              description: `Remove ${student.username} from the platform?`,
+              confirmLabel: 'Remove', danger: true,
+              onConfirm: async () => {
+                try { await AdminStudentService.toggleStatus(student.id); toast.info('Account deactivated'); fetchStudents(); }
+                catch (e: any) { toast.error(e.message); }
+              },
+            })}
+          />
+        </td>
+      </tr>
+    );
+  };
 
   // ─────────────────────────────────────────────────────────────────
   // BREADCRUMB
@@ -923,6 +1110,16 @@ export default function StudentManagementPage() {
       {coursesLoading ? (
         <div className="flex items-center justify-center py-20">
           <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a]" />
+        </div>
+      ) : coursesError ? (
+        <div className="text-center py-16 bg-[#0d1b2a]/80 rounded-xl border border-red-500/20">
+          <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+          <p className="text-red-200 font-medium">Could not load courses</p>
+          <p className="text-gray-400 text-sm mt-1">{coursesError}</p>
+          <button onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 rounded-lg bg-[#162844] text-white text-sm font-medium hover:bg-[#0d2040]">
+            Retry
+          </button>
         </div>
       ) : filteredCourses.length === 0 ? (
         <div className="text-center py-16 bg-[#0d1b2a]/80 rounded-xl border border-white/10">
@@ -1016,6 +1213,16 @@ export default function StudentManagementPage() {
       {cohortsLoading ? (
         <div className="flex items-center justify-center py-20">
           <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a]" />
+        </div>
+      ) : cohortsError ? (
+        <div className="text-center py-16 bg-[#0d1b2a]/80 rounded-xl border border-red-500/20">
+          <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+          <p className="text-red-200 font-medium">Could not load cohorts</p>
+          <p className="text-gray-400 text-sm mt-1">{cohortsError}</p>
+          <button onClick={() => selectedCourse && loadCohorts(selectedCourse)}
+            className="mt-4 px-4 py-2 rounded-lg bg-[#162844] text-white text-sm font-medium hover:bg-[#0d2040]">
+            Retry
+          </button>
         </div>
       ) : cohorts.length === 0 ? (
         <div className="text-center py-16 bg-[#0d1b2a]/80 rounded-xl border border-white/10">
@@ -1252,177 +1459,158 @@ export default function StudentManagementPage() {
         </div>
       )}
 
-      {/* Table */}
-      <div className="bg-[#0d1b2a]/80 rounded-xl border border-white/10 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-[#0a1628] border-b border-white/10">
-              <tr>
-                <th className="px-4 py-3 w-10">
-                  <input type="checkbox"
-                    checked={selectedStudents.length === students.length && students.length > 0}
-                    onChange={e => setSelectedStudents(e.target.checked ? students.map(s => s.id) : [])}
-                    className="rounded border-white/15 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Progress</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Performance</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Activity</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/8">
-              {studentsLoading && students.length === 0 ? (
-                <tr><td colSpan={7} className="py-16 text-center">
-                  <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a] mx-auto mb-2" />
-                  <p className="text-gray-500 text-sm">Loading students…</p>
-                </td></tr>
-              ) : students.length === 0 ? (
-                <tr><td colSpan={7} className="py-16 text-center">
-                  <Users className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-                  <p className="text-gray-600 font-medium">No students in this cohort</p>
-                  {activeFilterCount > 0 && (
-                    <button onClick={() => { setFilters({ search: '', status: '', enrollment_status: '', performance: '', sort_by: 'created_at', sort_order: 'desc' }); }}
-                      className="mt-2 text-sm text-[#0d1b2a] hover:underline">Clear filters</button>
-                  )}
-                </td></tr>
-              ) : students.map(student => {
-                const perf = student.performance_level;
-                const perfCls = { high: 'bg-emerald-100 text-emerald-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-red-100 text-red-700' }[perf] || '';
-                const progColor = student.progress_summary.avg_progress >= 75 ? 'bg-emerald-500' : student.progress_summary.avg_progress >= 40 ? 'bg-amber-400' : 'bg-red-400';
-                const daysCls = student.activity.days_inactive === null ? 'text-gray-500' : student.activity.days_inactive === 0 ? 'text-emerald-600' : student.activity.days_inactive <= 7 ? 'text-green-600' : student.activity.days_inactive <= 14 ? 'text-orange-500' : 'text-red-500';
-                return (
-                  <tr key={student.id}
-                    className={`hover:bg-white/5 transition-colors ${selectedStudents.includes(student.id) ? 'bg-white/8' : ''}`}>
-                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" checked={selectedStudents.includes(student.id)}
-                        onChange={() => setSelectedStudents(prev => prev.includes(student.id) ? prev.filter(id => id !== student.id) : [...prev, student.id])}
-                        className="rounded border-white/15 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
-                    </td>
-                    <td className="px-4 py-3 cursor-pointer" onClick={() => setViewModal({ studentId: student.id, student })}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#162844] to-[#0d1b2a] flex items-center justify-center text-white font-semibold text-sm flex-shrink-0 shadow-sm">
-                          {(student.first_name?.[0] || student.username[0]).toUpperCase()}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-white truncate">{getStudentName(student)}</p>
-                          <p className="text-xs text-gray-500 truncate">{student.email}</p>
-                          {student.phone_number && (
-                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <a href={`tel:${student.phone_number}`}
-                                onClick={e => e.stopPropagation()}
-                                className="flex items-center gap-1 text-xs text-gray-500 hover:text-[#0d1b2a]">
-                                <Phone className="w-3 h-3 flex-shrink-0" />
-                                <span>{student.phone_number}</span>
-                              </a>
-                              {student.whatsapp_number && (
-                                <a href={`https://wa.me/${student.whatsapp_number.replace(/\D/g,'')}`}
-                                  target="_blank" rel="noopener noreferrer"
-                                  onClick={e => e.stopPropagation()}
-                                  className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700">
-                                  <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1 rounded">WA</span>
-                                  {student.whatsapp_number !== student.phone_number && (
-                                    <span>{student.whatsapp_number}</span>
-                                  )}
-                                </a>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${student.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                        {student.is_active ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                        {student.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className="text-sm font-semibold text-gray-100">{student.progress_summary.avg_progress}%</span>
-                        <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full ${progColor}`}
-                            style={{ width: `${Math.min(student.progress_summary.avg_progress, 100)}%` }} />
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {perfCls && (
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${perfCls}`}>
-                          {perf === 'high' ? <TrendingUp className="w-3 h-3" /> : perf === 'low' ? <AlertTriangle className="w-3 h-3" /> : <BarChart3 className="w-3 h-3" />}
-                          {perf.charAt(0).toUpperCase() + perf.slice(1)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-center hidden md:table-cell">
-                      <span className={`text-xs font-medium ${daysCls}`}>
-                        {student.activity.days_inactive === null ? 'Never' : student.activity.days_inactive === 0 ? 'Today' : `${student.activity.days_inactive}d ago`}
-                      </span>
-                      {student.activity.days_inactive !== null && student.activity.days_inactive > 14 && (
-                        <p className="text-xs text-red-400 flex items-center justify-center gap-0.5 mt-0.5">
-                          <ShieldAlert className="w-3 h-3" /> At risk
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <RowActionMenu
-                        student={student}
-                        onView={() => setViewModal({ studentId: student.id, student })}
-                        onToggleStatus={() => handleToggleStatus(student)}
-                        onEnroll={() => setEnrollModal({ open: true, student })}
-                        onResetProgress={() => handleResetProgress(student)}
-                        onMessage={() => setMessageModal({ open: true, recipients: [{ id: student.id, name: getStudentName(student) }] })}
-                        onDeleteConfirm={() => setConfirmDialog({
-                          open: true, title: 'Remove Student',
-                          description: `Remove ${student.username} from the platform?`,
-                          confirmLabel: 'Remove', danger: true,
-                          onConfirm: async () => {
-                            try { await AdminStudentService.toggleStatus(student.id); toast.info('Account deactivated'); fetchStudents(); }
-                            catch (e: any) { toast.error(e.message); }
-                          },
-                        })}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        {pagination.total_pages > 1 && (
-          <div className="px-5 py-3.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-gray-500">
-              Showing <span className="font-medium">{(pagination.current_page - 1) * pagination.per_page + 1}–{Math.min(pagination.current_page * pagination.per_page, pagination.total_items)}</span>
-              {' '}of <span className="font-medium">{pagination.total_items.toLocaleString()}</span>
-            </p>
-            <div className="flex items-center gap-1">
-              <button onClick={() => setPagination(p => ({ ...p, current_page: 1 }))} disabled={!pagination.has_prev}
-                className="px-2 py-1.5 text-xs rounded-lg hover:bg-white/10 disabled:opacity-40">«</button>
-              <button onClick={() => setPagination(p => ({ ...p, current_page: p.current_page - 1 }))} disabled={!pagination.has_prev}
-                className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
-              {(() => {
-                const start = Math.max(1, Math.min(pagination.current_page - 2, pagination.total_pages - 4));
-                return Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
-                  const page = start + i;
-                  if (page > pagination.total_pages) return null;
-                  return (
-                    <button key={page} onClick={() => setPagination(p => ({ ...p, current_page: page }))}
-                      className={`w-8 h-8 rounded-lg text-sm font-medium ${page === pagination.current_page ? 'bg-[#0d1b2a] text-white' : 'hover:bg-white/10 text-gray-200'}`}>
-                      {page}
-                    </button>
-                  );
-                });
-              })()}
-              <button onClick={() => setPagination(p => ({ ...p, current_page: p.current_page + 1 }))} disabled={!pagination.has_next}
-                className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
-              <button onClick={() => setPagination(p => ({ ...p, current_page: p.total_pages }))} disabled={!pagination.has_next}
-                className="px-2 py-1.5 text-xs rounded-lg hover:bg-white/10 disabled:opacity-40">»</button>
+      {/* Student results */}
+      <div className="space-y-3">
+        {hasClosedCohortGrouping && selectedCohort && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="bg-[#162844] rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-400 mb-2">
+                <Lock className="w-3.5 h-3.5" /> Closed cohort
+              </div>
+              <p className="text-lg font-bold text-white">{selectedCohort.cohort_label}</p>
+              <p className="text-xs text-gray-400 mt-1">This cohort is closed. Student records below are grouped by migration state.</p>
+            </div>
+            <div className="bg-[#162844] rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-400 mb-2">
+                <ArrowRightLeft className="w-3.5 h-3.5" /> Migrated in
+              </div>
+              <p className="text-lg font-bold text-white">{migratedInStudents.length}</p>
+              <p className="text-xs text-gray-400 mt-1">Students moved here from a previous cohort.</p>
+            </div>
+            <div className="bg-[#162844] rounded-xl p-4 border border-white/10">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-gray-400 mb-2">
+                <Users2 className="w-3.5 h-3.5" /> Original cohort members
+              </div>
+              <p className="text-lg font-bold text-white">{cohortOriginalStudents.length}</p>
+              <p className="text-xs text-gray-400 mt-1">Students that remain tied to the closed cohort record.</p>
             </div>
           </div>
         )}
+
+        {hasClosedCohortGrouping && selectedCohort && (
+          <div className="bg-[#162844] rounded-xl p-4 border border-blue-500/20 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-blue-300 font-semibold">Bulk migrate incomplete students</p>
+              <p className="text-sm text-gray-400 mt-1">
+                Move students who have not completed this closed cohort to the next available cohort and send migration emails.
+              </p>
+            </div>
+            <button
+              onClick={handleCohortEndMigration}
+              disabled={cohortMigrationLoading}
+              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {cohortMigrationLoading ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <ArrowRightLeft className="w-4 h-4" />
+              )}
+              Migrate Incomplete Students
+            </button>
+          </div>
+        )}
+
+        <div className="bg-[#0d1b2a]/80 rounded-xl border border-white/10 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-[#0a1628] border-b border-white/10">
+                <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input type="checkbox"
+                      checked={selectedStudents.length === cohortStudents.length && cohortStudents.length > 0}
+                      onChange={e => setSelectedStudents(e.target.checked ? cohortStudents.map(s => s.id) : [])}
+                      className="rounded border-white/15 text-[#0d1b2a] focus:ring-[#0d1b2a]" />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Student</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Progress</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Performance</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Activity</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/8">
+                {studentsError ? (
+                  <tr><td colSpan={7} className="py-16 text-center">
+                    <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+                    <p className="text-red-200 font-medium">Could not load students</p>
+                    <p className="text-gray-400 text-sm mt-1">{studentsError}</p>
+                    <button onClick={() => fetchStudents()}
+                      className="mt-4 px-4 py-2 rounded-lg bg-[#162844] text-white text-sm font-medium hover:bg-[#0d2040]">
+                      Retry
+                    </button>
+                  </td></tr>
+                ) : studentsLoading && cohortStudents.length === 0 ? (
+                  <tr><td colSpan={7} className="py-16 text-center">
+                    <RefreshCw className="w-6 h-6 animate-spin text-[#0d1b2a] mx-auto mb-2" />
+                    <p className="text-gray-500 text-sm">Loading students…</p>
+                  </td></tr>
+                ) : cohortStudents.length === 0 ? (
+                  <tr><td colSpan={7} className="py-16 text-center">
+                    <Users className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                    <p className="text-gray-600 font-medium">No students in this cohort</p>
+                    {activeFilterCount > 0 && (
+                      <button onClick={() => { setFilters({ search: '', status: '', enrollment_status: '', performance: '', sort_by: 'created_at', sort_order: 'desc' }); }}
+                        className="mt-2 text-sm text-[#0d1b2a] hover:underline">Clear filters</button>
+                    )}
+                  </td></tr>
+                ) : hasClosedCohortGrouping ? (
+                  <>
+                    <tr className="bg-[#0a1628]/90">
+                      <td colSpan={7} className="px-4 py-3 text-xs uppercase tracking-wide text-gray-400">
+                        Migrated into this closed cohort
+                      </td>
+                    </tr>
+                    {migratedInStudents.length > 0 ? migratedInStudents.map(renderStudentRow) : (
+                      <tr><td colSpan={7} className="py-10 text-center text-gray-500 text-sm">No migrated students found</td></tr>
+                    )}
+                    <tr className="bg-[#0a1628]/90">
+                      <td colSpan={7} className="px-4 py-3 text-xs uppercase tracking-wide text-gray-400">
+                        Original closed cohort members
+                      </td>
+                    </tr>
+                    {cohortOriginalStudents.length > 0 ? cohortOriginalStudents.map(renderStudentRow) : (
+                      <tr><td colSpan={7} className="py-10 text-center text-gray-500 text-sm">No original cohort members found</td></tr>
+                    )}
+                  </>
+                ) : cohortStudents.map(renderStudentRow)}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {pagination.total_pages > 1 && (
+            <div className="px-5 py-3.5 border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-gray-500">
+                Showing <span className="font-medium">{(pagination.current_page - 1) * pagination.per_page + 1}–{Math.min(pagination.current_page * pagination.per_page, pagination.total_items)}</span>
+                {' '}of <span className="font-medium">{pagination.total_items.toLocaleString()}</span>
+              </p>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPagination(p => ({ ...p, current_page: 1 }))} disabled={!pagination.has_prev}
+                  className="px-2 py-1.5 text-xs rounded-lg hover:bg-white/10 disabled:opacity-40">«</button>
+                <button onClick={() => setPagination(p => ({ ...p, current_page: p.current_page - 1 }))} disabled={!pagination.has_prev}
+                  className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-40"><ChevronLeft className="w-4 h-4" /></button>
+                {(() => {
+                  const start = Math.max(1, Math.min(pagination.current_page - 2, pagination.total_pages - 4));
+                  return Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
+                    const page = start + i;
+                    if (page > pagination.total_pages) return null;
+                    return (
+                      <button key={page} onClick={() => setPagination(p => ({ ...p, current_page: page }))}
+                        className={`w-8 h-8 rounded-lg text-sm font-medium ${page === pagination.current_page ? 'bg-[#0d1b2a] text-white' : 'hover:bg-white/10 text-gray-200'}`}>
+                        {page}
+                      </button>
+                    );
+                  });
+                })()}
+                <button onClick={() => setPagination(p => ({ ...p, current_page: p.current_page + 1 }))} disabled={!pagination.has_next}
+                  className="p-1.5 rounded-lg hover:bg-white/10 disabled:opacity-40"><ChevronRight className="w-4 h-4" /></button>
+                <button onClick={() => setPagination(p => ({ ...p, current_page: p.total_pages }))} disabled={!pagination.has_next}
+                  className="px-2 py-1.5 text-xs rounded-lg hover:bg-white/10 disabled:opacity-40">»</button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1444,6 +1632,7 @@ export default function StudentManagementPage() {
       <ViewStudentModal
         studentId={viewModal.studentId}
         listItem={viewModal.student}
+        allowEnrollAction={allowEnrollAction}
         onClose={() => setViewModal({ studentId: null, student: null })}
         onToggleStatus={(s) => { setViewModal({ studentId: null, student: null }); handleToggleStatus(s); }}
         onEnroll={(s) => { setViewModal({ studentId: null, student: null }); setEnrollModal({ open: true, student: s }); }}

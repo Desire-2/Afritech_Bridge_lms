@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { StudentService, EnrolledCourse } from '@/services/student.service';
 import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2, TrendingUp, Award, Search, Filter, UserCircle, AlertTriangle, CreditCard, ShieldAlert } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { Badge } from '@/components/ui/badge';
 
 const MyLearningPage = () => {
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -371,6 +372,11 @@ const MyLearningPage = () => {
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700">
                           {course.cohort_label}
                         </span>
+                        {course.migrated_from_window_id != null && (
+                          <Badge variant="outline" className="ml-2 border-blue-200 text-blue-700 bg-blue-50">
+                            Moved from previous cohort
+                          </Badge>
+                        )}
                       </div>
                     )}
                     {course.current_lesson && (

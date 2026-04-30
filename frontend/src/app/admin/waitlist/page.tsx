@@ -52,6 +52,7 @@ export default function AdminWaitlistPage() {
 
   // Bulk migrate state
   const [migrateLoading, setMigrateLoading] = useState(false);
+  const [cohortMigrationLoadingId, setCohortMigrationLoadingId] = useState<number | null>(null);
 
   // Load course list from the summary or a generic endpoint
   // For now we'll use an API call via waitlistService to detect courses with waitlisted apps
@@ -122,6 +123,34 @@ export default function AdminWaitlistPage() {
       setError(err.response?.data?.error || 'Bulk migration failed');
     } finally {
       setMigrateLoading(false);
+    }
+  };
+
+  const handleCohortEndMigration = async (windowId: number, cohortLabel: string) => {
+    if (!confirm(`Run cohort-end migration for ${cohortLabel}? This will move incomplete students to the next available cohort and email them.`)) {
+      return;
+    }
+
+    setCohortMigrationLoadingId(windowId);
+    setError(null);
+
+    try {
+      const res = await waitlistService.triggerCohortEndMigration(windowId);
+      const data = res.data;
+      alert(
+        `Migrated ${data.migrated} incomplete student(s) from ${cohortLabel}.\n` +
+        `Skipped completed: ${data.skipped_completed}\n` +
+        `Failed: ${data.failed}\n` +
+        `Emails sent: ${data.emails_sent ?? 0}`
+      );
+      if (selectedCourseId) {
+        loadSummary(parseInt(selectedCourseId));
+      }
+      loadUnpaidEnrollments(selectedCourseId ? parseInt(selectedCourseId) : undefined);
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Cohort-end migration failed');
+    } finally {
+      setCohortMigrationLoadingId(null);
     }
   };
 
@@ -369,6 +398,22 @@ export default function AdminWaitlistPage() {
                                 <Badge variant="outline" className="text-xs border-amber-200 text-amber-700">
                                   Paid ({cohort.effective_price} {cohort.effective_currency})
                                 </Badge>
+                              )}
+                              {cohort.status === 'closed' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleCohortEndMigration(cohort.window_id, cohort.cohort_label || `Window #${cohort.window_id}`)}
+                                  disabled={cohortMigrationLoadingId === cohort.window_id}
+                                  className="ml-2 border-blue-200 text-blue-700 hover:bg-blue-50"
+                                >
+                                  {cohortMigrationLoadingId === cohort.window_id ? (
+                                    <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+                                  ) : (
+                                    <ArrowRightLeft className="w-4 h-4 mr-1" />
+                                  )}
+                                  Migrate Incomplete
+                                </Button>
                               )}
                             </div>
                           </div>

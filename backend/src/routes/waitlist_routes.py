@@ -33,6 +33,15 @@ def _require_admin_or_instructor():
     return user, user_id
 
 
+def _require_admin():
+    """Helper to verify admin role only."""
+    user_id = int(get_jwt_identity())
+    user = User.query.get(user_id)
+    if not user or user.role.name != 'admin':
+        return None, user_id
+    return user, user_id
+
+
 # ─────────────────────────────────────────────────────────
 # MIGRATION SUMMARY
 # ─────────────────────────────────────────────────────────
@@ -167,6 +176,19 @@ def bulk_migrate_waitlist():
         _send_bulk_migration_emails(result, course_id)
 
     return jsonify({"success": True, "message": message, "data": result}), 200
+
+
+@waitlist_bp.route("/trigger-cohort-end-migration/<int:window_id>", methods=["POST"])
+@jwt_required()
+def trigger_cohort_end_migration(window_id):
+    """Manually trigger cohort-end migration for a specific cohort window."""
+    user, user_id = _require_admin()
+    if not user:
+        return jsonify({"error": "Admin access required"}), 403
+
+    result = WaitlistService.auto_migrate_cohort_end_students(window_id)
+    status_code = 200 if result.get("success") else 400
+    return jsonify({"success": result.get("success", False), "data": result}), status_code
 
 
 # ─────────────────────────────────────────────────────────

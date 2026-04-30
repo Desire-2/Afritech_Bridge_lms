@@ -70,6 +70,7 @@ def get_student_dashboard():
         course_data['cohort_label'] = enrollment.cohort_label
         course_data['cohort_start_date'] = enrollment.cohort_start_date.isoformat() if enrollment.cohort_start_date else None
         course_data['cohort_end_date'] = enrollment.cohort_end_date.isoformat() if enrollment.cohort_end_date else None
+        course_data['migrated_from_window_id'] = enrollment.migrated_from_window_id
 
         # Cohort-level payment/access details (the single source of truth)
         from ..services.waitlist_service import WaitlistService
@@ -166,6 +167,7 @@ def get_my_learning():
         course_data['cohort_label'] = enrollment.cohort_label
         course_data['cohort_start_date'] = enrollment.cohort_start_date.isoformat() if enrollment.cohort_start_date else None
         course_data['cohort_end_date'] = enrollment.cohort_end_date.isoformat() if enrollment.cohort_end_date else None
+        course_data['migrated_from_window_id'] = enrollment.migrated_from_window_id
 
         # Cohort-level payment/access details (the single source of truth)
         from ..services.waitlist_service import WaitlistService

@@ -66,6 +66,7 @@ from src.routes.email_routes import email_bp # Import email preference/unsubscri
 from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance middleware
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
+from src.services.cohort_migration_scheduler import start_cohort_migration_scheduler # Import cohort migration scheduler
 from flask_cors import CORS
 
 # Configure logging
@@ -247,6 +248,10 @@ app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
 # Admin email for notifications
 app.config['ADMIN_EMAIL'] = os.getenv('ADMIN_EMAIL')
+app.config['ENABLE_SCHEDULERS'] = os.getenv(
+    'ENABLE_SCHEDULERS',
+    'true' if env == 'production' else 'false'
+).lower() in ('true', '1', 'yes')
 
 # Check email service configuration
 if app.config.get('BREVO_API_KEY'):
@@ -403,6 +408,9 @@ with app.app_context():
         logger.info("✅ System settings initialized successfully")
     except Exception as e:
         logger.error(f"❌ Failed to initialize system settings: {str(e)}")
+
+# Start scheduled cohort migration job only when enabled.
+start_cohort_migration_scheduler(app)
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext

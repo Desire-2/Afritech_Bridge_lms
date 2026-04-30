@@ -152,6 +152,7 @@ const StudentDashboardOverviewPage = () => {
         cohortLabel: c.cohort_label!,
         startDate: c.cohort_start_date,
         endDate: c.cohort_end_date,
+        migratedFromWindowId: c.migrated_from_window_id,
         enrollmentType: c.cohort_enrollment_type,
         scholarshipType: c.cohort_scholarship_type,
         scholarshipPercentage: c.cohort_scholarship_percentage,
@@ -451,6 +452,11 @@ const StudentDashboardOverviewPage = () => {
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${statusColor}`}>
                                       {statusLabel}
                                     </span>
+                                    {cohort.migratedFromWindowId != null && (
+                                      <Badge variant="outline" className="border-blue-200 text-blue-700 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300">
+                                        Moved from previous cohort
+                                      </Badge>
+                                    )}
                                   </div>
                                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
                                     {cohort.courseTitle}

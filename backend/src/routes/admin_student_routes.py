@@ -170,6 +170,26 @@ def list_students():
             total_enrollments = len(enrollments)
             active_enrollments = sum(1 for e in enrollments if e.status == "active")
             completed_enrollments = sum(1 for e in enrollments if e.status == "completed")
+
+            cohort_enrollment = None
+            if course_filter or window_id is not None:
+                cohort_query = Enrollment.query.filter_by(student_id=student.id)
+                if course_filter:
+                    cohort_query = cohort_query.filter(Enrollment.course_id == course_filter)
+                if window_id == "none":
+                    cohort_query = cohort_query.filter(Enrollment.application_window_id.is_(None))
+                elif window_id is not None:
+                    try:
+                        cohort_query = cohort_query.filter(Enrollment.application_window_id == int(window_id))
+                    except (TypeError, ValueError):
+                        pass
+                cohort_enrollment = cohort_query.order_by(Enrollment.enrollment_date.desc()).first()
+
+            cohort_window = cohort_enrollment.application_window if cohort_enrollment else None
+            cohort_status = cohort_window.compute_status() if cohort_window else None
+            cohort_label = None
+            if cohort_enrollment:
+                cohort_label = cohort_enrollment.cohort_label or (cohort_window.cohort_label if cohort_window else None)
             
             # Calculate average progress
             avg_progress = 0.0
@@ -238,6 +258,23 @@ def list_students():
                     "quiz_submissions": quiz_submissions,
                     "certificates": certificates,
                 },
+                "cohort_enrollment": {
+                    "enrollment_id": cohort_enrollment.id if cohort_enrollment else None,
+                    "course_id": cohort_enrollment.course_id if cohort_enrollment else None,
+                    "application_window_id": cohort_enrollment.application_window_id if cohort_enrollment else None,
+                    "cohort_label": cohort_label,
+                    "cohort_status": cohort_status,
+                    "cohort_reason": cohort_window.compute_status() if cohort_window else None,
+                    "enrollment_status": cohort_enrollment.status if cohort_enrollment else None,
+                    "enrollment_date": cohort_enrollment.enrollment_date.isoformat() if cohort_enrollment and cohort_enrollment.enrollment_date else None,
+                    "payment_status": cohort_enrollment.payment_status if cohort_enrollment else None,
+                    "payment_verified": cohort_enrollment.payment_verified if cohort_enrollment else None,
+                    "progress": cohort_enrollment.progress if cohort_enrollment else None,
+                    "migrated_from_window_id": cohort_enrollment.migrated_from_window_id if cohort_enrollment else None,
+                    "migration_state": "migrated_in" if cohort_enrollment and cohort_enrollment.migrated_from_window_id else "direct",
+                    "is_closed_cohort": cohort_status == "closed" if cohort_status else False,
+                },
+                "migrated_from_window_id": cohort_enrollment.migrated_from_window_id if cohort_enrollment else None,
                 "activity": {
                     "last_login": student.last_login.isoformat() if student.last_login else None,
                     "last_activity": student.last_activity.isoformat() if student.last_activity else None,

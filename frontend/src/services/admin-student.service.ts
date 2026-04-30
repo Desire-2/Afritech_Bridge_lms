@@ -41,6 +41,23 @@ export interface StudentActivity {
   days_inactive: number | null;
 }
 
+export interface StudentCohortEnrollment {
+  enrollment_id: number | null;
+  course_id: number | null;
+  application_window_id: number | null;
+  cohort_label: string | null;
+  cohort_status: 'open' | 'closed' | 'upcoming' | null;
+  cohort_reason?: string | null;
+  enrollment_status: string | null;
+  enrollment_date: string | null;
+  payment_status: string | null;
+  payment_verified: boolean | null;
+  progress: number | null;
+  migrated_from_window_id: number | null;
+  migration_state: 'direct' | 'migrated_in';
+  is_closed_cohort: boolean;
+}
+
 export interface StudentListItem {
   id: number;
   username: string;
@@ -56,6 +73,8 @@ export interface StudentListItem {
   progress_summary: ProgressSummary;
   activity: StudentActivity;
   performance_level: 'high' | 'medium' | 'low';
+  cohort_enrollment?: StudentCohortEnrollment;
+  migrated_from_window_id?: number | null;
 }
 
 export interface StudentListResponse {

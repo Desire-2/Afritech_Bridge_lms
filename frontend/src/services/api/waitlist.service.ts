@@ -79,6 +79,19 @@ export interface PaymentStatusInfo {
   requires_payment: boolean;
 }
 
+export interface CohortEndMigrationResult {
+  success: boolean;
+  migrated: number;
+  skipped_completed: number;
+  failed: number;
+  target_cohort_label: string | null;
+  target_cohort_id?: number;
+  emails_sent?: number;
+  emails_failed?: number;
+  message?: string;
+  error?: string;
+}
+
 class WaitlistApiService extends BaseApiService {
   private readonly BASE_PATH = '/admin/waitlist';
 
@@ -156,6 +169,16 @@ class WaitlistApiService extends BaseApiService {
     };
   }> {
     return this.post(`${this.BASE_PATH}/migrate-bulk`, params);
+  }
+
+  /**
+   * Trigger cohort-end migration for a specific closed cohort window.
+   */
+  async triggerCohortEndMigration(windowId: number): Promise<{
+    success: boolean;
+    data: CohortEndMigrationResult;
+  }> {
+    return this.post(`${this.BASE_PATH}/trigger-cohort-end-migration/${windowId}`);
   }
 
   /**
