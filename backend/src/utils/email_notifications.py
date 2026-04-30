@@ -112,7 +112,7 @@ def send_cohort_end_migration_email(enrollment, old_window, new_window):
         effective_type = new_window.get_effective_enrollment_type()
         effective_price = new_window.get_effective_price()
         currency = new_window.get_effective_currency()
-        requires_payment = effective_type == 'paid' and bool(effective_price and effective_price > 0)
+        requires_payment = bool(effective_price and effective_price > 0)
 
         progress = getattr(enrollment, 'progress', 0) or 0
         if progress <= 1:

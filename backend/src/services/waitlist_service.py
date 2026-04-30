@@ -840,10 +840,9 @@ class WaitlistService:
                     enrollment.cohort_end_date = next_cohort.cohort_end
 
                     # Apply next cohort's payment settings
-                    enrollment_type = next_cohort.get_effective_enrollment_type()
                     effective_price = next_cohort.get_effective_price()
 
-                    if enrollment_type in ('free', 'scholarship') or not effective_price or effective_price <= 0:
+                    if not effective_price or effective_price <= 0:
                         enrollment.payment_status = 'waived'
                         enrollment.payment_verified = True
                         enrollment.payment_verified_at = datetime.utcnow()
