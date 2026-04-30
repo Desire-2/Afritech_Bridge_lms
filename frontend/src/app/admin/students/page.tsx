@@ -857,22 +857,42 @@ export default function StudentManagementPage() {
     } catch { toast.error('Export failed'); } finally { setIsExporting(false); }
   };
 
-  const handleCohortEndMigration = async () => {
+  // Compute previous migration target: find latest open/upcoming cohort before selected
+  const previousMigrationTarget = selectedCohort && selectedCohort.status === 'closed'
+    ? cohorts
+        .filter(c => {
+          const cStart = new Date(c.cohort_start || 0).getTime();
+          const selectedStart = new Date(selectedCohort.cohort_start || 0).getTime();
+          return cStart < selectedStart && (c.status === 'open' || c.status === 'upcoming');
+        })
+        .sort((a, b) => new Date(b.cohort_start || 0).getTime() - new Date(a.cohort_start || 0).getTime())
+        [0] || null
+    : null;
+
+  const handleCohortEndMigration = async (direction: 'next' | 'previous') => {
     if (!selectedCohort || selectedCohort.status !== 'closed') {
       toast.error('Select a closed cohort to migrate incomplete students');
       return;
     }
 
+    if (direction === 'previous' && !previousMigrationTarget) {
+      toast.error('No previous open or upcoming cohort is available for migration');
+      return;
+    }
+
     const cohortLabel = selectedCohort.cohort_label || `Window #${selectedCohort.id}`;
-    if (!confirm(`Bulk migrate incomplete students from ${cohortLabel} to the next available cohort and send emails?`)) {
+    const targetLabel = direction === 'previous'
+      ? (previousMigrationTarget?.cohort_label || 'previous available cohort')
+      : 'next available cohort';
+    if (!confirm(`Bulk migrate incomplete students from ${cohortLabel} to the ${targetLabel} and send emails?`)) {
       return;
     }
 
     try {
       setCohortMigrationLoading(true);
-      const res = await waitlistService.triggerCohortEndMigration(selectedCohort.id);
+      const res = await waitlistService.triggerCohortEndMigration(selectedCohort.id, direction);
       toast.success(
-        `Migrated ${res.data.migrated} student(s) from ${cohortLabel}. ` +
+        `Migrated ${res.data.migrated} student(s) from ${cohortLabel} to ${res.data.target_cohort_label || targetLabel}. ` +
         `Skipped completed: ${res.data.skipped_completed}. ` +
         `Emails sent: ${res.data.emails_sent ?? 0}.`
       );
@@ -1492,21 +1512,35 @@ export default function StudentManagementPage() {
             <div>
               <p className="text-xs uppercase tracking-wide text-blue-300 font-semibold">Bulk migrate incomplete students</p>
               <p className="text-sm text-gray-400 mt-1">
-                Move students who have not completed this closed cohort to the next available cohort and send migration emails.
+                Move students who have not completed this closed cohort to the next or previous available cohort and send migration emails.
               </p>
             </div>
-            <button
-              onClick={handleCohortEndMigration}
-              disabled={cohortMigrationLoading}
-              className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {cohortMigrationLoading ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <ArrowRightLeft className="w-4 h-4" />
-              )}
-              Migrate Incomplete Students
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => handleCohortEndMigration('next')}
+                disabled={cohortMigrationLoading}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {cohortMigrationLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRightLeft className="w-4 h-4" />
+                )}
+                Migrate to Next Cohort
+              </button>
+              <button
+                onClick={() => handleCohortEndMigration('previous')}
+                disabled={cohortMigrationLoading}
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-blue-300/40 bg-transparent px-4 py-2 text-sm font-medium text-blue-200 hover:bg-blue-500/10 disabled:opacity-50"
+              >
+                {cohortMigrationLoading ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <ArrowRightLeft className="w-4 h-4" />
+                )}
+                Migrate to Previous Cohort
+              </button>
+            </div>
           </div>
         )}
 

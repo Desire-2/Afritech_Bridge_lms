@@ -186,7 +186,11 @@ def trigger_cohort_end_migration(window_id):
     if not user:
         return jsonify({"error": "Admin access required"}), 403
 
-    result = WaitlistService.auto_migrate_cohort_end_students(window_id)
+    direction = request.args.get("direction", "next").strip().lower()
+    if direction not in ("next", "previous"):
+        return jsonify({"error": "direction must be 'next' or 'previous'"}), 400
+
+    result = WaitlistService.auto_migrate_cohort_end_students_direction(window_id, direction=direction)
     status_code = 200 if result.get("success") else 400
     return jsonify({"success": result.get("success", False), "data": result}), status_code
 

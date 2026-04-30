@@ -174,11 +174,13 @@ class WaitlistApiService extends BaseApiService {
   /**
    * Trigger cohort-end migration for a specific closed cohort window.
    */
-  async triggerCohortEndMigration(windowId: number): Promise<{
+  async triggerCohortEndMigration(windowId: number, direction: 'next' | 'previous' = 'next'): Promise<{
     success: boolean;
     data: CohortEndMigrationResult;
   }> {
-    return this.post(`${this.BASE_PATH}/trigger-cohort-end-migration/${windowId}`);
+    return this.post(`${this.BASE_PATH}/trigger-cohort-end-migration/${windowId}`, {}, { 
+      params: { direction } 
+    });
   }
 
   /**

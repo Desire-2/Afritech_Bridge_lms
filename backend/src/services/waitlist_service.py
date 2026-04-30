@@ -27,6 +27,44 @@ class WaitlistService:
     # ─────────────────────────────────────────────────────────
 
     @staticmethod
+    def get_previous_cohort(course_id: int, current_window_id: Optional[int] = None) -> Optional[ApplicationWindow]:
+        """
+        Find the previous available (open or upcoming) cohort for a course.
+        If current_window_id is provided, find the cohort before that one.
+        """
+        now = datetime.now(timezone.utc)
+
+        query = ApplicationWindow.query.filter_by(course_id=course_id)
+
+        if current_window_id:
+            current = ApplicationWindow.query.get(current_window_id)
+            if current and current.opens_at:
+                query = query.filter(
+                    db.or_(
+                        ApplicationWindow.opens_at < current.opens_at,
+                        db.and_(
+                            ApplicationWindow.opens_at == current.opens_at,
+                            ApplicationWindow.id < current_window_id
+                        )
+                    )
+                )
+            else:
+                query = query.filter(ApplicationWindow.id != current_window_id)
+
+        windows = query.order_by(ApplicationWindow.opens_at.desc().nullslast()).all()
+
+        for window in windows:
+            status = window.compute_status(now)
+            if status in ('open', 'upcoming'):
+                if window.max_students:
+                    current_count = window.get_enrollment_count()
+                    if current_count >= window.max_students:
+                        continue
+                return window
+
+        return None
+
+    @staticmethod
     def get_next_cohort(course_id: int, current_window_id: Optional[int] = None) -> Optional[ApplicationWindow]:
         """
         Find the next available (open or upcoming) cohort for a course.
@@ -680,8 +718,16 @@ class WaitlistService:
             'skipped_completed': int,
             'failed': int,
             'target_cohort_label': str or None,
+            'direction': 'next' | 'previous',
             'error': str or None
         }
+        """
+        return WaitlistService.auto_migrate_cohort_end_students_direction(window_id, direction='next')
+
+    @staticmethod
+    def auto_migrate_cohort_end_students_direction(window_id: int, direction: str = 'next') -> Dict:
+        """
+        Auto-migrate students from a cohort end into the next or previous open/upcoming cohort.
         """
         try:
             # Load the closing cohort
@@ -695,6 +741,7 @@ class WaitlistService:
                     'skipped_completed': 0,
                     'failed': 0,
                     'target_cohort_label': None,
+                    'direction': direction,
                     'error': msg
                 }
 
@@ -735,15 +782,22 @@ class WaitlistService:
                     'message': f"No non-completed students to migrate. {len(completers)} students remain in closing cohort."
                 }
 
-            # Find next available cohort
-            next_cohort = WaitlistService.get_next_cohort(
-                course_id=window.course_id,
-                current_window_id=window_id
-            )
+            # Find target cohort based on direction
+            if direction == 'previous':
+                next_cohort = WaitlistService.get_previous_cohort(
+                    course_id=window.course_id,
+                    current_window_id=window_id
+                )
+            else:
+                next_cohort = WaitlistService.get_next_cohort(
+                    course_id=window.course_id,
+                    current_window_id=window_id
+                )
 
             if not next_cohort:
                 # No next cohort available — send admin alert
-                msg = f"No next cohort available for {len(non_completers)} non-completed students"
+                cohort_direction = 'previous' if direction == 'previous' else 'next'
+                msg = f"No {cohort_direction} cohort available for {len(non_completers)} non-completed students"
                 logger.warning(f"⚠️ {msg}")
                 try:
                     _send_admin_alert_no_next_cohort(
@@ -760,6 +814,7 @@ class WaitlistService:
                     'skipped_completed': len(completers),
                     'failed': len(non_completers),
                     'target_cohort_label': None,
+                    'direction': direction,
                     'error': msg
                 }
 
@@ -852,6 +907,7 @@ class WaitlistService:
                 'target_cohort_id': next_cohort.id,
                 'emails_sent': email_count,
                 'emails_failed': email_failed,
+                'direction': direction,
             }
 
             logger.info(
@@ -869,6 +925,7 @@ class WaitlistService:
                 'skipped_completed': 0,
                 'failed': 0,
                 'target_cohort_label': None,
+                'direction': direction,
                 'error': f"Unexpected error: {str(e)}"
             }
 
