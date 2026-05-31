@@ -1521,19 +1521,51 @@ def change_application_status(app_id):
         email_sent = False
         if send_notification:
             try:
-                # Prepare cohort info for email
+                # Get the current ApplicationWindow (cohort) for this application
+                from ..models.course_models import ApplicationWindow
+                current_window = None
+                if application.application_window_id:
+                    current_window = ApplicationWindow.query.get(application.application_window_id)
+                
+                # Prepare cohort info for email - use current window if available, else course defaults
                 cohort_info = None
-                if course:
+                if current_window:
+                    # Use the actual cohort window the student is currently in
+                    cohort_info = {
+                        'cohort_label': current_window.cohort_label or f'Cohort {current_window.cohort_start.strftime("%b %Y") if current_window.cohort_start else ""}',
+                        'cohort_start_date': current_window.cohort_start,
+                        'cohort_end_date': current_window.cohort_end,
+                        'timezone': 'Africa/Kigali'  # Default timezone - could be made configurable
+                    }
+                elif course:
+                    # Fallback to course defaults if no window
                     cohort_info = {
                         'cohort_label': course.cohort_label or f'Cohort {course.cohort_start_date.strftime("%b %Y") if course.cohort_start_date else ""}',
                         'cohort_start_date': course.cohort_start_date,
                         'cohort_end_date': course.cohort_end_date,
-                        'timezone': 'Africa/Kigali'  # Default timezone - could be made configurable
+                        'timezone': 'Africa/Kigali'
                     }
                 
                 # Prepare payment info for email (payment is at cohort level)
                 payment_info = None
-                if course and course.enrollment_type != 'free':
+                if current_window:
+                    # Use current window's payment info
+                    enrollment_type = current_window.enrollment_type or 'free'
+                    if enrollment_type != 'free':
+                        payment_info = {
+                            'cohort_label': current_window.cohort_label,
+                            'cohort_enrollment_type': enrollment_type,
+                            'cohort_scholarship_type': current_window.scholarship_type,
+                            'cohort_scholarship_percentage': current_window.scholarship_percentage,
+                            'cohort_original_price': current_window.price if enrollment_type == 'paid' else None,
+                            'cohort_effective_price': current_window.get_effective_price(),
+                            'cohort_currency': current_window.currency or 'USD',
+                            'payment_required': enrollment_type in ['paid', 'partial'],
+                            'payment_mode': 'full' if enrollment_type == 'paid' else 'partial',
+                            'payment_deadline': current_window.payment_deadline_days
+                        }
+                elif course and course.enrollment_type != 'free':
+                    # Fallback to course defaults if no window
                     payment_info = {
                         'cohort_label': course.cohort_label,
                         'cohort_enrollment_type': course.enrollment_type,
