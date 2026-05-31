@@ -1521,6 +1521,32 @@ def change_application_status(app_id):
         email_sent = False
         if send_notification:
             try:
+                # Prepare cohort info for email
+                cohort_info = None
+                if course:
+                    cohort_info = {
+                        'cohort_label': course.cohort_label or f'Cohort {course.cohort_start_date.strftime("%b %Y") if course.cohort_start_date else ""}',
+                        'cohort_start_date': course.cohort_start_date,
+                        'cohort_end_date': course.cohort_end_date,
+                        'timezone': 'Africa/Kigali'  # Default timezone - could be made configurable
+                    }
+                
+                # Prepare payment info for email (payment is at cohort level)
+                payment_info = None
+                if course and course.enrollment_type != 'free':
+                    payment_info = {
+                        'cohort_label': course.cohort_label,
+                        'cohort_enrollment_type': course.enrollment_type,
+                        'cohort_scholarship_type': getattr(course, 'scholarship_type', None),
+                        'cohort_scholarship_percentage': getattr(course, 'scholarship_percentage', None),
+                        'cohort_original_price': course.price if course.enrollment_type == 'paid' else None,
+                        'cohort_effective_price': course.price,
+                        'cohort_currency': course.currency or 'USD',
+                        'payment_required': course.enrollment_type in ['paid', 'partial'],
+                        'payment_mode': 'full' if course.enrollment_type == 'paid' else 'partial',
+                        'payment_deadline': course.payment_deadline_days
+                    }
+                
                 email_content = None
                 email_subject = None
                 
@@ -1532,7 +1558,9 @@ def change_application_status(app_id):
                         course=course,
                         username=None,  # No credentials for direct status change
                         temp_password=None,
-                        custom_message=reason or "Your application has been approved!"
+                        custom_message=reason or "Your application has been approved!",
+                        cohort_info=cohort_info,
+                        payment_info=payment_info
                     )
                     email_subject = f"🎉 Application Approved - {course.title}"
                     
@@ -1540,7 +1568,8 @@ def change_application_status(app_id):
                     email_content = application_rejected_email(
                         application=application,
                         course_title=course.title,
-                        reason=reason or "Unfortunately, we cannot approve your application at this time."
+                        reason=reason or "Unfortunately, we cannot approve your application at this time.",
+                        cohort_info=cohort_info
                     )
                     email_subject = f"Application Update - {course.title}"
                     
@@ -1548,7 +1577,8 @@ def change_application_status(app_id):
                     email_content = application_waitlisted_email(
                         application=application,
                         course_title=course.title,
-                        position=None
+                        position=None,
+                        cohort_info=cohort_info
                     )
                     email_subject = f"Application Waitlisted - {course.title}"
                     
@@ -1557,7 +1587,9 @@ def change_application_status(app_id):
                     email_content = application_status_pending_email(
                         application=application,
                         course_title=course.title,
-                        reason=reason
+                        reason=reason,
+                        cohort_info=cohort_info,
+                        payment_info=payment_info
                     )
                     email_subject = f"⏳ Application Under Review - {course.title}"
                     
@@ -1566,7 +1598,9 @@ def change_application_status(app_id):
                     email_content = application_status_withdrawn_email(
                         application=application,
                         course_title=course.title,
-                        reason=reason
+                        reason=reason,
+                        cohort_info=cohort_info,
+                        payment_info=payment_info
                     )
                     email_subject = f"Application Withdrawn - {course.title}"
                 

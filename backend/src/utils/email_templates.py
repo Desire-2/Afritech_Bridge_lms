@@ -1735,8 +1735,17 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
-def application_status_pending_email(application, course_title, reason=None, unsubscribe_token=None):
-    """✨ Professional email template for status change to pending"""
+def application_status_pending_email(application, course_title, reason=None, cohort_info=None, payment_info=None, unsubscribe_token=None):
+    """✨ Professional email template for status change to pending
+    
+    Args:
+        application: CourseApplication object
+        course_title: str - Course title
+        reason: Optional str - Reason for pending status
+        cohort_info: Optional dict with cohort details
+        payment_info: Optional dict with payment details
+        unsubscribe_token: str - User's unsubscribe token
+    """
     return f"""
     {get_email_header()}
             
@@ -1820,6 +1829,10 @@ def application_status_pending_email(application, course_title, reason=None, uns
                     ''' if reason else ''}
                 </div>
                 
+                {_build_cohort_info_section(cohort_info) if cohort_info else ''}
+                
+                {_build_payment_section(payment_info) if payment_info else ''}
+                
                 <!-- Info Section -->
                 <div style="background-color: rgba(59, 130, 246, 0.1); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px dashed #3b82f6;">
                     <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
@@ -1892,7 +1905,17 @@ def application_status_pending_email(application, course_title, reason=None, uns
     """
 
 
-def application_status_withdrawn_email(application, course_title, reason=None, unsubscribe_token=None):
+def application_status_withdrawn_email(application, course_title, reason=None, cohort_info=None, payment_info=None, unsubscribe_token=None):
+    """💙 Professional email template for application withdrawal notification
+    
+    Args:
+        application: CourseApplication object
+        course_title: str - Course title
+        reason: Optional str - Reason for withdrawal
+        cohort_info: Optional dict with cohort details
+        payment_info: Optional dict with payment details
+        unsubscribe_token: str - User's unsubscribe token
+    """
     """✨ Professional email template for withdrawn status"""
     return f"""
     {get_email_header()}
@@ -1976,6 +1999,10 @@ def application_status_withdrawn_email(application, course_title, reason=None, u
                     </div>
                     ''' if reason else ''}
                 </div>
+                
+                {_build_cohort_info_section(cohort_info) if cohort_info else ''}
+                
+                {_build_payment_section(payment_info) if payment_info else ''}
                 
                 <!-- Important Notice -->
                 <div style="background-color: rgba(239, 68, 68, 0.1); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px solid #ef4444;">
