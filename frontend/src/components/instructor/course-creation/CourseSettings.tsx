@@ -170,6 +170,9 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
   const [stripeEnabled, setStripeEnabled] = useState(false);
   const [kpayEnabled, setKpayEnabled] = useState(true);
   const [flutterwaveEnabled, setFlutterwaveEnabled] = useState(false);
+  const [momoPayCodeEnabled, setMomoPayCodeEnabled] = useState(false);
+  const [momoUssdCode, setMomoUssdCode] = useState<string>('');
+  const [momoRecipientName, setMomoRecipientName] = useState<string>('');
   const [installmentEnabled, setInstallmentEnabled] = useState(false);
   const [installmentCount, setInstallmentCount] = useState<number>(3);
   const [installmentIntervalDays, setInstallmentIntervalDays] = useState<number>(30);
@@ -377,6 +380,9 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     // K-Pay: prefer kpay_enabled field; fall back to checking payment_methods or defaulting to true
     setKpayEnabled(course.kpay_enabled !== false);
     setFlutterwaveEnabled(course.flutterwave_enabled === true);
+    setMomoPayCodeEnabled(course.momo_pay_code_enabled === true);
+    setMomoUssdCode(course.momo_ussd_code || '');
+    setMomoRecipientName(course.momo_recipient_name || '');
     setInstallmentEnabled(course.installment_enabled === true);
     setInstallmentCount(course.installment_count ?? 3);
     setInstallmentIntervalDays(course.installment_interval_days ?? 30);
@@ -647,6 +653,9 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
         bank_transfer_enabled: bankTransferEnabled,
         kpay_enabled: kpayEnabled,
         flutterwave_enabled: flutterwaveEnabled,
+        momo_pay_code_enabled: momoPayCodeEnabled,
+        momo_ussd_code: momoPayCodeEnabled ? momoUssdCode : null,
+        momo_recipient_name: momoPayCodeEnabled ? momoRecipientName : null,
         bank_transfer_details: bankTransferEnabled ? bankTransferDetails : null,
         installment_enabled: installmentEnabled,
         installment_count: installmentEnabled ? installmentCount : null,
@@ -661,6 +670,7 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           ...(stripeEnabled ? ['stripe'] : []),
           ...(kpayEnabled ? ['kpay'] : []),
           ...(flutterwaveEnabled ? ['flutterwave'] : []),
+          ...(momoPayCodeEnabled ? ['momo_pay_code'] : []),
         ],
       };
 
@@ -2297,6 +2307,24 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                     {flutterwaveEnabled && <p className="text-xs text-orange-600 dark:text-orange-400 mt-2">Pan-African gateway – requires FLUTTERWAVE_SECRET_KEY in env</p>}
                   </div>
 
+                  {/* MoMo Pay Code (USSD) */}
+                  <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${momoPayCodeEnabled ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
+                    onClick={() => setMomoPayCodeEnabled(!momoPayCodeEnabled)}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${momoPayCodeEnabled ? 'bg-yellow-500' : 'bg-slate-300 dark:bg-slate-600'}`}>
+                          <CreditCard className={`h-4 w-4 ${momoPayCodeEnabled ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`} />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-slate-900 dark:text-white text-sm">MoMo Pay Code (USSD)</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Manual USSD dial & screenshot</p>
+                        </div>
+                      </div>
+                      <Switch checked={momoPayCodeEnabled} onCheckedChange={setMomoPayCodeEnabled} onClick={(e) => e.stopPropagation()} />
+                    </div>
+                    {momoPayCodeEnabled && <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">USSD-based payment – students dial code and upload screenshot proof</p>}
+                  </div>
+
                   {/* Bank Transfer */}
                   <div className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${bankTransferEnabled ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700/30'}`}
                     onClick={() => setBankTransferEnabled(!bankTransferEnabled)}>
@@ -2325,7 +2353,58 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                       />
                     </div>
                   </div>
+
+                  {/* MoMo USSD Code Configuration */}
+                  {momoPayCodeEnabled && (
+                    <div className="md:col-span-2 space-y-4 p-4 bg-yellow-50 dark:bg-yellow-900/10 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                      <div className="space-y-2">
+                        <Label htmlFor="momo-ussd" className="text-slate-900 dark:text-white font-semibold">
+                          USSD Code
+                        </Label>
+                        <input
+                          id="momo-ussd"
+                          type="text"
+                          value={momoUssdCode}
+                          onChange={(e) => setMomoUssdCode(e.target.value)}
+                          placeholder="e.g., *182*8*1*594389#"
+                          className="w-full rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 p-3 text-sm text-slate-900 dark:text-white font-mono focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">The USSD code students will dial on their phone</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="momo-recipient" className="text-slate-900 dark:text-white font-semibold">
+                          Recipient Name
+                        </Label>
+                        <input
+                          id="momo-recipient"
+                          type="text"
+                          value={momoRecipientName}
+                          onChange={(e) => setMomoRecipientName(e.target.value)}
+                          placeholder="e.g., MTN MoMo or Business Name"
+                          className="w-full rounded-md border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 p-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                        />
+                        <p className="text-xs text-slate-500 dark:text-slate-400">The name that will appear to students when they dial the code (helps verify they're paying the right recipient)</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
+
+                {/* MoMo Configuration Preview */}
+                {momoPayCodeEnabled && (
+                  <div className="space-y-3 mt-3 p-4 bg-yellow-50 dark:bg-yellow-900/10 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                    <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Preview:</p>
+                    <div className="space-y-2">
+                      <p className="text-sm text-slate-700 dark:text-slate-300">
+                        <strong>USSD Code:</strong> <code className="font-mono text-yellow-700 dark:text-yellow-400 bg-white dark:bg-slate-700 px-2 py-1 rounded">{momoUssdCode || '(not configured yet)'}</code>
+                      </p>
+                      <p className="text-sm text-slate-700 dark:text-slate-300">
+                        <strong>Recipient Name:</strong> <span className="font-semibold text-yellow-700 dark:text-yellow-400">{momoRecipientName || '(not configured yet)'}</span>
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">Students will see this code and name during checkout and in payment instructions.</p>
+                  </div>
+                )}
 
                 {/* Bank Transfer Details */}
                 {bankTransferEnabled && (

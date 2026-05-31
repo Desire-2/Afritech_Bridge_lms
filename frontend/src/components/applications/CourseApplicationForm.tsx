@@ -18,6 +18,8 @@ import { CheckCircle2, AlertCircle, Loader2, ChevronRight, ChevronLeft, AlertTri
 import { AutoSaveIndicator, DraftRestoreBanner } from '@/components/ui/form-components';
 import { CurrencySelector, ConvertedBadge } from '@/components/ui/CurrencyDisplay';
 import FlutterwaveCheckoutModal from '@/components/payments/FlutterwaveCheckoutModal';
+import MoMoPayCodeInstructions from '@/components/payments/MoMoPayCodeInstructions';
+import ScreenshotUpload from '@/components/payments/ScreenshotUpload';
 import type { AutoSaveStatus } from '@/hooks/useAutoSave';
 
 interface CourseApplicationFormProps {
@@ -414,48 +416,6 @@ export default function CourseApplicationForm({
 
   const searchParams = useSearchParams();
 
-  // Restore payment status when returning from PayPal / Stripe redirect
-  useEffect(() => {
-    const verifiedParam = searchParams?.get('payment_verified');
-    const verifiedKey = `payment_verified_for_course_${courseId}`;
-    const stored = typeof window !== 'undefined' ? localStorage.getItem(verifiedKey) : null;
-
-    if (verifiedParam === 'true' || stored === 'true') {
-      setPaymentStatus('approved');
-      // Restore saved draft ID so the submit handler can upsert the draft record
-      if (typeof window !== 'undefined') {
-        const storedDraftId = localStorage.getItem(`draft_id_for_course_${courseId}`);
-        if (storedDraftId) setSavedDraftId(Number(storedDraftId));
-      }
-      // Jump to the payment section so the student can review and submit
-      setCurrentSection(7);
-      // Consume the flag so refreshing the page doesn't keep it approved
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem(verifiedKey);
-        localStorage.removeItem(`payment_reference_for_course_${courseId}`);
-        localStorage.removeItem(`payment_method_for_course_${courseId}`);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Set default payment method to the first enabled method when course/cohort data loads.
-  // Runs whenever courseData or selectedWindow changes.
-  useEffect(() => {
-    if (!effectiveNeedsPayment) return;
-
-    // Reset to first available method if the currently selected one is not enabled
-    if (!effectiveEnabledMethods.includes(formData.payment_method as string)) {
-      handleInputChange('payment_method', effectiveEnabledMethods[0]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [courseData, selectedWindow]);
-  
-  // Duplicate check states
-  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
-  const [existingApplication, setExistingApplication] = useState<any>(null);
-  const [emailChecked, setEmailChecked] = useState(false);
-
   // ── Auto-save: key is scoped per course ──
   const DRAFT_KEY = `afritec_draft_application_${courseId}`;
 
@@ -530,6 +490,11 @@ export default function CourseApplicationForm({
   // Tracks if we're in the initial mount tick to skip saving the just-loaded draft
   const initialMountRef = useRef(true);
 
+  // Duplicate check states
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false);
+  const [existingApplication, setExistingApplication] = useState<any>(null);
+  const [emailChecked, setEmailChecked] = useState(false);
+
   // ── Cohort-aware effective payment values ────────────────────────────────
   // Prefer values from selectedWindow (cohort-level) over courseData (course-level).
   // The backend payment_summary on applicationWindow already factors in
@@ -581,6 +546,52 @@ export default function CourseApplicationForm({
     } catch { return null; }
   });
   const [savingDraft, setSavingDraft] = useState(false);
+
+  // Restore payment status when returning from PayPal / Stripe redirect
+  useEffect(() => {
+    const verifiedParam = searchParams?.get('payment_verified');
+    const verifiedKey = `payment_verified_for_course_${courseId}`;
+    const stored = typeof window !== 'undefined' ? localStorage.getItem(verifiedKey) : null;
+
+    if (verifiedParam === 'true' || stored === 'true') {
+      setPaymentStatus('approved');
+      // Restore saved draft ID so the submit handler can upsert the draft record
+      if (typeof window !== 'undefined') {
+        const storedDraftId = localStorage.getItem(`draft_id_for_course_${courseId}`);
+        if (storedDraftId) setSavedDraftId(Number(storedDraftId));
+      }
+      // Jump to the payment section so the student can review and submit
+      setCurrentSection(7);
+      // Consume the flag so refreshing the page doesn't keep it approved
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(verifiedKey);
+        localStorage.removeItem(`payment_reference_for_course_${courseId}`);
+        localStorage.removeItem(`payment_method_for_course_${courseId}`);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Set default payment method to the first enabled method when course/cohort data loads.
+  // Runs whenever courseData or selectedWindow changes.
+  useEffect(() => {
+    if (!effectiveNeedsPayment) return;
+
+    // Reset to first available method if the currently selected one is not enabled
+    if (!effectiveEnabledMethods.includes(formData.payment_method as string)) {
+      handleInputChange('payment_method', effectiveEnabledMethods[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseData, selectedWindow]);
+
+  // Auto-generate USSD code when user enters section 7 with momo_pay_code selected
+  useEffect(() => {
+    if (currentSection === 7 && formData.payment_method === 'momo_pay_code' && !paymentReference && !paymentLoading) {
+      // Automatically trigger payment initiation for MoMo Pay Code
+      handlePayNow();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSection, formData.payment_method]);
 
   // Cleanup timers on unmount
   useEffect(() => {
@@ -868,6 +879,35 @@ export default function CourseApplicationForm({
     const method = formData.payment_method as string;
 
     try {
+      // For manual payment methods (MoMo Pay Code, Bank Transfer), 
+      // save application as draft first so screenshot upload has an applicationId
+      if ((method === 'momo_pay_code' || method === 'bank_transfer') && !savedDraftId) {
+        try {
+          const draftPayload = {
+            ...formData,
+            payment_method: method,
+            payment_phone_number: formData.payment_phone_number || formData.phone,
+            payment_payer_name: formData.payment_payer_name || formData.full_name,
+            course_id: courseId,
+          };
+          if (selectedWindow?.id) {
+            (draftPayload as any).application_window_id = selectedWindow.id;
+          }
+
+          const draftResponse = await applicationService.saveDraft(draftPayload);
+          if (draftResponse?.application_id) {
+            setSavedDraftId(draftResponse.application_id);
+            setApplicationId(draftResponse.application_id);
+            try {
+              localStorage.setItem(`draft_id_for_course_${courseId}`, String(draftResponse.application_id));
+            } catch { /* ignore */ }
+          }
+        } catch (draftErr) {
+          console.warn('Draft save failed, continuing without pre-saved draft', draftErr);
+          // Continue anyway - the application can still be submitted with payment info
+        }
+      }
+
       // Build base payload
       const basePayload: Record<string, unknown> = {
         course_id: courseId,
@@ -960,6 +1000,10 @@ export default function CourseApplicationForm({
         setPaymentReference(data.reference);
         setPaymentStatus('processing');
         setBankTransferInfo(null);
+      } else if (method === 'momo_pay_code') {
+        // MoMo Pay Code (USSD): directly return the USSD code for display
+        setPaymentReference(data.reference || data.ussd_code);
+        setPaymentStatus('processing');  // Match bank_transfer behavior
       }
     } catch (err: any) {
       setError(err.message || 'Payment initiation failed');
@@ -1119,7 +1163,7 @@ export default function CourseApplicationForm({
       return;
     }
     
-    // For paid courses, ensure payment is approved first
+    // For paid courses, ensure payment is approved
     if (effectiveNeedsPayment && paymentStatus !== 'approved') {
       setError('Please complete payment before submitting your application.');
       return;
@@ -1148,7 +1192,7 @@ export default function CourseApplicationForm({
       // Always pass payment tracking fields to the backend so it can store them
       if (effectiveNeedsPayment && paymentReference) {
         (payload as any).payment_reference = paymentReference;
-        (payload as any).payment_status = paymentStatus === 'approved' ? 'approved' : paymentStatus;
+        (payload as any).payment_status = 'approved';  // For pending_verification flows, mark as approved on submission
       }
       // Include payment method for bank transfer even when require_payment_before_application
       if (effectiveNeedsPayment) {
@@ -2306,6 +2350,7 @@ export default function CourseApplicationForm({
       stripe: { label: 'Card (Stripe)', sub: 'Visa, Mastercard, Amex via Stripe', color: 'indigo' },
       flutterwave: { label: 'Flutterwave', sub: 'Card, Mobile Money, Bank, USSD, Apple Pay', color: 'orange' },
       bank_transfer: { label: 'Bank Transfer', sub: 'Manual wire transfer', color: 'emerald' },
+      momo_pay_code: { label: 'MoMo Pay Code (USSD)', sub: 'Manual USSD dial & screenshot', color: 'yellow' },
     };
 
     return (
@@ -2774,11 +2819,83 @@ export default function CourseApplicationForm({
             );
           })()}
 
+          {/* MoMo Pay Code (USSD) Payment */}
+          {formData.payment_method === 'momo_pay_code' && (() => {
+            return (
+              <div className="border border-yellow-200 rounded-xl overflow-hidden animate-in fade-in duration-300">
+                <div className="bg-yellow-600 px-4 py-3 flex items-center gap-3">
+                  <div className="p-1.5 bg-white/20 rounded-lg"><Phone className="w-4 h-4 text-white" /></div>
+                  <div>
+                    <p className="font-bold text-white text-sm">MoMo Pay Code (USSD)</p>
+                    <p className="text-yellow-100 text-xs">Manual USSD dial & screenshot upload</p>
+                  </div>
+                </div>
+                <div className="bg-yellow-50 p-6">
+                  {paymentLoading ? (
+                    <div className="text-center py-8">
+                      <Loader2 className="w-8 h-8 text-yellow-500 mx-auto mb-3 animate-spin" />
+                      <p className="text-sm text-gray-600">Generating your USSD code...</p>
+                    </div>
+                  ) : paymentReference ? (
+                    <div className="space-y-6">
+                      {/* Instructions */}
+                      <MoMoPayCodeInstructions
+                        ussdCode={paymentReference}
+                        amount={amountDue}
+                        currency={currency}
+                        recipientName={courseData?.momo_recipient_name || "MTN MoMo"}
+                      />
+
+                      {/* Screenshot Upload */}
+                      <div className="pt-4 border-t-2 border-yellow-200">
+                        <ScreenshotUpload
+                          applicationId={savedDraftId || applicationId || 0}
+                          onSuccess={() => {
+                            setPaymentStatus('processing');
+                          }}
+                          onError={(error) => {
+                            console.error('Screenshot upload error:', error);
+                          }}
+                          apiUrl={process.env.NEXT_PUBLIC_API_URL}
+                          paymentMethod="momo_pay_code"
+                          applicantEmail={formData.email}
+                          autoUpload={true}
+                        />
+                      </div>
+
+                      {/* Payment status info */}
+                      {paymentStatus === 'processing' && (
+                        <div className="bg-white p-4 rounded-lg border-2 border-yellow-200">
+                          <p className="text-sm text-gray-700">
+                            <span className="font-semibold">✓ Receipt uploaded successfully!</span> Click the <strong>"I've Completed Payment"</strong> button below to confirm, then submit your application.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6">
+                      <AlertCircle className="w-8 h-8 text-yellow-600 mx-auto mb-3" />
+                      <p className="text-sm text-gray-700">Unable to generate USSD code. Please try again.</p>
+                      <button
+                        type="button"
+                        onClick={() => handlePayNow()}
+                        disabled={paymentLoading}
+                        className="mt-4 px-6 py-2 bg-yellow-600 text-white rounded-lg text-sm font-semibold hover:bg-yellow-700 disabled:opacity-60"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Payment status indicator */}
           {paymentStatus !== 'pending' && (
             <div className={`mt-4 p-4 rounded-xl border-2 animate-in fade-in duration-300 ${
               paymentStatus === 'approved' ? 'bg-emerald-50 border-emerald-500'
-              : paymentStatus === 'processing' ? 'bg-amber-50 border-amber-500'
+              : paymentStatus === 'processing' || paymentStatus === 'pending_verification' || paymentStatus === 'pending_screenshot' ? 'bg-amber-50 border-amber-500'
               : 'bg-red-50 border-red-500'
             }`}>
               <div className="flex items-center gap-3">
@@ -2816,6 +2933,24 @@ export default function CourseApplicationForm({
                           <span className="text-xs text-amber-500">Checking automatically every 5 seconds…</span>
                         </div>
                       )}
+                    </div>
+                  </>
+                )}
+                {paymentStatus === 'pending_screenshot' && (
+                  <>
+                    <AlertTriangle className="w-6 h-6 text-amber-600" />
+                    <div>
+                      <p className="font-bold text-amber-700">Awaiting Your Screenshot</p>
+                      <p className="text-sm text-amber-600">Please upload a screenshot of your payment confirmation above.</p>
+                    </div>
+                  </>
+                )}
+                {paymentStatus === 'pending_verification' && (
+                  <>
+                    <Loader2 className="w-6 h-6 text-amber-600 animate-spin flex-shrink-0" />
+                    <div>
+                      <p className="font-bold text-amber-700">Screenshot Received — Under Review</p>
+                      <p className="text-sm text-amber-600">An administrator will verify your payment and notify you shortly.</p>
                     </div>
                   </>
                 )}
@@ -3099,8 +3234,6 @@ export default function CourseApplicationForm({
                       >
                         {paymentLoading ? (
                           <><Loader2 className="w-6 h-6 mr-3 animate-spin" />Verifying Payment…</>
-                        ) : formData.payment_method === 'mobile_money' ? (
-                          <><CheckCircle2 className="w-6 h-6 mr-3" />Check Payment Status</>
                         ) : (
                           <><CheckCircle2 className="w-6 h-6 mr-3" />I&apos;ve Completed Payment</>
                         )}
@@ -3113,12 +3246,18 @@ export default function CourseApplicationForm({
                         className="px-10 py-7 text-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg hover:shadow-xl transition-all duration-300 rounded-2xl"
                       >
                         {paymentLoading ? (
-                          <><Loader2 className="w-6 h-6 mr-3 animate-spin" />Initiating Payment…</>
+                          <>
+                            <Loader2 className="w-6 h-6 mr-3 animate-spin" />
+                            {formData.payment_method === 'momo_pay_code' ? 'Getting USSD Code…' : 'Initiating Payment…'}
+                          </>
                         ) : (
                           <>
-                            <CreditCard className="w-6 h-6 mr-3" />
+                            <Phone className="w-6 h-6 mr-3" />
                             {(() => {
                               const isPartialHere = effectiveEnrollmentType === 'scholarship' && effectiveScholarshipPct != null && effectiveScholarshipPct < 100 || effectivePaymentMode === 'partial';
+                              if (formData.payment_method === 'momo_pay_code') {
+                                return `Dial USSD • Pay ${isPartialHere ? 'My Contribution' : 'Now'} (${effectiveCurrency} ${effectiveAmountDue > 0 ? effectiveAmountDue.toLocaleString() : '—'})`;
+                              }
                               return `Pay ${isPartialHere ? 'My Contribution' : 'Now'} (${effectiveCurrency} ${effectiveAmountDue > 0 ? effectiveAmountDue.toLocaleString() : '—'})`;
                             })()}
                           </>
@@ -3127,6 +3266,8 @@ export default function CourseApplicationForm({
                     )}
                   </>
                 )}
+
+
 
                 {/* Payment approved badge */}
                 {requiresPaymentStep && paymentStatus === 'approved' && (

@@ -403,7 +403,7 @@ def apply_for_course():
         payment_reference=submitted_payment_reference,
         payment_status=(
             'pending_bank_transfer' if submitted_payment_method == 'bank_transfer'
-            else ('completed' if submitted_payment_status == 'approved' else submitted_payment_status)
+            else ('pending' if submitted_payment_status == 'approved' else submitted_payment_status)
         ) if submitted_payment_method else None,
         amount_paid=(
             course.partial_payment_amount if (submitted_payment_method and course and getattr(course, 'payment_mode', None) == 'partial' and course.partial_payment_amount)
@@ -3922,7 +3922,7 @@ def initiate_payment():
     )
 
     # All recognized gateway names
-    ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave"}
+    ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave", "momo_pay_code"}
     if payment_method not in ALL_KNOWN_METHODS:
         logger.warning(f"initiate-payment: REJECTED unknown method '{payment_method}'")
         return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
@@ -4199,6 +4199,46 @@ def initiate_payment():
                 "message": "Complete your payment via the Flutterwave checkout.",
             }), 200
 
+        elif payment_method == "momo_pay_code":
+            # USSD-based MOMO payment: use pre-configured USSD code and recipient name
+            # Check if MOMO Pay Code is enabled for this course
+            logger.info(
+                f"initiate-payment momo_pay_code: course_id={course_id} "
+                f"momo_pay_code_enabled={getattr(course, 'momo_pay_code_enabled', False)} "
+                f"momo_ussd_code={getattr(course, 'momo_ussd_code', None)}"
+            )
+            if not getattr(course, 'momo_pay_code_enabled', False) or not getattr(course, 'momo_ussd_code', None):
+                logger.warning(
+                    f"initiate-payment momo_pay_code REJECTED: "
+                    f"enabled={getattr(course, 'momo_pay_code_enabled', False)}, "
+                    f"ussd_code={getattr(course, 'momo_ussd_code', None)}"
+                )
+                return jsonify({
+                    "success": False,
+                    "error": "MOMO Pay Code is not enabled or configured for this course. "
+                             f"Enable it and configure the USSD code in course settings."
+                }), 400
+            
+            # Use the course's configured USSD code and recipient name
+            ussd_code = course.momo_ussd_code
+            recipient_name = getattr(course, 'momo_recipient_name', None) or "MTN MoMo"  # Fallback to default if not configured
+            
+            return jsonify({
+                "success": True,
+                "payment_method": "momo_pay_code",
+                "ussd_code": ussd_code,
+                "amount": int(amount),
+                "currency": "RWF",
+                "recipient_name": recipient_name,
+                "instructions": (
+                    f"On your phone's dialer, type exactly:\n\n{ussd_code}\n\n"
+                    "Confirm the payment details before sending.\n"
+                    "After payment completes, take a screenshot and upload it as proof of payment."
+                ),
+                "requires_screenshot": True,
+                "message": "USSD code ready. Dial the code on your phone, then upload a screenshot.",
+            }), 200
+
         else:
             return jsonify({"error": f"Unsupported payment method: {payment_method}"}), 400
 
@@ -4288,6 +4328,111 @@ def flutterwave_webhook():
 
     # Acknowledge immediately – Flutterwave expects a 200 response
     return jsonify({"status": "ok"}), 200
+
+
+@application_bp.route("/<int:application_id>/upload-payment-screenshot", methods=["POST"])
+@jwt_required()
+def upload_payment_screenshot(application_id):
+    """
+    Upload a payment screenshot for MOMO Pay Code payment method.
+
+    Accepts multipart/form-data with:
+      screenshot : file – image file (jpg/png/webp, max 5MB)
+
+    Response:
+      {
+        "success": true,
+        "message": "Screenshot uploaded. Your payment is pending admin verification.",
+        "payment_status": "pending_verification"
+      }
+
+    Only the application owner (authenticated user) can upload for their own application.
+    """
+    from werkzeug.utils import secure_filename
+    import mimetypes
+
+    # Check if user is authenticated
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"success": False, "message": "User not found"}), 404
+
+    # Get application
+    application = CourseApplication.query.get(application_id)
+    if not application:
+        return jsonify({"success": False, "message": "Application not found"}), 404
+
+    # Verify ownership: user must be the applicant or an admin
+    is_admin = user.role and user.role.name == "admin"
+    is_owner = application.email == user.email
+    if not (is_owner or is_admin):
+        return jsonify({"success": False, "message": "Unauthorized"}), 403
+
+    # Check if screenshot file was provided
+    if 'screenshot' not in request.files:
+        return jsonify({"success": False, "message": "No screenshot file provided"}), 400
+
+    file = request.files['screenshot']
+    if file.filename == '':
+        return jsonify({"success": False, "message": "No file selected"}), 400
+
+    # Validate file type
+    allowed_types = {'image/jpeg', 'image/png', 'image/webp'}
+    file_type = mimetypes.guess_type(file.filename)[0] or ''
+    if file_type not in allowed_types:
+        return jsonify({
+            "success": False,
+            "message": "Invalid file type. Only JPEG, PNG, and WebP images are allowed."
+        }), 400
+
+    # Validate file size (max 5MB)
+    file.seek(0, 2)  # Seek to end
+    file_size = file.tell()
+    file.seek(0)  # Seek back to start
+    max_size = 5 * 1024 * 1024  # 5MB
+    if file_size > max_size:
+        return jsonify({
+            "success": False,
+            "message": f"File too large. Maximum size is 5MB, got {file_size / 1024 / 1024:.1f}MB"
+        }), 400
+
+    try:
+        # Create uploads directory if needed
+        upload_dir = os.path.join(current_app.root_path, '..', 'uploads', 'payment_screenshots')
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Generate unique filename
+        file_ext = os.path.splitext(secure_filename(file.filename))[1]
+        unique_filename = f"{application_id}_{uuid.uuid4().hex[:8]}{file_ext}"
+        file_path = os.path.join(upload_dir, unique_filename)
+
+        # Save file
+        file.save(file_path)
+
+        # Update application
+        application.payment_slip_filename = unique_filename
+        application.payment_slip_url = f"/uploads/payment_screenshots/{unique_filename}"
+        application.payment_status = "pending_verification"
+        db.session.commit()
+
+        logger.info(
+            f"Payment screenshot uploaded: application_id={application_id} "
+            f"filename={unique_filename} user_email={user.email}"
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Screenshot uploaded. Your payment is pending admin verification.",
+            "payment_status": "pending_verification"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error uploading payment screenshot: {e}", exc_info=True)
+        db.session.rollback()
+        return jsonify({
+            "success": False,
+            "message": "Error uploading file. Please try again."
+        }), 500
 
 
 @application_bp.route("/verify-payment", methods=["POST"])

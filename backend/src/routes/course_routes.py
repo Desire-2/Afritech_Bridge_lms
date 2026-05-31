@@ -469,6 +469,9 @@ def create_course():
             bank_transfer_enabled=data.get("bank_transfer_enabled", False),
             kpay_enabled=data.get("kpay_enabled", True),
             flutterwave_enabled=data.get("flutterwave_enabled", False),
+            momo_pay_code_enabled=data.get("momo_pay_code_enabled", False),
+            momo_ussd_code=data.get("momo_ussd_code"),
+            momo_recipient_name=data.get("momo_recipient_name"),
             bank_transfer_details=data.get("bank_transfer_details"),
             installment_enabled=data.get("installment_enabled", False),
             installment_count=data.get("installment_count"),
@@ -641,6 +644,15 @@ def update_course(course_id):
 
         if "flutterwave_enabled" in data:
             course.flutterwave_enabled = bool(data.get("flutterwave_enabled"))
+
+        if "momo_pay_code_enabled" in data:
+            course.momo_pay_code_enabled = bool(data.get("momo_pay_code_enabled"))
+
+        if "momo_ussd_code" in data:
+            course.momo_ussd_code = data.get("momo_ussd_code")
+
+        if "momo_recipient_name" in data:
+            course.momo_recipient_name = data.get("momo_recipient_name")
 
         if "bank_transfer_details" in data:
             course.bank_transfer_details = data.get("bank_transfer_details")

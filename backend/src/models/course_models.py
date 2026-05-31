@@ -34,6 +34,9 @@ class Course(db.Model):
     bank_transfer_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Bank transfer toggle
     kpay_enabled = db.Column(db.Boolean, default=True, nullable=False)  # K-Pay gateway toggle (MTN/Airtel MoMo, Visa, SPENN)
     flutterwave_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Flutterwave gateway toggle (Card, MoMo, Bank, USSD)
+    momo_pay_code_enabled = db.Column(db.Boolean, default=False, nullable=False)  # MoMo Pay Code (USSD) payment toggle
+    momo_ussd_code = db.Column(db.String(100), nullable=True)  # Pre-configured USSD code for MoMo Pay Code payments
+    momo_recipient_name = db.Column(db.String(100), nullable=True)  # Recipient name for MoMo Pay Code payments
     bank_transfer_details = db.Column(db.Text, nullable=True)  # Bank account info for manual transfer
     installment_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Allow installment payments
     installment_count = db.Column(db.Integer, nullable=True)  # Number of installments (2, 3, 4, etc.)
@@ -101,6 +104,8 @@ class Course(db.Model):
             methods.append('bank_transfer')
         if getattr(self, 'flutterwave_enabled', False):
             methods.append('flutterwave')
+        if getattr(self, 'momo_pay_code_enabled', False):
+            methods.append('momo_pay_code')
 
         return methods if methods else ['kpay']
 
@@ -341,6 +346,9 @@ class Course(db.Model):
             'bank_transfer_enabled': self.bank_transfer_enabled,
             'kpay_enabled': getattr(self, 'kpay_enabled', True),
             'flutterwave_enabled': getattr(self, 'flutterwave_enabled', False),
+            'momo_pay_code_enabled': getattr(self, 'momo_pay_code_enabled', False),
+            'momo_ussd_code': getattr(self, 'momo_ussd_code', None),
+            'momo_recipient_name': getattr(self, 'momo_recipient_name', None),
             'bank_transfer_details': self.bank_transfer_details,
             'installment_enabled': self.installment_enabled,
             'installment_count': self.installment_count,
