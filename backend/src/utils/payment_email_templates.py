@@ -4,9 +4,15 @@ Beautiful, responsive email designs for all payment-related actions
 """
 from datetime import datetime
 from .email_templates import get_email_header, get_email_footer, _frontend_url
+from .email_template_helpers import (
+    get_cohort_info_card,
+    get_payment_info_card,
+    get_cohort_payment_combined_card,
+    get_payment_deadline_warning
+)
 
 
-def application_saved_payment_pending_email(application, course_title, payment_info, unsubscribe_token=None):
+def application_saved_payment_pending_email(application, course_title, payment_info, cohort_info=None, unsubscribe_token=None):
     """
     📧 Email sent when applicant saves application for a course requiring payment
     
@@ -18,40 +24,50 @@ def application_saved_payment_pending_email(application, course_title, payment_i
             - currency: str
             - payment_deadline: datetime (optional)
             - payment_methods: list (optional)
+        cohort_info: dict with cohort details (optional)
+            - cohort_label: str
+            - cohort_start_date: datetime or str
+            - cohort_end_date: datetime or str
+            - timezone: str
+        unsubscribe_token: str - User's unsubscribe token
     """
     amount = payment_info.get('amount', 0)
     currency = payment_info.get('currency', 'USD')
     deadline = payment_info.get('payment_deadline')
     payment_methods = payment_info.get('payment_methods', ['Mobile Money', 'Bank Transfer', 'PayPal'])
     
-    deadline_section = ""
-    if deadline:
-        if isinstance(deadline, str):
-            deadline_str = deadline
-        else:
-            deadline_str = deadline.strftime('%b %d, %Y • %I:%M %p')
-        deadline_section = f'''
-        <div style="background-color: #7c2d12; border-left: 4px solid #f97316; border-radius: 8px; padding: 20px; margin: 25px 0;">
-            <table cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                    <td style="vertical-align: top; padding-right: 12px;">
-                        <span style="font-size: 24px;">⏰</span>
-                    </td>
-                    <td>
-                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">Payment Deadline</p>
-                        <p style="color: #fed7aa; margin: 5px 0 0 0; font-size: 14px; line-height: 1.6;">
-                            Please complete your payment by <strong style="color: #ffffff;">{deadline_str}</strong> to secure your spot in the course.
-                        </p>
-                    </td>
-                </tr>
-            </table>
-        </div>'''
+    # Extract cohort info if provided
+    cohort_label = ""
+    cohort_start = ""
+    cohort_end = ""
+    if cohort_info:
+        cohort_label = cohort_info.get('cohort_label', '')
+        cohort_start = cohort_info.get('cohort_start_date')
+        cohort_end = cohort_info.get('cohort_end_date')
+    
+    # Generate cohort information card
+    cohort_card = get_cohort_info_card(
+        cohort_label=cohort_label,
+        cohort_start_date=cohort_start,
+        cohort_end_date=cohort_end,
+        timezone=cohort_info.get('timezone', 'UTC') if cohort_info else 'UTC'
+    )
+    
+    # Generate deadline warning
+    deadline_warning = get_payment_deadline_warning(deadline, cohort_label)
     
     methods_html = ""
     for method in payment_methods:
+        method_emoji = "💳"
+        if "mobile" in method.lower() or "momo" in method.lower():
+            method_emoji = "📱"
+        elif "bank" in method.lower():
+            method_emoji = "🏦"
+        elif "paypal" in method.lower():
+            method_emoji = "🅿️"
         methods_html += f'''
         <div style="background-color: #34495e; padding: 12px 20px; border-radius: 8px; margin: 8px 0; border-left: 3px solid #8b5cf6;">
-            <span style="color: #ffffff; font-size: 15px; font-weight: 600;">✓ {method}</span>
+            <span style="color: #ffffff; font-size: 15px; font-weight: 600;">{method_emoji} {method}</span>
         </div>'''
     
     return f"""
@@ -88,6 +104,8 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
                     To complete your enrollment and secure your spot in the course, please proceed with the payment using any of the available methods below.
                 </p>
+                
+                {cohort_card}
                 
                 <!-- Payment Details Card -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #8b5cf6;">
@@ -132,7 +150,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                     </div>
                 </div>
                 
-                {deadline_section}
+                {deadline_warning}
                 
                 <!-- Payment Methods -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
@@ -189,7 +207,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
     """
 
 
-def payment_confirmation_email(application, course_title, payment_details, unsubscribe_token=None):
+def payment_confirmation_email(application, course_title, payment_details, cohort_info=None, unsubscribe_token=None):
     """
     ✅ Email sent when payment is successfully confirmed
     
@@ -202,6 +220,12 @@ def payment_confirmation_email(application, course_title, payment_details, unsub
             - payment_method: str
             - payment_reference: str
             - payment_date: datetime
+        cohort_info: dict with cohort details (optional)
+            - cohort_label: str
+            - cohort_start_date: datetime or str
+            - cohort_end_date: datetime or str
+            - timezone: str
+        unsubscribe_token: str - User's unsubscribe token
     """
     amount = payment_details.get('amount_paid', 0)
     currency = payment_details.get('currency', 'USD')
@@ -213,6 +237,16 @@ def payment_confirmation_email(application, course_title, payment_details, unsub
         date_str = payment_date
     else:
         date_str = payment_date.strftime('%b %d, %Y • %I:%M %p')
+    
+    # Generate cohort information card
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
     
     return f"""
     {get_email_header()}
@@ -248,6 +282,8 @@ def payment_confirmation_email(application, course_title, payment_details, unsub
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
                     You now have full access to all course materials, and we're thrilled to have you as part of our learning community!
                 </p>
+                
+                {cohort_card}
                 
                 <!-- Payment Receipt Card -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #10b981;">
@@ -387,7 +423,7 @@ def payment_confirmation_email(application, course_title, payment_details, unsub
     """
 
 
-def payment_failed_email(application, course_title, failure_reason=None, unsubscribe_token=None):
+def payment_failed_email(application, course_title, failure_reason=None, cohort_info=None, unsubscribe_token=None):
     """
     ❌ Email sent when payment fails
     
@@ -395,6 +431,8 @@ def payment_failed_email(application, course_title, failure_reason=None, unsubsc
         application: CourseApplication object
         course_title: str - Course title
         failure_reason: str - Reason for payment failure (optional)
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
     """
     reason_section = ""
     if failure_reason:
@@ -407,6 +445,16 @@ def payment_failed_email(application, course_title, failure_reason=None, unsubsc
                 {failure_reason}
             </p>
         </div>'''
+    
+    # Generate cohort card
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
     
     return f"""
     {get_email_header()}
@@ -440,6 +488,8 @@ def payment_failed_email(application, course_title, failure_reason=None, unsubsc
                 </p>
                 
                 {reason_section}
+                
+                {cohort_card}
                 
                 <!-- Application Details -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
@@ -533,7 +583,7 @@ def payment_failed_email(application, course_title, failure_reason=None, unsubsc
     """
 
 
-def payment_reminder_email(application, course_title, payment_info, unsubscribe_token=None):
+def payment_reminder_email(application, course_title, payment_info, cohort_info=None, unsubscribe_token=None):
     """
     ⏰ Payment reminder email for pending payments
     
@@ -545,11 +595,25 @@ def payment_reminder_email(application, course_title, payment_info, unsubscribe_
             - currency: str
             - days_remaining: int (optional)
             - payment_deadline: datetime (optional)
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
     """
     amount = payment_info.get('amount', 0)
     currency = payment_info.get('currency', 'USD')
     days_remaining = payment_info.get('days_remaining', None)
     deadline = payment_info.get('payment_deadline')
+    
+    # Generate cohort card
+    cohort_card = ""
+    cohort_label = ""
+    if cohort_info:
+        cohort_label = cohort_info.get('cohort_label', '')
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_label,
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
     
     urgency_section = ""
     if deadline:
@@ -581,7 +645,7 @@ def payment_reminder_email(application, course_title, payment_info, unsubscribe_
                     {urgency_text}
                 </p>
                 <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0; font-size: 16px;">
-                    Only <strong style="font-size: 20px;">{days_remaining}</strong> day{"s" if days_remaining != 1 else ""} remaining
+                    Only <strong style="font-size: 20px;">{days_remaining}</strong> day{"s" if days_remaining != 1 else ""} remaining{f" for {cohort_label}" if cohort_label else ""}
                 </p>
                 <p style="color: rgba(255,255,255,0.8); margin: 8px 0 0 0; font-size: 14px;">
                     Deadline: {deadline_str}
@@ -620,6 +684,8 @@ def payment_reminder_email(application, course_title, payment_info, unsubscribe_
                 </p>
                 
                 {urgency_section}
+                
+                {cohort_card}
                 
                 <!-- Payment Details -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #f59e0b;">
@@ -710,7 +776,7 @@ def payment_reminder_email(application, course_title, payment_info, unsubscribe_
     """
 
 
-def payment_refund_email(application, course_title, refund_details, unsubscribe_token=None):
+def payment_refund_email(application, course_title, refund_details, cohort_info=None, unsubscribe_token=None):
     """
     💸 Email sent when a payment is refunded
     
@@ -724,6 +790,8 @@ def payment_refund_email(application, course_title, refund_details, unsubscribe_
             - refund_reason: str
             - refund_date: datetime
             - processing_days: int (optional)
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
     """
     amount = refund_details.get('refund_amount', 0)
     currency = refund_details.get('currency', 'USD')
@@ -736,6 +804,16 @@ def payment_refund_email(application, course_title, refund_details, unsubscribe_
         date_str = refund_date
     else:
         date_str = refund_date.strftime('%b %d, %Y • %I:%M %p')
+    
+    # Generate cohort card
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
     
     return f"""
     {get_email_header()}
@@ -767,6 +845,8 @@ def payment_refund_email(application, course_title, refund_details, unsubscribe_
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
                     Your payment for <strong style="color: #3b82f6; font-size: 16px;">{course_title}</strong> has been refunded.
                 </p>
+                
+                {cohort_card}
                 
                 <!-- Refund Details Card -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #3b82f6;">

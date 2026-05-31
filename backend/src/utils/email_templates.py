@@ -215,8 +215,40 @@ def get_email_footer(unsubscribe_token=None, email_category=None):
     </html>
     """
 
-def application_received_email(application, course_title, unsubscribe_token=None):
-    """✨ Creative email template for application confirmation"""
+def application_received_email(application, course_title, cohort_info=None, payment_info=None, unsubscribe_token=None):
+    """✨ Creative email template for application confirmation
+    
+    Args:
+        application: CourseApplication object
+        course_title: str - Course title
+        cohort_info: dict with cohort details (optional)
+        payment_info: dict with payment details if payment required (optional)
+        unsubscribe_token: str - User's unsubscribe token
+    """
+    # Import helpers lazily to avoid circular imports
+    from .email_template_helpers import get_cohort_info_card, get_payment_info_card
+    
+    # Generate cohort card if provided
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label'),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
+    
+    # Generate payment card if required
+    payment_card = ""
+    if payment_info and payment_info.get('amount'):
+        payment_card = get_payment_info_card(
+            amount=payment_info.get('amount'),
+            currency=payment_info.get('currency', 'USD'),
+            payment_required=True,
+            payment_mode=payment_info.get('payment_mode', 'full'),
+            payment_deadline=payment_info.get('payment_deadline'),
+            include_title=True
+        )
     return f"""
     {get_email_header()}
             
@@ -306,6 +338,10 @@ def application_received_email(application, course_title, unsubscribe_token=None
                         </tr>
                     </table>
                 </div>
+                
+                {cohort_card}
+                
+                {payment_card}
                 
                 <!-- Timeline -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
@@ -426,6 +462,87 @@ def application_received_email(application, course_title, unsubscribe_token=None
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
+def _build_cohort_info_section(cohort_info: dict) -> str:
+    """Build a cohort information section for approval emails.
+    
+    Args:
+        cohort_info: dict with cohort details (label, start_date, end_date, timezone)
+    
+    Returns:
+        HTML string with formatted cohort card or empty string if no cohort_info
+    """
+    if not cohort_info:
+        return ""
+    
+    from datetime import datetime
+    label = cohort_info.get('cohort_label', '')
+    start_date = cohort_info.get('cohort_start_date')
+    end_date = cohort_info.get('cohort_end_date')
+    timezone = cohort_info.get('timezone', 'UTC')
+    
+    # Format dates
+    start_str = ""
+    end_str = ""
+    if start_date:
+        if isinstance(start_date, str):
+            start_str = start_date
+        else:
+            start_str = start_date.strftime('%b %d, %Y')
+    
+    if end_date:
+        if isinstance(end_date, str):
+            end_str = end_date
+        else:
+            end_str = end_date.strftime('%b %d, %Y')
+    
+    # Calculate duration if both dates exist
+    duration_str = ""
+    if start_date and end_date:
+        if not isinstance(start_date, datetime):
+            try:
+                start_date = datetime.fromisoformat(start_date)
+            except:
+                start_date = None
+        if not isinstance(end_date, datetime):
+            try:
+                end_date = datetime.fromisoformat(end_date)
+            except:
+                end_date = None
+        
+        if start_date and end_date:
+            delta = end_date - start_date
+            weeks = delta.days // 7
+            if weeks > 0:
+                duration_str = f"<tr><td style='padding: 8px 0; font-weight: 600; color: #e5e7eb;'>Duration:</td><td style='padding: 8px 0; color: #e5e7eb;'>{weeks} weeks</td></tr>"
+    
+    return f'''
+    <div style="background-color: #2c3e50; border: 2px solid #667eea; border-radius: 8px; padding: 25px; margin: 20px 0;">
+        <div style="text-align: center; margin-bottom: 15px;">
+            <span style="font-size: 36px; display: block; margin-bottom: 8px;">📅</span>
+            <h3 style="margin: 0; color: #667eea; font-size: 18px;">Cohort Information</h3>
+        </div>
+        <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
+            <tr>
+                <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Cohort:</td>
+                <td style="padding: 8px 0; color: #ffffff; font-weight: 700;">{label or 'Standard Cohort'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Start Date:</td>
+                <td style="padding: 8px 0; color: #e5e7eb;">{start_str or 'TBA'}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">End Date:</td>
+                <td style="padding: 8px 0; color: #e5e7eb;">{end_str or 'TBA'}</td>
+            </tr>
+            {duration_str}
+            <tr>
+                <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Timezone:</td>
+                <td style="padding: 8px 0; color: #e5e7eb;">{timezone}</td>
+            </tr>
+        </table>
+    </div>'''
+
+
 def _build_payment_section(payment_info: dict) -> str:
     """Build the payment / scholarship info block for the approval email."""
     if not payment_info:
@@ -509,7 +626,7 @@ def _build_payment_section(payment_info: dict) -> str:
     return ""
 
 
-def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None, payment_info=None, unsubscribe_token=None):
+def application_approved_email(application, course, username, temp_password, custom_message="", is_new_account=True, password_reset_link=None, payment_info=None, cohort_info=None, unsubscribe_token=None):
     """🎉 Creative celebration email template for application approval
     
     Args:
@@ -517,6 +634,7 @@ def application_approved_email(application, course, username, temp_password, cus
             - cohort_label, cohort_enrollment_type, cohort_scholarship_type,
               cohort_scholarship_percentage, cohort_effective_price, cohort_currency,
               cohort_original_price, payment_required
+        cohort_info: Optional dict with cohort details (cohort_label, cohort_start_date, cohort_end_date, timezone)
     """
     
     # Determine account type message and credentials display
@@ -714,6 +832,8 @@ def application_approved_email(application, course, username, temp_password, cus
             </table>
         </div>
         
+        {_build_cohort_info_section(cohort_info) if cohort_info else ''}
+        
         {_build_payment_section(payment_info) if payment_info else ''}
         
         <!-- Tips for Success -->
@@ -761,7 +881,7 @@ def application_approved_email(application, course, username, temp_password, cus
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
-def application_rejected_email(application, course_title, reason=None, reapply_info=True, unsubscribe_token=None):
+def application_rejected_email(application, course_title, reason=None, reapply_info=True, cohort_info=None, unsubscribe_token=None):
     """💙 Empathetic and encouraging email template for application rejection"""
     return f"""
     {get_email_header()}
@@ -805,6 +925,8 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
                         </p>
                     </div>
                 </div>
+                
+                {_build_cohort_info_section(cohort_info) if cohort_info else ''}
                 
                 {f'''<div style="background-color: #2c3e50; border-left: 5px solid #ef4444; border-radius: 12px; padding: 30px; margin: 30px 0;">
                     <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
@@ -965,7 +1087,7 @@ def application_rejected_email(application, course_title, reason=None, reapply_i
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
-def application_waitlisted_email(application, course_title, position=None, estimated_wait="2-4 weeks", unsubscribe_token=None):
+def application_waitlisted_email(application, course_title, position=None, estimated_wait="2-4 weeks", cohort_info=None, unsubscribe_token=None):
     """⏳ Modern waitlist email template with engaging design"""
     return f"""
     {get_email_header()}
@@ -1055,6 +1177,8 @@ def application_waitlisted_email(application, course_title, position=None, estim
                         </div>
                     </div>
                 </div>
+                
+                {_build_cohort_info_section(cohort_info) if cohort_info else ''}
                 
                 <!-- What Happens Next -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 35px; margin: 35px 0; border: 3px solid #3b82f6;">
@@ -1362,7 +1486,7 @@ def assignment_graded_with_modification_email(student_name, student_email, assig
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
-def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True, assignment_id=None, unsubscribe_token=None):
+def assignment_graded_email(student_name, student_email, assignment_title, course_title, grade, points_possible, feedback, passed=True, assignment_id=None, cohort_context=None, unsubscribe_token=None):
     """Email template for graded assignment notification"""
     percentage = (grade / points_possible * 100) if points_possible > 0 else 0
     status_color = "#059669" if passed else "#dc2626"
@@ -1415,6 +1539,10 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
                     <td style="padding: 8px 0;"><strong>Course:</strong></td>
                     <td>{course_title}</td>
                 </tr>
+                {f'''<tr>
+                    <td style="padding: 8px 0;"><strong>Cohort:</strong></td>
+                    <td>{cohort_context.get('cohort_label', 'N/A')}</td>
+                </tr>''' if cohort_context else ''}
                 <tr>
                     <td style="padding: 8px 0;"><strong>Points Earned:</strong></td>
                     <td>{grade:.1f} / {points_possible}</td>
@@ -1460,7 +1588,7 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
-def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None, unsubscribe_token=None):
+def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None, cohort_context=None, unsubscribe_token=None):
     """Email template for course announcements"""
     # Clean and format the content (strip HTML if needed, truncate if too long)
     clean_content = announcement_content[:500] + "..." if len(announcement_content) > 500 else announcement_content
@@ -1500,6 +1628,10 @@ def course_announcement_email(student_name, course_title, announcement_title, an
                     <td style="padding: 8px 0; font-weight: 600;"><strong>Course:</strong></td>
                     <td style="color: #ffffff;">{course_title}</td>
                 </tr>
+                {f'''<tr>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Cohort:</strong></td>
+                    <td style="color: #ffffff;">{cohort_context.get('cohort_label', 'N/A')}</td>
+                </tr>''' if cohort_context else ''}
                 <tr>
                     <td style="padding: 8px 0; font-weight: 600;"><strong>Instructor:</strong></td>
                     <td style="color: #ffffff;">{instructor_name}</td>
@@ -1526,7 +1658,7 @@ def course_announcement_email(student_name, course_title, announcement_title, an
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='announcements')}
     """
 
-def quiz_graded_email(student_name, quiz_title, course_title, score, total_points, percentage, passed=True, unsubscribe_token=None):
+def quiz_graded_email(student_name, quiz_title, course_title, score, total_points, percentage, passed=True, cohort_context=None, unsubscribe_token=None):
     """Email template for quiz grade notification"""
     status_color = "#059669" if passed else "#dc2626"
     status_bg = "#34495e" if passed else "#34495e"
@@ -1573,6 +1705,10 @@ def quiz_graded_email(student_name, quiz_title, course_title, score, total_point
                     <td style="padding: 8px 0; font-weight: 600;"><strong>Course:</strong></td>
                     <td style="color: #ffffff;">{course_title}</td>
                 </tr>
+                {f'''<tr>
+                    <td style="padding: 8px 0; font-weight: 600;"><strong>Cohort:</strong></td>
+                    <td style="color: #ffffff;">{cohort_context.get('cohort_label', 'N/A')}</td>
+                </tr>''' if cohort_context else ''}
                 <tr>
                     <td style="padding: 8px 0; font-weight: 600;"><strong>Score:</strong></td>
                     <td style="color: #ffffff;">{score} / {total_points}</td>
@@ -1996,7 +2132,7 @@ def custom_application_email(recipient_name, subject, message, unsubscribe_token
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='system')}
     """
 
-def full_credit_awarded_email(student_name, module_title, course_title, instructor_name, reason=None, details=None, unsubscribe_token=None):
+def full_credit_awarded_email(student_name, module_title, course_title, instructor_name, reason=None, details=None, cohort_context=None, unsubscribe_token=None):
     """✨ Email template for full credit award notification"""
     # Process details for display
     components_text = ""
@@ -2099,6 +2235,10 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
                         <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">🎓 Course:</td>
                         <td style="padding: 12px 0; font-size: 16px;">{course_title}</td>
                     </tr>
+                    {f'''<tr style="border-bottom: 2px solid #f0fdf4;">
+                        <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">📚 Cohort:</td>
+                        <td style="padding: 12px 0; font-size: 16px;">{cohort_context.get('cohort_label', 'N/A')}</td>
+                    </tr>''' if cohort_context else ''}
                     <tr style="border-bottom: 2px solid #f0fdf4;">
                         <td style="padding: 12px 0; font-weight: 700; font-size: 16px;">👨‍🏫 Instructor:</td>
                         <td style="padding: 12px 0; font-size: 16px;">{instructor_name}</td>
