@@ -29,8 +29,8 @@ class Course(db.Model):
     payment_methods = db.Column(db.Text, nullable=True)  # JSON array of enabled methods: ["paypal","mobile_money","bank_transfer"]
     payment_deadline_days = db.Column(db.Integer, nullable=True)  # Days before cohort start when payment must be done
     require_payment_before_application = db.Column(db.Boolean, default=False, nullable=False)  # Must pay before submitting application
-    paypal_enabled = db.Column(db.Boolean, default=True, nullable=False)  # PayPal payment toggle
-    mobile_money_enabled = db.Column(db.Boolean, default=True, nullable=False)  # Mobile Money toggle
+    paypal_enabled = db.Column(db.Boolean, default=False, nullable=False)  # PayPal payment toggle
+    mobile_money_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Mobile Money toggle
     bank_transfer_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Bank transfer toggle
     kpay_enabled = db.Column(db.Boolean, default=True, nullable=False)  # K-Pay gateway toggle (MTN/Airtel MoMo, Visa, SPENN)
     flutterwave_enabled = db.Column(db.Boolean, default=False, nullable=False)  # Flutterwave gateway toggle (Card, MoMo, Bank, USSD)

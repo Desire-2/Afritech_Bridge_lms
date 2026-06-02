@@ -545,6 +545,8 @@ class WaitlistService:
 
         info: Dict = {
             # Identity
+            'enrollment_id': enrollment.id,
+            'cohort_id': enrollment.application_window_id,
             'enrollment_status': enrollment.status,
             'cohort_label': enrollment.cohort_label or (window.cohort_label if window else None),
             'application_window_id': enrollment.application_window_id,
@@ -571,6 +573,7 @@ class WaitlistService:
                 'cohort_remaining_balance': ps.get('remaining_balance', 0),
                 'cohort_installment_enabled': ps.get('installment_enabled', False),
                 'cohort_installment_count': ps.get('installment_count'),
+                'cohort_payment_methods': window.get_effective_payment_methods(),
             })
         else:
             # Fallback — no cohort AND no windows exist for course, read from course
@@ -586,6 +589,7 @@ class WaitlistService:
                 'cohort_remaining_balance': 0,
                 'cohort_installment_enabled': False,
                 'cohort_installment_count': None,
+                'cohort_payment_methods': course._get_payment_methods() if course else ['kpay'],
             })
 
         return info

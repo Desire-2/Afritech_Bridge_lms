@@ -1834,3 +1834,212 @@ def get_enrollment_detail(enrollment_id):
             "modules": module_progress_list
         }
     }), 200
+
+
+@enrollment_bp.route("/<int:enrollment_id>/initiate-payment", methods=["POST"])
+@jwt_required()
+def initiate_enrollment_payment(enrollment_id):
+    """
+    Initiate a payment for an existing enrollment.
+    
+    This endpoint mirrors /applications/initiate-payment but for enrolled students
+    who need to complete payment through the learning interface (PaymentModal).
+    
+    Body (JSON):
+      payment_method : str   – 'paypal' | 'mobile_money' | 'bank_transfer' | 'kpay' | 'flutterwave' | 'momo_pay_code'
+      amount         : float – amount to charge
+      currency       : str   – ISO 4217 code, e.g. 'USD' or 'RWF'
+      payer_name     : str   – student name
+      email          : str   – student email
+      phone_number   : str   – student phone (for mobile_money or momo_pay_code)
+    """
+    import uuid
+    import logging
+    from ..services.payment_service import (
+        get_bank_transfer_info,
+        kpay_initiate_payment,
+    )
+    
+    logger = logging.getLogger(__name__)
+    
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+    
+    student = User.query.get(current_user_id)
+    if not student:
+        return jsonify({"error": "Student not found"}), 404
+    
+    # Get enrollment
+    enrollment = Enrollment.query.get(enrollment_id)
+    if not enrollment:
+        return jsonify({"error": "Enrollment not found"}), 404
+    
+    # Verify student owns this enrollment
+    if enrollment.student_id != current_user_id:
+        # Admin/instructors can view, but cannot initiate payment for others
+        user = User.query.get(current_user_id)
+        if not user or user.role.name != 'admin':
+            return jsonify({"error": "Unauthorized access to this enrollment"}), 403
+    
+    course = Course.query.get(enrollment.course_id)
+    if not course:
+        return jsonify({"error": "Course not found"}), 404
+    
+    data = request.get_json(silent=True) or {}
+    
+    payment_method = data.get("payment_method", "paypal").lower()
+    amount = float(data.get("amount") or 0)
+    currency = (data.get("currency") or "RWF").upper()
+    payer_name = data.get("payer_name") or student.full_name or "Student"
+    email = data.get("email") or student.email or ""
+    phone = data.get("phone_number") or ""
+    
+    logger.info(
+        f"initiate-enrollment-payment: enrollment_id={enrollment_id} "
+        f"student_id={current_user_id} method={payment_method} "
+        f"amount={amount} currency={currency}"
+    )
+    
+    # Validation
+    if not amount or amount <= 0:
+        return jsonify({"error": "Invalid payment amount"}), 400
+    
+    # Validate payment method is enabled for this course
+    enabled_methods = course._get_payment_methods()
+    ALL_KNOWN_METHODS = {"paypal", "mobile_money", "bank_transfer", "stripe", "kpay", "flutterwave", "momo_pay_code"}
+    
+    if payment_method not in ALL_KNOWN_METHODS:
+        logger.warning(f"initiate-enrollment-payment: REJECTED unknown method '{payment_method}'")
+        return jsonify({"error": f"Unknown payment method: '{payment_method}'"}), 400
+    
+    if course.enrollment_type == "paid" and enabled_methods and payment_method not in enabled_methods:
+        logger.warning(
+            f"initiate-enrollment-payment: REJECTED method '{payment_method}' "
+            f"not in enabled_methods={enabled_methods}"
+        )
+        return jsonify({
+            "error": f"Payment method '{payment_method}' is not enabled for this course",
+            "enabled_methods": enabled_methods
+        }), 400
+    
+    try:
+        if payment_method == "bank_transfer":
+            # Bank transfer
+            info = get_bank_transfer_info(course)
+            unique_ref = f"ENR-{enrollment_id}-{uuid.uuid4().hex[:8].upper()}"
+            
+            logger.info(f"initiate-enrollment-payment bank_transfer: ref={unique_ref}")
+            
+            return jsonify({
+                "payment_method": "bank_transfer",
+                "status": "pending",
+                "message": info["message"],
+                "bank_details": info["bank_details"],
+                "reference": unique_ref,
+                "amount": amount,
+                "currency": currency,
+            }), 200
+        
+        elif payment_method == "momo_pay_code":
+            # USSD-based MOMO payment
+            logger.info(
+                f"initiate-enrollment-payment momo_pay_code: enrollment_id={enrollment_id} "
+                f"momo_pay_code_enabled={getattr(course, 'momo_pay_code_enabled', False)} "
+                f"momo_ussd_code={getattr(course, 'momo_ussd_code', None)}"
+            )
+            
+            if not getattr(course, 'momo_pay_code_enabled', False) or not getattr(course, 'momo_ussd_code', None):
+                logger.warning(
+                    f"initiate-enrollment-payment momo_pay_code REJECTED: "
+                    f"enabled={getattr(course, 'momo_pay_code_enabled', False)}, "
+                    f"ussd_code={getattr(course, 'momo_ussd_code', None)}"
+                )
+                return jsonify({
+                    "error": "MOMO Pay Code is not enabled or configured for this course. "
+                             "Enable it and configure the USSD code in course settings."
+                }), 400
+            
+            ussd_code = course.momo_ussd_code
+            recipient_name = getattr(course, 'momo_recipient_name', None) or "MTN MoMo"
+            
+            logger.info(f"initiate-enrollment-payment momo_pay_code: ussd_code={ussd_code}")
+            
+            return jsonify({
+                "success": True,
+                "payment_method": "momo_pay_code",
+                "ussd_code": ussd_code,
+                "amount": int(amount),
+                "currency": currency,
+                "recipient_name": recipient_name,
+                "instructions": (
+                    f"On your phone's dialer, type exactly:\n\n{ussd_code}\n\n"
+                    "Confirm the payment details before sending.\n"
+                    "After payment completes, take a screenshot and upload it as proof of payment."
+                ),
+                "requires_screenshot": True,
+                "message": "USSD code ready. Dial the code on your phone, then upload a screenshot.",
+            }), 200
+        
+        elif payment_method == "mobile_money":
+            # Mobile Money - prompt to approve on phone (not fully implemented here)
+            logger.info(f"initiate-enrollment-payment mobile_money: phone={phone}")
+            
+            return jsonify({
+                "payment_method": "mobile_money",
+                "reference": f"MOB-{enrollment_id}-{uuid.uuid4().hex[:8].upper()}",
+                "status": "pending",
+                "message": "Mobile Money payment support is not yet available. Please try another payment method.",
+            }), 501  # Not Implemented
+        
+        elif payment_method == "kpay":
+            # K-Pay gateway
+            if not phone:
+                return jsonify({"error": "phone_number is required for K-Pay payment"}), 400
+            
+            import os
+            frontend_url = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+            return_url = f"{frontend_url}/student/mylearning?payment=success"
+            
+            kpay_refid = f"ENR-{uuid.uuid4().hex[:16].upper()}"
+            kpay_amount = int(amount) if amount == int(amount) else int(amount) + 1
+            
+            result = kpay_initiate_payment(
+                amount=kpay_amount,
+                currency=currency,
+                email=email,
+                phone=phone,
+                cname=payer_name,
+                cnumber=f"ENR_{enrollment_id}",
+                refid=kpay_refid,
+                pmethod="momo",
+                details=f"Enrollment: {course.title}",
+                returl=f"{os.environ.get('BACKEND_URL', 'http://localhost:5000')}/api/v1/enrollments/kpay-callback",
+                redirecturl=return_url,
+            )
+            
+            logger.info(f"initiate-enrollment-payment kpay: ref={kpay_refid}")
+            
+            return jsonify({
+                "payment_method": "kpay",
+                "checkout_url": result["checkout_url"],
+                "tid": result["tid"],
+                "reference": result["refid"],
+                "status": "pending",
+                "message": "Redirect to K-Pay to complete your payment.",
+            }), 200
+        
+        else:
+            # Unsupported for learning interface (stripe, paypal, flutterwave require complex redirect flows)
+            logger.warning(f"initiate-enrollment-payment: UNSUPPORTED method '{payment_method}' for enrollment")
+            return jsonify({
+                "error": f"Payment method '{payment_method}' is not supported for enrollments. "
+                         "Please try bank_transfer, momo_pay_code, or kpay."
+            }), 501
+    
+    except Exception as e:
+        logger.error(f"initiate-enrollment-payment error: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": "Payment initiation failed",
+            "detail": str(e)
+        }), 500

@@ -3,6 +3,9 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from functools import wraps
 from flask_sqlalchemy import SQLAlchemy
+import uuid
+import os
+import logging
 
 from ..models.user_models import User
 from ..models.course_models import Course, Module, Enrollment
@@ -11,6 +14,8 @@ from ..services.dashboard_service import DashboardService
 from ..services.progression_service import ProgressionService
 from ..services.enhanced_learning_service import EnhancedLearningService
 from ..services.enhanced_module_unlock_service import EnhancedModuleUnlockService
+
+logger = logging.getLogger(__name__)
 
 # Get db from the extensions - avoid circular import
 def get_db():

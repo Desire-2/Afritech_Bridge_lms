@@ -3,9 +3,11 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { StudentService, EnrolledCourse } from '@/services/student.service';
-import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2, TrendingUp, Award, Search, Filter, UserCircle, AlertTriangle, CreditCard, ShieldAlert } from 'lucide-react';
+import { BookOpen, Clock, BarChart3, PlayCircle, CheckCircle2, TrendingUp, Award, Search, Filter, UserCircle, AlertTriangle, CreditCard, ShieldAlert, Zap } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import PaymentModal from '@/components/payments/PaymentModal';
 
 const MyLearningPage = () => {
   const [courses, setCourses] = useState<EnrolledCourse[]>([]);
@@ -14,7 +16,15 @@ const MyLearningPage = () => {
   const [filter, setFilter] = useState<'all' | 'in-progress' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [isClient, setIsClient] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [selectedCourseForPayment, setSelectedCourseForPayment] = useState<EnrolledCourse | null>(null);
   const { isAuthenticated, isLoading: authLoading } = useAuth();
+
+  // Handle pay now button click
+  const handlePayNow = (course: EnrolledCourse) => {
+    setSelectedCourseForPayment(course);
+    setPaymentModalOpen(true);
+  };
 
   // Handle client-side hydration
   useEffect(() => {
@@ -289,23 +299,25 @@ const MyLearningPage = () => {
 
                   {/* Payment Status Banner — cohort-level */}
                   {course.access_allowed === false && (
-                    <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50">
-                      <div className="flex items-start gap-2">
-                        <ShieldAlert className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div className="mb-4 p-3.5 rounded-lg border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50">
+                      <div className="flex items-start gap-3">
+                        <div className="p-1.5 rounded-lg bg-amber-100 flex-shrink-0">
+                          <AlertTriangle className="w-4 h-4 text-amber-700" />
+                        </div>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-amber-800">
+                          <p className="text-sm font-bold text-amber-900">
                             {course.payment_required
                               ? course.cohort_enrollment_type === 'scholarship' && course.cohort_scholarship_type === 'partial'
-                                ? `Partial Scholarship — Payment Required`
-                                : 'Tuition Payment Required'
+                                ? `Partial Scholarship Required`
+                                : 'Payment Required'
                               : 'Access Restricted'}
                           </p>
-                          <p className="text-xs text-amber-700 mt-0.5">
+                          <p className="text-xs text-amber-800 mt-0.5 line-clamp-1">
                             {course.payment_required
                               ? course.cohort_effective_price != null && course.cohort_effective_price > 0
-                                ? `Amount due: ${course.cohort_currency || 'USD'} ${course.cohort_effective_price.toLocaleString()}${
+                                ? `${course.cohort_currency || 'USD'} ${course.cohort_effective_price.toLocaleString()} due${
                                     course.cohort_scholarship_percentage
-                                      ? ` (${course.cohort_scholarship_percentage}% scholarship applied)`
+                                      ? ` (${course.cohort_scholarship_percentage}% off)`
                                       : ''
                                   }`
                                 : 'Complete your payment to access course content.'
@@ -394,10 +406,22 @@ const MyLearningPage = () => {
                   {/* Action Buttons */}
                   <div className="flex gap-2">
                     {course.access_allowed === false ? (
-                      <div className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gray-100 text-gray-400 rounded-lg cursor-not-allowed font-medium">
-                        <AlertTriangle className="w-4 h-4" />
-                        {course.payment_required ? 'Payment Pending' : 'Access Locked'}
-                      </div>
+                      <>
+                        {course.payment_required ? (
+                          <Button
+                            onClick={() => handlePayNow(course)}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-lg hover:from-amber-600 hover:to-orange-600 transition-all shadow-sm hover:shadow-md font-medium"
+                          >
+                            <Zap className="w-4 h-4" />
+                            Pay Now
+                          </Button>
+                        ) : (
+                          <div className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-gray-100 text-gray-400 rounded-lg cursor-not-allowed font-medium">
+                            <AlertTriangle className="w-4 h-4" />
+                            Access Locked
+                          </div>
+                        )}
+                      </>
                     ) : course.progress >= 100 ? (
                       <Link
                         href={`/learn/${course.id}`}
@@ -448,6 +472,45 @@ const MyLearningPage = () => {
           </div>
         )}
       </div>
+
+      {/* Payment Modal */}
+      {selectedCourseForPayment && (() => {
+        // Get effective enabled payment methods from course settings (same logic as application form)
+        const effectivePaymentMethods: string[] =
+          (selectedCourseForPayment.cohort_payment_methods && selectedCourseForPayment.cohort_payment_methods.length > 0)
+            ? selectedCourseForPayment.cohort_payment_methods
+            : (selectedCourseForPayment.payment_methods && selectedCourseForPayment.payment_methods.length > 0)
+              ? selectedCourseForPayment.payment_methods
+              : ['kpay', 'stripe'];
+        
+        return (
+          <PaymentModal
+            open={paymentModalOpen}
+            onOpenChange={setPaymentModalOpen}
+            courseId={selectedCourseForPayment.id}
+            courseName={selectedCourseForPayment.title}
+            amount={selectedCourseForPayment.cohort_effective_price || 0}
+            currency={selectedCourseForPayment.cohort_currency || 'USD'}
+            enrollmentId={selectedCourseForPayment.enrollment_id || 0}
+            cohortId={selectedCourseForPayment.cohort_id}
+            isPartialScholarship={
+              selectedCourseForPayment.cohort_enrollment_type === 'scholarship' &&
+              selectedCourseForPayment.cohort_scholarship_type === 'partial'
+            }
+            scholarshipPercentage={selectedCourseForPayment.cohort_scholarship_percentage || 0}
+            paymentMethods={effectivePaymentMethods}
+            onPaymentSuccess={() => {
+              setPaymentModalOpen(false);
+              // Refresh courses to update payment status
+              setLoading(true);
+              StudentService.getMyLearning().then((data) => {
+                setCourses(Array.isArray(data) ? data : []);
+                setLoading(false);
+              });
+            }}
+          />
+        );
+      })()}
     </div>
   );
 };

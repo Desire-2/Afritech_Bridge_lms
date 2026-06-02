@@ -15,6 +15,7 @@ import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, Ar
 import Link from 'next/link';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
 import { motion, AnimatePresence } from 'framer-motion';
+import PaymentModal from '@/components/payments/PaymentModal';
 
 // Import custom components and utilities
 import { LearningHeader } from './components/LearningHeader';
@@ -94,6 +95,7 @@ const LearningPage = () => {
   const [error, setError] = useState<string | null>(null);
   // Cohort-level payment info from 402 response
   const [paymentInfo, setPaymentInfo] = useState<Record<string, any> | null>(null);
+  const [isPaymentRequired, setIsPaymentRequired] = useState(false);
   const [currentLesson, setCurrentLesson] = useState<any>(null);
   const [currentModuleId, setCurrentModuleId] = useState<number | null>(null);
   
@@ -144,10 +146,21 @@ const LearningPage = () => {
     // Cleanup
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []); // Only run on mount
+
+  // Update isPaymentRequired state when error changes
+  useEffect(() => {
+    if (error) {
+      const paymentRequired = error.toLowerCase().includes('payment required') || error.toLowerCase().includes('payment must be');
+      setIsPaymentRequired(paymentRequired);
+    } else {
+      setIsPaymentRequired(false);
+    }
+  }, [error]);
   
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [lessonAssessments, setLessonAssessments] = useState<{ [lessonId: number]: any[] }>({});
   const [lessonCompletionStatus, setLessonCompletionStatus] = useState<{ [lessonId: number]: boolean }>({});
   const [quizLoadError, setQuizLoadError] = useState<string | null>(null);
@@ -2338,7 +2351,6 @@ const LearningPage = () => {
     const isNotEnrolled = error.toLowerCase().includes('not enrolled');
     const isNotFound = error.toLowerCase().includes('not found');
     const isNetworkError = error.toLowerCase().includes('network') || error.toLowerCase().includes('fetch') || error.toLowerCase().includes('timeout');
-    const isPaymentRequired = error.toLowerCase().includes('payment required') || error.toLowerCase().includes('payment must be');
     
     let errorIcon = <AlertCircle className="h-12 w-12 text-red-400 mx-auto mb-4" />;
     let errorTitle = "Unable to Load Course";
@@ -2433,6 +2445,10 @@ const LearningPage = () => {
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               {isPaymentRequired ? (
                 <>
+                  <Button onClick={() => setPaymentModalOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white font-semibold">
+                    <CreditCard className="h-4 w-4 mr-2" />
+                    Pay Now
+                  </Button>
                   <Button asChild variant="outline" className="border-amber-600 text-amber-300 hover:bg-amber-900/30">
                     <Link href="/student/mylearning">My Learning</Link>
                   </Button>
@@ -2474,6 +2490,38 @@ const LearningPage = () => {
             </div>
           </CardContent>
         </Card>
+
+        {/* Payment Modal for Payment Required Access */}
+        {isPaymentRequired && (() => {
+          // Get effective enabled payment methods from course settings (same logic as application form)
+          const effectivePaymentMethods: string[] =
+            (paymentInfo?.cohort_payment_methods && paymentInfo.cohort_payment_methods.length > 0)
+              ? paymentInfo.cohort_payment_methods
+              : (courseData?.course?.payment_methods && courseData.course.payment_methods.length > 0)
+                ? courseData.course.payment_methods
+                : ['kpay', 'bank_transfer', 'momo_pay_code'];
+          
+          return (
+            <PaymentModal
+              open={paymentModalOpen}
+              onOpenChange={setPaymentModalOpen}
+              courseId={courseId}
+              courseName={courseData?.course?.title || 'Course'}
+              amount={paymentInfo?.cohort_effective_price || 0}
+              currency={paymentInfo?.cohort_currency || 'USD'}
+              enrollmentId={paymentInfo?.enrollment_id || 0}
+              cohortId={paymentInfo?.cohort_id}
+              isPartialScholarship={paymentInfo?.cohort_enrollment_type === 'scholarship' && paymentInfo?.cohort_scholarship_type === 'partial'}
+              scholarshipPercentage={paymentInfo?.cohort_scholarship_percentage || 0}
+              paymentMethods={effectivePaymentMethods}
+              onPaymentSuccess={() => {
+                setPaymentModalOpen(false);
+                // Reload page to refresh access
+                window.location.reload();
+              }}
+            />
+          );
+        })()}
       </div>
     );
   }
@@ -3356,6 +3404,7 @@ const LearningPage = () => {
           errorInfo={unlockErrorInfo}
         />
       )}
+
     </div>
   );
 };
