@@ -1854,9 +1854,7 @@ def upload_enrollment_payment_slip(enrollment_id):
         "payment_status": "pending_verification"
       }
     """
-    from werkzeug.utils import secure_filename
     import mimetypes
-    import uuid
 
     current_user_id = get_user_id()
     if not current_user_id:
@@ -1902,25 +1900,86 @@ def upload_enrollment_payment_slip(enrollment_id):
         }), 400
 
     try:
-        # Create uploads directory if needed
-        upload_dir = os.path.join(current_app.root_path, '..', 'uploads', 'payment_screenshots')
-        os.makedirs(upload_dir, exist_ok=True)
+        mime_type = file.content_type or 'application/octet-stream'
+        original_filename = file.filename
 
-        # Generate unique filename
-        file_ext = os.path.splitext(secure_filename(file.filename))[1]
-        unique_filename = f"enr_{enrollment_id}_{uuid.uuid4().hex[:8]}{file_ext}"
-        file_path = os.path.join(upload_dir, unique_filename)
+        # ── Storage: Google Drive (with base64 fallback) ──
+        # Mirrors the application form's upload-payment-slip endpoint.
+        slip_url = None
+        file_bytes = None
 
-        # Save file
-        file.save(file_path)
+        try:
+            from ..utils.google_drive_service import GoogleDriveService
+            drive_service = GoogleDriveService()
 
-        # Build the URL the same way the application upload does
-        slip_url = f"/uploads/payment_screenshots/{unique_filename}"
+            if drive_service.is_configured:
+                from io import BytesIO
+
+                file_bytes = file.read()
+                file_data = BytesIO(file_bytes)
+
+                root_folder_id = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
+                if not root_folder_id:
+                    raise ValueError("GOOGLE_DRIVE_ROOT_FOLDER_ID not configured")
+
+                # Create/get Payment_Slips folder
+                slips_folder_id = drive_service._get_or_create_folder(
+                    'Payment_Slips', root_folder_id
+                )
+
+                # Generate unique filename
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                safe_name = f"slip_enr_{enrollment_id}_{timestamp}_{original_filename}"
+
+                from googleapiclient.http import MediaIoBaseUpload as _MediaUpload
+                from googleapiclient.errors import HttpError as _HttpError
+
+                file_metadata = {
+                    'name': safe_name,
+                    'parents': [slips_folder_id],
+                    'description': f"Payment slip for enrollment #{enrollment_id} ({student.full_name})"
+                }
+                media = _MediaUpload(file_data, mimetype=mime_type, resumable=False)
+
+                try:
+                    uploaded = drive_service.service.files().create(
+                        body=file_metadata,
+                        media_body=media,
+                        fields='id,name,webViewLink,webContentLink',
+                        supportsAllDrives=True,
+                    ).execute()
+
+                    # Make file viewable by anyone with the link
+                    try:
+                        drive_service.service.permissions().create(
+                            fileId=uploaded['id'],
+                            body={'type': 'anyone', 'role': 'reader'},
+                            supportsAllDrives=True,
+                        ).execute()
+                    except Exception:
+                        pass  # Permission setting failure is non-fatal
+
+                    slip_url = uploaded.get('webViewLink') or uploaded.get('webContentLink') or f"https://drive.google.com/file/d/{uploaded['id']}/view"
+                except _HttpError as drive_err:
+                    logger.warning(
+                        f"Google Drive upload failed for enrollment {enrollment_id}, "
+                        f"falling back to base64 storage: {drive_err}"
+                    )
+
+        except Exception as drive_exc:
+            logger.warning(f"Google Drive service unavailable for enrollment {enrollment_id}: {drive_exc}")
+
+        # Fallback: store as base64 data URL when Drive is unavailable or failed
+        if slip_url is None:
+            import base64
+            raw = file_bytes if file_bytes is not None else file.read()
+            data = base64.b64encode(raw).decode('utf-8')
+            slip_url = f"data:{mime_type};base64,{data}"
 
         # Update enrollment payment status AND store the slip path
         enrollment.payment_status = 'submitted_with_proof'
         enrollment.payment_slip_url = slip_url
-        enrollment.payment_slip_filename = file.filename
+        enrollment.payment_slip_filename = original_filename
         db.session.commit()
 
         # Notify admins about the new payment submission
