@@ -1920,7 +1920,7 @@ def upload_enrollment_payment_slip(enrollment_id):
         # Update enrollment payment status AND store the slip path
         enrollment.payment_status = 'submitted_with_proof'
         enrollment.payment_slip_url = slip_url
-        enrollment.payment_slip_filename = original_filename
+        enrollment.payment_slip_filename = file.filename
         db.session.commit()
 
         # Notify admins about the new payment submission
@@ -2101,23 +2101,10 @@ def initiate_enrollment_payment(enrollment_id):
             info = get_bank_transfer_info(course)
             unique_ref = f"ENR-{enrollment_id}-{uuid.uuid4().hex[:8].upper()}"
             
-            # Mark payment as pending — student will upload screenshot for admin verification
-            enrollment.payment_status = 'submitted'
+            # Don't set payment_status here — student still needs to upload proof.
+            # The upload-payment-slip endpoint will set 'submitted_with_proof'.
             enrollment.payment_verified = False
             db.session.commit()
-
-            # Notify admins about the new payment submission
-            try:
-                from ..utils.payment_notifications import send_enrollment_payment_admin_alert
-                send_enrollment_payment_admin_alert(
-                    enrollment=enrollment,
-                    amount=amount,
-                    currency=currency,
-                    payment_method='bank_transfer',
-                    payment_status='submitted',
-                )
-            except Exception as notify_err:
-                logger.warning(f"Failed to send admin alert for bank transfer payment: {notify_err}")
 
             logger.info(f"initiate-enrollment-payment bank_transfer: ref={unique_ref}")
             
@@ -2153,23 +2140,10 @@ def initiate_enrollment_payment(enrollment_id):
             ussd_code = course.momo_ussd_code
             recipient_name = getattr(course, 'momo_recipient_name', None) or "MTN MoMo"
             
-            # Mark payment as submitted — student will upload screenshot for admin verification
-            enrollment.payment_status = 'submitted'
+            # Don't set payment_status here — student still needs to upload proof.
+            # The upload-payment-slip endpoint will set 'submitted_with_proof'.
             enrollment.payment_verified = False
             db.session.commit()
-
-            # Notify admins about the new payment submission
-            try:
-                from ..utils.payment_notifications import send_enrollment_payment_admin_alert
-                send_enrollment_payment_admin_alert(
-                    enrollment=enrollment,
-                    amount=amount,
-                    currency=currency,
-                    payment_method='momo_pay_code',
-                    payment_status='submitted',
-                )
-            except Exception as notify_err:
-                logger.warning(f"Failed to send admin alert for MoMo payment: {notify_err}")
 
             logger.info(f"initiate-enrollment-payment momo_pay_code: ussd_code={ussd_code}")
             

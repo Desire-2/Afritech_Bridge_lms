@@ -825,19 +825,31 @@ export default function PaymentModal({
                 </div>
               )}
 
-              {/* I've Completed Payment Button */}
+              {/* I've Completed Payment Button - only enabled after upload */}
               <Button
                 onClick={handleConfirmPayment}
-                className="w-full py-6 text-lg font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                disabled={!uploaded}
+                className={`w-full py-6 text-lg font-bold rounded-lg ${
+                  uploaded
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
               >
                 <CheckSquare className="w-5 h-5 mr-2" />
                 I've Completed the Transfer
               </Button>
 
-              <p className="text-xs text-center text-gray-500">
-                By clicking, you confirm that you have initiated the bank transfer.
-                Our team will verify your payment and activate your course access.
-              </p>
+              {!uploaded && (
+                <p className="text-xs text-center text-amber-600 font-medium">
+                  Please upload your payment proof screenshot first.
+                </p>
+              )}
+              {uploaded && (
+                <p className="text-xs text-center text-gray-500">
+                  By clicking, you confirm that you have initiated the bank transfer.
+                  Our team will verify your payment and activate your course access.
+                </p>
+              )}
             </div>
           )}
 
@@ -1002,19 +1014,31 @@ export default function PaymentModal({
                 </div>
               )}
 
-              {/* I've Completed Payment Button */}
+              {/* I've Completed Payment Button - only enabled after upload */}
               <Button
                 onClick={handleConfirmPayment}
-                className="w-full py-6 text-lg font-bold bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg"
+                disabled={!uploaded}
+                className={`w-full py-6 text-lg font-bold rounded-lg ${
+                  uploaded
+                    ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
+                    : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                }`}
               >
                 <CheckSquare className="w-5 h-5 mr-2" />
                 I've Completed the Payment
               </Button>
 
-              <p className="text-xs text-center text-gray-500">
-                By clicking, you confirm that you have sent the MoMo payment.
-                Our team will verify and activate your course access.
-              </p>
+              {!uploaded && (
+                <p className="text-xs text-center text-amber-600 font-medium">
+                  Please upload your payment screenshot first.
+                </p>
+              )}
+              {uploaded && (
+                <p className="text-xs text-center text-gray-500">
+                  By clicking, you confirm that you have sent the MoMo payment.
+                  Our team will verify and activate your course access.
+                </p>
+              )}
             </div>
           )}
 
