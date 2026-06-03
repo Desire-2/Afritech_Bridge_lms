@@ -286,12 +286,13 @@ function DRow({ label, children }: { label: string; children: React.ReactNode })
 }
 
 function DetailDrawer({
-  record, onClose, onStatusChange, onConfirmTransfer,
+  record, onClose, onStatusChange, onConfirmTransfer, onVerifyPayment,
 }: {
   record: PaymentRecord;
   onClose: () => void;
   onStatusChange: (id: number | string, status: string, notes: string) => Promise<void>;
   onConfirmTransfer: (id: number | string, notes: string) => Promise<void>;
+  onVerifyPayment?: (id: number | string, paymentStatus: string, notes: string) => Promise<void>;
 }) {
   const isEnrollment = record.source === 'enrollment';
   const [newStatus, setNewStatus] = useState('');
@@ -526,16 +527,87 @@ function DetailDrawer({
             </section>
           )}
 
-          {isEnrollment ? (
-            <section className="border rounded-xl p-4 bg-indigo-50 border-indigo-200">
-              <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-2">Enrollment Payment</p>
-              <p className="text-sm text-indigo-700">
-                This is an enrollment-level payment (e.g., pay-later, cohort migration).
-                To update the payment status, use the course enrollment management interface
-                or contact an admin with enrollment verification access.
-              </p>
-            </section>
-          ) : (
+          {isEnrollment ? (() => {
+            const isActionable = ['submitted', 'submitted_with_proof', 'pending', 'pending_verification'].includes(record.payment_status || '');
+            const isAlreadyVerified = record.payment_verified && ['completed', 'waived'].includes(record.payment_status || '');
+
+            const handleVerify = async (paymentStatus: string) => {
+              if (!onVerifyPayment) return;
+              setLoading(true);
+              setMsg(null);
+              try {
+                await onVerifyPayment(record.id, paymentStatus, notes);
+                setMsg({ type: 'ok', text: `Payment marked as "${STATUS_LABELS[paymentStatus] || paymentStatus}"` });
+                setNotes('');
+              } catch (e) {
+                setMsg({ type: 'err', text: e instanceof Error ? e.message : 'Error' });
+              } finally { setLoading(false); }
+            };
+
+            return (
+              <section className="border rounded-xl p-4 bg-indigo-50 border-indigo-200">
+                <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-2">
+                  {isActionable ? '🔍 Verify Enrollment Payment' : 'Enrollment Payment'}
+                </p>
+
+                {msg && (
+                  <div className={`mb-3 text-xs p-2 rounded ${msg.type === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg.text}</div>
+                )}
+
+                {/* Current status summary */}
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <span className="text-xs text-indigo-700">
+                    Status: {record.payment_status
+                      ? <Badge text={STATUS_LABELS[record.payment_status] || record.payment_status} cls={STATUS_BG[record.payment_status] || 'bg-white/10 text-gray-600 border-white/10'} />
+                      : '—'}
+                  </span>
+                  {isAlreadyVerified && (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-300">
+                      ✅ Verified
+                    </span>
+                  )}
+                </div>
+
+                {isActionable && onVerifyPayment ? (
+                  <div className="space-y-3">
+                    {/* Action buttons */}
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => handleVerify('completed')} disabled={loading}
+                        className="flex-1 min-w-24 px-3 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                        {loading ? '…' : '✅'} Approve
+                      </button>
+                      <button onClick={() => handleVerify('pending')} disabled={loading}
+                        className="flex-1 min-w-24 px-3 py-2 bg-yellow-500 hover:bg-yellow-600 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                        {loading ? '…' : '⏳'} Pending
+                      </button>
+                      <button onClick={() => handleVerify('failed')} disabled={loading}
+                        className="flex-1 min-w-24 px-3 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                        {loading ? '…' : '❌'} Reject
+                      </button>
+                    </div>
+                    {/* Waive button - separate for emphasis */}
+                    <button onClick={() => handleVerify('waived')} disabled={loading}
+                      className="w-full py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5">
+                      {loading ? '…' : '🎓'} Waive Payment
+                    </button>
+                    {/* Notes */}
+                    <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+                      placeholder="Add admin note (optional)…"
+                      className="w-full border border-indigo-300 rounded-lg px-3 py-2 text-sm bg-[#162844] focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                  </div>
+                ) : isAlreadyVerified ? (
+                  <p className="text-sm text-indigo-700">
+                    This enrollment payment has been verified and marked as <strong>{STATUS_LABELS[record.payment_status || ''] || record.payment_status}</strong>.
+                    {record.payment_verified_at && ` Verified on ${new Date(record.payment_verified_at).toLocaleDateString()}.`}
+                  </p>
+                ) : (
+                  <p className="text-sm text-indigo-700">
+                    This is an enrollment-level payment. Current status: <strong>{STATUS_LABELS[record.payment_status || ''] || record.payment_status || 'unknown'}</strong>.
+                  </p>
+                )}
+              </section>
+            );
+          })() : (
             <section className="border rounded-xl p-4 bg-amber-50 border-amber-200">
               <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">Update Payment Status</p>
               {msg && (
@@ -761,6 +833,21 @@ export default function PaymentsDashboard({ role }: Props) {
     fetchSummary();
   };
 
+  const handleVerifyEnrollmentPayment = async (id: number | string, paymentStatus: string, notes: string) => {
+    const res = await fetch(`${API_BASE}/admin/waitlist/enrollment/${id}/verify-payment`, {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ payment_status: paymentStatus, notes }),
+    });
+    const data = await res.json() as { error?: string; data?: { payment_status?: string; payment_verified?: boolean; enrollment_status?: string } };
+    if (!res.ok) throw new Error(data.error || 'Failed to verify payment');
+    showToast(`Enrollment payment ${STATUS_LABELS[paymentStatus] || paymentStatus} ✓`);
+    const ps = (data.data?.payment_status || paymentStatus) as PaymentStatus;
+    const pv = data.data?.payment_verified;
+    setRecords((prev) => prev.map((r) => r.id === id ? { ...r, payment_status: ps, payment_verified: pv ?? r.payment_verified } : r));
+    if (selected?.id === id) setSelected((s) => s ? { ...s, payment_status: ps, payment_verified: pv ?? s.payment_verified } : s);
+    fetchSummary();
+  };
+
   const exportCSV = () => {
     const headers = ['ID', 'Name', 'Email', 'Course', 'Cohort', 'Method', 'Amount', 'Currency', 'Status', 'Reference', 'Scholarship', 'Payment Slip', 'Date'];
     const rows = records.map((r) => [
@@ -864,7 +951,8 @@ export default function PaymentsDashboard({ role }: Props) {
       {/* Detail Drawer */}
       {selected && (
         <DetailDrawer record={selected} onClose={() => setSelected(null)}
-          onStatusChange={handleStatusChange} onConfirmTransfer={handleConfirmTransfer} />
+          onStatusChange={handleStatusChange} onConfirmTransfer={handleConfirmTransfer}
+          onVerifyPayment={handleVerifyEnrollmentPayment} />
       )}
 
       {/* ── KPI Row ─────────────────────────────────────────────────────── */}
