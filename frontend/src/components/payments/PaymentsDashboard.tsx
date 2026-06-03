@@ -838,7 +838,10 @@ export default function PaymentsDashboard({ role }: Props) {
   };
 
   const handleVerifyEnrollmentPayment = async (id: number | string, paymentStatus: string, notes: string) => {
-    const res = await fetch(`${API_BASE}/admin/waitlist/enrollment/${id}/verify-payment`, {
+    // Enrollment IDs from the API are prefixed with 'enr_' (e.g. 'enr_42')
+    // but the backend route expects a plain integer.
+    const numericId = typeof id === 'string' ? id.replace(/^enr_/, '') : id;
+    const res = await fetch(`${API_BASE}/admin/waitlist/enrollment/${numericId}/verify-payment`, {
       method: 'POST', headers: authHeaders(),
       body: JSON.stringify({ payment_status: paymentStatus, notes }),
     });
