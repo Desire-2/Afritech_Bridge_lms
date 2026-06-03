@@ -811,7 +811,9 @@ export default function PaymentsDashboard({ role }: Props) {
     const res = await fetch(`${API_BASE}/applications/${id}/confirm-bank-transfer`, {
       method: 'POST', headers: authHeaders(), body: JSON.stringify({ notes }),
     });
-    const data = await res.json() as { error?: string };
+    const text = await res.text();
+    let data: { error?: string } = {};
+    try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status}). Please try again.`); }
     if (!res.ok) throw new Error(data.error || 'Failed to confirm');
     showToast('Bank transfer confirmed ✓');
     setRecords((prev) => prev.map((r) => r.id === id ? { ...r, payment_status: 'confirmed' } : r));
@@ -824,7 +826,9 @@ export default function PaymentsDashboard({ role }: Props) {
       method: 'POST', headers: authHeaders(),
       body: JSON.stringify({ payment_status: newStatus, notes }),
     });
-    const data = await res.json() as { error?: string; payment_status?: string };
+    const text = await res.text();
+    let data: { error?: string; payment_status?: string } = {};
+    try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status}). Please try again.`); }
     if (!res.ok) throw new Error(data.error || 'Failed to update status');
     showToast(`Payment status → ${STATUS_LABELS[newStatus] || newStatus}`);
     const ps = (data.payment_status || newStatus) as PaymentStatus;
@@ -838,7 +842,9 @@ export default function PaymentsDashboard({ role }: Props) {
       method: 'POST', headers: authHeaders(),
       body: JSON.stringify({ payment_status: paymentStatus, notes }),
     });
-    const data = await res.json() as { error?: string; data?: { payment_status?: string; payment_verified?: boolean; enrollment_status?: string } };
+    const text = await res.text();
+    let data: { error?: string; data?: { payment_status?: string; payment_verified?: boolean; enrollment_status?: string } } = {};
+    try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status}). Please try again.`); }
     if (!res.ok) throw new Error(data.error || 'Failed to verify payment');
     showToast(`Enrollment payment ${STATUS_LABELS[paymentStatus] || paymentStatus} ✓`);
     const ps = (data.data?.payment_status || paymentStatus) as PaymentStatus;

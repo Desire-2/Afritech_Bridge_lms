@@ -458,6 +458,12 @@ def after_request(response):
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
+    # Return JSON 404 for any unmatched /api/ paths instead of serving HTML.
+    # This prevents the frontend from receiving HTML when a backend route
+    # hasn't been deployed yet (catch-all was serving index.html for API paths).
+    if path.startswith('api/'):
+        return jsonify({"error": "API endpoint not found", "path": f"/{path}"}), 404
+
     static_folder_path = app.static_folder
     if static_folder_path is None:
         return jsonify({"error": "Static folder not configured"}), 404
