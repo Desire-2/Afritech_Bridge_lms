@@ -289,6 +289,8 @@ def get_course_for_learning(course_id):
                 return jsonify({
                     "error": "Payment required",
                     "message": access_reason,
+                    "course_title": course.title,
+                    "course_id": course.id,
                     **cohort_info,
                 }), 402  # 402 Payment Required
         

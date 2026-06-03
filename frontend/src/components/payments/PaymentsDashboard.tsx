@@ -13,10 +13,13 @@ type PaymentStatus =
   | 'confirmed'
   | 'failed'
   | 'refunded'
-  | 'initiated';
+  | 'initiated'
+  | 'submitted'
+  | 'submitted_with_proof';
 
 interface PaymentRecord {
-  id: number;
+  id: number | string;
+  source?: 'application' | 'enrollment';
   full_name: string;
   email: string;
   phone?: string;
@@ -27,7 +30,7 @@ interface PaymentRecord {
   course_payment_mode?: string;
   course_enabled_methods?: PaymentMethod[];
   amount_paid?: number;
-  payment_method?: PaymentMethod;
+  payment_method?: PaymentMethod | null;
   payment_status?: PaymentStatus;
   payment_reference?: string;
   payment_currency?: string;
@@ -43,6 +46,9 @@ interface PaymentRecord {
   payment_slip_url?: string;
   payment_slip_filename?: string;
   has_payment_slip?: boolean;
+  payment_verified?: boolean;
+  payment_verified_at?: string | null;
+  migrated_from_window_id?: number | null;
 }
 
 interface MethodRevenue {
@@ -78,6 +84,23 @@ interface PaymentSummary {
   by_status: Record<string, number>;
   by_course: CourseBreakdown[];
   recent_payments: PaymentRecord[];
+}
+
+interface EnrollmentPaymentSummary {
+  total_with_payment: number;
+  completed_count: number;
+  pending_count: number;
+  verified_count: number;
+  revenue_by_currency: Record<string, number>;
+  by_course: Array<{
+    course_id: number;
+    course_title: string;
+    total: number;
+    pending: number;
+    completed: number;
+    verified: number;
+    revenue: Record<string, number>;
+  }>;
 }
 
 interface Props {
@@ -123,6 +146,11 @@ const STATUS_LABELS: Record<string, string> = {
   failed: 'Failed',
   refunded: 'Refunded',
   initiated: 'Initiated',
+  waived: 'Waived',
+  not_required: 'Not Required',
+  pending_verification: 'Pending Verification',
+  submitted: 'Submitted',
+  submitted_with_proof: 'Submitted (With Proof)',
 };
 
 const STATUS_BG: Record<string, string> = {
@@ -133,9 +161,14 @@ const STATUS_BG: Record<string, string> = {
   failed: 'bg-red-50 text-red-700 border-red-200',
   refunded: 'bg-white/10 text-gray-600 border-white/15',
   initiated: 'bg-[#0a1628] text-gray-500 border-white/10',
+  waived: 'bg-purple-50 text-purple-700 border-purple-200',
+  not_required: 'bg-gray-50 text-gray-600 border-gray-200',
+  pending_verification: 'bg-sky-50 text-sky-700 border-sky-200',
+  submitted: 'bg-blue-50 text-blue-700 border-blue-200',
+  submitted_with_proof: 'bg-indigo-50 text-indigo-700 border-indigo-200',
 };
 
-const ACTIONABLE_STATUSES = new Set(['pending', 'pending_bank_transfer', 'initiated']);
+const ACTIONABLE_STATUSES = new Set(['pending', 'pending_bank_transfer', 'initiated', 'pending_verification', 'submitted', 'submitted_with_proof']);
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
@@ -257,22 +290,22 @@ function DetailDrawer({
 }: {
   record: PaymentRecord;
   onClose: () => void;
-  onStatusChange: (id: number, status: string, notes: string) => Promise<void>;
-  onConfirmTransfer: (id: number, notes: string) => Promise<void>;
+  onStatusChange: (id: number | string, status: string, notes: string) => Promise<void>;
+  onConfirmTransfer: (id: number | string, notes: string) => Promise<void>;
 }) {
+  const isEnrollment = record.source === 'enrollment';
   const [newStatus, setNewStatus] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
 
-  // Lazy-load payment slip on demand (base64 data can be 7MB+, too big for list API)
+  // Lazy-load payment slip on demand — only for application payments
   const [slipUrl, setSlipUrl] = useState<string | null>(record.payment_slip_url || null);
   const [slipLoading, setSlipLoading] = useState(false);
-  const hasSlip = record.has_payment_slip || !!record.payment_slip_url;
+  const hasSlip = !isEnrollment && (record.has_payment_slip || !!record.payment_slip_url);
 
   useEffect(() => {
-    // If we already have a URL (Google Drive link), no need to fetch
-    if (slipUrl || !hasSlip) return;
+    if (isEnrollment || slipUrl || !hasSlip) return;
     let cancelled = false;
     setSlipLoading(true);
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
@@ -281,13 +314,13 @@ function DetailDrawer({
     })
       .then(r => r.ok ? r.json() as Promise<{ slip_url?: string }> : Promise.reject(new Error(`HTTP ${r.status}`)))
       .then(data => { if (!cancelled) setSlipUrl(data.slip_url || null); })
-      .catch(() => { /* silently ignore — slip section just won't render */ })
+      .catch(() => { /* silently ignore */ })
       .finally(() => { if (!cancelled) setSlipLoading(false); });
     return () => { cancelled = true; };
-  }, [record.id, hasSlip, slipUrl]);
+  }, [record.id, isEnrollment, hasSlip, slipUrl]);
 
   const handleChange = async () => {
-    if (!newStatus) return;
+    if (!newStatus || isEnrollment) return;
     setLoading(true);
     setMsg(null);
     try {
@@ -469,6 +502,21 @@ function DetailDrawer({
             <DRow label="Phone">{record.phone || '—'}</DRow>
             <DRow label="Country">{record.country || '—'}</DRow>
             <DRow label="App Status"><span className="capitalize">{record.status}</span></DRow>
+            {isEnrollment && (
+              <>
+                <DRow label="Source"><span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">Enrollment Payment</span></DRow>
+                {record.migrated_from_window_id && (
+                  <DRow label="Migrated"><span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">Migrated from cohort #{record.migrated_from_window_id}</span></DRow>
+                )}
+                {record.payment_verified && (
+                  <DRow label="Verified">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700 border border-green-200">
+                      Verified{record.payment_verified_at ? ` ${new Date(record.payment_verified_at).toLocaleDateString()}` : ''}
+                    </span>
+                  </DRow>
+                )}
+              </>
+            )}
           </section>
 
           {record.admin_notes && (
@@ -478,29 +526,40 @@ function DetailDrawer({
             </section>
           )}
 
-          <section className="border rounded-xl p-4 bg-amber-50 border-amber-200">
-            <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">Update Payment Status</p>
-            {msg && (
-              <div className={`mb-3 text-xs p-2 rounded ${msg.type === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg.text}</div>
-            )}
-            <select value={newStatus} onChange={(e) => setNewStatus(e.target.value)}
-              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400">
-              <option value="">Choose new status…</option>
-              <option value="completed">✅ Completed</option>
-              <option value="confirmed">✔ Confirmed (Bank Transfer)</option>
-              <option value="pending">⏳ Pending</option>
-              <option value="pending_bank_transfer">🏦 Awaiting Bank Transfer</option>
-              <option value="failed">❌ Failed</option>
-              <option value="refunded">↩ Refunded</option>
-            </select>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-              placeholder="Optional note…"
-              className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400" />
-            <button onClick={handleChange} disabled={!newStatus || loading}
-              className="w-full py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
-              {loading ? 'Saving…' : 'Save Status Change'}
-            </button>
-          </section>
+          {isEnrollment ? (
+            <section className="border rounded-xl p-4 bg-indigo-50 border-indigo-200">
+              <p className="text-xs font-semibold text-indigo-700 uppercase tracking-wide mb-2">Enrollment Payment</p>
+              <p className="text-sm text-indigo-700">
+                This is an enrollment-level payment (e.g., pay-later, cohort migration).
+                To update the payment status, use the course enrollment management interface
+                or contact an admin with enrollment verification access.
+              </p>
+            </section>
+          ) : (
+            <section className="border rounded-xl p-4 bg-amber-50 border-amber-200">
+              <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">Update Payment Status</p>
+              {msg && (
+                <div className={`mb-3 text-xs p-2 rounded ${msg.type === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg.text}</div>
+              )}
+              <select value={newStatus} onChange={(e) => setNewStatus(e.target.value)}
+                className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400">
+                <option value="">Choose new status…</option>
+                <option value="completed">✅ Completed</option>
+                <option value="confirmed">✔ Confirmed (Bank Transfer)</option>
+                <option value="pending">⏳ Pending</option>
+                <option value="pending_bank_transfer">🏦 Awaiting Bank Transfer</option>
+                <option value="failed">❌ Failed</option>
+                <option value="refunded">↩ Refunded</option>
+              </select>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+                placeholder="Optional note…"
+                className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              <button onClick={handleChange} disabled={!newStatus || loading}
+                className="w-full py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+                {loading ? 'Saving…' : 'Save Status Change'}
+              </button>
+            </section>
+          )}
         </div>
       </div>
     </div>
@@ -576,6 +635,7 @@ export default function PaymentsDashboard({ role }: Props) {
   const { user } = useAuth();
 
   const [summary, setSummary] = useState<PaymentSummary | null>(null);
+  const [enrollmentSummary, setEnrollmentSummary] = useState<EnrollmentPaymentSummary | null>(null);
   const [records, setRecords] = useState<PaymentRecord[]>([]);
   const [totalRecords, setTotalRecords] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -596,9 +656,13 @@ export default function PaymentsDashboard({ role }: Props) {
 
   const fetchSummary = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/applications/payment-summary?${instructorParam}`, { headers: authHeaders() });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setSummary(await res.json() as PaymentSummary);
+      const [appRes, enrRes] = await Promise.all([
+        fetch(`${API_BASE}/applications/payment-summary?${instructorParam}`, { headers: authHeaders() }),
+        fetch(`${API_BASE}/applications/enrollment-payment-summary?${instructorParam}`, { headers: authHeaders() }),
+      ]);
+      if (appRes.ok) setSummary(await appRes.json() as PaymentSummary);
+      else throw new Error(`App summary HTTP ${appRes.status}`);
+      if (enrRes.ok) setEnrollmentSummary(await enrRes.json() as EnrollmentPaymentSummary);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load summary');
     }
@@ -621,13 +685,38 @@ export default function PaymentsDashboard({ role }: Props) {
   const fetchRecords = useCallback(async () => {
     setTableLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/applications?${buildParams()}`, { headers: authHeaders() });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { applications?: PaymentRecord[]; items?: PaymentRecord[]; total?: number };
-      let apps = (data.applications || data.items || []).filter((a) => a.payment_method);
-      if (tab === 'action') apps = apps.filter((a) => a.payment_status && ACTIONABLE_STATUSES.has(a.payment_status));
-      setRecords(apps);
-      setTotalRecords(data.total || apps.length);
+      // Fetch both application and enrollment payments in parallel
+      const [appRes, enrRes] = await Promise.all([
+        fetch(`${API_BASE}/applications?${buildParams()}`, { headers: authHeaders() }),
+        fetch(`${API_BASE}/applications/enrollment-payments?${buildParams()}`, { headers: authHeaders() }),
+      ]);
+
+      let merged: PaymentRecord[] = [];
+      let total = 0;
+
+      if (appRes.ok) {
+        const appData = await appRes.json() as { applications?: PaymentRecord[]; items?: PaymentRecord[]; total?: number };
+        let apps = (appData.applications || appData.items || []).filter((a) => a.payment_method);
+        merged = merged.concat(apps);
+        total = appData.total || apps.length;
+      }
+
+      if (enrRes.ok) {
+        const enrData = await enrRes.json() as { enrollment_payments?: PaymentRecord[]; total?: number };
+        const enrollments = enrData.enrollment_payments || [];
+        merged = merged.concat(enrollments);
+        total += enrData.total || enrollments.length;
+      }
+
+      // Sort by created_at descending
+      merged.sort((a, b) => new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime());
+
+      if (tab === 'action') {
+        merged = merged.filter((a) => a.payment_status && ACTIONABLE_STATUSES.has(a.payment_status));
+      }
+
+      setRecords(merged);
+      setTotalRecords(total);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load records');
     } finally { setTableLoading(false); }
@@ -698,9 +787,56 @@ export default function PaymentsDashboard({ role }: Props) {
     setTab('all'); setPage(1);
   };
 
+  // ── Merge app + enrollment course breakdowns ──
+  const mergedCourseBreakdowns = useCallback(() => {
+    const byCourse: Record<number, any> = {};
+    // Add application course data
+    (summary?.by_course || []).forEach((c) => {
+      byCourse[c.course_id] = { ...c };
+    });
+    // Add enrollment course data
+    (enrollmentSummary?.by_course || []).forEach((c) => {
+      if (byCourse[c.course_id]) {
+        byCourse[c.course_id].total += c.total;
+        byCourse[c.course_id].completed += c.completed;
+        byCourse[c.course_id].pending_bank = (byCourse[c.course_id].pending_bank || 0) + c.pending;
+        Object.entries(c.revenue).forEach(([cur, amt]) => {
+          byCourse[c.course_id].revenue[cur] = (byCourse[c.course_id].revenue[cur] || 0) + amt;
+        });
+      } else {
+        byCourse[c.course_id] = {
+          course_id: c.course_id,
+          course_title: c.course_title,
+          currency: '',
+          payment_mode: '',
+          enabled_methods: [],
+          total: c.total,
+          completed: c.completed,
+          pending_bank: c.pending,
+          failed: 0,
+          revenue: c.revenue,
+        };
+      }
+    });
+    return Object.values(byCourse);
+  }, [summary, enrollmentSummary]);
+
+  const mergedCourses = mergedCourseBreakdowns();
+
+  const combinedTotal = (summary?.total_with_payment ?? 0) + (enrollmentSummary?.total_with_payment ?? 0);
+  const combinedCompleted = (summary?.completed_count ?? 0) + (enrollmentSummary?.completed_count ?? 0);
+  const combinedRevenue: Record<string, number> = {};
+  if (summary?.revenue_by_currency) {
+    Object.entries(summary.revenue_by_currency).forEach(([cur, amt]) => { combinedRevenue[cur] = (combinedRevenue[cur] || 0) + amt; });
+  }
+  if (enrollmentSummary?.revenue_by_currency) {
+    Object.entries(enrollmentSummary.revenue_by_currency).forEach(([cur, amt]) => { combinedRevenue[cur] = (combinedRevenue[cur] || 0) + amt; });
+  }
+
   const actionableCount = (summary?.pending_bank_count ?? 0)
     + (summary?.by_status?.pending ?? 0)
-    + (summary?.by_status?.initiated ?? 0);
+    + (summary?.by_status?.initiated ?? 0)
+    + (enrollmentSummary?.pending_count ?? 0);
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-64">
@@ -733,16 +869,22 @@ export default function PaymentsDashboard({ role }: Props) {
 
       {/* ── KPI Row ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-        <KpiCard label="Total Transactions" value={summary?.total_with_payment ?? 0} icon="💳" color="bg-indigo-50 border-indigo-200 text-indigo-900" />
+        <KpiCard label="Total Transactions" value={combinedTotal} icon="💳" color="bg-indigo-50 border-indigo-200 text-indigo-900"
+          sub={`${summary?.total_with_payment ?? 0} app + ${enrollmentSummary?.total_with_payment ?? 0} enrollment`}
+        />
         <KpiCard
           label="Completed / Confirmed"
-          value={summary?.completed_count ?? 0}
+          value={combinedCompleted}
           icon="✅"
           color="bg-emerald-50 border-emerald-200 text-emerald-900"
-          sub={summary?.revenue_by_currency ? formatRevenue(summary.revenue_by_currency) : undefined}
+          sub={Object.keys(combinedRevenue).length > 0 ? formatRevenue(combinedRevenue) : undefined}
         />
-        <KpiCard label="Awaiting Bank Transfer" value={summary?.pending_bank_count ?? 0} icon="🏦" color="bg-orange-50 border-orange-200 text-orange-900" />
-        <KpiCard label="Failed Payments" value={summary?.failed_count ?? 0} icon="❌" color="bg-red-50 border-red-200 text-red-900" />
+        <KpiCard label="Pending Payments" value={enrollmentSummary?.pending_count ?? 0} icon="⏳" color="bg-orange-50 border-orange-200 text-orange-900"
+          sub={`${summary?.pending_bank_count ?? 0} awaiting bank transfer`}
+        />
+        <KpiCard label="Verified Payments" value={enrollmentSummary?.verified_count ?? 0} icon="✅" color="bg-emerald-50 border-emerald-200 text-emerald-900"
+          sub={`Enrollment-level verifications`}
+        />
       </div>
 
       {/* ── Method Revenue Cards ──────────────────────────────────────── */}
@@ -770,7 +912,7 @@ export default function PaymentsDashboard({ role }: Props) {
         {([
           { key: 'all' as Tab, label: 'All Payments' },
           { key: 'action' as Tab, label: `Needs Action${actionableCount > 0 ? ` · ${actionableCount}` : ''}` },
-          { key: 'courses' as Tab, label: `By Course${summary?.by_course?.length ? ` · ${summary.by_course.length}` : ''}` },
+          { key: 'courses' as Tab, label: `By Course${mergedCourses.length ? ` · ${mergedCourses.length}` : ''}` },
         ]).map(({ key, label }) => (
           <button key={key} onClick={() => { setTab(key); setPage(1); }}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${tab === key ? 'bg-[#162844] text-white shadow-sm' : 'text-gray-500 hover:text-gray-200'}`}>
@@ -781,9 +923,9 @@ export default function PaymentsDashboard({ role }: Props) {
 
       {/* ── By Course Tab ───────────────────────────────────────────────── */}
       {tab === 'courses' && (
-        summary?.by_course?.length ? (
+        mergedCourses.length ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {[...summary.by_course].sort((a, b) => b.total - a.total).map((c) => (
+            {[...mergedCourses].sort((a: any, b: any) => b.total - a.total).map((c: any) => (
               <CourseBreakdownCard key={c.course_id} course={c} onFilter={handleCourseFilter} />
             ))}
           </div>
@@ -820,9 +962,14 @@ export default function PaymentsDashboard({ role }: Props) {
               <option value="confirmed">Confirmed</option>
               <option value="pending_bank_transfer">Awaiting Bank Transfer</option>
               <option value="pending">Pending</option>
+              <option value="submitted">Submitted</option>
+              <option value="submitted_with_proof">Submitted (With Proof)</option>
+              <option value="pending_verification">Pending Verification</option>
               <option value="failed">Failed</option>
               <option value="refunded">Refunded</option>
               <option value="initiated">Initiated</option>
+              <option value="waived">Waived</option>
+              <option value="not_required">Not Required</option>
             </select>
             {filterCourse && (
               <span className="flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1.5 rounded-lg">

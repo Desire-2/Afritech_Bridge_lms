@@ -3,6 +3,7 @@
 Centralizes payment-related email notifications
 """
 import logging
+import os
 from datetime import datetime
 from typing import Optional, Dict
 from .payment_email_templates import (
@@ -10,7 +11,10 @@ from .payment_email_templates import (
     payment_confirmation_email,
     payment_failed_email,
     payment_reminder_email,
-    payment_refund_email
+    payment_refund_email,
+    enrollment_payment_confirmed_email,
+    enrollment_payment_waived_email,
+    enrollment_payment_failed_email,
 )
 
 # Import email service
@@ -255,6 +259,228 @@ def send_payment_refund_notification(application, course_title: str, refund_deta
         
     except Exception as e:
         logger.error(f"❌ Error sending refund notification: {str(e)}")
+        return False
+
+
+def send_enrollment_payment_notification(
+    enrollment,
+    payment_status: str,
+    notes: Optional[str] = None
+) -> bool:
+    """
+    Send email notification for enrollment-level payment status changes.
+    Called when an admin verifies/updates payment for an enrollment.
+
+    Args:
+        enrollment: Enrollment object
+        payment_status: str - New payment status ('completed', 'waived', 'failed')
+        notes: str - Optional admin notes/reason
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send enrollment payment notification")
+            return False
+
+        student = enrollment.student
+        if not student or not student.email:
+            logger.warning(f"Cannot send enrollment payment email: enrollment {enrollment.id} has no student email")
+            return False
+
+        course = enrollment.course
+        course_title = course.title if course else "Course"
+
+        # Build cohort info for email template
+        cohort_info = None
+        window = enrollment.application_window
+        if window:
+            cohort_info = {
+                'cohort_label': window.cohort_label,
+                'cohort_start_date': window.cohort_start,
+                'cohort_end_date': window.cohort_end,
+                'timezone': 'UTC',
+            }
+
+        if payment_status == 'completed':
+            # Resolve payment amount from window or course (Enrollment model has no amount column)
+            window = enrollment.application_window
+            if window:
+                amount = window.get_effective_price() or 0
+                currency = window.get_effective_currency() or 'USD'
+            elif course:
+                amount = course.price or 0
+                currency = course.currency or 'USD'
+            else:
+                amount = 0
+                currency = 'USD'
+
+            payment_details = {
+                'amount_paid': amount,
+                'currency': currency,
+                'payment_method': 'Manual Payment',
+                'payment_reference': f'ENR-{enrollment.id}',
+                'payment_date': datetime.utcnow(),
+            }
+            email_html = enrollment_payment_confirmed_email(
+                enrollment=enrollment,
+                course_title=course_title,
+                payment_details=payment_details,
+                cohort_info=cohort_info,
+            )
+            subject = f"✅ Payment Verified - Welcome to {course_title}! 🎉"
+
+        elif payment_status == 'waived':
+            waiver_details = {'reason': notes or ''} if notes else {}
+            email_html = enrollment_payment_waived_email(
+                enrollment=enrollment,
+                course_title=course_title,
+                waiver_details=waiver_details,
+                cohort_info=cohort_info,
+            )
+            subject = f"🎉 Payment Waived - Welcome to {course_title}!"
+
+        elif payment_status == 'failed':
+            failure_reason = notes or "Payment verification could not be completed. Please contact support."
+            email_html = enrollment_payment_failed_email(
+                enrollment=enrollment,
+                course_title=course_title,
+                failure_reason=failure_reason,
+                cohort_info=cohort_info,
+            )
+            subject = f"⚠️ Payment Not Approved - {course_title}"
+
+        else:
+            logger.info(f"No email template for enrollment payment status '{payment_status}' - skipping")
+            return False
+
+        success = brevo_service.send_email(
+            to_emails=[student.email],
+            subject=subject,
+            html_content=email_html
+        )
+
+        if success:
+            logger.info(f"📧 Enrollment payment '{payment_status}' email sent to {student.email} for enrollment #{enrollment.id}")
+        else:
+            logger.error(f"❌ Failed to send enrollment payment '{payment_status}' email to {student.email}")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"❌ Error sending enrollment payment notification: {str(e)}")
+        return False
+
+
+def send_enrollment_payment_admin_alert(
+    enrollment,
+    amount: float,
+    currency: str,
+    payment_method: str,
+    payment_status: str,
+) -> bool:
+    """
+    🏪 Send email alert to admins and course instructor when a student
+    submits a payment from the learning interface.
+
+    Args:
+        enrollment: Enrollment object
+        amount: float - Payment amount
+        currency: str - Currency code
+        payment_method: str - Payment method used
+        payment_status: str - New payment status ('submitted', 'submitted_with_proof')
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send enrollment payment admin alert")
+            return False
+
+        student = enrollment.student
+        if not student:
+            logger.warning(f"Cannot send admin alert: enrollment {enrollment.id} has no student")
+            return False
+
+        course = enrollment.course
+        course_title = course.title if course else "Course"
+
+        student_name = student.full_name or student.username or "Student"
+        student_email = student.email or ""
+
+        screenshot_available = payment_status == 'submitted_with_proof'
+
+        # Build the admin panel URL
+        frontend_base = os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')
+        admin_panel_url = f"{frontend_base}/admin/payments"
+
+        # Generate email HTML
+        from .payment_email_templates import enrollment_payment_admin_alert_email
+        email_html = enrollment_payment_admin_alert_email(
+            student_name=student_name,
+            student_email=student_email,
+            course_title=course_title,
+            enrollment_id=enrollment.id,
+            amount=amount,
+            currency=currency,
+            payment_method=payment_method,
+            payment_status=payment_status,
+            admin_panel_url=admin_panel_url,
+            screenshot_available=screenshot_available,
+        )
+
+        # Collect recipients: course instructor + all admin users
+        recipients = []
+
+        # Course instructor
+        if course and course.instructor and course.instructor.email:
+            recipients.append(course.instructor.email)
+
+        # All platform admins
+        try:
+            from ..models.user_models import User, Role
+            admin_role = Role.query.filter_by(name='admin').first()
+            if admin_role:
+                admins = User.query.filter_by(role_id=admin_role.id, is_active=True).all()
+                for admin in admins:
+                    if admin.email and admin.email not in recipients:
+                        recipients.append(admin.email)
+        except Exception as role_err:
+            logger.warning(f"Could not fetch admin users: {role_err}")
+
+        if not recipients:
+            logger.warning(f"No admin/instructor recipients found for enrollment payment alert #{enrollment.id}")
+            return False
+
+        method_labels = {
+            'bank_transfer': 'Bank Transfer',
+            'momo_pay_code': 'MoMo Pay Code',
+            'mobile_money': 'Mobile Money',
+            'paypal': 'PayPal',
+            'kpay': 'K-Pay',
+            'flutterwave': 'Flutterwave',
+            'stripe': 'Stripe',
+        }
+        method_label = method_labels.get(payment_method, payment_method.replace('_', ' ').title())
+        subject = f"💳 New Payment: {student_name} - {course_title} ({method_label})"
+
+        success = brevo_service.send_email(
+            to_emails=recipients,
+            subject=subject,
+            html_content=email_html,
+        )
+
+        if success:
+            logger.info(f"📧 Enrollment payment admin alert sent to {len(recipients)} recipients for enrollment #{enrollment.id}")
+        else:
+            logger.error(f"❌ Failed to send enrollment payment admin alert for enrollment #{enrollment.id}")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"❌ Error sending enrollment payment admin alert: {str(e)}")
         return False
 
 

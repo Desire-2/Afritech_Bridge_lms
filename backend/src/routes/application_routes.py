@@ -32,6 +32,7 @@ from ..utils.payment_notifications import (
     send_payment_pending_notification,
     send_payment_confirmation_notification,
     send_payment_failed_notification,
+    send_payment_refund_notification,
     get_payment_info_from_application_window,
     get_payment_info_from_course
 )
@@ -5138,6 +5139,265 @@ def get_payment_summary():
     }), 200
 
 
+# ── Enrollment-level Payment Records ──────────────────────────────────────────
+# These are payments made through the learning interface (PaymentModal on /learn/{id})
+# after a student has been approved/enrolled. They cover:
+#   - Pay-later approvals (enrollment.status = 'pending_payment')
+#   - Free to paid cohort migrations
+#   - Payment verification done directly on Enrollments
+
+
+@application_bp.route("/enrollment-payments", methods=["GET"])
+@jwt_required()
+def list_enrollment_payments():
+    """
+    List enrollment-level payment records for admin/instructor payment dashboards.
+
+    These are payments made through the PaymentModal on /learn/{id} after a
+    student has been enrolled - covering pay-later approvals, cohort migrations,
+    and manual admin payment verification.
+
+    Query params (same pattern as GET /applications):
+      - course_id       (int)    - restrict to a single course
+      - instructor_id   (int)    - restrict to instructor\'s courses
+      - search          (str)    - search student name or email
+      - payment_status  (str)    - filter by enrollment.payment_status
+      - page            (int)    - page number (default 1)
+      - per_page        (int)    - items per page (default 50)
+      - sort_by         (str)    - 'enrollment_date', 'student_name' (default 'enrollment_date')
+      - order           (str)    - 'asc' or 'desc' (default 'desc')
+    """
+    course_id = request.args.get("course_id", type=int)
+    instructor_id = request.args.get("instructor_id", type=int)
+    search_term = request.args.get("search", "").strip()
+    payment_status_filter = request.args.get("payment_status")
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    sort_by = request.args.get("sort_by", "enrollment_date")
+    order = request.args.get("order", "desc")
+
+    q = Enrollment.query.filter(
+        db.or_(
+            Enrollment.payment_status.isnot(None),
+            Enrollment.payment_verified == True,
+            Enrollment.status == 'pending_payment',
+        )
+    )
+
+    if course_id:
+        q = q.filter_by(course_id=course_id)
+
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        if instructor_course_ids:
+            q = q.filter(Enrollment.course_id.in_(instructor_course_ids))
+        else:
+            q = q.filter(Enrollment.id == -1)
+
+    if payment_status_filter:
+        q = q.filter_by(payment_status=payment_status_filter)
+
+    if search_term:
+        term = f"%{search_term}%"
+        q = q.join(User, Enrollment.student_id == User.id).filter(
+            db.or_(
+                User.first_name.ilike(term),
+                User.last_name.ilike(term),
+                User.email.ilike(term),
+                User.username.ilike(term),
+            )
+        )
+
+    if sort_by == 'student_name':
+        sort_col = User.first_name
+        q = q.join(User, Enrollment.student_id == User.id)
+    else:
+        sort_col = Enrollment.enrollment_date
+
+    if order == "asc":
+        q = q.order_by(sort_col.asc())
+    else:
+        q = q.order_by(sort_col.desc())
+
+    if not search_term and sort_by != 'student_name':
+        q = q.join(User, Enrollment.student_id == User.id)
+
+    try:
+        pagination = q.paginate(page=page, per_page=per_page, error_out=False)
+
+        records = []
+        for enrollment in pagination.items:
+            student = enrollment.student
+            if not student:
+                continue
+
+            course = enrollment.course
+            if not course:
+                continue
+
+            from ..services.waitlist_service import WaitlistService
+            cohort_payment = {}
+            try:
+                cohort_payment = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
+            except Exception:
+                pass
+
+            amount = cohort_payment.get('cohort_effective_price') or course.price or 0
+            currency = cohort_payment.get('cohort_currency') or course.currency or 'USD'
+
+            records.append({
+                'id': f"enr_{enrollment.id}",
+                'source': 'enrollment',
+                'full_name': f"{student.first_name or ''} {student.last_name or ''}".strip() or student.username,
+                'email': student.email or '',
+                'phone': '',
+                'course_id': course.id,
+                'course_title': course.title,
+                'course_price': course.price,
+                'course_currency': course.currency or 'USD',
+                'course_payment_mode': course.payment_mode or 'full',
+                'course_enabled_methods': course._get_payment_methods(),
+                'amount_paid': amount,
+                'payment_method': None,
+                'payment_status': enrollment.payment_status or 'pending',
+                'payment_reference': None,
+                'payment_currency': currency,
+                'status': enrollment.status,
+                'created_at': enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                'admin_notes': None,
+                'country': None,
+                'cohort_label': enrollment.cohort_label,
+                'cohort_effective_price': cohort_payment.get('cohort_effective_price'),
+                'cohort_scholarship_type': cohort_payment.get('cohort_scholarship_type'),
+                'cohort_scholarship_percentage': cohort_payment.get('cohort_scholarship_percentage'),
+                'cohort_enrollment_type': cohort_payment.get('cohort_enrollment_type'),
+                'payment_slip_url': None,
+                'payment_slip_filename': None,
+                'has_payment_slip': False,
+                'payment_verified': enrollment.payment_verified,
+                'payment_verified_at': enrollment.payment_verified_at.isoformat() if enrollment.payment_verified_at else None,
+                'migrated_from_window_id': enrollment.migrated_from_window_id,
+            })
+
+        return jsonify({
+            'enrollment_payments': records,
+            'total': pagination.total,
+            'pages': pagination.pages,
+            'current_page': page,
+            'per_page': per_page,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error listing enrollment payments: {str(e)}", exc_info=True)
+        return jsonify({'error': 'Failed to list enrollment payments', 'detail': str(e)}), 500
+
+
+@application_bp.route("/enrollment-payment-summary", methods=["GET"])
+@jwt_required()
+def get_enrollment_payment_summary():
+    """
+    Returns aggregated payment statistics from enrollment-level payments.
+    Complements /payment-summary which only covers application-level payments.
+
+    Query params:
+      - course_id       (int, optional)
+      - instructor_id   (int, optional)
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+
+    course_id = request.args.get("course_id", type=int)
+    instructor_id = request.args.get("instructor_id", type=int)
+
+    q = Enrollment.query.filter(
+        db.or_(
+            Enrollment.payment_status.isnot(None),
+            Enrollment.payment_verified == True,
+            Enrollment.status == 'pending_payment',
+        )
+    )
+
+    if course_id:
+        q = q.filter_by(course_id=course_id)
+
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        if instructor_course_ids:
+            q = q.filter(Enrollment.course_id.in_(instructor_course_ids))
+        else:
+            q = q.filter(Enrollment.id == -1)
+
+    all_enrollments = q.all()
+
+    total_with_payment = len(all_enrollments)
+    completed_count = sum(1 for e in all_enrollments if e.payment_status in ('completed', 'waived'))
+    pending_count = sum(1 for e in all_enrollments if e.payment_status in ('submitted', 'submitted_with_proof', 'pending', 'pending_verification'))
+    verified_count = sum(1 for e in all_enrollments if e.payment_verified)
+
+    revenue_by_currency = {}
+    for e in all_enrollments:
+        if e.payment_status in ('completed', 'waived') and e.course:
+            ccy = e.course.currency or 'USD'
+            try:
+                from ..services.waitlist_service import WaitlistService
+                cp = WaitlistService.get_enrollment_cohort_payment_info(e)
+                amt = cp.get('cohort_effective_price') or e.course.price or 0
+            except Exception:
+                amt = e.course.price or 0
+            revenue_by_currency[ccy] = revenue_by_currency.get(ccy, 0) + (amt or 0)
+
+    by_course = {}
+    for e in all_enrollments:
+        if not e.course:
+            continue
+        cid = e.course_id
+        if cid not in by_course:
+            by_course[cid] = {
+                'course_id': cid,
+                'course_title': e.course.title,
+                'total': 0,
+                'pending': 0,
+                'completed': 0,
+                'verified': 0,
+                'revenue': {},
+            }
+        b = by_course[cid]
+        b['total'] += 1
+        if e.payment_status in ('completed', 'waived'):
+            b['completed'] += 1
+            amt = 0
+            try:
+                from ..services.waitlist_service import WaitlistService
+                cp = WaitlistService.get_enrollment_cohort_payment_info(e)
+                amt = cp.get('cohort_effective_price') or e.course.price or 0
+            except Exception:
+                amt = e.course.price or 0
+            ccy = e.course.currency or 'USD'
+            b['revenue'][ccy] = b['revenue'].get(ccy, 0) + (amt or 0)
+        if e.payment_status in ('pending', None) and e.status == 'pending_payment':
+            b['pending'] += 1
+        if e.payment_verified:
+            b['verified'] += 1
+
+    return jsonify({
+        'total_with_payment': total_with_payment,
+        'completed_count': completed_count,
+        'pending_count': pending_count,
+        'verified_count': verified_count,
+        'revenue_by_currency': revenue_by_currency,
+        'by_course': list(by_course.values()),
+    }), 200
+
+
 @application_bp.route("/<int:application_id>/update-payment-status", methods=["POST"])
 @jwt_required()
 def update_payment_status_endpoint(application_id):
@@ -5242,6 +5502,32 @@ def update_payment_status_endpoint(application_id):
                     logger.info(f"✅ Payment failure email sent to {application.email}")
                 else:
                     logger.warning(f"⚠️ Failed to send payment failure email")
+            
+            # Payment refunded - send refund notification
+            elif new_status == "refunded":
+                logger.info(f"📧 Sending refund notification email for application #{application_id}")
+                
+
+                
+                refund_details = {
+                    'refund_amount': application.amount_paid or 0,
+                    'currency': application.payment_currency or 'USD',
+                    'refund_reference': application.payment_reference or f'REF-{application.id}',
+                    'refund_reason': notes or 'As requested',
+                    'refund_date': datetime.utcnow(),
+                    'processing_days': '5-10 business days',
+                }
+                
+                email_sent = send_payment_refund_notification(
+                    application=application,
+                    course_title=course.title,
+                    refund_details=refund_details
+                )
+                
+                if email_sent:
+                    logger.info(f"✅ Refund email sent to {application.email}")
+                else:
+                    logger.warning(f"⚠️ Failed to send refund email")
                     
     except Exception as email_error:
         # Log but don't fail the status update

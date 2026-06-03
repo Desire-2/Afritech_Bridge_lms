@@ -776,6 +776,523 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
     """
 
 
+def enrollment_payment_confirmed_email(enrollment, course_title, payment_details, cohort_info=None, unsubscribe_token=None):
+    """
+    ✅ Email sent when enrollment-level payment is confirmed by admin
+
+    Args:
+        enrollment: Enrollment object
+        course_title: str - Course title
+        payment_details: dict with confirmation details
+            - amount_paid: float
+            - currency: str
+            - payment_method: str
+            - payment_reference: str
+            - payment_date: datetime
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
+    """
+    amount = payment_details.get('amount_paid', 0)
+    currency = payment_details.get('currency', 'USD')
+    method = payment_details.get('payment_method', 'Manual Payment')
+    reference = payment_details.get('payment_reference', 'N/A')
+    payment_date = payment_details.get('payment_date', datetime.utcnow())
+
+    if isinstance(payment_date, str):
+        date_str = payment_date
+    else:
+        date_str = payment_date.strftime('%b %d, %Y • %I:%M %p')
+
+    student_name = enrollment.student.full_name or enrollment.student.username if enrollment.student else "Student"
+
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
+
+    return f"""
+    {get_email_header()}
+
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Success Icon & Title -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); width: 120px; height: 120px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 15px 40px rgba(16, 185, 129, 0.4);">
+                        <table width="120" height="120" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 60px;">✅</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #10b981; margin: 0; font-size: 36px; font-weight: 700; letter-spacing: -0.5px;">
+                        Payment Verified! 🎉
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        Course Access Activated
+                    </p>
+                </div>
+
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{student_name}</strong> 👋
+                </p>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    Great news! Your payment for <strong style="color: #10b981; font-size: 16px;">{course_title}</strong> has been verified by an administrator! 🚀
+                </p>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    Your course access is now <strong style="color: #10b981;">active</strong>. You can start learning immediately.
+                </p>
+
+                {cohort_card}
+
+                <!-- Payment Receipt Card -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #10b981;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 22px; font-weight: 700;">
+                        <span style="margin-right: 8px;">🧾</span> Payment Receipt
+                    </h3>
+                    <div style="background-color: #1a252f; border-radius: 12px; padding: 25px;">
+                        <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">📚 Course</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; font-weight: 600; text-align: right;">{course_title}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">💳 Method</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; text-align: right;">{method}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">🔖 Reference</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 14px; text-align: right; font-family: 'Courier New', monospace;">{reference}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">📅 Date</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 14px; text-align: right;">{date_str}</td>
+                            </tr>
+                            <tr style="border-top: 2px solid #10b981;">
+                                <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Paid</td>
+                                <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">{currency} {int(amount):,}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Next Steps -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">🎯 What's Next?</h3>
+                    <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">1️⃣ Access Your Course</p>
+                        <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px;">Log in to your student dashboard and start exploring course modules.</p>
+                    </div>
+                    <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">2️⃣ Begin Learning</p>
+                        <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px;">Start with Module 1 and progress through the course at your own pace.</p>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin: 40px 0;">
+                    <a href="{_frontend_url('student/mylearning')}"
+                       style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);">
+                        🚀 Go to My Learning
+                    </a>
+                </div>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
+                    Welcome aboard! We're excited to support you on your learning journey! 🎓✨
+                </p>
+                <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
+                    Best regards,<br><strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
+                </p>
+            </div>
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
+    """
+
+
+def enrollment_payment_waived_email(enrollment, course_title, waiver_details=None, cohort_info=None, unsubscribe_token=None):
+    """
+    ✅ Email sent when enrollment payment is waived by admin
+
+    Args:
+        enrollment: Enrollment object
+        course_title: str - Course title
+        waiver_details: dict with waiver info (optional)
+            - reason: str
+            - waived_by: str
+            - date: datetime
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
+    """
+    student_name = enrollment.student.full_name or enrollment.student.username if enrollment.student else "Student"
+    reason = waiver_details.get('reason', '') if waiver_details else ''
+
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
+
+    return f"""
+    {get_email_header()}
+
+            <div class="email-content" style="padding: 50px 35px;">
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(59, 130, 246, 0.4);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">🎉</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #3b82f6; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">Payment Waived! 🎉</h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">Course Access Activated</p>
+                </div>
+
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{student_name}</strong> 👋
+                </p>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    Great news! The payment requirement for <strong style="color: #3b82f6; font-size: 16px;">{course_title}</strong> has been waived! 🚀
+                </p>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    Your course access is now <strong style="color: #3b82f6;">active</strong>. You can start learning immediately.
+                </p>
+
+                {cohort_card}
+
+                {"""<div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 30px 0;">
+                    <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">📝 Waiver Reason</p>
+                    <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 14px;">{reason}</p>
+                </div>""" if reason else ""}
+
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">🎯 What's Next?</h3>
+                    <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">1️⃣ Access Your Course</p>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 28px; font-size: 14px;">Log in and start exploring course modules.</p>
+                    </div>
+                    <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">2️⃣ Begin Learning</p>
+                        <p style="color: #bfdbfe; margin: 8px 0 0 28px; font-size: 14px;">Progress through the course at your own pace.</p>
+                    </div>
+                </div>
+
+                <div style="text-align: center; margin: 40px 0;">
+                    <a href="{_frontend_url('student/mylearning')}"
+                       style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);">
+                        🚀 Go to My Learning
+                    </a>
+                </div>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
+                    Welcome aboard! 🎓✨
+                </p>
+                <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
+                    Best regards,<br><strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
+                </p>
+            </div>
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
+    """
+
+
+def enrollment_payment_failed_email(enrollment, course_title, failure_reason=None, cohort_info=None, unsubscribe_token=None):
+    """
+    ❌ Email sent when enrollment payment verification fails
+
+    Args:
+        enrollment: Enrollment object
+        course_title: str - Course title
+        failure_reason: str - Reason for failure (optional)
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
+    """
+    student_name = enrollment.student.full_name or enrollment.student.username if enrollment.student else "Student"
+
+    reason_section = ""
+    if failure_reason:
+        reason_section = f'''
+        <div style="background-color: #7f1d1d; border-left: 4px solid #ef4444; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">❗ Reason</p>
+            <p style="color: #fecaca; margin: 8px 0 0 0; font-size: 14px;">{failure_reason}</p>
+        </div>'''
+
+    return f"""
+    {get_email_header()}
+
+            <div class="email-content" style="padding: 50px 35px;">
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(239, 68, 68, 0.4);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">⚠️</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #ef4444; margin: 0; font-size: 32px; font-weight: 700;">Payment Not Approved</h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">Your payment verification was not successful</p>
+                </div>
+
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{student_name}</strong> 👋
+                </p>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    We wanted to let you know that your payment verification for <strong style="color: #ef4444; font-size: 16px;">{course_title}</strong> could not be approved.
+                </p>
+
+                {reason_section}
+
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">💡 Next Steps</h3>
+                    <div style="background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #60a5fa; margin: 0; font-size: 14px; font-weight: 600;">1. Review the reason above</p>
+                        <p style="color: #d1d5db; margin: 5px 0 0 0; font-size: 13px;">Understand why the payment could not be verified.</p>
+                    </div>
+                    <div style="background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #60a5fa; margin: 0; font-size: 14px; font-weight: 600;">2. Submit a new payment proof</p>
+                        <p style="color: #d1d5db; margin: 5px 0 0 0; font-size: 13px;">Upload a clear screenshot or receipt of your payment.</p>
+                    </div>
+                    <div style="background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                        <p style="color: #60a5fa; margin: 0; font-size: 14px; font-weight: 600;">3. Contact support if needed</p>
+                        <p style="color: #d1d5db; margin: 5px 0 0 0; font-size: 13px;">Reach out to us for assistance.</p>
+                    </div>
+                </div>
+
+                <div style="background-color: #2c3e50; border-radius: 12px; padding: 25px; margin: 30px 0; text-align: center;">
+                    <p style="color: #ffffff; font-size: 16px; font-weight: 600; margin: 0 0 10px 0;">Need Help? 🤝</p>
+                    <p style="color: #bdc3c7; font-size: 14px;">
+                        Contact us at <a href="mailto:afritech.bridge@yahoo.com" style="color: #f59e0b; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
+                    </p>
+                </div>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
+                    We're here to help you resolve this. 💪
+                </p>
+                <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
+                    Best regards,<br><strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
+                </p>
+            </div>
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
+    """
+
+
+def enrollment_payment_admin_alert_email(
+    student_name,
+    student_email,
+    course_title,
+    enrollment_id,
+    amount,
+    currency,
+    payment_method,
+    payment_status,
+    admin_panel_url=None,
+    screenshot_available=False,
+):
+    """
+    🏪 Email sent to admin when a student submits a payment from the learning interface.
+
+    Args:
+        student_name: str - Student's name
+        student_email: str - Student's email address
+        course_title: str - Course title
+        enrollment_id: int - Enrollment ID
+        amount: float - Payment amount
+        currency: str - Currency code (USD, RWF, etc.)
+        payment_method: str - Payment method used (bank_transfer, momo_pay_code, etc.)
+        payment_status: str - New payment status (submitted, submitted_with_proof)
+        admin_panel_url: str - URL to admin payments panel
+        screenshot_available: bool - Whether a screenshot was uploaded
+    """
+    method_labels = {
+        'bank_transfer': 'Bank Transfer',
+        'momo_pay_code': 'MoMo Pay Code (USSD)',
+        'mobile_money': 'Mobile Money',
+        'paypal': 'PayPal',
+        'kpay': 'K-Pay',
+        'flutterwave': 'Flutterwave',
+        'stripe': 'Stripe',
+    }
+    method_label = method_labels.get(payment_method, payment_method.replace('_', ' ').title())
+    status_label = 'With Proof (Screenshot)' if screenshot_available else 'Submitted'
+
+    review_url = admin_panel_url or _frontend_url('admin/payments')
+
+    screenshot_badge = ""
+    if screenshot_available:
+        screenshot_badge = '''
+        <div style="margin-top: 15px; background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 12px 20px;">
+            <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                    <td style="vertical-align: middle; padding-right: 10px;">
+                        <span style="font-size: 24px;">📎</span>
+                    </td>
+                    <td style="vertical-align: middle;">
+                        <p style="color: #60a5fa; margin: 0; font-size: 14px;">
+                            <strong>Payment screenshot uploaded</strong> — view in admin panel
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </div>'''
+
+    return f"""
+    {get_email_header()}
+
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Alert Header -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(245, 158, 11, 0.4);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">🏦</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #f59e0b; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
+                        New Payment Submission
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        A student has submitted a payment — action required
+                    </p>
+                </div>
+
+                <!-- Greeting -->
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi Admin 👋
+                </p>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    A payment has been submitted by <strong style="color: #ffffff;">{student_name}</strong> for <strong style="color: #f59e0b;">{course_title}</strong>.
+                    Please review and verify the payment in the admin panel.
+                </p>
+
+                <!-- Payment Details Card -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #f59e0b;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">
+                        <span style="margin-right: 8px;">📋</span> Payment Details
+                    </h3>
+
+                    <div style="background-color: #1a252f; border-radius: 12px; padding: 25px;">
+                        <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 10px;">
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">
+                                    <span style="margin-right: 8px;">👤</span> Student
+                                </td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; font-weight: 600; text-align: right;">
+                                    {student_name}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">
+                                    <span style="margin-right: 8px;">📧</span> Email
+                                </td>
+                                <td style="padding: 10px 0; color: #60a5fa; font-size: 15px; text-align: right;">
+                                    {student_email}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">
+                                    <span style="margin-right: 8px;">📚</span> Course
+                                </td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; font-weight: 600; text-align: right;">
+                                    {course_title}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">
+                                    <span style="margin-right: 8px;">🆔</span> Enrollment ID
+                                </td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 14px; text-align: right; font-family: 'Courier New', monospace;">
+                                    #{enrollment_id}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">
+                                    <span style="margin-right: 8px;">💳</span> Payment Method
+                                </td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; text-align: right;">
+                                    {method_label}
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">
+                                    <span style="margin-right: 8px;">📊</span> Status
+                                </td>
+                                <td style="padding: 10px 0; text-align: right;">
+                                    <span style="background: #3b82f6; color: #ffffff; padding: 4px 14px; border-radius: 12px; font-size: 13px; font-weight: 700;">
+                                        {status_label}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr style="border-top: 2px solid #f59e0b;">
+                                <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">
+                                    <span style="margin-right: 8px;">💵</span> Amount
+                                </td>
+                                <td style="padding: 15px 0; color: #f59e0b; font-size: 24px; font-weight: 700; text-align: right;">
+                                    {currency} {int(amount):,}
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    {screenshot_badge}
+                </div>
+
+                <!-- Action Required -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; border: 2px solid #3b82f6;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 18px; font-weight: 700;">
+                        <span style="margin-right: 8px;">🎯</span> Action Required
+                    </h3>
+                    <ol style="color: #d1d5db; font-size: 15px; line-height: 2; margin: 0; padding-left: 25px;">
+                        <li>Log into the <strong style="color: #ffffff;">admin payments panel</strong></li>
+                        <li>Review the payment details submitted by the student</li>
+                        <li>Verify the payment method and amount match</li>
+                        <li>Confirm or reject the payment</li>
+                    </ol>
+
+                    <div style="text-align: center; margin: 25px 0 10px 0;">
+                        <a href="{review_url}" 
+                           style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 20px rgba(245, 158, 11, 0.3);">
+                            🚀 Open Admin Payments Panel
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Quick Summary -->
+                <div style="background-color: #2c3e50; border-radius: 12px; padding: 20px; margin: 30px 0;">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                            <td style="vertical-align: top; padding-right: 12px;">
+                                <span style="font-size: 24px;">ℹ️</span>
+                            </td>
+                            <td style="vertical-align: top;">
+                                <p style="color: #bdc3c7; margin: 0; font-size: 13px; line-height: 1.7;">
+                                    This is an automatic notification sent when a student initiates or submits
+                                    a payment from the learning interface. The payment will not be active until
+                                    an admin reviews and confirms it.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
+                    Best regards,<br>
+                    <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
+                </p>
+            </div>
+
+    {get_email_footer(email_category='system')}
+    """
+
+
 def payment_refund_email(application, course_title, refund_details, cohort_info=None, unsubscribe_token=None):
     """
     💸 Email sent when a payment is refunded

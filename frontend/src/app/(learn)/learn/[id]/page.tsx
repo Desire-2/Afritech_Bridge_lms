@@ -11,7 +11,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw, CreditCard } from 'lucide-react';
+import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw, CreditCard, Clock } from 'lucide-react';
 import Link from 'next/link';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -96,6 +96,7 @@ const LearningPage = () => {
   // Cohort-level payment info from 402 response
   const [paymentInfo, setPaymentInfo] = useState<Record<string, any> | null>(null);
   const [isPaymentRequired, setIsPaymentRequired] = useState(false);
+  const [isPaymentPending, setIsPaymentPending] = useState(false);
   const [currentLesson, setCurrentLesson] = useState<any>(null);
   const [currentModuleId, setCurrentModuleId] = useState<number | null>(null);
   
@@ -147,15 +148,29 @@ const LearningPage = () => {
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []); // Only run on mount
 
-  // Update isPaymentRequired state when error changes
+  // Update isPaymentRequired and isPaymentPending state when error or paymentInfo changes
   useEffect(() => {
     if (error) {
-      const paymentRequired = error.toLowerCase().includes('payment required') || error.toLowerCase().includes('payment must be');
+      // Check both the error message AND the explicit payment_required field
+      // from the backend's cohort payment info for robustness.
+      const paymentRequired =
+        error.toLowerCase().includes('payment required') ||
+        error.toLowerCase().includes('payment must be') ||
+        (paymentInfo?.payment_required === true);
       setIsPaymentRequired(paymentRequired);
+
+      // Check if the student has already submitted payment but it's pending admin verification
+      // payment_status from the backend can be: 'pending' (initiated), 'pending_verification' (screenshot uploaded)
+      const paymentStatus = paymentInfo?.payment_status;
+      const hasPendingPayment =
+        paymentStatus === 'pending' ||
+        paymentStatus === 'pending_verification';
+      setIsPaymentPending(hasPendingPayment);
     } else {
       setIsPaymentRequired(false);
+      setIsPaymentPending(false);
     }
-  }, [error]);
+  }, [error, paymentInfo]);
   
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -2362,33 +2377,45 @@ const LearningPage = () => {
     let showRetry = false;
     
     if (isPaymentRequired) {
-      errorIcon = <CreditCard className="h-12 w-12 text-amber-400 mx-auto mb-4" />;
-
-      // Use cohort-level info for a precise title/message
       const pi = paymentInfo;
-      const isScholarship = pi?.cohort_enrollment_type === 'scholarship' && pi?.cohort_scholarship_type === 'partial';
-      errorTitle = isScholarship ? "Partial Scholarship — Payment Required" : "Tuition Payment Required";
 
-      if (pi?.cohort_effective_price != null && pi.cohort_effective_price > 0) {
-        const cur = pi.cohort_currency || 'USD';
-        const price = Number(pi.cohort_effective_price).toLocaleString();
-        errorMessage = `Amount due: ${cur} ${price}`;
-        if (pi.cohort_scholarship_percentage) {
-          errorMessage += ` (${pi.cohort_scholarship_percentage}% scholarship applied)`;
-        }
+      // ── Payment Submitted, Pending Admin Approval ──
+      if (isPaymentPending) {
+        errorIcon = <Clock className="h-12 w-12 text-blue-400 mx-auto mb-4" />;
+        errorTitle = "Payment Submitted — Pending Approval";
+        errorMessage = "Your payment has been submitted and is awaiting verification by an administrator.";
+        errorDescription = "This usually takes 1-2 business days. You'll receive an email once your payment is verified. If you have questions, please contact support.";
+        borderColor = "border-blue-900/50";
+        titleColor = "text-blue-300";
+        messageColor = "text-blue-200";
       } else {
-        errorMessage = "Your enrollment requires payment before you can access this course.";
-      }
+        // ── No Payment Yet — Show Payment Card ──
+        errorIcon = <CreditCard className="h-12 w-12 text-amber-400 mx-auto mb-4" />;
 
-      if (pi?.cohort_installment_enabled && pi?.cohort_installment_count && pi.cohort_installment_count > 1) {
-        const dueNow = pi.cohort_amount_due != null ? ` — ${pi.cohort_currency || 'USD'} ${Number(pi.cohort_amount_due).toLocaleString()} due now` : '';
-        errorDescription = `Installment plan available: ${pi.cohort_installment_count} payments${dueNow}. `;
-      }
-      errorDescription += "Please complete your payment to unlock the course content. If you've already paid, contact support so an admin can verify your payment.";
+        const isScholarship = pi?.cohort_enrollment_type === 'scholarship' && pi?.cohort_scholarship_type === 'partial';
+        errorTitle = isScholarship ? "Partial Scholarship — Payment Required" : "Tuition Payment Required";
 
-      borderColor = "border-amber-900/50";
-      titleColor = "text-amber-300";
-      messageColor = "text-amber-200";
+        if (pi?.cohort_effective_price != null && pi.cohort_effective_price > 0) {
+          const cur = pi.cohort_currency || 'USD';
+          const price = Number(pi.cohort_effective_price).toLocaleString();
+          errorMessage = `Amount due: ${cur} ${price}`;
+          if (pi.cohort_scholarship_percentage) {
+            errorMessage += ` (${pi.cohort_scholarship_percentage}% scholarship applied)`;
+          }
+        } else {
+          errorMessage = "Your enrollment requires payment before you can access this course.";
+        }
+
+        if (pi?.cohort_installment_enabled && pi?.cohort_installment_count && pi.cohort_installment_count > 1) {
+          const dueNow = pi.cohort_amount_due != null ? ` — ${pi.cohort_currency || 'USD'} ${Number(pi.cohort_amount_due).toLocaleString()} due now` : '';
+          errorDescription = `Installment plan available: ${pi.cohort_installment_count} payments${dueNow}. `;
+        }
+        errorDescription += "Please complete your payment to unlock the course content.";
+
+        borderColor = "border-amber-900/50";
+        titleColor = "text-amber-300";
+        messageColor = "text-amber-200";
+      }
     } else if (isNetworkError) {
       errorIcon = <Wifi className="h-12 w-12 text-orange-400 mx-auto mb-4" />;
       errorTitle = "Connection Issue";
@@ -2444,18 +2471,32 @@ const LearningPage = () => {
             )}
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               {isPaymentRequired ? (
-                <>
-                  <Button onClick={() => setPaymentModalOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white font-semibold">
-                    <CreditCard className="h-4 w-4 mr-2" />
-                    Pay Now
-                  </Button>
-                  <Button asChild variant="outline" className="border-amber-600 text-amber-300 hover:bg-amber-900/30">
-                    <Link href="/student/mylearning">My Learning</Link>
-                  </Button>
-                  <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
-                    <Link href="/student/dashboard">Dashboard</Link>
-                  </Button>
-                </>
+                isPaymentPending ? (
+                  <>
+                    <Button asChild className="bg-blue-600 hover:bg-blue-700 text-white font-semibold">
+                      <Link href="/student/mylearning">My Learning</Link>
+                    </Button>
+                    <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                      <Link href="/student/dashboard">Dashboard</Link>
+                    </Button>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Questions? <Link href="/contact" className="text-blue-400 hover:underline">Contact Support</Link>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Button onClick={() => setPaymentModalOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white font-semibold">
+                      <CreditCard className="h-4 w-4 mr-2" />
+                      Pay Now
+                    </Button>
+                    <Button asChild variant="outline" className="border-amber-600 text-amber-300 hover:bg-amber-900/30">
+                      <Link href="/student/mylearning">My Learning</Link>
+                    </Button>
+                    <Button asChild variant="outline" className="border-gray-600 text-gray-300 hover:bg-gray-700">
+                      <Link href="/student/dashboard">Dashboard</Link>
+                    </Button>
+                  </>
+                )
               ) : isNotEnrolled ? (
                 <>
                   <Button asChild className="bg-green-600 hover:bg-green-700">
@@ -2491,8 +2532,8 @@ const LearningPage = () => {
           </CardContent>
         </Card>
 
-        {/* Payment Modal for Payment Required Access */}
-        {isPaymentRequired && (() => {
+        {/* Payment Modal for Payment Required Access (only show when not pending payment) */}
+        {isPaymentRequired && !isPaymentPending && (() => {
           // Get effective enabled payment methods from course settings (same logic as application form)
           const effectivePaymentMethods: string[] =
             (paymentInfo?.cohort_payment_methods && paymentInfo.cohort_payment_methods.length > 0)
@@ -2506,7 +2547,7 @@ const LearningPage = () => {
               open={paymentModalOpen}
               onOpenChange={setPaymentModalOpen}
               courseId={courseId}
-              courseName={courseData?.course?.title || 'Course'}
+              courseName={paymentInfo?.course_title || courseData?.course?.title || 'Course'}
               amount={paymentInfo?.cohort_effective_price || 0}
               currency={paymentInfo?.cohort_currency || 'USD'}
               enrollmentId={paymentInfo?.enrollment_id || 0}

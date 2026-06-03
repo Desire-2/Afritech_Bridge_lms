@@ -275,15 +275,33 @@ def verify_enrollment_payment(enrollment_id):
     if not payment_status or payment_status not in ('completed', 'waived', 'pending', 'failed'):
         return jsonify({"error": "payment_status must be one of: completed, waived, pending, failed"}), 400
 
+    notes = data.get("notes")
+
     success, message, result = WaitlistService.verify_enrollment_payment(
         enrollment_id=enrollment_id,
         admin_id=user_id,
         payment_status=payment_status,
-        notes=data.get("notes")
+        notes=notes
     )
 
     if not success:
         return jsonify({"error": message}), 400
+
+    # ──── Send email notification for enrollment payment status change ────
+    try:
+        from ..utils.payment_notifications import send_enrollment_payment_notification
+        email_sent = send_enrollment_payment_notification(
+            enrollment=Enrollment.query.get(enrollment_id),
+            payment_status=payment_status,
+            notes=notes
+        )
+        if email_sent:
+            logger.info(f"✅ Payment notification email sent for enrollment #{enrollment_id} (status={payment_status})")
+        else:
+            logger.warning(f"⚠️ Failed to send payment notification for enrollment #{enrollment_id} (status={payment_status})")
+    except Exception as email_error:
+        logger.error(f"❌ Error sending enrollment payment notification: {str(email_error)}")
+    # ────────────────────────────────────────────────────────────────────────
 
     return jsonify({"success": True, "message": message, "data": result}), 200
 

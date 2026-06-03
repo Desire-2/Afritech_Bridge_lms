@@ -1836,6 +1836,129 @@ def get_enrollment_detail(enrollment_id):
     }), 200
 
 
+@enrollment_bp.route("/<int:enrollment_id>/upload-payment-slip", methods=["POST"])
+@jwt_required()
+def upload_enrollment_payment_slip(enrollment_id):
+    """
+    Upload a payment slip / screenshot for an enrollment.
+    Used for manual payment methods (bank transfer, momo_pay_code).
+
+    Accepts multipart/form-data with:
+      file : file – image file (jpg/png/webp, max 5MB)
+
+    Response:
+      {
+        "success": true,
+        "message": "Payment slip uploaded. Payment is pending admin verification.",
+        "payment_status": "pending_verification"
+      }
+    """
+    from werkzeug.utils import secure_filename
+    import mimetypes
+    import uuid
+
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+
+    student = User.query.get(current_user_id)
+    if not student:
+        return jsonify({"error": "User not found"}), 404
+
+    enrollment = Enrollment.query.get(enrollment_id)
+    if not enrollment:
+        return jsonify({"error": "Enrollment not found"}), 404
+
+    # Verify student owns this enrollment
+    if enrollment.student_id != current_user_id:
+        user = User.query.get(current_user_id)
+        if not user or user.role.name != 'admin':
+            return jsonify({"error": "Unauthorized access to this enrollment"}), 403
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded. Please attach a payment slip."}), 400
+
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({"error": "Empty file"}), 400
+
+    # Validate file type
+    allowed_types = {'image/jpeg', 'image/png', 'image/webp'}
+    file_type = mimetypes.guess_type(file.filename)[0] or ''
+    if file_type not in allowed_types:
+        return jsonify({
+            "error": "Invalid file type. Only JPEG, PNG, and WebP images are allowed."
+        }), 400
+
+    # Validate file size (max 5MB)
+    file.seek(0, 2)
+    file_size = file.tell()
+    file.seek(0)
+    max_size = 5 * 1024 * 1024
+    if file_size > max_size:
+        return jsonify({
+            "error": f"File too large. Maximum size is 5MB, got {file_size / 1024 / 1024:.1f}MB"
+        }), 400
+
+    try:
+        # Create uploads directory if needed
+        upload_dir = os.path.join(current_app.root_path, '..', 'uploads', 'payment_screenshots')
+        os.makedirs(upload_dir, exist_ok=True)
+
+        # Generate unique filename
+        file_ext = os.path.splitext(secure_filename(file.filename))[1]
+        unique_filename = f"enr_{enrollment_id}_{uuid.uuid4().hex[:8]}{file_ext}"
+        file_path = os.path.join(upload_dir, unique_filename)
+
+        # Save file
+        file.save(file_path)
+
+        # Update enrollment payment status
+        enrollment.payment_status = 'submitted_with_proof'
+        db.session.commit()
+
+        # Notify admins about the new payment submission
+        try:
+            from ..utils.payment_notifications import send_enrollment_payment_admin_alert
+
+            # Resolve amount from course/window
+            slip_course = enrollment.course
+            slip_window = enrollment.application_window
+            if slip_window and slip_window.get_effective_price():
+                slip_amount = slip_window.get_effective_price()
+                slip_currency = slip_window.get_effective_currency() or 'RWF'
+            elif slip_course and slip_course.price:
+                slip_amount = slip_course.price
+                slip_currency = slip_course.currency or 'RWF'
+            else:
+                slip_amount = 0
+                slip_currency = 'RWF'
+
+            send_enrollment_payment_admin_alert(
+                enrollment=enrollment,
+                amount=slip_amount,
+                currency=slip_currency,
+                payment_method='payment_screenshot',
+                payment_status='submitted_with_proof',
+            )
+        except Exception as notify_err:
+            logger.warning(f"Failed to send admin alert for enrollment payment slip: {notify_err}")
+
+        logger.info(f"Payment slip uploaded for enrollment {enrollment_id}: {unique_filename}")
+
+        return jsonify({
+            "success": True,
+            "message": "Payment slip uploaded. Your payment is pending admin verification.",
+            "payment_status": "submitted_with_proof",
+            "filename": unique_filename
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error uploading payment slip for enrollment {enrollment_id}: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to upload payment slip"}), 500
+
+
 @enrollment_bp.route("/<int:enrollment_id>/initiate-payment", methods=["POST"])
 @jwt_required()
 def initiate_enrollment_payment(enrollment_id):
@@ -1929,11 +2052,29 @@ def initiate_enrollment_payment(enrollment_id):
             info = get_bank_transfer_info(course)
             unique_ref = f"ENR-{enrollment_id}-{uuid.uuid4().hex[:8].upper()}"
             
+            # Mark payment as pending — student will upload screenshot for admin verification
+            enrollment.payment_status = 'submitted'
+            enrollment.payment_verified = False
+            db.session.commit()
+
+            # Notify admins about the new payment submission
+            try:
+                from ..utils.payment_notifications import send_enrollment_payment_admin_alert
+                send_enrollment_payment_admin_alert(
+                    enrollment=enrollment,
+                    amount=amount,
+                    currency=currency,
+                    payment_method='bank_transfer',
+                    payment_status='submitted',
+                )
+            except Exception as notify_err:
+                logger.warning(f"Failed to send admin alert for bank transfer payment: {notify_err}")
+
             logger.info(f"initiate-enrollment-payment bank_transfer: ref={unique_ref}")
             
             return jsonify({
                 "payment_method": "bank_transfer",
-                "status": "pending",
+                "status": "submitted",
                 "message": info["message"],
                 "bank_details": info["bank_details"],
                 "reference": unique_ref,
@@ -1963,6 +2104,24 @@ def initiate_enrollment_payment(enrollment_id):
             ussd_code = course.momo_ussd_code
             recipient_name = getattr(course, 'momo_recipient_name', None) or "MTN MoMo"
             
+            # Mark payment as submitted — student will upload screenshot for admin verification
+            enrollment.payment_status = 'submitted'
+            enrollment.payment_verified = False
+            db.session.commit()
+
+            # Notify admins about the new payment submission
+            try:
+                from ..utils.payment_notifications import send_enrollment_payment_admin_alert
+                send_enrollment_payment_admin_alert(
+                    enrollment=enrollment,
+                    amount=amount,
+                    currency=currency,
+                    payment_method='momo_pay_code',
+                    payment_status='submitted',
+                )
+            except Exception as notify_err:
+                logger.warning(f"Failed to send admin alert for MoMo payment: {notify_err}")
+
             logger.info(f"initiate-enrollment-payment momo_pay_code: ussd_code={ussd_code}")
             
             return jsonify({

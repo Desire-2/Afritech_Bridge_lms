@@ -327,12 +327,15 @@ class WaitlistService:
                 "access_allowed": True,
             }
 
+        # Only admin-verified payments grant access
+        access_allowed = enrollment.payment_verified
+
         return {
             "enrollment_id": enrollment.id,
             "requires_payment": True,
             "payment_status": enrollment.payment_status or "pending",
             "payment_verified": enrollment.payment_verified,
-            "access_allowed": enrollment.payment_verified or enrollment.status == 'active' and enrollment.payment_status in ('completed', 'waived'),
+            "access_allowed": access_allowed,
             "migrated_from_window_id": enrollment.migrated_from_window_id,
         }
 
@@ -421,18 +424,17 @@ class WaitlistService:
                 return True, "Free enrollment - access granted"
             return False, f"Enrollment status: {enrollment.status}"
 
-        # Paid cohort — require payment verification
+        # Paid cohort — require payment verification (admin must approve)
         if enrollment.payment_verified:
             if enrollment.status in ('active', 'completed'):
                 return True, "Payment verified - access granted"
             return False, f"Enrollment status: {enrollment.status}"
 
-        if enrollment.payment_status in ('completed', 'waived'):
-            # Payment completed but not yet verified by admin — still allow
-            return True, "Payment completed (pending admin verification)"
-
-        # Payment not completed + not verified = BLOCK ACCESS
-        return False, "Payment required - access blocked until payment is verified"
+        # NOTE: payment_status is NOT sufficient on its own.
+        # Only payment_verified=True (set by admin via verify_enrollment_payment)
+        # grants access. A student-initiated 'pending' or 'pending_verification'
+        # status means the payment has NOT yet been verified by an admin.
+        return False, "Payment required - access blocked until payment is verified by an administrator"
 
     @staticmethod
     def _resolve_enrollment_window(enrollment: Enrollment) -> Optional[ApplicationWindow]:
@@ -553,8 +555,7 @@ class WaitlistService:
             # Payment booleans
             'payment_status': enrollment.payment_status,
             'payment_verified': enrollment.payment_verified,
-            'payment_required': requires_payment and not enrollment.payment_verified
-                                and enrollment.payment_status not in ('completed', 'waived'),
+            'payment_required': requires_payment and not enrollment.payment_verified,
             'access_allowed': access_allowed,
             'access_reason': access_reason,
         }
@@ -856,8 +857,13 @@ class WaitlistService:
                         enrollment.payment_verified_at = None
 
                     # Do not change progress field — preserve it
-                    # Keep status as 'active' in new cohort
-                    enrollment.status = 'active'
+                    # If new cohort requires payment, set pending_payment so
+                    # the student must pay before accessing course content.
+                    # Otherwise (free / full-scholarship cohort), activate immediately.
+                    if not effective_price or effective_price <= 0:
+                        enrollment.status = 'active'
+                    else:
+                        enrollment.status = 'pending_payment'
 
                     db.session.add(enrollment)
                     migrated_enrollments.append(enrollment)
