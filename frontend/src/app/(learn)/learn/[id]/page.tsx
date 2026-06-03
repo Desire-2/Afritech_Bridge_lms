@@ -160,11 +160,14 @@ const LearningPage = () => {
       setIsPaymentRequired(paymentRequired);
 
       // Check if the student has already submitted payment but it's pending admin verification
-      // payment_status from the backend can be: 'pending' (initiated), 'pending_verification' (screenshot uploaded)
+      // payment_status 'submitted' = bank_transfer/momo_pay_code initiated,
+      // 'submitted_with_proof' = screenshot uploaded, 'pending_verification' = legacy screenshot
+      // Note: 'pending' alone is NOT included because it's the default for new unpaid enrollments
       const paymentStatus = paymentInfo?.payment_status;
       const hasPendingPayment =
-        paymentStatus === 'pending' ||
-        paymentStatus === 'pending_verification';
+        paymentStatus === 'pending_verification' ||
+        paymentStatus === 'submitted' ||
+        paymentStatus === 'submitted_with_proof';
       setIsPaymentPending(hasPendingPayment);
     } else {
       setIsPaymentRequired(false);

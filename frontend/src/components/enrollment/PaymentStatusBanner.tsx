@@ -44,8 +44,10 @@ export default function PaymentStatusBanner({
   if (!paymentRequired && accessAllowed !== false) return null;
   if (paymentVerified && accessAllowed) return null;
 
-  // Payment completed but not yet admin-verified
-  if (paymentStatus === 'completed' && !paymentVerified) {
+  // Payment submitted/initiated but not yet admin-verified
+  // Note: 'pending' is intentionally excluded — it's the default status for new unpaid enrollments
+  if ((paymentStatus === 'completed' || paymentStatus === 'submitted' || paymentStatus === 'submitted_with_proof' || paymentStatus === 'pending_verification') && !paymentVerified) {
+    const statusLabel = paymentStatus === 'submitted_with_proof' ? 'Proof Submitted' : (paymentStatus === 'completed' ? 'Completed' : 'Submitted');
     return (
       <Alert className="border-blue-200 bg-blue-50 mb-4">
         <Clock className="h-4 w-4 text-blue-600" />
@@ -53,12 +55,12 @@ export default function PaymentStatusBanner({
         <AlertDescription className="text-blue-700">
           <p>
             Your payment for <strong>{displayCourseName}</strong>
-            {displayCohortLabel} has been received and is being verified.
+            {displayCohortLabel} has been {paymentStatus === 'submitted_with_proof' ? 'submitted with proof' : 'received'} and is being verified.
             You&apos;ll get full access once an admin confirms it.
           </p>
           <div className="mt-2 flex items-center gap-2">
             <Badge variant="outline" className="border-blue-300 text-blue-700">
-              <Clock className="h-3 w-3 mr-1" /> Verification Pending
+              <Clock className="h-3 w-3 mr-1" /> {statusLabel}
             </Badge>
           </div>
         </AlertDescription>
