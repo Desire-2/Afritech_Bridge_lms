@@ -338,21 +338,21 @@ app.register_blueprint(internships_bp) # Register internship application bluepri
 maintenance_mode = MaintenanceMode(app)
 logger.info("Maintenance mode middleware initialized and active")
 
-def _sqlite_auto_migrate():
+def _auto_migrate():
     """
     Automatically add any columns that exist in SQLAlchemy models but are missing
-    from the SQLite database. This prevents OperationalError on startup after
+    from the database. This prevents OperationalError on startup after
     model changes without a full schema recreation.
-    Only runs when using SQLite (dev environment).
+    Works for both SQLite (dev) and PostgreSQL (production).
     """
     db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    if 'sqlite' not in db_uri:
-        return  # Only needed for SQLite; PostgreSQL uses db.create_all() fine
+    is_postgres = 'postgresql' in db_uri or 'postgres' in db_uri
 
     from sqlalchemy import inspect, text
     inspector = inspect(db.engine)
 
     # Map of table_name -> [(column_name, column_type_sql)]
+    # Column types use SQLite syntax; for PostgreSQL we map common types.
     migrations = {
         'users': [
             ('email_unsubscribe_token', 'VARCHAR(64)'),
@@ -372,13 +372,21 @@ def _sqlite_auto_migrate():
             ('cohort_label', 'VARCHAR(100)'),
             ('application_window_id', 'INTEGER'),
             ('payment_status', 'VARCHAR(50)'),
-            ('payment_verified', 'BOOLEAN DEFAULT 0'),
-            ('payment_verified_at', 'DATETIME'),
+            ('payment_verified', 'BOOLEAN DEFAULT FALSE'),
+            ('payment_verified_at', 'TIMESTAMP'),
             ('payment_verified_by', 'INTEGER'),
             ('payment_slip_url', 'VARCHAR(500)'),
             ('payment_slip_filename', 'VARCHAR(255)'),
-            ('payment_reminder_sent', 'BOOLEAN DEFAULT 0'),
-            ('payment_reminder_sent_at', 'DATETIME'),
+            ('migrated_from_window_id', 'INTEGER'),
+            ('application_id', 'INTEGER'),
+            ('cohort_start_date', 'TIMESTAMP'),
+            ('cohort_end_date', 'TIMESTAMP'),
+            ('status', 'VARCHAR(20)'),
+            ('terminated_at', 'TIMESTAMP'),
+            ('termination_reason', 'VARCHAR(255)'),
+            ('terminated_by', 'INTEGER'),
+            ('payment_reminder_sent', 'BOOLEAN DEFAULT FALSE'),
+            ('payment_reminder_sent_at', 'TIMESTAMP'),
         ],
     }
 
@@ -398,7 +406,7 @@ def _sqlite_auto_migrate():
 
 with app.app_context():
     db.create_all()
-    _sqlite_auto_migrate()
+    _auto_migrate()
     if not Role.query.filter_by(name='student').first():
         db.session.add(Role(name='student'))
     if not Role.query.filter_by(name='instructor').first():
