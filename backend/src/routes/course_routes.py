@@ -1900,83 +1900,16 @@ def upload_enrollment_payment_slip(enrollment_id):
         }), 400
 
     try:
+        import base64
         mime_type = file.content_type or 'application/octet-stream'
         original_filename = file.filename
 
-        # ── Storage: Google Drive (with base64 fallback) ──
-        # Mirrors the application form's upload-payment-slip endpoint.
-        slip_url = None
-        file_bytes = None
+        # Store as base64 data URL (works on any hosting including Render)
+        file_bytes = file.read()
+        encoded = base64.b64encode(file_bytes).decode('utf-8')
+        slip_url = f"data:{mime_type};base64,{encoded}"
 
-        try:
-            from ..utils.google_drive_service import GoogleDriveService
-            drive_service = GoogleDriveService()
-
-            if drive_service.is_configured:
-                from io import BytesIO
-
-                file_bytes = file.read()
-                file_data = BytesIO(file_bytes)
-
-                root_folder_id = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID')
-                if not root_folder_id:
-                    raise ValueError("GOOGLE_DRIVE_ROOT_FOLDER_ID not configured")
-
-                # Create/get Payment_Slips folder
-                slips_folder_id = drive_service._get_or_create_folder(
-                    'Payment_Slips', root_folder_id
-                )
-
-                # Generate unique filename
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                safe_name = f"slip_enr_{enrollment_id}_{timestamp}_{original_filename}"
-
-                from googleapiclient.http import MediaIoBaseUpload as _MediaUpload
-                from googleapiclient.errors import HttpError as _HttpError
-
-                file_metadata = {
-                    'name': safe_name,
-                    'parents': [slips_folder_id],
-                    'description': f"Payment slip for enrollment #{enrollment_id} ({student.full_name})"
-                }
-                media = _MediaUpload(file_data, mimetype=mime_type, resumable=False)
-
-                try:
-                    uploaded = drive_service.service.files().create(
-                        body=file_metadata,
-                        media_body=media,
-                        fields='id,name,webViewLink,webContentLink',
-                        supportsAllDrives=True,
-                    ).execute()
-
-                    # Make file viewable by anyone with the link
-                    try:
-                        drive_service.service.permissions().create(
-                            fileId=uploaded['id'],
-                            body={'type': 'anyone', 'role': 'reader'},
-                            supportsAllDrives=True,
-                        ).execute()
-                    except Exception:
-                        pass  # Permission setting failure is non-fatal
-
-                    slip_url = uploaded.get('webViewLink') or uploaded.get('webContentLink') or f"https://drive.google.com/file/d/{uploaded['id']}/view"
-                except _HttpError as drive_err:
-                    logger.warning(
-                        f"Google Drive upload failed for enrollment {enrollment_id}, "
-                        f"falling back to base64 storage: {drive_err}"
-                    )
-
-        except Exception as drive_exc:
-            logger.warning(f"Google Drive service unavailable for enrollment {enrollment_id}: {drive_exc}")
-
-        # Fallback: store as base64 data URL when Drive is unavailable or failed
-        if slip_url is None:
-            import base64
-            raw = file_bytes if file_bytes is not None else file.read()
-            data = base64.b64encode(raw).decode('utf-8')
-            slip_url = f"data:{mime_type};base64,{data}"
-
-        # Update enrollment payment status AND store the slip path
+        # Update enrollment payment status AND store the slip
         enrollment.payment_status = 'submitted_with_proof'
         enrollment.payment_slip_url = slip_url
         enrollment.payment_slip_filename = original_filename
