@@ -902,7 +902,7 @@ class Enrollment(db.Model):
     payment_verified = db.Column(db.Boolean, default=False, nullable=False)  # True once admin confirms payment or cohort is free
     payment_verified_at = db.Column(db.DateTime, nullable=True)
     payment_verified_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
-    payment_slip_url = db.Column(db.String(500), nullable=True)  # Path to uploaded payment slip/screenshot
+    payment_slip_url = db.Column(db.Text, nullable=True)  # Base64 data URL or path to uploaded payment slip/screenshot
     payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of payment slip
     migrated_from_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # If student was migrated from a waitlisted cohort
 

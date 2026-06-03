@@ -375,7 +375,7 @@ def _auto_migrate():
             ('payment_verified', 'BOOLEAN DEFAULT FALSE'),
             ('payment_verified_at', 'TIMESTAMP'),
             ('payment_verified_by', 'INTEGER'),
-            ('payment_slip_url', 'VARCHAR(500)'),
+            ('payment_slip_url', 'TEXT'),
             ('payment_slip_filename', 'VARCHAR(255)'),
             ('migrated_from_window_id', 'INTEGER'),
             ('application_id', 'INTEGER'),
@@ -402,6 +402,18 @@ def _auto_migrate():
                         logger.info(f"✅ Auto-migrated: added {table_name}.{col_name}")
                     except Exception as e:
                         logger.warning(f"⚠️  Auto-migrate skipped {table_name}.{col_name}: {e}")
+
+        # ── Alter existing columns that need type changes ──
+        column_type_changes = [
+            ('enrollments', 'payment_slip_url', 'TEXT'),
+        ]
+        for tbl, col, new_type in column_type_changes:
+            try:
+                with db.engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE {tbl} ALTER COLUMN {col} TYPE {new_type}'))
+                    logger.info(f"✅ Auto-migrated: altered {tbl}.{col} to {new_type}")
+            except Exception as e:
+                logger.warning(f"⚠️  Auto-migrate alter skipped {tbl}.{col}: {e}")
 
 
 with app.app_context():
