@@ -292,24 +292,25 @@ export default function PaymentModal({
 
     setSelectedFile(file);
     setUploadError(null);
+
+    // Auto-upload immediately (same as application form ScreenshotUpload component)
+    handleUploadScreenshotInternal(file);
   };
 
-  const handleUploadScreenshot = async () => {
-    if (!selectedFile) return;
-
+  const handleUploadScreenshotInternal = async (fileToUpload: File) => {
     setUploadLoading(true);
     setUploadError(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
+      const fd = new FormData();
+      fd.append('file', fileToUpload);
 
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/enrollments/${enrollmentId}/upload-payment-slip`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`,
         },
-        body: formData,
+        body: fd,
       });
 
       const data = await response.json();
@@ -791,25 +792,12 @@ export default function PaymentModal({
                       className="hidden"
                     />
 
-                    {/* Upload Button */}
-                    {selectedFile && (
-                      <Button
-                        onClick={handleUploadScreenshot}
-                        disabled={uploadLoading}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
-                      >
-                        {uploadLoading ? (
-                          <>
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                            Uploading...
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="w-5 h-5" />
-                            Submit Payment Proof
-                          </>
-                        )}
-                      </Button>
+                    {/* Auto-upload status */}
+                    {selectedFile && uploadLoading && (
+                      <div className="flex items-center justify-center gap-2 p-3 bg-emerald-50 border-2 border-emerald-300 rounded-lg">
+                        <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+                        <p className="text-sm font-semibold text-emerald-700">Uploading payment proof...</p>
+                      </div>
                     )}
 
                     {/* Info */}
@@ -982,24 +970,12 @@ export default function PaymentModal({
                       className="hidden"
                     />
 
-                    {selectedFile && (
-                      <Button
-                        onClick={handleUploadScreenshot}
-                        disabled={uploadLoading}
-                        className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
-                      >
-                        {uploadLoading ? (
-                          <>
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                            Uploading Screenshot...
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="w-5 h-5" />
-                            Submit Screenshot
-                          </>
-                        )}
-                      </Button>
+                    {/* Auto-upload status */}
+                    {selectedFile && uploadLoading && (
+                      <div className="flex items-center justify-center gap-2 p-3 bg-yellow-50 border-2 border-yellow-300 rounded-lg">
+                        <Loader2 className="w-5 h-5 text-yellow-600 animate-spin" />
+                        <p className="text-sm font-semibold text-yellow-700">Uploading screenshot...</p>
+                      </div>
                     )}
 
                     <div className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r text-sm text-blue-800">
