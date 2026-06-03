@@ -303,14 +303,18 @@ function DetailDrawer({
   // Lazy-load payment slip on demand — only for application payments
   const [slipUrl, setSlipUrl] = useState<string | null>(record.payment_slip_url || null);
   const [slipLoading, setSlipLoading] = useState(false);
-  const hasSlip = !isEnrollment && (record.has_payment_slip || !!record.payment_slip_url);
+  const hasSlip = record.has_payment_slip || !!record.payment_slip_url;
 
   useEffect(() => {
     if (isEnrollment || slipUrl || !hasSlip) return;
     let cancelled = false;
     setSlipLoading(true);
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-    fetch(`${API_BASE}/applications/${record.id}/payment-slip`, {
+    // Enrollment records use a different endpoint than application records
+    const slipEndpoint = isEnrollment
+      ? `${API_BASE}/enrollments/${String(record.id).replace(/^enr_/, '')}/payment-slip`
+      : `${API_BASE}/applications/${record.id}/payment-slip`;
+    fetch(slipEndpoint, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' },
     })
       .then(r => r.ok ? r.json() as Promise<{ slip_url?: string }> : Promise.reject(new Error(`HTTP ${r.status}`)))

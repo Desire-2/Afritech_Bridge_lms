@@ -14,6 +14,7 @@ from ..services.notification_service import notify_announcement_new
 from functools import wraps
 import logging
 import json
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -1913,8 +1914,13 @@ def upload_enrollment_payment_slip(enrollment_id):
         # Save file
         file.save(file_path)
 
-        # Update enrollment payment status
+        # Build the URL the same way the application upload does
+        slip_url = f"/uploads/payment_screenshots/{unique_filename}"
+
+        # Update enrollment payment status AND store the slip path
         enrollment.payment_status = 'submitted_with_proof'
+        enrollment.payment_slip_url = slip_url
+        enrollment.payment_slip_filename = original_filename
         db.session.commit()
 
         # Notify admins about the new payment submission
@@ -1957,6 +1963,49 @@ def upload_enrollment_payment_slip(enrollment_id):
         db.session.rollback()
         logger.error(f"Error uploading payment slip for enrollment {enrollment_id}: {str(e)}", exc_info=True)
         return jsonify({"error": "Failed to upload payment slip"}), 500
+
+
+@enrollment_bp.route("/<int:enrollment_id>/payment-slip", methods=["GET"])
+@jwt_required()
+def get_enrollment_payment_slip(enrollment_id):
+    """
+    Retrieve the payment slip / screenshot URL for an enrollment.
+    Mirrors the application-level GET /applications/<id>/payment-slip endpoint.
+
+    Response:
+      { "slip_url": "...", "slip_filename": "..." }
+    """
+    current_user_id = get_user_id()
+    if not current_user_id:
+        return jsonify({"error": "Authentication error"}), 401
+
+    enrollment = Enrollment.query.get(enrollment_id)
+    if not enrollment:
+        return jsonify({"error": "Enrollment not found"}), 404
+
+    # Verify student owns this enrollment or is admin/instructor
+    if enrollment.student_id != current_user_id:
+        user = User.query.get(current_user_id)
+        if not user or user.role.name not in ['admin', 'instructor']:
+            return jsonify({"error": "Unauthorized access"}), 403
+
+    if not enrollment.payment_slip_url:
+        return jsonify({"error": "No payment slip uploaded for this enrollment"}), 404
+
+    url = enrollment.payment_slip_url
+
+    # If it's a normal URL (local file), just return it
+    if not url.startswith("data:"):
+        return jsonify({
+            "slip_url": url,
+            "slip_filename": enrollment.payment_slip_filename,
+        }), 200
+
+    # For base64 data URIs — return inline
+    return jsonify({
+        "slip_url": url,
+        "slip_filename": enrollment.payment_slip_filename,
+    }), 200
 
 
 @enrollment_bp.route("/<int:enrollment_id>/initiate-payment", methods=["POST"])
