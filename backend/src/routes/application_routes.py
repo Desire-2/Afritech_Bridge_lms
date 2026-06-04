@@ -5261,7 +5261,7 @@ def list_enrollment_payments():
                 'course_payment_mode': course.payment_mode or 'full',
                 'course_enabled_methods': course._get_payment_methods(),
                 'amount_paid': amount,
-                'payment_method': None,
+                'payment_method': enrollment.payment_method,
                 'payment_status': enrollment.payment_status or 'pending',
                 'payment_reference': None,
                 'payment_currency': currency,

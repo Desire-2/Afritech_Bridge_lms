@@ -2095,6 +2095,7 @@ def initiate_enrollment_payment(enrollment_id):
             
             # Don't set payment_status here — student still needs to upload proof.
             # The upload-payment-slip endpoint will set 'submitted_with_proof'.
+            enrollment.payment_method = 'bank_transfer'
             enrollment.payment_verified = False
             db.session.commit()
 
@@ -2134,6 +2135,7 @@ def initiate_enrollment_payment(enrollment_id):
             
             # Don't set payment_status here — student still needs to upload proof.
             # The upload-payment-slip endpoint will set 'submitted_with_proof'.
+            enrollment.payment_method = 'momo_pay_code'
             enrollment.payment_verified = False
             db.session.commit()
 

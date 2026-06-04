@@ -376,6 +376,7 @@ def _auto_migrate():
             ('payment_verified_at', 'TIMESTAMP'),
             ('payment_verified_by', 'INTEGER'),
             ('payment_slip_url', 'TEXT'),
+            ('payment_method', 'VARCHAR(30)'),
             ('payment_slip_filename', 'VARCHAR(255)'),
             ('migrated_from_window_id', 'INTEGER'),
             ('application_id', 'INTEGER'),
