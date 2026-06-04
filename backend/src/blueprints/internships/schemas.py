@@ -76,9 +76,33 @@ class ApplicationSubmissionSchema(Schema):
     track_id = fields.Str(required=True)
     cohort_id = fields.Str(allow_none=True)
     motivation_letter = fields.Str(required=True, validate=validate.Length(min=50, max=5000))
-    portfolio_url = fields.Url(allow_none=True)
-    github_url = fields.Url(allow_none=True)
-    linkedin_url = fields.Url(allow_none=True)
+    portfolio_url = fields.Str(allow_none=True, validate=validate.Length(max=500))
+    github_url = fields.Str(allow_none=True, validate=validate.Length(max=500))
+    linkedin_url = fields.Str(allow_none=True, validate=validate.Length(max=500))
+
+    @pre_load
+    def convert_empty_strings(self, data, **kwargs):
+        """Convert empty strings to None and strip whitespace for all optional fields.
+        
+        Multipart form data sends unfilled fields as empty strings ("")
+        rather than None, which causes strict field validators to fail.
+        This hook normalizes those values before validation runs.
+        """
+        if not isinstance(data, dict):
+            return data
+        
+        # Strip whitespace from all string values
+        for key, value in list(data.items()):
+            if isinstance(value, str):
+                data[key] = value.strip()
+        
+        # Convert empty strings to None for optional fields
+        optional_none_fields = ['national_id', 'cohort_id', 'portfolio_url', 'github_url', 'linkedin_url']
+        for field_name in optional_none_fields:
+            if field_name in data and data[field_name] in ('', None):
+                data[field_name] = None
+        
+        return data
 
 
 class ApplicationStatusUpdateSchema(Schema):

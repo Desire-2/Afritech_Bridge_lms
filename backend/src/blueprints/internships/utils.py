@@ -82,13 +82,15 @@ def validate_phone_number(phone):
     Validate phone number in E.164 or local RW format.
     Accepted formats:
     - E.164: +1234567890 (up to 15 digits with country code)
-    - Local RW: 0788123456 or 788123456
+    - Local RW: 0788123456, 788123456, 250788123456
+    Strips common separators (spaces, hyphens, dots, parens) before validation.
     """
     if not phone:
         return False
     
-    # Remove whitespace and hyphens for validation
-    cleaned = re.sub(r'[\s\-\(\)]', '', phone)
+    # Strip whitespace first, then remove common separators
+    phone = phone.strip()
+    cleaned = re.sub(r'[\s\-\(\)\.]', '', phone)
     
     # E.164 format: +1 to +999 followed by 7-15 digits
     if re.match(r'^\+[1-9]\d{6,14}$', cleaned):

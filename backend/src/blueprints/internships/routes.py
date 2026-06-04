@@ -150,72 +150,140 @@ def submit_application():
     """
     Submit internship application with CV upload.
     Multipart form data with file upload.
-    Rate limited: 3 per IP per hour
     """
     try:
-        # Validate multipart form
-        if not request.form or 'cv' not in request.files:
-            return error_response('CV file is required', status_code=400)
-        
-        cv_file = request.files['cv']
-        if cv_file.filename == '':
-            return error_response('CV file is required', status_code=400)
-        
-        # Get form data
-        form_data = request.form.to_dict()
-        
-        # Validate schema
+        # ----------------------------------------------------------------
+        # 1. Parse request data (multipart form with optional JSON fallback)
+        # ----------------------------------------------------------------
+        form_data = {}
+        cv_file = None
+
+        if request.files and 'cv' in request.files:
+            cv_file = request.files['cv']
+
+        if request.form:
+            form_data = request.form.to_dict()
+        elif request.is_json:
+            # JSON fallback for programmatic clients
+            json_data = request.get_json(silent=True) or {}
+            form_data = {k: v for k, v in json_data.items() if not isinstance(v, (dict, list))}
+            logger.info("Received /apply request as JSON instead of multipart form")
+
+        # ----------------------------------------------------------------
+        # 2. Validate CV file
+        # ----------------------------------------------------------------
+        if not cv_file or cv_file.filename == '':
+            return error_response(
+                'CV file is required',
+                {'cv': ['A CV/resume file (PDF, DOC, or DOCX) is required']},
+                status_code=400
+            )
+
+        # ----------------------------------------------------------------
+        # 3. Validate form data schema
+        # ----------------------------------------------------------------
         schema = ApplicationSubmissionSchema()
         try:
             validated_data = schema.load(form_data)
         except ValidationError as e:
+            logger.error(f"Schema validation failed for /apply | errors: {e.messages} | fields: {list(form_data.keys())}")
             return error_response('Validation failed', e.messages, status_code=400)
-        
-        # Validate phone
+
+        # ----------------------------------------------------------------
+        # 4. Validate phone number
+        # ----------------------------------------------------------------
         if not validate_phone_number(validated_data['phone']):
-            return error_response('Invalid phone number format', {'phone': ['Invalid format']}, status_code=400)
-        
-        # Check email uniqueness in active cycle
+            return error_response(
+                'Invalid phone number format',
+                {
+                    'phone': [
+                        'Enter a valid phone number (e.g. +250788123456 or 0788123456)'
+                    ]
+                },
+                status_code=400
+            )
+
+        # ----------------------------------------------------------------
+        # 5. Check email uniqueness (recent submissions only)
+        # ----------------------------------------------------------------
         existing = InternshipApplication.query.filter_by(
             email=validated_data['email'],
             status=ApplicationStatusEnum.PENDING
         ).first()
-        
+
         if existing and (datetime.utcnow() - existing.created_at).days < 30:
-            return error_response('You have already submitted an application recently', status_code=409)
-        
-        # Validate track exists and is active
+            return error_response(
+                'You have already submitted an application. Use your reference code to check status.',
+                {'email': ['An application from this email is already pending review']},
+                status_code=409
+            )
+
+        # ----------------------------------------------------------------
+        # 6. Validate track
+        # ----------------------------------------------------------------
         track = InternshipTrack.query.get(validated_data['track_id'])
-        if not track or not track.is_active:
-            return error_response('Invalid or inactive track', status_code=400)
-        
-        # Validate cohort if provided
+        if not track:
+            logger.error(f"Track not found for id={validated_data['track_id']}")
+            return error_response(
+                'Invalid track selected',
+                {'track_id': ['The selected internship track does not exist']},
+                status_code=400
+            )
+        if not track.is_active:
+            return error_response(
+                'Track is no longer accepting applications',
+                {'track_id': ['This track is currently inactive']},
+                status_code=400
+            )
+
+        # ----------------------------------------------------------------
+        # 7. Validate cohort (if provided)
+        # ----------------------------------------------------------------
         cohort = None
         if validated_data.get('cohort_id'):
             cohort = InternshipCohort.query.get(validated_data['cohort_id'])
-            if not cohort or not cohort.is_accepting or cohort.is_full():
-                return error_response('Invalid, non-accepting, or full cohort', status_code=400)
-        
-        # Save CV file
+            if not cohort:
+                return error_response(
+                    'Invalid cohort',
+                    {'cohort_id': ['The selected cohort does not exist']},
+                    status_code=400
+                )
+            if not cohort.is_accepting:
+                return error_response(
+                    'Cohort is not accepting applications',
+                    {'cohort_id': ['This cohort is not currently accepting applications']},
+                    status_code=400
+                )
+            if cohort.is_full():
+                return error_response(
+                    'Cohort is full',
+                    {'cohort_id': ['This cohort has reached its capacity']},
+                    status_code=400
+                )
+
+        # ----------------------------------------------------------------
+        # 8. Save CV file
+        # ----------------------------------------------------------------
         try:
             cv_path, cv_original_name = save_cv_file(cv_file, cv_file.filename)
         except ValueError as e:
-            return error_response(str(e), status_code=400)
+            return error_response(str(e), {'cv': [str(e)]}, status_code=400)
         except Exception as e:
-            logger.error(f"Error saving CV: {str(e)}")
-            return error_response('Failed to save CV file', status_code=500)
-        
-        # Generate reference code
-        reference_code = get_next_available_reference_code()
-        
-        # Create application
+            logger.error(f"Error saving CV file: {str(e)}")
+            return error_response('Failed to save CV file. Please try again.', status_code=500)
+
+        # ----------------------------------------------------------------
+        # 9. Generate reference code & create application
+        # ----------------------------------------------------------------
         try:
+            reference_code = get_next_available_reference_code()
+
             application = InternshipApplication(
                 reference_code=reference_code,
                 applicant_type=ApplicantTypeEnum(validated_data['applicant_type']),
                 full_name=sanitize_text(validated_data['full_name']),
                 email=validated_data['email'].lower(),
-                phone=validated_data['phone'],
+                phone=validated_data['phone'].strip(),
                 national_id=validated_data.get('national_id'),
                 track_id=validated_data['track_id'],
                 cohort_id=validated_data.get('cohort_id'),
@@ -227,16 +295,23 @@ def submit_application():
                 cv_original_name=cv_original_name,
                 status=ApplicationStatusEnum.PENDING,
             )
-            
+
             db.session.add(application)
             db.session.commit()
-            
-            # Send confirmation email to applicant
-            mailer.send_application_confirmation(application)
-            
-            # Send admin notification
-            mailer.send_admin_new_application_alert(application)
-            
+
+            # Send confirmation emails (non-blocking — errors are logged, not returned)
+            try:
+                mailer.send_application_confirmation(application)
+            except Exception as mail_err:
+                logger.error(f"Failed to send confirmation email: {mail_err}")
+
+            try:
+                mailer.send_admin_new_application_alert(application)
+            except Exception as mail_err:
+                logger.error(f"Failed to send admin alert email: {mail_err}")
+
+            logger.info(f"Application created: ref={reference_code} track={validated_data['track_id']} email={validated_data['email']}")
+
             return success_response(
                 'Application submitted successfully',
                 {
@@ -245,14 +320,19 @@ def submit_application():
                 },
                 status_code=201
             )
+
         except Exception as e:
             db.session.rollback()
-            logger.error(f"Error creating application: {str(e)}")
-            return error_response('Failed to submit application', status_code=500)
-    
+            logger.error(f"Error creating application record: {str(e)}", exc_info=True)
+            # Check for unique constraint violations
+            error_str = str(e).lower()
+            if 'unique' in error_str or 'duplicate' in error_str:
+                return error_response('A duplicate application was detected. Please try again.', status_code=409)
+            return error_response('Failed to submit application. Please try again.', status_code=500)
+
     except Exception as e:
-        logger.error(f"Error in submit_application: {str(e)}")
-        return error_response('Internal server error', status_code=500)
+        logger.error(f"Unexpected error in submit_application: {str(e)}", exc_info=True)
+        return error_response('An unexpected error occurred. Please try again.', status_code=500)
 
 
 @internships_bp.route('/apply/status', methods=['GET'])
@@ -278,7 +358,28 @@ def check_application_status():
         if not application:
             return error_response('Application not found', status_code=404)
         
-        return success_response('Application status retrieved', application.to_dict())
+        # Map status to human-readable review stage
+        review_stage_map = {
+            'pending': 'Application Received',
+            'reviewing': 'Under Review',
+            'shortlisted': 'Shortlisted',
+            'interview_scheduled': 'Interview Scheduled',
+            'accepted': 'Accepted',
+            'rejected': 'Rejected',
+        }
+        
+        status_data = {
+            'status': application.status.value if application.status else 'pending',
+            'submittedAt': application.created_at.isoformat(),
+            'review_stage': review_stage_map.get(application.status.value if application.status else 'pending', 'Application Received'),
+            'full_name': application.full_name,
+            'email': application.email,
+            'reference_code': application.reference_code,
+            'track_name': application.track.name if application.track else None,
+            'updated_at': application.updated_at.isoformat(),
+        }
+        
+        return success_response('Application status retrieved', status_data)
     except Exception as e:
         logger.error(f"Error checking status: {str(e)}")
         return error_response('Failed to check status', status_code=500)

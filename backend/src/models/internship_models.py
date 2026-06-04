@@ -86,6 +86,7 @@ class InternshipCohort(db.Model):
             'capacity': self.capacity,
             'is_accepting': self.is_accepting,
             'accepted_count': self.get_accepted_count(),
+            'spots_available': max(0, self.capacity - self.get_accepted_count()) if self.capacity else None,
             'is_full': self.is_full(),
             'description': self.description,
             'created_at': self.created_at.isoformat(),
