@@ -1019,12 +1019,17 @@ export default function CourseApplicationForm({
 
     const method = formData.payment_method as string;
 
-    // Bank transfer cannot be verified via API – inform user and allow submission
-    if (method === 'bank_transfer') {
+    // Manual payment methods (bank transfer, MoMo Pay Code) cannot be verified via API
+    // – inform user and allow submission
+    if (method === 'bank_transfer' || method === 'momo_pay_code') {
       setBankTransferInfo(
-        `Your payment reference is: ${paymentReference}. ` +
-        'Our team will verify your bank transfer and confirm your enrollment. ' +
-        'You can now submit your application — we will contact you once payment is confirmed.'
+        method === 'momo_pay_code'
+          ? `Your payment reference is: ${paymentReference}. ` +
+            'Our team will verify your MoMo Pay Code payment and confirm your enrollment. ' +
+            'You can now submit your application — we will contact you once payment is confirmed.'
+          : `Your payment reference is: ${paymentReference}. ` +
+            'Our team will verify your bank transfer and confirm your enrollment. ' +
+            'You can now submit your application — we will contact you once payment is confirmed.'
       );
       setError(null);
       setPaymentStatus('approved');
