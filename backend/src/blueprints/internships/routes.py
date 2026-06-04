@@ -219,11 +219,17 @@ def submit_application():
             )
 
         # ----------------------------------------------------------------
-        # 6. Validate track
+        # 6. Validate track (accepts UUID or slug)
         # ----------------------------------------------------------------
         track = InternshipTrack.query.get(validated_data['track_id'])
+        if not track or not track.is_active:
+            # Fallback: try resolving by slug
+            track = InternshipTrack.query.filter_by(
+                slug=validated_data['track_id'], is_active=True
+            ).first()
+
         if not track:
-            logger.error(f"Track not found for id={validated_data['track_id']}")
+            logger.error(f"Track not found for track_id={validated_data['track_id']}")
             return error_response(
                 'Invalid track selected',
                 {'track_id': ['The selected internship track does not exist']},
@@ -235,6 +241,9 @@ def submit_application():
                 {'track_id': ['This track is currently inactive']},
                 status_code=400
             )
+
+        # Use the resolved track UUID going forward (in case slug was provided)
+        validated_data['track_id'] = track.id
 
         # ----------------------------------------------------------------
         # 7. Validate cohort (if provided)
