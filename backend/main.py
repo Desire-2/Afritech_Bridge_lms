@@ -389,6 +389,7 @@ def _auto_migrate():
             ('terminated_by', 'INTEGER'),
             ('payment_reminder_sent', 'BOOLEAN DEFAULT FALSE'),
             ('payment_reminder_sent_at', 'TIMESTAMP'),
+            ('cohort_start_notified', 'BOOLEAN DEFAULT FALSE'),
         ],
         'courses': [
             ('momo_pay_code_enabled', 'BOOLEAN DEFAULT FALSE'),
