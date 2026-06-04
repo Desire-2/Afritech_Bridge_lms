@@ -306,7 +306,7 @@ function DetailDrawer({
   const hasSlip = record.has_payment_slip || !!record.payment_slip_url;
 
   useEffect(() => {
-    if (isEnrollment || slipUrl || !hasSlip) return;
+    if (slipUrl || !hasSlip) return;
     let cancelled = false;
     setSlipLoading(true);
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
