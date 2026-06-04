@@ -11,11 +11,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw, CreditCard, Clock } from 'lucide-react';
+import { Loader2, AlertCircle, BookOpen, Award, X, Lock, Target, CheckCircle, ArrowRight, Unlock, Wifi, RefreshCw, CreditCard, Clock, CalendarDays } from 'lucide-react';
 import Link from 'next/link';
 import { useProgressiveLearning, useModuleAttempts, useModuleScoring } from '@/hooks/useProgressiveLearning';
 import { motion, AnimatePresence } from 'framer-motion';
 import PaymentModal from '@/components/payments/PaymentModal';
+import CohortCountdownTimer from '@/components/enrollment/CohortCountdownTimer';
 
 // Import custom components and utilities
 import { LearningHeader } from './components/LearningHeader';
@@ -93,10 +94,14 @@ const LearningPage = () => {
   const [courseData, setCourseData] = useState<CourseData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Cohort-level payment info from 402 response
+  // Cohort-level payment info from 402/403 response
   const [paymentInfo, setPaymentInfo] = useState<Record<string, any> | null>(null);
   const [isPaymentRequired, setIsPaymentRequired] = useState(false);
   const [isPaymentPending, setIsPaymentPending] = useState(false);
+  const [isCohortNotStarted, setIsCohortNotStarted] = useState(false);
+  const [cohortStartDate, setCohortStartDate] = useState<string | null>(null);
+  const [cohortStartIso, setCohortStartIso] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<{ days: number; hours: number; minutes: number; seconds: number } | null>(null);
   const [currentLesson, setCurrentLesson] = useState<any>(null);
   const [currentModuleId, setCurrentModuleId] = useState<number | null>(null);
   
@@ -148,15 +153,39 @@ const LearningPage = () => {
     return () => window.removeEventListener('resize', checkScreenSize);
   }, []); // Only run on mount
 
-  // Update isPaymentRequired and isPaymentPending state when error or paymentInfo changes
+  // Update isPaymentRequired, isPaymentPending, and isCohortNotStarted
+  // when error or paymentInfo changes
   useEffect(() => {
     if (error) {
+      // Check if the backend reported cohort_not_started error type
+      const cohortNotStarted =
+        paymentInfo?.error_type === 'cohort_not_started' ||
+        error.toLowerCase().includes('cohort has not started');
+      setIsCohortNotStarted(cohortNotStarted);
+
+      // Extract cohort start date from the message for display
+      if (cohortNotStarted && paymentInfo?.message) {
+        const dateMatch = paymentInfo.message.match(/begins on (.+?)\.?$/);
+        if (dateMatch) {
+          setCohortStartDate(dateMatch[1]);
+        }
+      }
+
+      // Extract ISO date for countdown timer (from backend response)
+      if (cohortNotStarted && paymentInfo?.cohort_start) {
+        setCohortStartIso(paymentInfo.cohort_start);
+      } else {
+        setCohortStartIso(null);
+      }
+
       // Check both the error message AND the explicit payment_required field
       // from the backend's cohort payment info for robustness.
       const paymentRequired =
-        error.toLowerCase().includes('payment required') ||
-        error.toLowerCase().includes('payment must be') ||
-        (paymentInfo?.payment_required === true);
+        !cohortNotStarted && (
+          error.toLowerCase().includes('payment required') ||
+          error.toLowerCase().includes('payment must be') ||
+          (paymentInfo?.payment_required === true)
+        );
       setIsPaymentRequired(paymentRequired);
 
       // Check if the student has already submitted payment but it's pending admin verification
@@ -172,6 +201,10 @@ const LearningPage = () => {
     } else {
       setIsPaymentRequired(false);
       setIsPaymentPending(false);
+      setIsCohortNotStarted(false);
+      setCohortStartDate(null);
+      setCohortStartIso(null);
+      setCountdown(null);
     }
   }, [error, paymentInfo]);
   
@@ -1489,10 +1522,12 @@ const LearningPage = () => {
 
       } catch (err: any) {
         console.error('Failed to fetch course data:', err);
-        // Handle 402 Payment Required from the backend payment gate
-        if (err.response?.status === 402) {
-          setError(err.response?.data?.error || 'Payment required to access this course');
-          setPaymentInfo(err.response?.data || null);
+        // Handle 402 Payment Required and 403 Cohort Not Started
+        const status = err.response?.status;
+        if (status === 402 || status === 403) {
+          const data = err.response?.data || {};
+          setError(data.error || data.message || 'Access restricted');
+          setPaymentInfo(data);
         } else {
           setError(err.response?.data?.error || err.message || 'Failed to load course');
         }
@@ -2379,7 +2414,15 @@ const LearningPage = () => {
     let messageColor = "text-red-200";
     let showRetry = false;
     
-    if (isPaymentRequired) {
+    if (isCohortNotStarted) {
+      errorIcon = <CalendarDays className="h-12 w-12 text-indigo-400 mx-auto mb-4" />;
+      errorTitle = "Cohort Has Not Started Yet";
+      errorMessage = paymentInfo?.message || "Your cohort has not started yet.";
+      errorDescription = "Your enrollment is confirmed and payment is verified. The learning content will become available once the cohort officially begins.";
+      borderColor = "border-indigo-900/50";
+      titleColor = "text-indigo-300";
+      messageColor = "text-indigo-200";
+    } else if (isPaymentRequired) {
       const pi = paymentInfo;
 
       // ── Payment Submitted, Pending Admin Approval ──
@@ -2471,6 +2514,14 @@ const LearningPage = () => {
             <p className={`${messageColor} mb-2 font-medium`}>{errorMessage}</p>
             {errorDescription && (
               <p className="text-gray-400 text-sm mb-6">{errorDescription}</p>
+            )}
+            {isCohortNotStarted && paymentInfo?.cohort_start && (
+              <div className="mb-6 p-4 bg-indigo-900/20 rounded-lg border border-indigo-500/20">
+                <p className="text-indigo-400 text-xs font-medium uppercase tracking-wider mb-3">Time Until Cohort Starts</p>
+                <div className="flex justify-center">
+                  <CohortCountdownTimer startDate={paymentInfo.cohort_start} size="md" />
+                </div>
+              </div>
             )}
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               {isPaymentRequired ? (

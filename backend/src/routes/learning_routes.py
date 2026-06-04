@@ -36,6 +36,57 @@ def student_required(f):
 
 learning_bp = Blueprint("student_learning", __name__, url_prefix="/api/v1/student/learning")
 
+def _check_enrollment_access(enrollment):
+    """Check if a student's enrollment allows access (cohort started + payment verified).
+
+    Returns (access_ok, error_response) where error_response is (json, http_status)
+    when access is denied, or (None, None) when access is granted.
+    Instructors and admins should bypass this check.
+    """
+    from ..services.waitlist_service import WaitlistService
+    access_allowed, access_reason = WaitlistService.is_enrollment_access_allowed(enrollment)
+    if access_allowed:
+        return True, None
+
+    cohort_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
+    reason_lower = access_reason.lower()
+    course = enrollment.course
+
+    if 'cohort has not started' in reason_lower:
+        error_type = 'cohort_not_started'
+        error_label = 'Cohort has not started'
+        http_status = 403
+        _win = enrollment.application_window
+        if _win is None and course:
+            from ..models.course_models import ApplicationWindow as _AW
+            _win = _AW.query.filter_by(course_id=course.id).order_by(_AW.id.desc()).first()
+        _cs_dt = (
+            getattr(_win, 'cohort_start', None)
+            or getattr(enrollment, 'cohort_start_date', None)
+            or getattr(course, 'cohort_start_date', None)
+        )
+    elif 'terminated' in reason_lower or 'suspended' in reason_lower:
+        error_type = 'enrollment_blocked'
+        error_label = 'Enrollment blocked'
+        http_status = 403
+    else:
+        error_type = 'payment_required'
+        error_label = 'Payment required'
+        http_status = 402
+
+    resp_data = {
+        "error": error_label,
+        "error_type": error_type,
+        "message": access_reason,
+        **cohort_info,
+    }
+    if error_type == 'cohort_not_started' and _cs_dt:
+        resp_data["cohort_start"] = _cs_dt.isoformat()
+
+    return False, (jsonify(resp_data), http_status)
+
+
+
 @learning_bp.route("/", methods=["GET"])
 @student_required
 def get_my_learning():
@@ -162,6 +213,21 @@ def complete_lesson(lesson_id):
     """Mark a lesson as completed with quiz requirement checking"""
     try:
         student_id = int(get_jwt_identity())
+
+        # ── Enrollment access gate (cohort start + payment verification) ──
+        from ..models.course_models import Lesson as _Lesson
+        _lesson = _Lesson.query.get(lesson_id)
+        if _lesson:
+            _mod = Module.query.get(_lesson.module_id)
+            if _mod:
+                _enrollment = Enrollment.query.filter_by(
+                    student_id=student_id, course_id=_mod.course_id
+                ).first()
+                if _enrollment:
+                    access_ok, err_resp = _check_enrollment_access(_enrollment)
+                    if not access_ok:
+                        return err_resp
+
         data = request.get_json() or {}
         time_spent = data.get('time_spent', 0)
         
@@ -277,22 +343,11 @@ def get_course_for_learning(course_id):
         if not enrollment and not is_instructor and not is_admin:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
-        # ── Payment verification gate ──
-        # Block access for students in paid cohorts who haven't paid
+        # ── Enrollment access gate (cohort start + payment verification) ──
         if enrollment and not is_instructor and not is_admin:
-            from ..services.waitlist_service import WaitlistService
-            access_allowed, access_reason = WaitlistService.is_enrollment_access_allowed(enrollment)
-            if not access_allowed:
-                # Include full cohort-level payment info so the frontend
-                # can show the correct amount, scholarship type, etc.
-                cohort_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
-                return jsonify({
-                    "error": "Payment required",
-                    "message": access_reason,
-                    "course_title": course.title,
-                    "course_id": course.id,
-                    **cohort_info,
-                }), 402  # 402 Payment Required
+            access_ok, err_resp = _check_enrollment_access(enrollment)
+            if not access_ok:
+                return err_resp
         
         # OPTIMIZED: Load modules and lessons in efficient batch queries
         # For students: only show published AND released modules
@@ -536,6 +591,12 @@ def get_course_modules(course_id):
         if not enrollment and not is_instructor and not is_admin:
             return jsonify({"error": "Not enrolled in this course"}), 403
         
+        # ── Enrollment access gate (cohort start + payment verification) ──
+        if enrollment and not is_instructor and not is_admin:
+            access_ok, err_resp = _check_enrollment_access(enrollment)
+            if not access_ok:
+                return err_resp
+        
         # Filter modules based on user role and course settings
         if is_instructor or is_admin:
             # Instructors and admins see all modules
@@ -634,6 +695,11 @@ def retake_module(module_id):
         
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
+
+        # ── Enrollment access gate (cohort start + payment verification) ──
+        access_ok, err_resp = _check_enrollment_access(enrollment)
+        if not access_ok:
+            return err_resp
         
         # Check suspension status
         suspension_status = ProgressionService.check_student_suspension_status(student_id, module.course_id)
@@ -684,6 +750,11 @@ def check_module_unlock_eligibility(module_id):
         
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
+
+        # ── Enrollment access gate (cohort start + payment verification) ──
+        access_ok, err_resp = _check_enrollment_access(enrollment)
+        if not access_ok:
+            return err_resp
         
         # Use enhanced service for comprehensive check
         eligibility_result = EnhancedModuleUnlockService.check_module_unlock_eligibility(
@@ -718,6 +789,11 @@ def attempt_enhanced_module_unlock(module_id):
         
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
+
+        # ── Enrollment access gate (cohort start + payment verification) ──
+        access_ok, err_resp = _check_enrollment_access(enrollment)
+        if not access_ok:
+            return err_resp
         
         # Use enhanced service for unlock attempt
         unlock_result = EnhancedModuleUnlockService.attempt_module_unlock(
@@ -834,6 +910,11 @@ def check_module_completion(module_id):
         
         if not enrollment:
             return jsonify({"error": "Not enrolled in this course"}), 403
+
+        # ── Enrollment access gate (cohort start + payment verification) ──
+        access_ok, err_resp = _check_enrollment_access(enrollment)
+        if not access_ok:
+            return err_resp
         
         # Get module progress for score breakdown
         from ..models.student_models import ModuleProgress

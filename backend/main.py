@@ -71,6 +71,7 @@ from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
 from src.services.cohort_migration_scheduler import start_cohort_migration_scheduler # Import cohort migration scheduler
+from src.services.cohort_start_notification_scheduler import start_cohort_start_notification_scheduler  # Cohort start email notifications
 from flask_cors import CORS
 
 # Configure logging
@@ -444,6 +445,9 @@ with app.app_context():
 
 # Start scheduled cohort migration job only when enabled.
 start_cohort_migration_scheduler(app)
+
+# Start cohort-start email notification scheduler (notifies students when their cohort begins)
+start_cohort_start_notification_scheduler(app)
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext

@@ -905,6 +905,10 @@ class Enrollment(db.Model):
     payment_method = db.Column(db.String(30), nullable=True)  # e.g. 'bank_transfer', 'momo_pay_code', 'mobile_money'
     payment_slip_url = db.Column(db.Text, nullable=True)  # Base64 data URL or path to uploaded payment slip/screenshot
     payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of payment slip
+
+    # ── Notification tracking ──
+    cohort_start_notified = db.Column(db.Boolean, default=False, nullable=False)  # True after cohort-start email is sent
+
     migrated_from_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # If student was migrated from a waitlisted cohort
 
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('enrollments', lazy='dynamic'))

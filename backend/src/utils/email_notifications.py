@@ -1065,3 +1065,138 @@ def send_admin_alert_no_next_cohort(course, cohort_label, affected_student_count
     except Exception as e:
         logger.error(f"❌ Failed to send admin alert email: {str(e)}")
         return False
+
+
+def send_cohort_start_notification(enrollment):
+    """Send email to enrolled students when their cohort start date arrives.
+
+    Called by the cohort-start notification scheduler for each enrollment
+    whose cohort starts today.
+
+    Args:
+        enrollment: Enrollment object (must have .student and .course relationships
+                    or .student_id / .course_id foreign keys)
+
+    Returns:
+        bool: True if email was sent successfully.
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send cohort start notification")
+            return False
+
+        # ── Resolve student ──
+        student = getattr(enrollment, 'student', None)
+        if not student and getattr(enrollment, 'student_id', None):
+            from ..models.user_models import User
+            student = User.query.get(enrollment.student_id)
+
+        if not student or not getattr(student, 'email', None):
+            logger.warning(
+                f"Cannot send cohort start notification for enrollment "
+                f"{getattr(enrollment, 'id', None)}: missing student email"
+            )
+            return False
+
+        # ── Respect notification preferences ──
+        if not _should_send_email(student, 'enrollment'):
+            return False
+
+        # ── Resolve course & cohort info ──
+        course = getattr(enrollment, 'course', None)
+        if not course and getattr(enrollment, 'course_id', None):
+            from ..models.course_models import Course
+            course = Course.query.get(enrollment.course_id)
+
+        course_title = getattr(course, 'title', 'Your Course') if course else 'Your Course'
+        cohort_label = getattr(enrollment, 'cohort_label', None) or 'Your Cohort'
+
+        # ── Resolve cohort start date for display ──
+        cohort_start = None
+        window = getattr(enrollment, 'application_window', None)
+        if window and getattr(window, 'cohort_start', None):
+            cohort_start = window.cohort_start
+        elif getattr(enrollment, 'cohort_start_date', None):
+            cohort_start = enrollment.cohort_start_date
+        elif course and getattr(course, 'cohort_start_date', None):
+            cohort_start = course.cohort_start_date
+
+        cohort_start_display = (
+            cohort_start.strftime('%B %d, %Y') if cohort_start else 'today'
+        )
+
+        student_name = (
+            f"{student.first_name} {student.last_name}".strip()
+            if getattr(student, 'first_name', None) or getattr(student, 'last_name', None)
+            else student.username
+        )
+        unsub_token = _get_unsub_token(student)
+
+        dashboard_url = (
+            f"{os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')}/student/dashboard"
+        )
+
+        email_html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Your Cohort Has Started!</title>
+        </head>
+        <body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+          <div style="max-width:600px;margin:0 auto;padding:24px;">
+            <!-- Header -->
+            <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px;border-radius:16px 16px 0 0;text-align:center;">
+              <h1 style="color:#fff;margin:0;font-size:24px;">🎉 Your Cohort Has Started!</h1>
+            </div>
+            <!-- Body -->
+            <div style="background:#1e293b;color:#e2e8f0;padding:32px;border-radius:0 0 16px 16px;">
+              <p style="font-size:16px;margin-top:0;">Hello <strong>{student_name}</strong>,</p>
+              <p style="font-size:15px;line-height:1.7;">
+                Great news! Your cohort for <strong>{course_title}</strong> has officially started.
+                You can now access all the learning content and begin your journey.
+              </p>
+              <!-- Cohort Info Card -->
+              <div style="background:#334155;padding:20px;border-radius:12px;margin:24px 0;border-left:4px solid #6366f1;">
+                <p style="margin:0 0 8px 0;font-size:14px;color:#94a3b8;">COHORT DETAILS</p>
+                <p style="margin:0 0 4px 0;font-size:16px;"><strong>Course:</strong> {course_title}</p>
+                <p style="margin:0 0 4px 0;font-size:16px;"><strong>Cohort:</strong> {cohort_label}</p>
+                <p style="margin:0;font-size:16px;"><strong>Started:</strong> {cohort_start_display}</p>
+              </div>
+              <!-- CTA Button -->
+              <div style="text-align:center;margin:28px 0;">
+                <a href="{dashboard_url}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-decoration:none;padding:14px 32px;border-radius:10px;font-weight:700;font-size:16px;">
+                  Start Learning →
+                </a>
+              </div>
+              <p style="font-size:14px;color:#94a3b8;line-height:1.6;">
+                If you have any questions, don't hesitate to reach out to your instructor.
+                We wish you the best in your learning journey!
+              </p>
+            </div>
+            <!-- Footer -->
+            <div style="text-align:center;padding:16px;">
+              <p style="font-size:12px;color:#64748b;margin:0 0 8px 0;">
+                <a href="{dashboard_url}" style="color:#818cf8;text-decoration:none;">Manage email preferences</a>
+                &nbsp;&bull;&nbsp;
+                <a href="https://study.afritechbridge.online/unsubscribe?token={unsub_token}" style="color:#818cf8;text-decoration:none;">Unsubscribe</a>
+              </p>
+              <p style="font-size:12px;color:#64748b;margin:0;">
+                Afritec Bridge LMS &bull; Empowering Africa's Tech Talent
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+
+        subject = f"🎉 Your Cohort for {course_title} Has Started!"
+        return brevo_service.send_email(
+            to_emails=[student.email],
+            subject=subject,
+            html_content=email_html,
+        )
+    except Exception as e:
+        logger.error(f"❌ Failed to send cohort start notification: {str(e)}")
+        return False

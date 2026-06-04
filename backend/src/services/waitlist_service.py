@@ -387,14 +387,12 @@ class WaitlistService:
 
     # ─────────────────────────────────────────────────────────
     # ACCESS CONTROL
-    # ─────────────────────────────────────────────────────────
-
-    @staticmethod
+    # ─────────────────────────────────────────────────────────    @staticmethod
     def is_enrollment_access_allowed(enrollment: Enrollment) -> Tuple[bool, str]:
         """
         Check if a student should be allowed to access course content
-        based on enrollment status and payment verification.
-        
+        based on enrollment status, cohort start date, and payment verification.
+
         Returns: (allowed, reason)
         """
         # Terminated or suspended enrollments never have access
@@ -412,29 +410,57 @@ class WaitlistService:
                 course_id=course.id
             ).order_by(ApplicationWindow.id.desc()).first()
 
+        # ── Payment check FIRST ──
+        # Users can pay before the cohort starts, so payment must be verified
+        # before we check the cohort start date.  Unpaid students should see
+        # "payment required" regardless of whether the cohort has started.
         requires_payment = False
         if window:
             requires_payment = _cohort_requires_payment(window)
         elif course:
             requires_payment = course.enrollment_type == 'paid'
 
-        if not requires_payment:
-            # Free cohort — always allow active enrollments
-            if enrollment.status in ('active', 'completed'):
-                return True, "Free enrollment - access granted"
-            return False, f"Enrollment status: {enrollment.status}"
+        if requires_payment:
+            # Paid cohort — require payment verification (admin must approve)
+            if not enrollment.payment_verified:
+                return False, "Payment required - access blocked until payment is verified by an administrator"
+            # Payment is verified but enrollment status may still block access
+            if enrollment.status not in ('active', 'completed'):
+                return False, f"Enrollment status: {enrollment.status}"
+        else:
+            # Free cohort — check enrollment status
+            if enrollment.status not in ('active', 'completed'):
+                return False, f"Enrollment status: {enrollment.status}"
 
-        # Paid cohort — require payment verification (admin must approve)
-        if enrollment.payment_verified:
-            if enrollment.status in ('active', 'completed'):
-                return True, "Payment verified - access granted"
-            return False, f"Enrollment status: {enrollment.status}"
+        # ── Cohort start date gate ──
+        # Only reached when payment is verified (or cohort is free).
+        # Block access if the cohort has not started yet.
+        cohort_start = None
+        if window and window.cohort_start:
+            cohort_start = window.cohort_start
+        elif enrollment.cohort_start_date:
+            cohort_start = enrollment.cohort_start_date
+        elif course and course.cohort_start_date:
+            cohort_start = course.cohort_start_date
 
-        # NOTE: payment_status is NOT sufficient on its own.
-        # Only payment_verified=True (set by admin via verify_enrollment_payment)
-        # grants access. A student-initiated 'pending' or 'pending_verification'
-        # status means the payment has NOT yet been verified by an admin.
-        return False, "Payment required - access blocked until payment is verified by an administrator"
+        if cohort_start:
+            now = datetime.now(timezone.utc)
+            start_naive = (
+                cohort_start.replace(tzinfo=timezone.utc)
+                if cohort_start.tzinfo is None
+                else cohort_start
+            )
+            if now < start_naive:
+                start_display = start_naive.strftime('%B %d, %Y')
+                return (
+                    False,
+                    f"Cohort has not started yet. It begins on {start_display}.",
+                )
+
+        # All checks passed — grant access
+        if requires_payment:
+            return True, "Payment verified - access granted"
+        return True, "Free enrollment - access granted"
 
     @staticmethod
     def _resolve_enrollment_window(enrollment: Enrollment) -> Optional[ApplicationWindow]:

@@ -1,9 +1,10 @@
 'use client';
 
 import React from 'react';
-import { AlertTriangle, CreditCard, Clock, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, CreditCard, Clock, CheckCircle2, XCircle, CalendarDays } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import CohortCountdownTimer from './CohortCountdownTimer';
 
 interface PaymentStatusBannerProps {
   paymentRequired: boolean;
@@ -17,6 +18,10 @@ interface PaymentStatusBannerProps {
   cohortPrice?: number | null;
   cohortCurrency?: string;
   migratedFromWindowId?: number | null;
+  /** When the cohort has not started yet, this contains the start date string */
+  cohortStartDate?: string | null;
+  /** Error type from backend: 'payment_required' | 'cohort_not_started' | 'enrollment_blocked' */
+  errorType?: string | null;
 }
 
 /**
@@ -35,6 +40,8 @@ export default function PaymentStatusBanner({
   cohortPrice,
   cohortCurrency,
   migratedFromWindowId,
+  cohortStartDate,
+  errorType,
 }: PaymentStatusBannerProps) {
   const displayCourseName = courseName || 'this course';
   const displayCohortLabel = cohortLabel ? ` (${cohortLabel})` : '';
@@ -43,6 +50,37 @@ export default function PaymentStatusBanner({
   // Don't show anything if no payment is required or payment is verified
   if (!paymentRequired && accessAllowed !== false) return null;
   if (paymentVerified && accessAllowed) return null;
+
+  // ── Cohort has not started yet ──
+  if (errorType === 'cohort_not_started' || (accessReason && accessReason.toLowerCase().includes('cohort has not started'))) {
+    return (
+      <Alert className="border-indigo-200 bg-indigo-50 mb-4">
+        <CalendarDays className="h-4 w-4 text-indigo-600" />
+        <AlertTitle className="text-indigo-800">Cohort Has Not Started Yet</AlertTitle>
+        <AlertDescription className="text-indigo-700">
+          <p>
+            Your enrollment in <strong>{displayCourseName}</strong>
+            {displayCohortLabel} is confirmed and payment has been verified.
+            However, the cohort has not started yet.
+          </p>
+          {cohortStartDate && (
+            <div className="mt-3">
+              <p className="text-sm font-medium mb-2">
+                Cohort starts on: <strong>{new Date(cohortStartDate).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</strong>
+              </p>
+              <div className="bg-indigo-100 rounded-lg p-3">
+                <p className="text-xs text-indigo-600 mb-2 font-medium uppercase tracking-wide">Time until cohort starts</p>
+                <CohortCountdownTimer startDate={cohortStartDate} size="sm" />
+              </div>
+            </div>
+          )}
+          <p className="mt-2 text-sm">
+            Learning content will become available once the cohort officially begins.
+          </p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   // Payment submitted/initiated but not yet admin-verified
   // Note: 'pending' is intentionally excluded — it's the default status for new unpaid enrollments
