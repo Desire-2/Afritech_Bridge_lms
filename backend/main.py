@@ -388,6 +388,11 @@ def _auto_migrate():
             ('payment_reminder_sent', 'BOOLEAN DEFAULT FALSE'),
             ('payment_reminder_sent_at', 'TIMESTAMP'),
         ],
+        'courses': [
+            ('momo_pay_code_enabled', 'BOOLEAN DEFAULT FALSE'),
+            ('momo_ussd_code', 'VARCHAR(100)'),
+            ('momo_recipient_name', 'VARCHAR(100)'),
+        ],
     }
 
     for table_name, columns in migrations.items():
@@ -404,16 +409,18 @@ def _auto_migrate():
                         logger.warning(f"⚠️  Auto-migrate skipped {table_name}.{col_name}: {e}")
 
         # ── Alter existing columns that need type changes ──
-        column_type_changes = [
-            ('enrollments', 'payment_slip_url', 'TEXT'),
-        ]
-        for tbl, col, new_type in column_type_changes:
-            try:
-                with db.engine.begin() as conn:
-                    conn.execute(text(f'ALTER TABLE {tbl} ALTER COLUMN {col} TYPE {new_type}'))
-                    logger.info(f"✅ Auto-migrated: altered {tbl}.{col} to {new_type}")
-            except Exception as e:
-                logger.warning(f"⚠️  Auto-migrate alter skipped {tbl}.{col}: {e}")
+        # Note: ALTER COLUMN TYPE is PostgreSQL-only; SQLite does not support it.
+        if is_postgres:
+            column_type_changes = [
+                ('enrollments', 'payment_slip_url', 'TEXT'),
+            ]
+            for tbl, col, new_type in column_type_changes:
+                try:
+                    with db.engine.begin() as conn:
+                        conn.execute(text(f'ALTER TABLE {tbl} ALTER COLUMN {col} TYPE {new_type}'))
+                        logger.info(f"✅ Auto-migrated: altered {tbl}.{col} to {new_type}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Auto-migrate alter skipped {tbl}.{col}: {e}")
 
 
 with app.app_context():

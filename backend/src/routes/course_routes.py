@@ -1942,13 +1942,13 @@ def upload_enrollment_payment_slip(enrollment_id):
         except Exception as notify_err:
             logger.warning(f"Failed to send admin alert for enrollment payment slip: {notify_err}")
 
-        logger.info(f"Payment slip uploaded for enrollment {enrollment_id}: {unique_filename}")
+        logger.info(f"Payment slip uploaded for enrollment {enrollment_id}: {original_filename}")
 
         return jsonify({
             "success": True,
             "message": "Payment slip uploaded. Your payment is pending admin verification.",
             "payment_status": "submitted_with_proof",
-            "filename": unique_filename
+            "filename": original_filename
         }), 200
 
     except Exception as e:
