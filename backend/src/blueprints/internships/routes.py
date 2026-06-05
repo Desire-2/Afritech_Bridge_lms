@@ -63,7 +63,7 @@ def get_tracks():
         include_cohorts = request.args.get('include_cohorts', 'false').lower() == 'true'
         
         tracks = InternshipTrack.query.filter_by(is_active=True).all()
-        schema = InternshipTrackSchema(many=True)
+        schema = InternshipTrackSchema()
         
         data = []
         for track in tracks:
@@ -219,14 +219,28 @@ def submit_application():
             )
 
         # ----------------------------------------------------------------
-        # 6. Validate track (accepts UUID or slug)
+        # 6. Validate track (accepts UUID, slug, or numeric index)
         # ----------------------------------------------------------------
-        track = InternshipTrack.query.get(validated_data['track_id'])
+        track_id_value = validated_data['track_id']
+        track = InternshipTrack.query.get(track_id_value)
         if not track or not track.is_active:
             # Fallback: try resolving by slug
             track = InternshipTrack.query.filter_by(
-                slug=validated_data['track_id'], is_active=True
+                slug=track_id_value, is_active=True
             ).first()
+
+        if not track and track_id_value is not None:
+            # Fallback: try resolving numeric index (1-based) to active tracks
+            try:
+                idx = int(track_id_value)
+                if idx >= 1:
+                    active_tracks = InternshipTrack.query.filter_by(
+                        is_active=True
+                    ).order_by(InternshipTrack.created_at.asc()).all()
+                    if 1 <= idx <= len(active_tracks):
+                        track = active_tracks[idx - 1]
+            except (ValueError, TypeError):
+                pass
 
         if not track:
             logger.error(f"Track not found for track_id={validated_data['track_id']}")
