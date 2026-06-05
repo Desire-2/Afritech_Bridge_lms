@@ -70,6 +70,15 @@ const AdminSidebar = () => {
       ],
     },
     {
+      title: 'Internships',
+      items: [
+        { href: '/admin/internships', label: 'Dashboard', icon: '📋', description: 'Overview & stats' },
+        { href: '/admin/internships/applications', label: 'Applications', icon: '📝', description: 'Review applicants' },
+        { href: '/admin/internships/tracks', label: 'Tracks', icon: '🛤️', description: 'Manage internship tracks' },
+        { href: '/admin/internships/cohorts', label: 'Cohorts', icon: '👥', description: 'Manage cohorts' },
+      ],
+    },
+    {
       title: 'Analytics & Reports',
       items: [
         { href: '/admin/analytics', label: 'Analytics', icon: '📈', description: 'System analytics' },

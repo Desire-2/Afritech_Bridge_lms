@@ -95,9 +95,24 @@ class BaseApiService {
       }
     );
 
-    // Response interceptor - handle errors
+    // Response interceptor - auto-unwrap {success: true, data: ...} envelopes + handle errors
     this.api.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        // Auto-unwrap the standard Flask success_response envelope:
+        //   { success: true, data: <actual_data>, message: "..." }
+        //   → returns <actual_data> directly to the caller
+        if (
+          response.data &&
+          typeof response.data === 'object' &&
+          'success' in response.data &&
+          response.data.success === true &&
+          'data' in response.data &&
+          response.data.data !== undefined
+        ) {
+          response.data = response.data.data;
+        }
+        return response;
+      },
       (error: AxiosError) => {
         this.handleError(error);
         return Promise.reject(error);
@@ -162,6 +177,11 @@ class BaseApiService {
   protected async delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
     const response = await this.api.delete<T>(url, config);
     return response.data;
+  }
+
+  /** Get the base URL from the configured axios instance */
+  protected getBaseUrl(): string {
+    return this.api.defaults.baseURL || API_BASE_URL;
   }
 
   // Utility method for handling API responses
