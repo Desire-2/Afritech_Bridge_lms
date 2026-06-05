@@ -4,6 +4,7 @@ import logging
 from flask import render_template_string, current_app
 from datetime import datetime
 from src.utils.brevo_email_service import brevo_service
+from src.services.internship_offer_service import InternshipOfferService
 
 logger = logging.getLogger(__name__)
 
@@ -518,6 +519,417 @@ class InternshipMailer:
 </html>
 '''
     
+    def send_offer_letter(self, application, offer, password=None):
+        """
+        Send an internship offer letter email with credentials and next steps.
+        """
+        try:
+            frontend_url = current_app.config.get('FRONTEND_URL', 'https://study.afritechbridge.online')
+            subject = f"🎉 Congratulations! Your Internship Offer from AfriTech Bridge"
+
+            html_content = render_template_string(self._get_offer_letter_template(),
+                full_name=application.full_name.split()[0] if application.full_name else 'Applicant',
+                track_name=application.track.name if application.track else 'Internship Program',
+                reference_code=application.reference_code,
+                offer_number=offer.offer_number,
+                username=offer.generated_username,
+                password=password or 'Use the password set during account creation',
+                login_url=f'{frontend_url}/auth/login',
+                cohort_name=application.cohort.cohort_name if application.cohort else 'Your Cohort',
+                start_date=application.cohort.start_date.strftime('%d %B %Y') if application.cohort else 'TBD',
+                share_url=InternshipOfferService.get_share_url(offer),
+                verification_hash=offer.verification_hash,
+            )
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': application.email, 'name': application.full_name}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Offer letter email sent to {application.email} (offer={offer.offer_number})")
+            else:
+                logger.warning(f"Failed to send offer letter email to {application.email}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending offer letter email: {str(e)}")
+            return False
+
+    def _get_offer_letter_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        /* Header with gradient */
+        .header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #14b8a6 100%);
+            padding: 48px 40px 36px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(20,184,166,0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 70% 30%, rgba(249,115,22,0.1) 0%, transparent 50%);
+            animation: pulse 4s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.5; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+        }
+        .header-content { position: relative; z-index: 1; }
+        .confetti-icon { font-size: 48px; margin-bottom: 16px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        .header p {
+            color: rgba(255,255,255,0.85);
+            font-size: 16px;
+            line-height: 1.5;
+        }
+        .header .offer-badge {
+            display: inline-block;
+            background: rgba(20,184,166,0.2);
+            border: 1px solid rgba(20,184,166,0.4);
+            color: #5eead4;
+            padding: 6px 20px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-top: 12px;
+        }
+        /* Body */
+        .body-content {
+            padding: 40px;
+            color: #334155;
+        }
+        .body-content h2 {
+            color: #0f172a;
+            font-size: 20px;
+            margin-bottom: 16px;
+        }
+        .body-content p {
+            line-height: 1.7;
+            margin-bottom: 16px;
+        }
+        /* Credentials Box */
+        .creds-box {
+            background: linear-gradient(135deg, #f0fdfa 0%, #fef2f2 100%);
+            border: 2px solid #14b8a6;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 24px 0;
+        }
+        .creds-box h3 {
+            color: #0f172a;
+            font-size: 16px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .creds-box .creds-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 16px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .creds-box .creds-label {
+            font-weight: 700;
+            color: #1e3a8a;
+            width: 100px;
+            font-size: 13px;
+        }
+        .creds-box .creds-value {
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+            color: #0f172a;
+            font-size: 15px;
+            letter-spacing: 1px;
+            flex: 1;
+        }
+        .creds-box .creds-note {
+            text-align: center;
+            color: #ef4444;
+            font-size: 12px;
+            margin-top: 12px;
+            font-weight: 600;
+        }
+        /* Detail Grid */
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        .detail-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .detail-item .label {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+        .detail-item .value {
+            font-size: 14px;
+            color: #0f172a;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+        /* CTA Button */
+        .cta-button {
+            display: block;
+            width: 100%;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            text-align: center;
+            margin: 24px 0;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(20,184,166,0.3);
+        }
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(20,184,166,0.4);
+        }
+        /* Social Share */
+        .social-share {
+            text-align: center;
+            padding: 24px;
+            background: #f8fafc;
+            border-radius: 12px;
+            margin: 24px 0;
+            border: 1px solid #e2e8f0;
+        }
+        .social-share p {
+            font-size: 14px;
+            color: #64748b;
+            margin-bottom: 12px;
+        }
+        .social-links {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+        }
+        .social-btn {
+            display: inline-block;
+            padding: 10px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff !important;
+            transition: all 0.2s;
+        }
+        .social-btn.linkedin { background: #0a66c2; }
+        .social-btn.twitter { background: #1da1f2; }
+        .social-btn.facebook { background: #1877f2; }
+        .social-btn.whatsapp { background: #25d366; }
+        .social-btn:hover { transform: translateY(-2px); opacity: 0.9; }
+        /* Verification */
+        .verify-section {
+            text-align: center;
+            padding: 16px;
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 8px;
+            margin: 16px 0;
+        }
+        .verify-section p {
+            color: #92400e;
+            font-size: 12px;
+            margin-bottom: 0;
+        }
+        /* Footer */
+        .footer {
+            background: #0f172a;
+            padding: 32px 40px;
+            text-align: center;
+        }
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .footer .brand {
+            color: #14b8a6;
+            font-weight: 700;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        /* Mobile */
+        @media (max-width: 480px) {
+            .header { padding: 32px 20px; }
+            .body-content { padding: 24px; }
+            .header h1 { font-size: 22px; }
+            .detail-grid { grid-template-columns: 1fr; }
+            .social-links { flex-wrap: wrap; }
+            .creds-box .creds-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .creds-box .creds-label { width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-content">
+                <span class="confetti-icon">🎉</span>
+                <h1>Welcome to AfriTech Bridge!</h1>
+                <p>We're thrilled to have you join our internship program</p>
+                <span class="offer-badge">Offer No: {{ offer_number }}</span>
+            </div>
+        </div>
+
+        <!-- Body -->
+        <div class="body-content">
+            <h2>Dear {{ full_name }},</h2>
+
+            <p>
+                Congratulations! We are delighted to officially offer you a position in the
+                <strong>{{ track_name }}</strong> internship program at
+                <strong>AfriTech Bridge</strong>. Your application, skills, and passion
+                impressed our team, and we are confident you will make a significant impact.
+            </p>
+
+            <!-- Offer Details -->
+            <div class="detail-grid">
+                <div class="detail-item">
+                    <div class="label">Program Track</div>
+                    <div class="value">{{ track_name }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Cohort</div>
+                    <div class="value">{{ cohort_name }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Start Date</div>
+                    <div class="value">{{ start_date }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="label">Reference Code</div>
+                    <div class="value" style="font-family:monospace;">{{ reference_code }}</div>
+                </div>
+            </div>
+
+            <!-- Credentials Box -->
+            <div class="creds-box">
+                <h3>🔑 Your Login Credentials</h3>
+                <div class="creds-row">
+                    <span class="creds-label">Username</span>
+                    <span class="creds-value">{{ username }}</span>
+                </div>
+                <div class="creds-row">
+                    <span class="creds-label">Password</span>
+                    <span class="creds-value" style="letter-spacing: 2px;">{{ password }}</span>
+                </div>
+                <p class="creds-note">⚠️ For security, you will be required to change your password on first login.</p>
+            </div>
+
+            <!-- Call to Action -->
+            <a href="{{ login_url }}" class="cta-button">
+                🚀 Log In to Your Account
+            </a>
+
+            <p>
+                Once logged in, you will be able to:
+            </p>
+            <ul style="padding-left: 20px; margin-bottom: 20px; line-height: 2;">
+                <li>📋 <strong>View and complete assigned tasks</strong></li>
+                <li>📈 <strong>Track your progress and performance</strong></li>
+                <li>💬 <strong>Communicate with your mentor and team</strong></li>
+                <li>🏆 <strong>Earn badges and certificates of completion</strong></li>
+            </ul>
+
+            <!-- Social Share -->
+            <div class="social-share">
+                <p>🎯 Share your achievement with friends and family!</p>
+                <div class="social-links">
+                    <a href="https://www.linkedin.com/sharing/share-offsite/?url={{ share_url }}" class="social-btn linkedin" target="_blank">LinkedIn</a>
+                    <a href="https://twitter.com/intent/tweet?text=I%27m%20thrilled%20to%20share%20that%20I%20received%20an%20internship%20offer%20from%20%40AfriTechBridge%20%F0%9F%8E%89&url={{ share_url }}" class="social-btn twitter" target="_blank">Twitter</a>
+                    <a href="https://www.facebook.com/sharer/sharer.php?u={{ share_url }}" class="social-btn facebook" target="_blank">Facebook</a>
+                    <a href="https://wa.me/?text=I%20received%20an%20internship%20offer%20from%20AfriTech%20Bridge%21%20Check%20it%20out%3A%20{{ share_url }}" class="social-btn whatsapp" target="_blank">WhatsApp</a>
+                </div>
+            </div>
+
+            <!-- Verification -->
+            <div class="verify-section">
+                <p>
+                    🔒 <strong>Tamper-Proof Verification:</strong> This offer letter is protected by blockchain-grade
+                    SHA-256 hashing. Verify its authenticity at
+                    <a href="https://study.afritechbridge.online/verify-offer/{{ verification_hash }}" style="color: #14b8a6; font-weight: 600;">study.afritechbridge.online/verify-offer</a>
+                </p>
+            </div>
+
+            <p>
+                If you have any questions or need assistance getting started,
+                please don't hesitate to reach out to our team at
+                <a href="mailto:info@afritechbridge.online" style="color: #14b8a6;">info@afritechbridge.online</a>.
+            </p>
+
+            <p>
+                Welcome aboard! We can't wait to see what you'll achieve.
+            </p>
+
+            <p style="margin-top: 24px;">
+                Best regards,<br>
+                <strong style="color: #14b8a6; font-size: 16px;">The AfriTech Bridge Team</strong>
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+            <p style="margin-top: 8px;">
+                © 2026 AfriTech Bridge. All rights reserved.<br>
+                Offer No: {{ offer_number }} | This is an official communication.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
     def _get_reviewing_template(self):
         return '''
 <!DOCTYPE html>

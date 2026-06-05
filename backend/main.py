@@ -31,7 +31,7 @@ from src.models.notification_models import Notification # Import notification mo
 from src.models.excel_grading_models import ExcelGradingResult # Import Excel AI grading model
 from src.models.task_models import BackgroundTask, TaskStatus # Import background task models for multi-worker support
 from src.models.internship_models import (
-    InternshipTrack, InternshipCohort, InternshipApplication, ApplicationStatusLog
+    InternshipTrack, InternshipCohort, InternshipApplication, ApplicationStatusLog, InternshipOfferLetter
 ) # Import internship models
 from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
 from src.utils.brevo_email_service import brevo_service # Import Brevo service

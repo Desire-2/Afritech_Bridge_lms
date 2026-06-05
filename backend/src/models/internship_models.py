@@ -204,6 +204,217 @@ class InternshipApplication(db.Model):
         return data
 
 
+
+class InternshipTaskStatusEnum(str, Enum):
+    """Task statuses"""
+    PENDING = 'pending'
+    ACTIVE = 'active'
+    COMPLETED = 'completed'
+    CANCELLED = 'cancelled'
+
+
+class InternshipPriorityEnum(str, Enum):
+    """Task priority levels"""
+    LOW = 'low'
+    MEDIUM = 'medium'
+    HIGH = 'high'
+    URGENT = 'urgent'
+
+
+class InternshipTaskTypeEnum(str, Enum):
+    """Types of tasks that can be assigned"""
+    DOCUMENT = 'document'
+    PRESENTATION = 'presentation'
+    CODE = 'code'
+    RESEARCH = 'research'
+    ASSIGNMENT = 'assignment'
+    PROJECT = 'project'
+    REPORT = 'report'
+    QUIZ = 'quiz'
+    OTHER = 'other'
+
+
+class InternshipTask(db.Model):
+    """Tasks assigned to interns by instructors"""
+    __tablename__ = 'internship_tasks'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    cohort_id = db.Column(db.String(36), db.ForeignKey('internship_cohorts.id'), nullable=True, index=True)
+    assigned_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    task_type = db.Column(db.Enum(InternshipTaskTypeEnum), default=InternshipTaskTypeEnum.OTHER, nullable=False)
+    priority = db.Column(db.Enum(InternshipPriorityEnum), default=InternshipPriorityEnum.MEDIUM, nullable=False)
+    due_date = db.Column(db.DateTime, nullable=True)
+    max_score = db.Column(db.Integer, nullable=True, default=100)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    cohort = db.relationship('InternshipCohort', backref='tasks')
+    assigned_by = db.relationship('User', foreign_keys=[assigned_by_id], backref='tasks_assigned')
+    assignments = db.relationship('InternshipTaskAssignment', backref='task', lazy='dynamic', cascade='all, delete-orphan')
+
+    def __repr__(self):
+        return f'<InternshipTask {self.title}>'
+
+    def to_dict(self):
+        total = self.assignments.count()
+        completed = self.assignments.filter_by(status='approved').count()
+        submitted = self.assignments.filter(InternshipTaskAssignment.status.in_(['submitted', 'approved'])).count()
+        return {
+            'id': self.id,
+            'cohort_id': self.cohort_id,
+            'cohort_name': self.cohort.cohort_name if self.cohort else None,
+            'cohort_code': self.cohort.cohort_code if self.cohort else None,
+            'assigned_by_id': self.assigned_by_id,
+            'assigned_by_name': f"{self.assigned_by.first_name} {self.assigned_by.last_name}" if self.assigned_by else None,
+            'title': self.title,
+            'description': self.description,
+            'task_type': self.task_type.value if self.task_type else None,
+            'priority': self.priority.value if self.priority else None,
+            'due_date': self.due_date.isoformat() if self.due_date else None,
+            'max_score': self.max_score,
+            'is_active': self.is_active,
+            'total_interns': total,
+            'completed_count': completed,
+            'submitted_count': submitted,
+            'progress_pct': round((completed / total * 100)) if total > 0 else 0,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+        }
+
+
+class AssignmentStatusEnum(str, Enum):
+    """Per-intern assignment progress status"""
+    PENDING = 'pending'
+    IN_PROGRESS = 'in_progress'
+    SUBMITTED = 'submitted'
+    APPROVED = 'approved'
+    REJECTED = 'rejected'
+
+
+class InternshipTaskAssignment(db.Model):
+    """Links tasks to individual interns with progress tracking"""
+    __tablename__ = 'internship_task_assignments'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id = db.Column(db.String(36), db.ForeignKey('internship_tasks.id'), nullable=False, index=True)
+    intern_id = db.Column(db.String(36), db.ForeignKey('internship_applications.id'), nullable=False, index=True)
+    status = db.Column(db.Enum(AssignmentStatusEnum), default=AssignmentStatusEnum.PENDING, nullable=False, index=True)
+    submission_text = db.Column(db.Text, nullable=True)
+    file_path = db.Column(db.String(500), nullable=True)
+    file_original_name = db.Column(db.String(255), nullable=True)
+    score = db.Column(db.Integer, nullable=True)
+    feedback = db.Column(db.Text, nullable=True)
+    graded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    graded_at = db.Column(db.DateTime, nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    intern = db.relationship('InternshipApplication', backref='task_assignments')
+    graded_by = db.relationship('User', foreign_keys=[graded_by_id], backref='task_grades')
+
+    def __repr__(self):
+        return f'<InternshipTaskAssignment task={self.task_id} intern={self.intern_id}>'
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'task_title': self.task.title if self.task else None,
+            'intern_id': self.intern_id,
+            'intern_name': self.intern.full_name if self.intern else None,
+            'intern_email': self.intern.email if self.intern else None,
+            'intern_reference': self.intern.reference_code if self.intern else None,
+            'status': self.status.value if self.status else None,
+            'submission_text': self.submission_text,
+            'file_path': self.file_path,
+            'file_original_name': self.file_original_name,
+            'score': self.score,
+            'feedback': self.feedback,
+            'graded_by_id': self.graded_by_id,
+            'graded_by_name': f"{self.graded_by.first_name} {self.graded_by.last_name}" if self.graded_by else None,
+            'graded_at': self.graded_at.isoformat() if self.graded_at else None,
+            'submitted_at': self.submitted_at.isoformat() if self.submitted_at else None,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+        }
+
+
+class InternshipOfferLetter(db.Model):
+    """
+    Internship offer letters issued to accepted applicants.
+    Stores the generated PDF path, SHA-256 hash for tamper-proofing,
+    auto-generated credentials, and social sharing info.
+    """
+    __tablename__ = 'internship_offer_letters'
+
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    application_id = db.Column(db.String(36), db.ForeignKey('internship_applications.id'), nullable=False, unique=True, index=True)
+
+    # Generated content
+    offer_number = db.Column(db.String(30), nullable=False, unique=True, index=True)  # e.g., OFR-2026-0001
+    pdf_path = db.Column(db.String(500), nullable=True)  # Path to generated PDF on disk
+
+    # Tamper-proofing — SHA-256 hash of the PDF binary
+    pdf_hash = db.Column(db.String(64), nullable=True)
+    verification_hash = db.Column(db.String(64), nullable=False, unique=True)  # Public-facing token for verification
+
+    # Auto-generated user account for this intern
+    generated_username = db.Column(db.String(80), nullable=True, unique=True)
+    generated_password_hash = db.Column(db.String(256), nullable=True)  # Hashed password
+
+    # Status tracking
+    status = db.Column(db.String(20), default='sent', nullable=False)  # sent | accepted | declined | revoked
+    sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    accepted_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+
+    # Social sharing
+    share_token = db.Column(db.String(64), nullable=True, unique=True)  # Token for public share page
+    social_shares = db.Column(db.Integer, default=0)
+
+    # Metadata
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Relationships
+    application = db.relationship('InternshipApplication', backref='offer_letter', uselist=False)
+    created_by = db.relationship('User', foreign_keys=[created_by_id], backref='offer_letters_created')
+    accepted_by_user = db.relationship('User', foreign_keys=[accepted_by_user_id], backref='offers_accepted')
+
+    def __repr__(self):
+        return f'<InternshipOfferLetter {self.offer_number}>'
+
+    def to_dict(self, include_sensitive=False):
+        data = {
+            'id': self.id,
+            'application_id': self.application_id,
+            'offer_number': self.offer_number,
+            'pdf_hash': self.pdf_hash,
+            'verification_hash': self.verification_hash,
+            'generated_username': self.generated_username,
+            'status': self.status,
+            'sent_at': self.sent_at.isoformat() if self.sent_at else None,
+            'accepted_at': self.accepted_at.isoformat() if self.accepted_at else None,
+            'accepted_by_user_id': self.accepted_by_user_id,
+            'share_token': self.share_token,
+            'social_shares': self.social_shares,
+            'created_by_id': self.created_by_id,
+            'created_at': self.created_at.isoformat(),
+            'updated_at': self.updated_at.isoformat(),
+        }
+        if include_sensitive:
+            data['pdf_path'] = self.pdf_path
+            data['generated_password_hash'] = self.generated_password_hash
+        return data
+
+
 class ApplicationStatusLog(db.Model):
     """Audit log for application status changes"""
     __tablename__ = 'application_status_logs'
