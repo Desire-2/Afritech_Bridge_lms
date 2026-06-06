@@ -167,7 +167,7 @@ class InternshipOfferService:
             pdf_canvas.drawRightString(width - 20 * mm, height - 36 * mm, f"Offer No: {offer.offer_number}")
 
             # ── Divider ──
-            divider_y = height - 44 * mm
+            divider_y = height - 50 * mm
             pdf_canvas.setStrokeColor(teal)
             pdf_canvas.setLineWidth(1)
             pdf_canvas.line(20 * mm, divider_y, width - 50 * mm, divider_y)
@@ -212,16 +212,13 @@ class InternshipOfferService:
                 "We are delighted to offer you a position in our internship program at",
                 "AfriTech Bridge. After careful review of your application and interview",
                 "performance, we were impressed by your skills, passion, and potential.",
-                "",
-                "We believe you will be a valuable addition to our team and look forward",
-                "to having you contribute to our mission of transforming technology in Africa.",
             )
 
             for i, line in enumerate(body_text):
                 pdf_canvas.drawCentredString(width / 2, body_start_y - i * line_height, line)
 
             # ── Offer Details Box ──
-            details_y = body_start_y - len(body_text) * line_height - 10 * mm
+            details_y = body_start_y - len(body_text) * line_height - 25 * mm
             box_height = 32 * mm
             box_width = 140 * mm
 
@@ -274,7 +271,7 @@ class InternshipOfferService:
                 pdf_canvas.drawString(col2_x, y, value)
 
             # ── Login Credentials Box ──
-            creds_y = details_y - 14 * mm
+            creds_y = details_y - 28 * mm
             creds_box_height = 22 * mm
 
             pdf_canvas.setFillColorRGB(0.08, 0.72, 0.65, alpha=0.08)
@@ -311,9 +308,8 @@ class InternshipOfferService:
             pdf_canvas.setFont("Helvetica", 10)
             pdf_canvas.setFillColor(slate)
             closing_lines = (
-                "We look forward to having you on board! To accept this offer, please log in to",
-                "your account using the credentials above within 7 days. Once logged in, you will",
-                "be able to access your tasks, track your progress, and connect with your mentor.",
+                "We look forward to having you on board! Log in using the credentials above",
+                "within 7 days to access your tasks, track progress, and connect with your mentor.",
             )
             for i, line in enumerate(closing_lines):
                 pdf_canvas.drawCentredString(width / 2, closing_y - i * line_height, line)
@@ -464,33 +460,45 @@ class InternshipOfferService:
             if existing:
                 return False, "An offer letter has already been issued for this application", existing, None
 
-            # ── Create user account ──
-            username = InternshipOfferService._generate_username(application.full_name)
-            password = InternshipOfferService._generate_password()
+            # ── Create or find existing user account ──
+            # Check if a user already exists with this email
+            intern_user = User.query.filter_by(email=application.email).first()
 
-            # Check for username uniqueness
-            existing_user = User.query.filter_by(username=username).first()
-            if existing_user:
-                username = f"{username}.{secrets.token_hex(2)}"
+            if intern_user:
+                # User already exists — link them and skip account creation
+                logger.info(
+                    f"User already exists for email {application.email} (id={intern_user.id}) — linking existing account"
+                )
+                username = intern_user.username
+                password = None  # Don't regenerate password for existing users
+            else:
+                # Create new user account
+                username = InternshipOfferService._generate_username(application.full_name)
+                password = InternshipOfferService._generate_password()
 
-            # Look up student role by name instead of hardcoding ID
-            student_role = Role.query.filter_by(name='student').first()
-            student_role_id = student_role.id if student_role else 4
-            
-            intern_user = User(
-                username=username,
-                email=application.email,
-                first_name=application.full_name.split()[0] if application.full_name.split() else application.full_name,
-                last_name=" ".join(application.full_name.split()[1:]) if len(application.full_name.split()) > 1 else "",
-                role_id=student_role_id,
-                is_active=True,
-                must_change_password=True,  # Force password change on first login
-            )
-            intern_user.set_password(password)
-            db.session.add(intern_user)
-            db.session.flush()
+                # Check for username uniqueness
+                existing_user = User.query.filter_by(username=username).first()
+                if existing_user:
+                    username = f"{username}.{secrets.token_hex(2)}"
 
-            # Link the application to the new user
+                # Look up student role by name instead of hardcoding ID
+                student_role = Role.query.filter_by(name='student').first()
+                student_role_id = student_role.id if student_role else 4
+
+                intern_user = User(
+                    username=username,
+                    email=application.email,
+                    first_name=application.full_name.split()[0] if application.full_name.split() else application.full_name,
+                    last_name=" ".join(application.full_name.split()[1:]) if len(application.full_name.split()) > 1 else "",
+                    role_id=student_role_id,
+                    is_active=True,
+                    must_change_password=True,  # Force password change on first login
+                )
+                intern_user.set_password(password)
+                db.session.add(intern_user)
+                db.session.flush()
+
+            # Link the application to the user (existing or newly created)
             application.user_id = intern_user.id
             db.session.flush()
 

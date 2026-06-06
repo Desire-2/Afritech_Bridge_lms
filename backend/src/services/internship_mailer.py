@@ -533,7 +533,7 @@ class InternshipMailer:
                 reference_code=application.reference_code,
                 offer_number=offer.offer_number,
                 username=offer.generated_username,
-                password=password or 'Use the password set during account creation',
+                password=password or 'Use your existing password (or use Forgot Password to reset it)',
                 login_url=f'{frontend_url}/auth/login',
                 cohort_name=application.cohort.cohort_name if application.cohort else 'Your Cohort',
                 start_date=application.cohort.start_date.strftime('%d %B %Y') if application.cohort else 'TBD',
