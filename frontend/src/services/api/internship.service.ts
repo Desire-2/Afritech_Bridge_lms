@@ -185,6 +185,7 @@ class InternshipService extends BaseApiService {
     track_id?: string;
     cohort_id?: string;
     search?: string;
+    applicant_type?: string;
     start_date?: string;
     end_date?: string;
     page?: number;
@@ -197,6 +198,7 @@ class InternshipService extends BaseApiService {
     if (params?.track_id) searchParams.set('track_id', params.track_id);
     if (params?.cohort_id) searchParams.set('cohort_id', params.cohort_id);
     if (params?.search) searchParams.set('search', params.search);
+    if (params?.applicant_type) searchParams.set('applicant_type', params.applicant_type);
     if (params?.start_date) searchParams.set('start_date', params.start_date);
     if (params?.end_date) searchParams.set('end_date', params.end_date);
     if (params?.page) searchParams.set('page', params.page.toString());
@@ -226,7 +228,12 @@ class InternshipService extends BaseApiService {
     return this.patch(`${this.BASE}/admin/applications/${id}/assign-cohort`, { cohort_id: cohortId });
   }
 
-  /** Download CV file (returns a blob URL) */
+  /** Download CV file as a blob */
+  async downloadCv(appId: string): Promise<Blob> {
+    return this.downloadBlob(`${this.BASE}/admin/applications/${appId}/cv`);
+  }
+
+  /** Get CV download URL (uses JWT in query param for direct links) */
   getCvDownloadUrl(appId: string): string {
     const token = this.getToken();
     return `${this.getBaseUrl()}${this.BASE}/admin/applications/${appId}/cv?token=${token}`;
@@ -501,7 +508,12 @@ class InternshipService extends BaseApiService {
     return this.get(`${this.BASE}/admin/applications/${appId}/offer`);
   }
 
-  /** Download offer letter PDF URL */
+  /** Download offer letter PDF as a blob */
+  async downloadOfferPdf(offerId: string): Promise<Blob> {
+    return this.downloadBlob(`${this.BASE}/admin/offers/${offerId}/download`);
+  }
+
+  /** Get offer letter PDF download URL (uses JWT in query param for direct links) */
   getOfferDownloadUrl(offerId: string): string {
     const token = this.getToken();
     return `${this.getBaseUrl()}${this.BASE}/admin/offers/${offerId}/download?token=${token}`;
@@ -522,6 +534,20 @@ class InternshipService extends BaseApiService {
     return this.get(`${this.BASE}/admin/offers/${offerId}/verify`);
   }
 
+  /** Resend the offer letter email for an application that already has an offer */
+  async resendOfferEmail(appId: string): Promise<{ offer_number: string; sent_to: string }> {
+    return this.post(`${this.BASE}/admin/applications/${appId}/offer/resend`, {});
+  }
+
+  /** Regenerate an offer letter — revokes old one and creates a new one with fresh credentials */
+  async regenerateOffer(appId: string): Promise<{
+    offer: InternshipOfferLetter;
+    username: string;
+    message: string;
+  }> {
+    return this.post(`${this.BASE}/admin/applications/${appId}/offer/regenerate`, {});
+  }
+
   /** Get social media share content for an offer letter */
   async getShareContent(offerId: string, platform?: string): Promise<{
     success: boolean;
@@ -535,6 +561,103 @@ class InternshipService extends BaseApiService {
     };
   }> {
     return this.post(`${this.BASE}/admin/offers/${offerId}/share`, { platform });
+  }
+
+  // ═══════════ Applications Export & Communication ═══════════
+
+  /** Export applications to CSV */
+  getApplicationsExportUrl(params?: {
+    status?: string;
+    track_id?: string;
+    cohort_id?: string;
+    search?: string;
+    applicant_type?: string;
+    start_date?: string;
+    end_date?: string;
+  }): string {
+    const searchParams = new URLSearchParams();
+    if (params?.status) searchParams.set('status', params.status);
+    if (params?.track_id) searchParams.set('track_id', params.track_id);
+    if (params?.cohort_id) searchParams.set('cohort_id', params.cohort_id);
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.applicant_type) searchParams.set('applicant_type', params.applicant_type);
+    if (params?.start_date) searchParams.set('start_date', params.start_date);
+    if (params?.end_date) searchParams.set('end_date', params.end_date);
+    const token = this.getToken();
+    searchParams.set('token', token || '');
+    return `${this.getBaseUrl()}${this.BASE}/admin/applications/export?${searchParams.toString()}`;
+  }
+
+  /** Update interview notes for an application */
+  async updateInterviewNotes(appId: string, interviewNotes: string): Promise<{ interview_notes: string }> {
+    return this.put(`${this.BASE}/admin/applications/${appId}/interview-notes`, { interview_notes: interviewNotes });
+  }
+
+  /** Send an email to an applicant from the admin panel */
+  async sendApplicantEmail(appId: string, data: {
+    subject: string;
+    message: string;
+  }): Promise<{ to: string; subject: string }> {
+    return this.post(`${this.BASE}/admin/applications/${appId}/send-email`, data);
+  }
+
+  // ═══════════ Admin Intern Management ═══════════
+
+  /** Get all interns (accepted applications) with task progress and offer info */
+  async getAdminInterns(params?: {
+    cohort_id?: string;
+    track_id?: string;
+    search?: string;
+    offer_status?: string;
+    page?: number;
+    per_page?: number;
+    sort_by?: string;
+    sort_order?: string;
+  }): Promise<PaginatedResult<InternshipApplication & {
+    task_stats: {
+      total_assigned: number;
+      completed: number;
+      submitted: number;
+      in_progress: number;
+      pending: number;
+      progress_pct: number;
+      avg_score: number | null;
+    };
+    offer: {
+      id: string;
+      offer_number: string;
+      status: string;
+      sent_at: string | null;
+      social_shares: number;
+    } | null;
+  }> & { summary: {
+    total_accepted: number;
+    with_cohort: number;
+    unassigned: number;
+    with_offers: number;
+    offers_accepted: number;
+  } }> {
+    const searchParams = new URLSearchParams();
+    if (params?.cohort_id) searchParams.set('cohort_id', params.cohort_id);
+    if (params?.track_id) searchParams.set('track_id', params.track_id);
+    if (params?.search) searchParams.set('search', params.search);
+    if (params?.offer_status) searchParams.set('offer_status', params.offer_status);
+    if (params?.page) searchParams.set('page', params.page.toString());
+    if (params?.per_page) searchParams.set('per_page', params.per_page.toString());
+    if (params?.sort_by) searchParams.set('sort_by', params.sort_by);
+    if (params?.sort_order) searchParams.set('sort_order', params.sort_order);
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
+    return this.get(`${this.BASE}/admin/interns${query}`);
+  }
+
+  /** Export interns to CSV */
+  getInternsExportUrl(params?: { cohort_id?: string; track_id?: string }): string {
+    const searchParams = new URLSearchParams();
+    if (params?.cohort_id) searchParams.set('cohort_id', params.cohort_id);
+    if (params?.track_id) searchParams.set('track_id', params.track_id);
+    const token = this.getToken();
+    searchParams.set('token', token || '');
+    return `${this.getBaseUrl()}${this.BASE}/admin/interns/export?${searchParams.toString()}`;
   }
 }
 

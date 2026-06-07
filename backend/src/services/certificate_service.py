@@ -1183,7 +1183,7 @@ class CertificateService:
             # Center - Enhanced Signature Section with Authority Badge
             center_x = width / 2
             sig_box_width = 76*mm
-            sig_box_height = 24*mm
+            sig_box_height = 30*mm
             sig_box_x = center_x - sig_box_width/2
             sig_box_y = footer_y
             
@@ -1219,9 +1219,9 @@ class CertificateService:
             
             # Create signature frame (matching frontend design) - frame is smaller than image
             sig_frame_width = 14*mm
-            sig_frame_height = 7*mm
+            sig_frame_height = 8*mm
             sig_frame_x = center_x - sig_frame_width/2
-            sig_frame_y = sig_box_y + sig_box_height - 10*mm  # Position from top for better spacing
+            sig_frame_y = sig_box_y + sig_box_height - 12*mm  # Position from top for better spacing
             
             # Frame with teal/cyan left-top and orange right-bottom borders
             pdf_canvas.setStrokeColor(teal)
@@ -1263,7 +1263,7 @@ class CertificateService:
                     logger.warning(f"Could not add signature: {str(e)}")
             
             # Elegant signature line with tech dots (positioned below signature frame)
-            line_y = sig_box_y + sig_box_height - 11.5*mm
+            line_y = sig_box_y + sig_box_height - 14*mm
             pdf_canvas.setStrokeColor(teal)
             pdf_canvas.setLineWidth(1.1)
             pdf_canvas.line(center_x - 31*mm, line_y, center_x - 2*mm, line_y)
@@ -1278,21 +1278,21 @@ class CertificateService:
             # Signature name with better spacing
             pdf_canvas.setFont('Helvetica-Bold', 10)
             pdf_canvas.setFillColor(white)
-            pdf_canvas.drawCentredString(center_x, sig_box_y + 8.5*mm, 'Desire Bikorimana')
+            pdf_canvas.drawCentredString(center_x, sig_box_y + 10*mm, 'Desire Bikorimana')
             
             # Title with accent styling
             pdf_canvas.setFont('Helvetica-Bold', 7.5)
             pdf_canvas.setFillColor(orange)
-            pdf_canvas.drawCentredString(center_x, sig_box_y + 5*mm, 'Founder & Chief Executive Officer')
+            pdf_canvas.drawCentredString(center_x, sig_box_y + 6.5*mm, 'Founder & Chief Executive Officer')
             
             # Company name
             pdf_canvas.setFont('Helvetica', 6.5)
             pdf_canvas.setFillColor(light_gray)
-            pdf_canvas.drawCentredString(center_x, sig_box_y + 2*mm, 'Afritech Bridge')
+            pdf_canvas.drawCentredString(center_x, sig_box_y + 3*mm, 'Afritech Bridge')
             
             # Add authority seal/badge on left side of signature
             seal_x = sig_box_x + 8*mm
-            seal_y = sig_box_y + 12*mm  # Fixed position for better alignment
+            seal_y = sig_box_y + 23*mm  # Raised to top area for better alignment
             seal_radius = 5.5*mm
             
             # Seal outer circle
@@ -1325,7 +1325,7 @@ class CertificateService:
             
             # Add excellence ribbon/badge on right side
             ribbon_x = sig_box_x + sig_box_width - 8*mm
-            ribbon_y = sig_box_y + 12*mm  # Fixed position for better alignment
+            ribbon_y = sig_box_y + 23*mm  # Raised to match seal position
             ribbon_radius = 5.5*mm
             
             # Ribbon outer circle
@@ -1352,9 +1352,9 @@ class CertificateService:
             pdf_canvas.drawCentredString(ribbon_x, ribbon_y - 7*mm, 'EXCELLENCE')
             
             # Right side - QR Code with modern tech frame
-            qr_size = 16*mm
-            qr_x = width - 42*mm
-            qr_y = footer_y - 2*mm
+            qr_size = 22*mm
+            qr_x = width - 48*mm
+            qr_y = footer_y - 4*mm
             
             # Generate real QR code
             verification_url = f"https://study.afritechbridge.online/verify/{certificate.certificate_number}"
@@ -1383,10 +1383,10 @@ class CertificateService:
             qr_image_reader = ImageReader(qr_buffer)
             pdf_canvas.drawImage(
                 qr_image_reader,
-                qr_x + 2*mm,
-                qr_y + 2*mm,
-                width=qr_size - 4*mm,
-                height=qr_size - 4*mm,
+                qr_x + 3*mm,
+                qr_y + 3*mm,
+                width=qr_size - 6*mm,
+                height=qr_size - 6*mm,
                 preserveAspectRatio=True,
                 mask='auto'
             )
@@ -1397,7 +1397,7 @@ class CertificateService:
             pdf_canvas.roundRect(qr_x, qr_y, qr_size, qr_size, 3*mm, fill=0, stroke=1)
             
             # Corner accents (circuit nodes)
-            corner_size = 1.5*mm
+            corner_size = 1.8*mm
             pdf_canvas.setFillColor(orange)
             pdf_canvas.circle(qr_x, qr_y, corner_size, fill=1, stroke=0)
             pdf_canvas.circle(qr_x + qr_size, qr_y, corner_size, fill=1, stroke=0)
@@ -1405,15 +1405,15 @@ class CertificateService:
             pdf_canvas.circle(qr_x + qr_size, qr_y + qr_size, corner_size, fill=1, stroke=0)
             
             # Scan instruction with tech style
-            pdf_canvas.setFont('Helvetica-Bold', 7)
+            pdf_canvas.setFont('Helvetica-Bold', 8)
             pdf_canvas.setFillColor(teal)
-            pdf_canvas.drawCentredString(qr_x + qr_size/2, footer_y - 6*mm, 'SCAN TO VERIFY')
+            pdf_canvas.drawCentredString(qr_x + qr_size/2, footer_y - 8*mm, 'SCAN TO VERIFY')
             
             # Verification URL
-            pdf_canvas.setFont('Helvetica', 6.5)
+            pdf_canvas.setFont('Helvetica', 7)
             pdf_canvas.setFillColor(light_gray)
             verify_url = f"study.afritechbridge.online/verify"
-            pdf_canvas.drawCentredString(qr_x + qr_size/2, footer_y - 10*mm, verify_url)
+            pdf_canvas.drawCentredString(qr_x + qr_size/2, footer_y - 12.5*mm, verify_url)
             
             # Footer section with elegant badge design
             footer_line_y = 20*mm

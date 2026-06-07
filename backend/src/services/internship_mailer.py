@@ -930,6 +930,72 @@ class InternshipMailer:
 </html>
 '''
 
+    def send_custom_email(self, application, subject, message):
+        """
+        Send a custom email to an applicant from the admin panel.
+        """
+        try:
+            html_content = render_template_string(self._get_custom_email_template(),
+                full_name=application.full_name.split()[0] if application.full_name else 'Applicant',
+                reference_code=application.reference_code,
+                track_name=application.track.name if application.track else 'Internship Program',
+                message=message.replace('\n', '<br/>'),
+            )
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': application.email, 'name': application.full_name}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Custom email sent to {application.email}: {subject}")
+            else:
+                logger.warning(f"Failed to send custom email to {application.email}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending custom email: {str(e)}")
+            return False
+
+    def _get_custom_email_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
+        .header { border-bottom: 3px solid #1ab3a8; padding-bottom: 20px; margin-bottom: 30px; }
+        .header h1 { color: #1a2d5a; font-size: 22px; margin: 0; }
+        .content { color: #333; line-height: 1.7; }
+        .message-box { background-color: #f9f9f9; padding: 20px; border-left: 4px solid #1ab3a8; margin: 20px 0; border-radius: 4px; }
+        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AfriTech Bridge</h1>
+        </div>
+        <div class="content">
+            <p>Dear {{ full_name }},</p>
+            <div class="message-box">
+                {{ message }}
+            </div>
+            <p>If you have any questions, please don't hesitate to reach out.</p>
+            <p>Best regards,<br/><strong style="color: #1ab3a8;">AfriTech Bridge Team</strong></p>
+        </div>
+        <div class="footer">
+            <p>© 2026 AfriTech Bridge | Ref: {{ reference_code }}</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
     def _get_reviewing_template(self):
         return '''
 <!DOCTYPE html>

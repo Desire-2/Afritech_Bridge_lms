@@ -828,7 +828,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                 
                 {/* Center Column - Enhanced Signature Box matching backend */}
                 <div className="text-center flex flex-col items-center">
-                  <div className="relative" style={{ width: '70mm', height: '22mm' }}>
+                  <div className="relative" style={{ width: '62mm', height: '28mm' }}>
                     {/* Elegant gradient background */}
                     <div className="absolute inset-0 bg-gradient-to-br from-[#1e3a8a]/40 via-[#1e3a8a]/25 to-[#1e3a8a]/40 rounded-lg" />
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-[#14b8a6]/5 via-transparent to-transparent rounded-lg" />
@@ -853,7 +853,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     </div>
                     
                     {/* Signature image with colored frame matching image */}
-                    <div className="absolute" style={{ top: '7mm', left: '19mm', width: '32mm', height: '7mm' }}>
+                    <div className="absolute" style={{ top: '7mm', left: '16mm', width: '30mm', height: '8mm' }}>
                       {/* Frame with teal/cyan and orange borders (26mm wide, smaller than image) */}
                       <div className="absolute" style={{
                         left: '3mm',
@@ -876,7 +876,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     </div>
                     
                     {/* Elegant signature line with decorative dots */}
-                    <div className="absolute" style={{ top: '15mm', left: '7mm', right: '7mm', height: '1.5px' }}>
+                    <div className="absolute" style={{ top: '16.5mm', left: '4mm', right: '4mm', height: '1.5px' }}>
                       <div className="absolute left-0 right-[calc(50%+2mm)] h-full bg-gradient-to-r from-[#14b8a6] to-[#14b8a6]/80" />
                       <div className="absolute left-[calc(50%+2mm)] right-0 h-full bg-gradient-to-l from-[#f97316] to-[#f97316]/80" />
                       <div className="absolute left-[calc(50%-2mm)] top-1/2 transform -translate-y-1/2 w-[1.5mm] h-[1.5mm] rounded-full bg-[#14b8a6] shadow-[0_0_3px_rgba(20,184,166,0.8)]" />
@@ -884,19 +884,19 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     </div>
                     
                     {/* CEO Information with enhanced typography and better spacing */}
-                    <div className="absolute bottom-[6mm] left-0 right-0 text-center">
+                    <div className="absolute bottom-[7.5mm] left-0 right-0 text-center">
                       <p className="font-bold text-white text-[9px] tracking-wide mb-0.5" style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>
                         Desire Bikorimana
                       </p>
                     </div>
-                    <div className="absolute bottom-[3.5mm] left-0 right-0 text-center">
+                    <div className="absolute bottom-[4.5mm] left-0 right-0 text-center">
                       <div className="inline-flex items-center gap-1">
                         <div className="w-[0.8mm] h-[0.8mm] rounded-full bg-[#f97316]" />
                         <p className="text-[#f97316] text-[7px] font-bold tracking-wide">Founder & Chief Executive Officer</p>
                         <div className="w-[0.8mm] h-[0.8mm] rounded-full bg-[#f97316]" />
                       </div>
                     </div>
-                    <div className="absolute bottom-[1.2mm] left-0 right-0 text-center">
+                    <div className="absolute bottom-[2mm] left-0 right-0 text-center">
                       <p className="text-[#cbd5e1] text-[6px] tracking-wider" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}>
                         Afritech Bridge
                       </p>
@@ -973,7 +973,7 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                 
                 {/* Right Column - QR Code with tech frame matching backend */}
                 <div className="text-right flex flex-col items-end">
-                  <div className="relative inline-block" style={{ width: '15mm', height: '15mm' }}>
+                  <div className="relative inline-block" style={{ width: '22mm', height: '22mm' }}>
                     {/* White background */}
                     <div className="absolute inset-0 bg-white rounded-lg" />
                     
@@ -981,19 +981,19 @@ const CertificateViewer: React.FC<CertificateViewerProps> = ({ certificate, isOp
                     <div className="absolute inset-0 border-2 border-[#14b8a6] rounded-lg" />
                     
                     {/* Corner accents */}
-                    <div className="absolute top-0 left-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
-                    <div className="absolute top-0 right-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
-                    <div className="absolute bottom-0 left-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
-                    <div className="absolute bottom-0 right-0 w-[1.3mm] h-[1.3mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute top-0 left-0 w-[1.8mm] h-[1.8mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute top-0 right-0 w-[1.8mm] h-[1.8mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute bottom-0 left-0 w-[1.8mm] h-[1.8mm] rounded-full bg-[#f97316]" />
+                    <div className="absolute bottom-0 right-0 w-[1.8mm] h-[1.8mm] rounded-full bg-[#f97316]" />
                     
                     {/* Real QR Code */}
                     <QRCodeComponent 
                       value={`https://study.afritechbridge.online/verify/${certificate.certificate_number}`}
-                      size={56}
+                      size={80}
                     />
                   </div>
-                  <p className="text-[#14b8a6] text-[6.5px] font-bold mt-1 uppercase tracking-wider">SCAN TO VERIFY</p>
-                  <p className="text-[#94a3b8] text-[6px]">study.afritechbridge.online/verify</p>
+                  <p className="text-[#14b8a6] text-[7.5px] font-bold mt-1.5 uppercase tracking-wider">SCAN TO VERIFY</p>
+                  <p className="text-[#94a3b8] text-[6.5px]">study.afritechbridge.online/verify</p>
                 </div>
               </div>
               

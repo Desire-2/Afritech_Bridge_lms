@@ -179,6 +179,12 @@ class BaseApiService {
     return response.data;
   }
 
+  /** Download a file as a blob (uses auth headers automatically) */
+  protected async downloadBlob(url: string): Promise<Blob> {
+    const response = await this.api.get(url, { responseType: 'blob' });
+    return response.data;
+  }
+
   /** Get the base URL from the configured axios instance */
   protected getBaseUrl(): string {
     return this.api.defaults.baseURL || API_BASE_URL;

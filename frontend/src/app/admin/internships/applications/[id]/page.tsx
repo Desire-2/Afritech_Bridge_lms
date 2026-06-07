@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import internshipService, { type InternshipApplication, type InternshipCohort, type InternshipOfferLetter } from '@/services/api/internship.service';
-import { ArrowLeft, Download, Calendar, Mail, Phone, Globe, Github, Linkedin, FileText, Clock, User, MessageSquare, CheckCircle, XCircle, ChevronRight, Send, Award, Share2, Shield, Eye, Copy, Check } from 'lucide-react';
+import { ArrowLeft, Download, Calendar, Mail, Phone, Globe, Github, Linkedin, FileText, Clock, User, MessageSquare, CheckCircle, XCircle, ChevronRight, Send, Award, Share2, Shield, Eye, Copy, Check, Edit3, AlertTriangle } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
@@ -42,10 +42,34 @@ const ApplicationDetailPage = () => {
   const [selectedCohort, setSelectedCohort] = useState('');
   const [assigning, setAssigning] = useState(false);
 
+  // Quick notification helper
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setNotification({ type, message });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // Interview notes
+  const [interviewNotes, setInterviewNotes] = useState('');
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+
+  // Send email modal
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailForm, setEmailForm] = useState({ subject: '', message: '' });
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailResult, setEmailResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // Alert/notification state
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   // Offer letter
   const [offerLetter, setOfferLetter] = useState<InternshipOfferLetter | null>(null);
   const [offerLoading, setOfferLoading] = useState(false);
   const [generatingOffer, setGeneratingOffer] = useState(false);
+  const [resendingOfferEmail, setResendingOfferEmail] = useState(false);
+  const [regeneratingOffer, setRegeneratingOffer] = useState(false);
+  const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
   const [generatedUsername, setGeneratedUsername] = useState<string | null>(null);
   const [showOfferConfirm, setShowOfferConfirm] = useState(false);
   const [copiedField, setCopiedField] = useState<'username' | null>(null);
@@ -57,6 +81,7 @@ const ApplicationDetailPage = () => {
       const app = await internshipService.getApplication(id);
       setApplication(app);
       setSelectedStatus(app.status);
+      setInterviewNotes(app.interview_notes || '');
 
       // Fetch available cohorts for this track
       if (app.track_id) {
@@ -98,8 +123,9 @@ const ApplicationDetailPage = () => {
       await fetchApplication();
       setStatusNote('');
       setInterviewDate('');
+      showNotification('success', 'Status updated successfully');
     } catch (err: any) {
-      alert(err?.message || 'Failed to update status');
+      showNotification('error', err?.message || 'Failed to update status');
     } finally {
       setUpdating(false);
     }
@@ -111,8 +137,9 @@ const ApplicationDetailPage = () => {
       setAssigning(true);
       await internshipService.assignCohort(id, selectedCohort);
       await fetchApplication();
+      showNotification('success', 'Cohort assigned successfully');
     } catch (err: any) {
-      alert(err?.message || 'Failed to assign cohort');
+      showNotification('error', err?.message || 'Failed to assign cohort');
     } finally {
       setAssigning(false);
     }
@@ -126,10 +153,47 @@ const ApplicationDetailPage = () => {
       setGeneratedUsername(result.username);
       setShowOfferConfirm(true);
       await fetchApplication();
+      showNotification('success', 'Offer letter generated and sent successfully');
     } catch (err: any) {
-      alert(err?.message || 'Failed to generate offer letter');
+      showNotification('error', err?.message || 'Failed to generate offer letter');
     } finally {
       setGeneratingOffer(false);
+    }
+  };
+
+  const handleSaveInterviewNotes = async () => {
+    try {
+      setSavingNotes(true);
+      await internshipService.updateInterviewNotes(id, interviewNotes);
+      setEditingNotes(false);
+      setNotesSaved(true);
+      showNotification('success', 'Interview notes saved');
+      setTimeout(() => setNotesSaved(false), 3000);
+    } catch (err: any) {
+      showNotification('error', err?.message || 'Failed to save notes');
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!emailForm.subject || !emailForm.message) return;
+    try {
+      setSendingEmail(true);
+      setEmailResult(null);
+      await internshipService.sendApplicantEmail(id, emailForm);
+      setEmailResult({ success: true, message: 'Email sent successfully!' });
+      showNotification('success', `Email sent to ${application?.email}`);
+      setTimeout(() => {
+        setShowEmailModal(false);
+        setEmailForm({ subject: '', message: '' });
+        setEmailResult(null);
+      }, 2000);
+    } catch (err: any) {
+      setEmailResult({ success: false, message: err?.message || 'Failed to send email' });
+      showNotification('error', 'Failed to send email');
+    } finally {
+      setSendingEmail(false);
     }
   };
 
@@ -140,6 +204,52 @@ const ApplicationDetailPage = () => {
         setCopiedField('username');
         setTimeout(() => setCopiedField(null), 2000);
       } catch { /* ignore */ }
+    }
+  };
+
+  const handleResendOfferEmail = async () => {
+    if (!offerLetter) return;
+    try {
+      setResendingOfferEmail(true);
+      await internshipService.resendOfferEmail(id);
+      showNotification('success', `Offer email resent to ${application?.email}`);
+    } catch (err: any) {
+      showNotification('error', err?.message || 'Failed to resend offer email');
+    } finally {
+      setResendingOfferEmail(false);
+    }
+  };
+
+  const handleRegenerateOffer = async () => {
+    if (!offerLetter) return;
+    try {
+      setRegeneratingOffer(true);
+      setShowRegenerateConfirm(false);
+      const result = await internshipService.regenerateOffer(id);
+      setOfferLetter(result.offer);
+      setGeneratedUsername(result.username);
+      setShowOfferConfirm(true);
+      showNotification('success', 'Offer letter regenerated successfully. New email sent.');
+    } catch (err: any) {
+      showNotification('error', err?.message || 'Failed to regenerate offer letter');
+    } finally {
+      setRegeneratingOffer(false);
+    }
+  };
+
+  const handleVerifyOffer = async () => {
+    if (!offerLetter) return;
+    try {
+      const result = await internshipService.verifyOffer(offerLetter.id);
+      const msg = result.data.is_authentic
+        ? `✅ Offer is AUTHENTIC. The PDF has not been tampered with.`
+        : `⚠️ WARNING: The offer PDF has been modified since issuance!`;
+      showNotification(
+        result.data.is_authentic ? 'success' : 'error',
+        `${msg}\n\nHash: ${result.data.pdf_hash?.slice(0, 20)}...`
+      );
+    } catch (err: any) {
+      showNotification('error', 'Verification failed: ' + (err?.message || 'Unknown error'));
     }
   };
 
@@ -183,6 +293,27 @@ const ApplicationDetailPage = () => {
 
   return (
     <div className="space-y-6">
+      {/* Notification Toast */}
+      {notification && (
+        <div className={`fixed top-4 right-4 z-[100] px-5 py-3 rounded-xl shadow-2xl border transition-all duration-300 animate-in slide-in-from-top-2 ${
+          notification.type === 'success'
+            ? 'bg-green-900/90 border-green-700/50 text-green-200'
+            : 'bg-red-900/90 border-red-700/50 text-red-200'
+        }`}>
+          <div className="flex items-center gap-2">
+            {notification.type === 'success' ? (
+              <CheckCircle className="h-5 w-5 text-green-400" />
+            ) : (
+              <XCircle className="h-5 w-5 text-red-400" />
+            )}
+            <p className="text-sm font-medium whitespace-pre-line">{notification.message}</p>
+            <button onClick={() => setNotification(null)} className="ml-2 p-1 hover:bg-white/10 rounded transition">
+              <XCircle className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Back navigation */}
       <Link href="/admin/internships/applications" className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition text-sm">
         <ArrowLeft className="h-4 w-4" /> Back to Applications
@@ -264,14 +395,27 @@ const ApplicationDetailPage = () => {
 
             {/* CV Download */}
             <div className="mt-4">
-              <a
-                href={internshipService.getCvDownloadUrl(application.id)}
+              <button
+                onClick={async () => {
+                  try {
+                    const blob = await internshipService.downloadCv(application.id);
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = application.cv_original_name;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                  } catch (err: any) {
+                    alert('Failed to download CV: ' + (err?.message || 'Unknown error'));
+                  }
+                }}
                 className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition text-sm font-medium"
-                download
               >
                 <Download className="h-4 w-4" />
                 Download CV: {application.cv_original_name}
-              </a>
+              </button>
             </div>
           </div>
 
@@ -283,6 +427,60 @@ const ApplicationDetailPage = () => {
                 {application.motivation_letter}
               </p>
             </div>
+          </div>
+
+          {/* Interview Notes - Editable */}
+          <div className="bg-[#162844] rounded-xl border border-white/10 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Interview Notes</h2>
+              {!editingNotes ? (
+                <button
+                  onClick={() => setEditingNotes(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-400 hover:text-white transition text-xs"
+                >
+                  <Edit3 className="h-3.5 w-3.5" />
+                  Edit Notes
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {notesSaved && (
+                    <span className="text-green-400 text-xs flex items-center gap-1">
+                      <CheckCircle className="h-3.5 w-3.5" /> Saved
+                    </span>
+                  )}
+                  <button
+                    onClick={() => { setEditingNotes(false); setInterviewNotes(application.interview_notes || ''); }}
+                    className="px-3 py-1.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-400 hover:text-white transition text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveInterviewNotes}
+                    disabled={savingNotes}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded-lg transition text-xs"
+                  >
+                    {savingNotes ? 'Saving...' : <><CheckCircle className="h-3.5 w-3.5" /> Save</>}
+                  </button>
+                </div>
+              )}
+            </div>
+            {editingNotes ? (
+              <textarea
+                value={interviewNotes}
+                onChange={e => setInterviewNotes(e.target.value)}
+                placeholder="Add interview notes, observations, and feedback..."
+                rows={5}
+                className="w-full px-4 py-3 bg-[#0a1628] border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition text-sm resize-none"
+              />
+            ) : (
+              <div className="bg-[#0a1628] rounded-lg p-4 min-h-[80px]">
+                {interviewNotes ? (
+                  <p className="text-gray-300 text-sm whitespace-pre-wrap">{interviewNotes}</p>
+                ) : (
+                  <p className="text-gray-500 text-sm italic">No interview notes recorded yet.</p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Status History */}
@@ -449,29 +647,61 @@ const ApplicationDetailPage = () => {
                   {/* Actions */}
                   <div className="grid grid-cols-2 gap-3">
                     {/* Download PDF */}
-                    <a
-                      href={internshipService.getOfferDownloadUrl(offerLetter.id)}
-                      download
+                    <button
+                      onClick={async () => {
+                        try {
+                          const blob = await internshipService.downloadOfferPdf(offerLetter.id);
+                          const url = window.URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `Offer_Letter_${application.reference_code}.pdf`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          window.URL.revokeObjectURL(url);
+                        } catch (err: any) {
+                          showNotification('error', 'Failed to download: ' + (err?.message || 'Unknown error'));
+                        }
+                      }}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition text-sm font-medium"
                     >
                       <Download className="h-4 w-4" />
                       Download PDF
-                    </a>
+                    </button>
 
                     {/* Verify Integrity */}
                     <button
-                      onClick={async () => {
-                        try {
-                          const result = await internshipService.verifyOffer(offerLetter.id);
-                          alert(`✅ Verification Result:\n\n${result.data.message}\n\nAuthentic: ${result.data.is_authentic}\nSHA-256 Hash: ${result.data.pdf_hash?.slice(0, 20)}...`);
-                        } catch (err: any) {
-                          alert('Verification failed: ' + (err?.message || 'Unknown error'));
-                        }
-                      }}
+                      onClick={handleVerifyOffer}
                       className="flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0a1628] border border-white/10 hover:bg-white/5 text-gray-300 rounded-lg transition text-sm font-medium"
                     >
                       <Shield className="h-4 w-4 text-green-400" />
                       Verify Integrity
+                    </button>
+
+                    {/* Resend Offer Email */}
+                    <button
+                      onClick={handleResendOfferEmail}
+                      disabled={resendingOfferEmail}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-[#0a1628] border border-white/10 hover:bg-white/5 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition text-sm font-medium col-span-2"
+                    >
+                      {resendingOfferEmail ? (
+                        <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400" /> Resending...</>
+                      ) : (
+                        <><Mail className="h-4 w-4 text-orange-400" /> Resend Offer Email</>
+                      )}
+                    </button>
+
+                    {/* Regenerate Offer */}
+                    <button
+                      onClick={() => setShowRegenerateConfirm(true)}
+                      disabled={regeneratingOffer}
+                      className="flex items-center justify-center gap-2 px-4 py-2.5 bg-red-900/40 hover:bg-red-900/60 border border-red-700/40 text-red-300 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition text-sm font-medium col-span-2"
+                    >
+                      {regeneratingOffer ? (
+                        <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-400" /> Regenerating...</>
+                      ) : (
+                        <><FileText className="h-4 w-4" /> Regenerate Offer Letter</>
+                      )}
                     </button>
                   </div>
 
@@ -594,6 +824,32 @@ const ApplicationDetailPage = () => {
             </div>
           )}
 
+          {/* Send Email to Applicant */}
+          <div className="bg-[#162844] rounded-xl border border-white/10 p-6">
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Mail className="h-5 w-5 text-blue-400" />
+              Contact Applicant
+            </h2>
+            <button
+              onClick={() => {
+                setEmailForm({ subject: '', message: '' });
+                setEmailResult(null);
+                setShowEmailModal(true);
+              }}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium text-sm"
+            >
+              <Send className="h-4 w-4" />
+              Send Email
+            </button>
+            <a
+              href={`mailto:${application.email}`}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 mt-2 bg-[#0a1628] border border-white/10 hover:bg-white/5 text-gray-300 rounded-lg transition text-sm"
+            >
+              <Mail className="h-4 w-4" />
+              Open in Mail Client
+            </a>
+          </div>
+
           {/* Application Metadata */}
           <div className="bg-[#162844] rounded-xl border border-white/10 p-6">
             <h2 className="text-lg font-semibold text-white mb-4">Details</h2>
@@ -640,6 +896,140 @@ const ApplicationDetailPage = () => {
           )}
         </div>
       </div>
+      {/* ═══════════ Regenerate Offer Confirmation Modal ═══════════ */}
+      {showRegenerateConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRegenerateConfirm(false)} />
+          <div className="relative bg-[#1a2d5a] rounded-2xl border border-red-700/30 shadow-2xl w-full max-w-md">
+            <div className="p-6 text-center">
+              <div className="w-16 h-16 rounded-full bg-red-900/40 border border-red-700/40 flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="h-8 w-8 text-red-400" />
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">Regenerate Offer Letter?</h2>
+              <p className="text-gray-300 text-sm leading-relaxed">
+                This will <strong className="text-red-400">revoke the current offer</strong> and generate a
+                brand new one with a different offer number, new PDF, and new login credentials.
+              </p>
+              <div className="bg-red-900/20 border border-red-700/30 rounded-lg p-3 mt-4 text-left">
+                <p className="text-red-300 text-xs flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span>
+                    The previous offer will be marked as revoked and can no longer be used.
+                    The applicant will receive a new email with updated credentials.
+                  </span>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 p-4 border-t border-white/10">
+              <button
+                onClick={() => setShowRegenerateConfirm(false)}
+                className="px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 hover:text-white transition text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRegenerateOffer}
+                disabled={regeneratingOffer}
+                className="flex items-center gap-2 px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition font-medium text-sm"
+              >
+                {regeneratingOffer ? (
+                  <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Regenerating...</>
+                ) : (
+                  <><FileText className="h-4 w-4" /> Yes, Regenerate</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════ Send Email Modal ═══════════ */}
+      {showEmailModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => { setShowEmailModal(false); setEmailResult(null); }} />
+          <div className="relative bg-[#162844] rounded-2xl border border-white/10 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-6 border-b border-white/10">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <Send className="h-5 w-5 text-blue-400" />
+                Send Email to {application?.full_name?.split(' ')[0]}
+              </h2>
+              <button onClick={() => { setShowEmailModal(false); setEmailResult(null); }} className="p-2 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition">
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+
+            {emailResult && emailResult.success ? (
+              <div className="p-6">
+                <div className="bg-green-900/20 border border-green-700/40 rounded-lg p-4 text-center">
+                  <CheckCircle className="h-10 w-10 text-green-400 mx-auto mb-2" />
+                  <p className="text-green-300 font-medium">Email Sent Successfully</p>
+                  <p className="text-green-500 text-sm mt-1">To: {application?.email}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="p-6 space-y-5">
+                <div className="bg-blue-900/20 border border-blue-700/40 rounded-lg p-3">
+                  <p className="text-blue-300 text-sm">
+                    Sending email to <strong>{application?.email}</strong>
+                  </p>
+                </div>
+
+                {emailResult && !emailResult.success && (
+                  <div className="bg-red-900/20 border border-red-700/40 rounded-lg p-3">
+                    <p className="text-red-300 text-sm">{emailResult.message}</p>
+                  </div>
+                )}
+
+                {/* Subject */}
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1.5 font-medium">Subject *</label>
+                  <input
+                    type="text"
+                    value={emailForm.subject}
+                    onChange={e => setEmailForm(prev => ({ ...prev, subject: e.target.value }))}
+                    placeholder="e.g., Follow-up on your application"
+                    className="w-full px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition text-sm"
+                  />
+                </div>
+
+                {/* Message */}
+                <div>
+                  <label className="block text-sm text-gray-300 mb-1.5 font-medium">Message *</label>
+                  <textarea
+                    value={emailForm.message}
+                    onChange={e => setEmailForm(prev => ({ ...prev, message: e.target.value }))}
+                    placeholder="Type your message here..."
+                    rows={6}
+                    className="w-full px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition text-sm resize-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            {!emailResult?.success && (
+              <div className="flex items-center justify-end gap-3 p-6 border-t border-white/10">
+                <button
+                  onClick={() => { setShowEmailModal(false); setEmailResult(null); }}
+                  className="px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 hover:text-white transition text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSendEmail}
+                  disabled={!emailForm.subject || !emailForm.message || sendingEmail}
+                  className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition font-medium text-sm"
+                >
+                  {sendingEmail ? (
+                    <><div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> Sending...</>
+                  ) : (
+                    <><Send className="h-4 w-4" /> Send Email</>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

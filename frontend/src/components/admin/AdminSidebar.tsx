@@ -75,6 +75,7 @@ const AdminSidebar = () => {
         { href: '/admin/internships', label: 'Dashboard', icon: '📋', description: 'Overview & stats' },
         { href: '/admin/internships/applications', label: 'Applications', icon: '📝', description: 'Review applicants' },
         { href: '/admin/internships/tracks', label: 'Tracks', icon: '🛤️', description: 'Manage internship tracks' },
+        { href: '/admin/internships/interns', label: 'Interns', icon: '🎓', description: 'Manage accepted interns' },
         { href: '/admin/internships/cohorts', label: 'Cohorts', icon: '👥', description: 'Manage cohorts' },
       ],
     },
