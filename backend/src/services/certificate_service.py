@@ -1185,7 +1185,7 @@ class CertificateService:
             # Center - Enhanced Signature Section with Authority Badge
             center_x = width / 2
             sig_box_width = 76*mm
-            sig_box_height = 30*mm
+            sig_box_height = 32*mm
             sig_box_x = center_x - sig_box_width/2
             sig_box_y = footer_y
             
@@ -1201,18 +1201,19 @@ class CertificateService:
             pdf_canvas.setLineWidth(1)
             pdf_canvas.roundRect(sig_box_x + 1.5*mm, sig_box_y + 1.5*mm, sig_box_width - 3*mm, sig_box_height - 3*mm, 4*mm, fill=0, stroke=1)
             
-            # Add corner decorative elements (tech nodes)
+            # Add corner decorative elements (tech nodes) — reduced radius to prevent overlap
             corner_offset = 3*mm
+            corner_node_radius = 1.0*mm
             corners = [
                 (sig_box_x + corner_offset, sig_box_y + corner_offset),
                 (sig_box_x + sig_box_width - corner_offset, sig_box_y + corner_offset),
                 (sig_box_x + corner_offset, sig_box_y + sig_box_height - corner_offset),
                 (sig_box_x + sig_box_width - corner_offset, sig_box_y + sig_box_height - corner_offset),
             ]
-            for i, (x, y) in enumerate(corners):
+            for i, (cx, cy) in enumerate(corners):
                 color = teal if i % 2 == 0 else orange
                 pdf_canvas.setFillColor(color)
-                pdf_canvas.circle(x, y, 1.5*mm, fill=1, stroke=0)
+                pdf_canvas.circle(cx, cy, corner_node_radius, fill=1, stroke=0)
             
             # Add "AUTHORIZED SIGNATURE" label at top of box
             pdf_canvas.setFont('Helvetica-Bold', 5.5)
@@ -1300,7 +1301,7 @@ class CertificateService:
             # Add authority seal/badge on left side of signature
             seal_x = sig_box_x + 8*mm
             seal_y = sig_box_y + 23*mm  # Raised to top area for better alignment
-            seal_radius = 5.5*mm
+            seal_radius = 3.5*mm
             
             # Seal outer circle
             pdf_canvas.setStrokeColor(teal)
@@ -1313,27 +1314,27 @@ class CertificateService:
             pdf_canvas.setFillColor(teal)
             pdf_canvas.setStrokeColor(teal)
             # Center circle
-            pdf_canvas.circle(seal_x, seal_y, 2*mm, fill=1, stroke=0)
-            # Radiating lines (badge effect)
+            pdf_canvas.circle(seal_x, seal_y, 1.5*mm, fill=1, stroke=0)
+            # Radiating lines (badge effect) — reduced extent to fit within card without overlap
             for angle in range(0, 360, 45):
                 angle_rad = math.radians(angle)
-                x1 = seal_x + 2.5*mm * math.cos(angle_rad)
-                y1 = seal_y + 2.5*mm * math.sin(angle_rad)
-                x2 = seal_x + 5.5*mm * math.cos(angle_rad)
-                y2 = seal_y + 5.5*mm * math.sin(angle_rad)
-                pdf_canvas.setLineWidth(1.5)
+                x1 = seal_x + 2.0*mm * math.cos(angle_rad)
+                y1 = seal_y + 2.0*mm * math.sin(angle_rad)
+                x2 = seal_x + 3.5*mm * math.cos(angle_rad)
+                y2 = seal_y + 3.5*mm * math.sin(angle_rad)
+                pdf_canvas.setLineWidth(1.2)
                 pdf_canvas.line(x1, y1, x2, y2)
-                pdf_canvas.circle(x2, y2, 0.8*mm, fill=1, stroke=0)
+                pdf_canvas.circle(x2, y2, 0.6*mm, fill=1, stroke=0)
             
-            # Seal text
+            # Seal text — positioned below signature line to avoid overlap
             pdf_canvas.setFont('Helvetica-Bold', 6)
             pdf_canvas.setFillColor(teal)
-            pdf_canvas.drawCentredString(seal_x, seal_y - 7*mm, '2026')
+            pdf_canvas.drawCentredString(seal_x, seal_y - 10*mm, '2026')
             
             # Add excellence ribbon/badge on right side
             ribbon_x = sig_box_x + sig_box_width - 8*mm
-            ribbon_y = sig_box_y + 23*mm  # Raised to match seal position
-            ribbon_radius = 5.5*mm
+            ribbon_y = sig_box_y + 23*mm
+            ribbon_radius = 3.5*mm
             
             # Ribbon outer circle
             pdf_canvas.setStrokeColor(orange)
@@ -1345,18 +1346,18 @@ class CertificateService:
             # Excellence star
             pdf_canvas.setFillColor(orange)
             pdf_canvas.setStrokeColor(orange)
-            pdf_canvas.circle(ribbon_x, ribbon_y, 2.5*mm, fill=1, stroke=0)
-            # Star points
+            pdf_canvas.circle(ribbon_x, ribbon_y, 2.0*mm, fill=1, stroke=0)
+            # Star points — reduced to match smaller radius
             for angle in [0, 72, 144, 216, 288]:
                 angle_rad = math.radians(angle - 90)
-                x = ribbon_x + 5*mm * math.cos(angle_rad)
-                y = ribbon_y + 5*mm * math.sin(angle_rad)
-                pdf_canvas.circle(x, y, 1.2*mm, fill=1, stroke=0)
+                x = ribbon_x + 3.5*mm * math.cos(angle_rad)
+                y = ribbon_y + 3.5*mm * math.sin(angle_rad)
+                pdf_canvas.circle(x, y, 0.9*mm, fill=1, stroke=0)
             
-            # Excellence text
+            # Excellence text — positioned below signature line to avoid overlap
             pdf_canvas.setFont('Helvetica-Bold', 5)
             pdf_canvas.setFillColor(orange)
-            pdf_canvas.drawCentredString(ribbon_x, ribbon_y - 7*mm, 'EXCELLENCE')
+            pdf_canvas.drawCentredString(ribbon_x, ribbon_y - 10*mm, 'EXCELLENCE')
             
             # Right side - QR Code with modern tech frame
             qr_size = 22*mm
