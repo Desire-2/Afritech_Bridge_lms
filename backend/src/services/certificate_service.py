@@ -1146,7 +1146,7 @@ class CertificateService:
                     logger.warning(f"Error rendering skills: {str(e)}")
             
             # Footer section with modern tech design
-            footer_y = 48*mm
+            footer_y = 38*mm
             
             # Left side - Date and Certificate ID with improved styling
             left_section_x = 26*mm
@@ -1166,19 +1166,21 @@ class CertificateService:
             pdf_canvas.setFillColor(colors.HexColor('#cbd5e1'))  # Lighter gray for better contrast
             pdf_canvas.drawString(left_section_x, footer_y - 7*mm, certificate.certificate_number)
             
-            # Enhanced verified badge with checkmark
+            # Enhanced verified badge with checkmark — extra spacing to avoid overlap
+            badge_center_x = left_section_x
+            badge_center_y = footer_y - 14*mm
             pdf_canvas.setFont('Helvetica-Bold', 7.5)
             pdf_canvas.setFillColor(teal)
-            pdf_canvas.circle(left_section_x - 2*mm, footer_y - 14*mm, 2.2*mm, fill=1, stroke=0)
+            pdf_canvas.circle(badge_center_x, badge_center_y, 2.2*mm, fill=1, stroke=0)
             pdf_canvas.setStrokeColor(colors.HexColor('#22d3ee'))
             pdf_canvas.setLineWidth(1.5)
-            pdf_canvas.circle(left_section_x - 2*mm, footer_y - 14*mm, 2.8*mm, fill=0, stroke=1)
+            pdf_canvas.circle(badge_center_x, badge_center_y, 2.8*mm, fill=0, stroke=1)
             pdf_canvas.setFillColor(white)
             pdf_canvas.setFont('Helvetica-Bold', 10)
-            pdf_canvas.drawString(left_section_x - 3.5*mm, footer_y - 15.5*mm, '✓')
+            pdf_canvas.drawString(badge_center_x - 1.5*mm, badge_center_y - 1.5*mm, '✓')
             pdf_canvas.setFillColor(light_teal)
             pdf_canvas.setFont('Helvetica-Bold', 7.5)
-            pdf_canvas.drawString(left_section_x + 2*mm, footer_y - 15*mm, 'Blockchain Verified')
+            pdf_canvas.drawString(badge_center_x + 5*mm, badge_center_y - 1*mm, 'Blockchain Verified')
             
             # Center - Enhanced Signature Section with Authority Badge
             center_x = width / 2
@@ -1245,12 +1247,17 @@ class CertificateService:
             signature_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'static', 'images', 'sign.jpg')
             if os.path.exists(signature_path):
                 try:
-                    # Signature size with padding inside frame
-                    sig_width = 52*mm  # 2mm total padding (1mm on each side)
-                    sig_height = 6*mm  # 1mm total padding (0.5mm on each side)
+                    # Signature size with padding inside frame (bugfix: was 52mm which overflowed)
+                    sig_width = sig_frame_width - 2*mm  # 2mm horizontal padding
+                    sig_height = sig_frame_height - 2*mm  # 2mm vertical padding
                     # Center signature in the frame
                     sig_x_position = sig_frame_x + (sig_frame_width - sig_width)/2
                     sig_y_position = sig_frame_y + (sig_frame_height - sig_height)/2
+                    # Draw light/white background behind signature so it's visible on dark navy
+                    pdf_canvas.setFillColor(colors.HexColor('#f8fafc'))
+                    pdf_canvas.roundRect(sig_x_position - 1*mm, sig_y_position - 1*mm,
+                                        sig_width + 2*mm, sig_height + 2*mm,
+                                        1.5*mm, fill=1, stroke=0)
                     pdf_canvas.drawImage(signature_path, 
                                        sig_x_position, 
                                        sig_y_position, 
@@ -1467,13 +1474,13 @@ class CertificateService:
             pdf_canvas.setFillColor(colors.HexColor('#5eead4'))
             pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 2*mm, fill=1, stroke=0)
             
-            # Footer text with better spacing and contrast
+            # Footer text with better spacing and contrast — kept above inner border
             pdf_canvas.setFont('Helvetica', 7)
             pdf_canvas.setFillColor(colors.HexColor('#cbd5e1'))
-            pdf_canvas.drawCentredString(width / 2, 13*mm, 'Empowering the next generation of African tech leaders')
+            pdf_canvas.drawCentredString(width / 2, 20*mm, 'Empowering the next generation of African tech leaders')
             pdf_canvas.setFillColor(teal)
             pdf_canvas.setFont('Helvetica-Bold', 6.5)
-            pdf_canvas.drawCentredString(width / 2, 9*mm, '2026 Afritech Bridge - All Rights Reserved')
+            pdf_canvas.drawCentredString(width / 2, 16*mm, '2026 Afritech Bridge - All Rights Reserved')
             
             # Save PDF - this must be called to finalize the document
             pdf_canvas.showPage()  # Finish the current page

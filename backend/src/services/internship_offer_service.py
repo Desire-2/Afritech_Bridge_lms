@@ -395,12 +395,21 @@ class InternshipOfferService:
             )
             if os.path.exists(signature_path):
                 try:
+                    # Draw light background so signature is visible on dark navy
+                    sig_img_x = width / 2 - 12 * mm
+                    sig_img_y = sig_line_y + 1 * mm
+                    sig_img_w = 24 * mm
+                    sig_img_h = 6 * mm
+                    pdf_canvas.setFillColor(colors.HexColor('#f8fafc'))
+                    pdf_canvas.roundRect(
+                        sig_img_x - 0.5 * mm, sig_img_y - 0.5 * mm,
+                        sig_img_w + 1 * mm, sig_img_h + 1 * mm,
+                        1.5 * mm, fill=1, stroke=0
+                    )
                     pdf_canvas.drawImage(
                         signature_path,
-                        width / 2 - 12 * mm,
-                        sig_line_y + 1 * mm,
-                        width=24 * mm,
-                        height=6 * mm,
+                        sig_img_x, sig_img_y,
+                        width=sig_img_w, height=sig_img_h,
                         preserveAspectRatio=True,
                         mask="auto",
                     )

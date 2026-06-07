@@ -568,40 +568,37 @@ def send_enrollment_payment_admin_alert(
 
 def get_payment_info_from_application_window(application_window) -> Dict:
     """
-    Extract payment information from ApplicationWindow for email templates
-    
+    Extract payment information from ApplicationWindow for email templates.
+    Properly handles cohort-level pricing and scholarship discounts.
+
     Args:
         application_window: ApplicationWindow object
-    
+
     Returns:
         dict: Payment information dictionary
     """
     try:
         payment_info = {}
-        
-        # Get enrollment type
-        enrollment_type = getattr(application_window, 'enrollment_type', 'free')
+
+        # Get enrollment type (cohort-level override or inherit from course)
+        enrollment_type = application_window.get_effective_enrollment_type() if hasattr(application_window, 'get_effective_enrollment_type') else getattr(application_window, 'enrollment_type', 'free')
         payment_info['enrollment_type'] = enrollment_type
-        
-        # Get pricing information
+
+        # Get pricing using ApplicationWindow's effective methods (handles scholarship)
         if enrollment_type in ['paid', 'scholarship']:
-                payment_info['amount'] = float(getattr(application_window, 'cohort_price', 0) or 0)
-                payment_info['currency'] = getattr(application_window, 'cohort_currency', 'USD') or 'USD'
-                payment_info['original_price'] = float(getattr(application_window, 'cohort_price', 0) or 0)
-                
-                # Check for scholarship
-                scholarship_type = getattr(application_window, 'scholarship_type', None)
-                scholarship_pct = float(getattr(application_window, 'scholarship_percentage', 0) or 0)
-                
-                if scholarship_type and scholarship_pct:
-                    payment_info['scholarship_type'] = scholarship_type
-                    payment_info['scholarship_percentage'] = scholarship_pct
-                    
-                    # Calculate effective price after scholarship
-                    if scholarship_type == 'full':
-                        payment_info['amount'] = 0.0
-                    elif scholarship_type == 'partial' and scholarship_pct > 0:
-                        original = float(payment_info['amount'])
+            effective_price = application_window.get_effective_price() if hasattr(application_window, 'get_effective_price') else 0
+            effective_currency = application_window.get_effective_currency() if hasattr(application_window, 'get_effective_currency') else 'USD'
+
+            payment_info['amount'] = float(effective_price or 0)
+            payment_info['currency'] = effective_currency or 'USD'
+            payment_info['original_price'] = float(getattr(application_window, 'price', 0) or (application_window.course.price if application_window.course else 0))
+
+            # Attach scholarship metadata for email templates
+            scholarship_type = getattr(application_window, 'scholarship_type', None)
+            scholarship_pct = getattr(application_window, 'scholarship_percentage', None)
+            if scholarship_type:
+                payment_info['scholarship_type'] = scholarship_type
+                payment_info['scholarship_percentage'] = float(scholarship_pct or 0)
         
         # Get deadline if available
         application_deadline = getattr(application_window, 'application_deadline', None)
