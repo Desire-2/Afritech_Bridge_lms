@@ -315,13 +315,13 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             <select
               value={thresholdDays}
               onChange={(e) => setThresholdDays(Number(e.target.value))}
-              className="border border-white/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30/50"
+              className="bg-[#162844] text-white border border-white/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30/50"
             >
-              <option value={7}>7+ days</option>
-              <option value={14}>14+ days</option>
-              <option value={30}>30+ days</option>
-              <option value={60}>60+ days</option>
-              <option value={90}>90+ days</option>
+              <option value={7} className="bg-[#162844] text-white">7+ days</option>
+              <option value={14} className="bg-[#162844] text-white">14+ days</option>
+              <option value={30} className="bg-[#162844] text-white">30+ days</option>
+              <option value={60} className="bg-[#162844] text-white">60+ days</option>
+              <option value={90} className="bg-[#162844] text-white">90+ days</option>
             </select>
           </div>
 
@@ -330,12 +330,12 @@ export default function InactiveUsersManagement({ onRefreshStats }: InactiveUser
             <select
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
-              className="border border-white/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30/50"
+              className="bg-[#162844] text-white border border-white/15 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30/50"
             >
-              <option value="">All Roles</option>
-              <option value="student">Students</option>
-              <option value="instructor">Instructors</option>
-              <option value="admin">Admins</option>
+              <option value="" className="bg-[#162844] text-white">All Roles</option>
+              <option value="student" className="bg-[#162844] text-white">Students</option>
+              <option value="instructor" className="bg-[#162844] text-white">Instructors</option>
+              <option value="admin" className="bg-[#162844] text-white">Admins</option>
             </select>
           </div>
 

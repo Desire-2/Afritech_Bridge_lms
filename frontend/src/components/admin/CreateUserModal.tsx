@@ -67,7 +67,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
     if (!username) return 'Username is required';
     if (username.length < 3) return 'Username must be at least 3 characters';
     if (username.length > 30) return 'Username must be less than 30 characters';
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) return 'Username can only contain letters, numbers, and underscores';
+    if (!/^[a-zA-Z0-9_.]+$/.test(username)) return 'Username can only contain letters, numbers, underscores, and dots';
     return '';
   };
 
@@ -216,7 +216,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                   value={formData.username}
                   onChange={(e) => handleFieldChange('username', e.target.value.toLowerCase())}
                   onBlur={() => handleBlur('username')}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                  className={`w-full px-4 py-2 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                     fieldErrors.username ? 'border-red-500' : 'border-white/15'
                   }`}
                   placeholder="johndoe"
@@ -236,7 +236,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                   value={formData.email}
                   onChange={(e) => handleFieldChange('email', e.target.value)}
                   onBlur={() => handleBlur('email')}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                  className={`w-full px-4 py-2 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                     fieldErrors.email ? 'border-red-500' : 'border-white/15'
                   }`}
                   placeholder="john@example.com"
@@ -269,7 +269,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                     value={formData.password}
                     onChange={(e) => handleFieldChange('password', e.target.value)}
                     onBlur={() => handleBlur('password')}
-                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                    className={`w-full px-4 py-2 pr-10 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                       fieldErrors.password ? 'border-red-500' : 'border-white/15'
                     }`}
                     placeholder="••••••••"
@@ -331,7 +331,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                     value={formData.confirm_password}
                     onChange={(e) => handleFieldChange('confirm_password', e.target.value)}
                     onBlur={() => handleBlur('confirm_password')}
-                    className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                    className={`w-full px-4 py-2 pr-10 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                       fieldErrors.confirm_password ? 'border-red-500' : 'border-white/15'
                     }`}
                     placeholder="••••••••"
@@ -364,10 +364,10 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                 required
                 value={formData.role_name}
                 onChange={(e) => handleFieldChange('role_name', e.target.value)}
-                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
               >
                 {roles.map((role) => (
-                  <option key={role.id} value={role.name}>
+                  <option key={role.id} value={role.name} className="bg-[#162844] text-white">
                     {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
                   </option>
                 ))}
@@ -393,7 +393,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                   type="text"
                   value={formData.first_name}
                   onChange={(e) => handleFieldChange('first_name', e.target.value)}
-                  className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                  className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                   placeholder="John"
                 />
               </div>
@@ -406,7 +406,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                   type="text"
                   value={formData.last_name}
                   onChange={(e) => handleFieldChange('last_name', e.target.value)}
-                  className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                  className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                   placeholder="Doe"
                 />
               </div>
@@ -419,9 +419,8 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
               <input
                 type="tel"
                 value={formData.phone_number}
-                onChange={(e) => handleFieldChange('phone_number', e.target.value)}
-                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
-                placeholder="+1 234 567 8900"
+                onChange={(e) => handleFieldChange('phone_number', e.target.value)}className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                  placeholder="+1 234 567 8900"
               />
             </div>
 
@@ -433,7 +432,7 @@ const CreateUserModal: React.FC<CreateUserModalProps> = ({ onClose, onSuccess })
                 value={formData.bio}
                 onChange={(e) => handleFieldChange('bio', e.target.value)}
                 rows={3}
-                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 resize-none"
+                className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 resize-none"
                 placeholder="Brief description about the user..."
               />
             </div>
