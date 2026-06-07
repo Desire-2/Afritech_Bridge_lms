@@ -18,8 +18,11 @@ from ..models.course_models import Course, ApplicationWindow, Enrollment
 from ..models.course_application import CourseApplication
 from ..services.waitlist_service import WaitlistService
 from ..utils.brevo_email_service import brevo_service
+from ..services.payment_slip_service import generate_payment_slip_html
+from ..utils.payment_notifications import _get_payment_info_from_enrollment
 
 logger = logging.getLogger(__name__)
+
 
 waitlist_bp = Blueprint("waitlist_bp", __name__, url_prefix="/api/v1/admin/waitlist")
 
@@ -304,6 +307,92 @@ def verify_enrollment_payment(enrollment_id):
     # ────────────────────────────────────────────────────────────────────────
 
     return jsonify({"success": True, "message": message, "data": result}), 200
+
+
+# ─────────────────────────────────────────────────────────
+# PAYMENT SLIP ENDPOINT
+# ─────────────────────────────────────────────────────────
+
+@waitlist_bp.route("/enrollment/<int:enrollment_id>/payment-slip", methods=["GET"])
+@jwt_required()
+def get_enrollment_payment_slip(enrollment_id):
+    """
+    🧾 Generate and return a beautiful HTML payment slip for a verified enrollment.
+
+    The payment slip includes:
+      - Student information (name, email, phone)
+      - Payment information (amount, method, reference, date, status)
+      - Cohort information (course, cohort name, start/end dates)
+      - Administrative info (receipt number, enrollment ID, verified by)
+
+    Accessible by: admin, instructor, or the student who owns the enrollment.
+    """
+    current_user_id = int(get_jwt_identity())
+    current_user = User.query.get(current_user_id)
+
+    if not current_user:
+        return jsonify({"error": "User not found"}), 401
+
+    enrollment = Enrollment.query.get(enrollment_id)
+    if not enrollment:
+        return jsonify({"error": "Enrollment not found"}), 404
+
+    # Authorization: admin, instructor, or the student who owns this enrollment
+    is_owner = (enrollment.student_id == current_user_id)
+    is_admin_or_instructor = current_user.role.name in ('admin', 'instructor')
+    if not is_owner and not is_admin_or_instructor:
+        return jsonify({"error": "Access denied — you do not have permission to view this payment slip"}), 403
+
+    student = enrollment.student
+    if not student:
+        return jsonify({"error": "Student not found for this enrollment"}), 404
+
+    course = enrollment.course
+    if not course:
+        return jsonify({"error": "Course not found for this enrollment"}), 404
+
+    window = enrollment.application_window
+
+    # Gather all the data needed for the payment slip
+    payment_info = _get_payment_info_from_enrollment(enrollment)
+
+    amount_paid = payment_info.get("amount_paid", 0)
+    currency = payment_info.get("currency", "USD")
+    payment_method = payment_info.get("payment_method", "Manual Payment")
+    payment_reference = payment_info.get("payment_reference", "")
+    # Use enrollment_date as the verified-on date (no separate payment_date field on Enrollment)
+    payment_date = payment_info.get("payment_date", enrollment.enrollment_date or datetime.utcnow())
+    payment_status = payment_info.get("payment_status", "completed")
+
+    cohort_label = window.cohort_label if window else enrollment.cohort_label or "Standard Cohort"
+    cohort_start = window.cohort_start if window else None
+    cohort_end = window.cohort_end if window else None
+
+    student_name = f"{student.first_name} {student.last_name}".strip() or student.username or "Student"
+    student_email = student.email or ""
+    student_phone = getattr(student, 'phone_number', None) or ""
+    admin_name = f"{current_user.first_name} {current_user.last_name}".strip() or current_user.username if current_user else "Administrator"
+
+    html = generate_payment_slip_html(
+        student_name=student_name,
+        student_email=student_email,
+        student_phone=student_phone,
+        course_title=course.title,
+        cohort_label=cohort_label,
+        cohort_start_date=cohort_start,
+        cohort_end_date=cohort_end,
+        amount_paid=amount_paid,
+        currency=currency,
+        payment_method=payment_method,
+        payment_reference=payment_reference,
+        payment_date=payment_date,
+        payment_status=payment_status,
+        enrollment_id=enrollment.id,
+        application_id=None,
+        admin_name=admin_name,
+    )
+
+    return html, 200, {"Content-Type": "text/html"}
 
 
 @waitlist_bp.route("/enrollments/unpaid", methods=["GET"])

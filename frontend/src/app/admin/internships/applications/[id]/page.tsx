@@ -36,6 +36,8 @@ const ApplicationDetailPage = () => {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusNote, setStatusNote] = useState('');
   const [interviewDate, setInterviewDate] = useState('');
+  const [meetingLink, setMeetingLink] = useState('');
+  const [meetingPlatform, setMeetingPlatform] = useState('');
   const [updating, setUpdating] = useState(false);
 
   // Cohort assignment
@@ -119,10 +121,14 @@ const ApplicationDetailPage = () => {
         status: selectedStatus,
         note: statusNote || undefined,
         interview_date: interviewDate || undefined,
+        interview_meeting_link: meetingLink || undefined,
+        interview_meeting_platform: meetingPlatform || undefined,
       });
       await fetchApplication();
       setStatusNote('');
       setInterviewDate('');
+      setMeetingLink('');
+      setMeetingPlatform('');
       showNotification('success', 'Status updated successfully');
     } catch (err: any) {
       showNotification('error', err?.message || 'Failed to update status');
@@ -544,15 +550,46 @@ const ApplicationDetailPage = () => {
 
                 {/* Interview Date (for interview_scheduled) */}
                 {selectedStatus === 'interview_scheduled' && (
-                  <div>
-                    <label className="text-gray-400 text-xs mb-1 block">Interview Date & Time</label>
-                    <input
-                      type="datetime-local"
-                      value={interviewDate}
-                      onChange={e => setInterviewDate(e.target.value)}
-                      className="w-full px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
-                    />
-                  </div>
+                  <>
+                    <div>
+                      <label className="text-gray-400 text-xs mb-1 block">Interview Date & Time</label>
+                      <input
+                        type="datetime-local"
+                        value={interviewDate}
+                        onChange={e => setInterviewDate(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
+                      />
+                    </div>
+
+                    {/* Meeting Platform */}
+                    <div>
+                      <label className="text-gray-400 text-xs mb-1 block">Meeting Platform</label>
+                      <select
+                        value={meetingPlatform}
+                        onChange={e => setMeetingPlatform(e.target.value)}
+                        className="w-full px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
+                      >
+                        <option value="">Select platform...</option>
+                        <option value="zoom">Zoom</option>
+                        <option value="google_meet">Google Meet</option>
+                        <option value="teams">Microsoft Teams</option>
+                        <option value="whatsapp">WhatsApp Video</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+
+                    {/* Meeting Link */}
+                    <div>
+                      <label className="text-gray-400 text-xs mb-1 block">Meeting Link</label>
+                      <input
+                        type="url"
+                        value={meetingLink}
+                        onChange={e => setMeetingLink(e.target.value)}
+                        placeholder="https://zoom.us/j/... or https://meet.google.com/..."
+                        className="w-full px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition text-sm"
+                      />
+                    </div>
+                  </>
                 )}
 
                 {/* Admin Note */}
@@ -876,6 +913,20 @@ const ApplicationDetailPage = () => {
                 <div className="flex justify-between py-2 border-b border-white/5">
                   <span className="text-gray-400 text-sm">Interview Date</span>
                   <span className="text-white text-sm">{new Date(application.interview_date).toLocaleString()}</span>
+                </div>
+              )}
+              {application.interview_meeting_platform && (
+                <div className="flex justify-between py-2 border-b border-white/5">
+                  <span className="text-gray-400 text-sm">Meeting Platform</span>
+                  <span className="text-white text-sm capitalize">{application.interview_meeting_platform.replace('_', ' ')}</span>
+                </div>
+              )}
+              {application.interview_meeting_link && (
+                <div className="flex justify-between py-2 border-b border-white/5">
+                  <span className="text-gray-400 text-sm">Meeting Link</span>
+                  <a href={application.interview_meeting_link} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm truncate max-w-[200px] ml-2">
+                    {application.interview_meeting_link}
+                  </a>
                 </div>
               )}
               <div className="flex justify-between py-2">

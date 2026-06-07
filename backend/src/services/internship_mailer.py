@@ -996,6 +996,839 @@ class InternshipMailer:
 </html>
 '''
 
+    def send_interview_scheduled(self, application, note=None):
+        """
+        Send interview scheduled email to applicant with meeting link and details.
+        """
+        try:
+            meeting_platform_display = {
+                'zoom': 'Zoom',
+                'google_meet': 'Google Meet',
+                'teams': 'Microsoft Teams',
+                'whatsapp': 'WhatsApp Video',
+                'other': 'Video Call',
+            }
+            platform_display = meeting_platform_display.get(
+                application.interview_meeting_platform, 'Video Call'
+            )
+
+            subject = '📅 Interview Scheduled - AfriTech Bridge Internship'
+
+            template_context = {
+                'full_name': application.full_name.split()[0] if application.full_name else 'Applicant',
+                'track_name': application.track.name if application.track else 'Unknown',
+                'reference_code': application.reference_code,
+                'interview_date': application.interview_date.strftime('%d %B %Y at %I:%M %p') if application.interview_date else 'To be confirmed',
+                'meeting_link': application.interview_meeting_link or '',
+                'meeting_platform': platform_display,
+                'note': note or 'We look forward to speaking with you!',
+            }
+
+            html_content = render_template_string(self._get_interview_scheduled_enhanced_template(), **template_context)
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': application.email, 'name': application.full_name}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Interview scheduled email sent to {application.email} with meeting link")
+            else:
+                logger.warning(f"Failed to send interview scheduled email to {application.email}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending interview scheduled email: {str(e)}")
+            return False
+
+    def send_task_assigned(self, intern, task_title, task_description=None, due_date=None, priority='medium', assigned_by_name='Instructor', cohort_name=None):
+        """
+        Send email notification when a task is assigned to an intern.
+        """
+        try:
+            subject = f'📋 New Task Assigned: {task_title}'
+
+            due_date_str = due_date.strftime('%d %B %Y at %I:%M %p') if due_date else 'No deadline'
+            priority_display = priority.upper() if priority else 'MEDIUM'
+            priority_color = {
+                'low': '#22c55e',
+                'medium': '#f59e0b',
+                'high': '#ef4444',
+                'urgent': '#dc2626',
+            }.get(priority, '#f59e0b')
+
+            template_context = {
+                'full_name': intern.full_name.split()[0] if intern.full_name else 'Intern',
+                'task_title': task_title,
+                'task_description': task_description or 'No additional details provided.',
+                'due_date': due_date_str,
+                'priority': priority_display,
+                'priority_color': priority_color,
+                'assigned_by_name': assigned_by_name,
+                'cohort_name': cohort_name or 'Your Cohort',
+            }
+
+            html_content = render_template_string(self._get_task_assigned_template(), **template_context)
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': intern.email, 'name': intern.full_name}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Task assignment email sent to {intern.email}: {task_title}")
+            else:
+                logger.warning(f"Failed to send task assignment email to {intern.email}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending task assignment email: {str(e)}")
+            return False
+
+    def send_task_graded(self, intern, task_title, status, score=None, feedback=None, graded_by_name='Instructor'):
+        """
+        Send email notification when an intern's task submission is graded.
+        """
+        try:
+            is_approved = status == 'approved'
+            subject = f"{'✅' if is_approved else '📝'} Task {status.title()}: {task_title}"
+
+            template_context = {
+                'full_name': intern.full_name.split()[0] if intern.full_name else 'Intern',
+                'task_title': task_title,
+                'status': status.title(),
+                'is_approved': is_approved,
+                'score': score,
+                'feedback': feedback or 'No feedback provided.',
+                'graded_by_name': graded_by_name,
+            }
+
+            html_content = render_template_string(self._get_task_graded_template(), **template_context)
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': intern.email, 'name': intern.full_name}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Task grading email sent to {intern.email}: {task_title} - {status}")
+            else:
+                logger.warning(f"Failed to send task grading email to {intern.email}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending task grading email: {str(e)}")
+            return False
+
+    def send_cohort_assigned(self, application, cohort_name, assigned_by_name='Admin'):
+        """
+        Send email notification when an applicant is assigned to a cohort.
+        """
+        try:
+            subject = f'🎯 Cohort Assigned - {cohort_name}'
+
+            start_date = application.cohort.start_date.strftime('%d %B %Y') if application.cohort and application.cohort.start_date else 'TBD'
+
+            template_context = {
+                'full_name': application.full_name.split()[0] if application.full_name else 'Applicant',
+                'track_name': application.track.name if application.track else 'Program',
+                'cohort_name': cohort_name,
+                'start_date': start_date,
+                'assigned_by_name': assigned_by_name,
+                'reference_code': application.reference_code,
+            }
+
+            html_content = render_template_string(self._get_cohort_assigned_template(), **template_context)
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': application.email, 'name': application.full_name}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Cohort assignment email sent to {application.email}: {cohort_name}")
+            else:
+                logger.warning(f"Failed to send cohort assignment email to {application.email}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending cohort assignment email: {str(e)}")
+            return False
+
+    # ============= ENHANCED EMAIL TEMPLATES =============
+
+    def _get_interview_scheduled_enhanced_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #14b8a6 100%);
+            padding: 40px 30px 30px;
+            text-align: center;
+        }
+        .header h1 {
+            color: #ffffff;
+            font-size: 26px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p {
+            color: rgba(255,255,255,0.85);
+            font-size: 15px;
+        }
+        .body-content {
+            padding: 36px;
+            color: #334155;
+        }
+        .body-content h2 {
+            color: #0f172a;
+            font-size: 18px;
+            margin-bottom: 14px;
+        }
+        .body-content p {
+            line-height: 1.7;
+            margin-bottom: 16px;
+        }
+        .interview-card {
+            background: linear-gradient(135deg, #eff6ff 0%, #f0fdfa 100%);
+            border: 2px solid #14b8a6;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+        }
+        .interview-card h3 {
+            color: #0f172a;
+            font-size: 15px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .detail-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .detail-row .icon { font-size: 18px; margin-right: 12px; }
+        .detail-row .label {
+            font-weight: 600;
+            color: #1e3a8a;
+            width: 110px;
+            font-size: 13px;
+        }
+        .detail-row .value {
+            color: #0f172a;
+            font-weight: 500;
+            font-size: 14px;
+            flex: 1;
+        }
+        .meeting-link-btn {
+            display: block;
+            text-align: center;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #14b8a6 0%, #0d9488 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(20,184,166,0.3);
+        }
+        .meeting-link-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(20,184,166,0.4);
+        }
+        .tips-box {
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin: 16px 0;
+        }
+        .tips-box h4 {
+            color: #92400e;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .tips-box ul {
+            padding-left: 20px;
+            color: #78350f;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 28px 36px;
+            text-align: center;
+        }
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .footer .brand {
+            color: #14b8a6;
+            font-weight: 700;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+            .detail-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .detail-row .label { width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📅 Interview Scheduled</h1>
+            <p>Your {{ track_name }} internship interview is confirmed</p>
+        </div>
+
+        <div class="body-content">
+            <h2>Dear {{ full_name }},</h2>
+
+            <p>
+                Great news! We've reviewed your application and we're excited to move forward.
+                Your interview for the <strong>{{ track_name }}</strong> internship has been scheduled.
+            </p>
+
+            <div class="interview-card">
+                <h3>🎯 Interview Details</h3>
+                <div class="detail-row">
+                    <span class="icon">📅</span>
+                    <span class="label">Date & Time</span>
+                    <span class="value">{{ interview_date }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="icon">💻</span>
+                    <span class="label">Platform</span>
+                    <span class="value">{{ meeting_platform }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="icon">🆔</span>
+                    <span class="label">Reference</span>
+                    <span class="value">{{ reference_code }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="icon">🎓</span>
+                    <span class="label">Track</span>
+                    <span class="value">{{ track_name }}</span>
+                </div>
+            </div>
+
+            {% if meeting_link %}
+            <a href="{{ meeting_link }}" class="meeting-link-btn" target="_blank">
+                🚀 Join Meeting on {{ meeting_platform }}
+            </a>
+            {% endif %}
+
+            <div class="tips-box">
+                <h4>📋 Preparation Tips</h4>
+                <ul>
+                    <li>Review your application and motivation letter</li>
+                    <li>Prepare questions about the internship and AfriTech Bridge</li>
+                    <li>Test your internet connection, camera, and microphone</li>
+                    <li>Find a quiet, well-lit space for the interview</li>
+                    <li>Join 5 minutes early to ensure everything works</li>
+                </ul>
+            </div>
+
+            {% if note %}
+            <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                <p style="color: #475569; font-style: italic; margin: 0;">{{ note }}</p>
+            </div>
+            {% endif %}
+
+            <p>
+                If you need to reschedule or have any questions, please reply to this email
+                or contact us at <a href="mailto:info@afritechbridge.online" style="color: #14b8a6;">info@afritechbridge.online</a>.
+            </p>
+
+            <p>
+                Looking forward to meeting you!<br/>
+                <strong style="color: #14b8a6;">AfriTech Bridge Team</strong>
+            </p>
+        </div>
+
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+            <p style="margin-top: 6px;">© 2026 AfriTech Bridge. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+    def _get_task_assigned_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #7c3aed 100%);
+            padding: 36px 30px;
+            text-align: center;
+        }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+        }
+        .header p {
+            color: rgba(255,255,255,0.85);
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        .body-content {
+            padding: 32px;
+            color: #334155;
+        }
+        .body-content h2 {
+            color: #0f172a;
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+        .body-content p {
+            line-height: 1.7;
+            margin-bottom: 14px;
+        }
+        .task-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .task-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #0f172a;
+            margin-bottom: 10px;
+        }
+        .task-desc {
+            color: #475569;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 8px 12px;
+            background: white;
+            border-radius: 8px;
+        }
+        .priority-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .footer .brand {
+            color: #14b8a6;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 New Task Assigned</h1>
+            <p>{{ cohort_name }}</p>
+        </div>
+
+        <div class="body-content">
+            <h2>Hi {{ full_name }},</h2>
+            <p>A new task has been assigned to you by <strong>{{ assigned_by_name }}</strong>.</p>
+
+            <div class="task-card">
+                <div class="task-title">{{ task_title }}</div>
+                <div class="task-desc">{{ task_description }}</div>
+
+                <div class="meta-row">
+                    <span>📅 Due:</span>
+                    <strong>{{ due_date }}</strong>
+                    <span style="margin-left: auto;">
+                        <span class="priority-badge" style="background: {{ priority_color }}15; color: {{ priority_color }}; border: 1px solid {{ priority_color }}40;">
+                            {{ priority }}
+                        </span>
+                    </span>
+                </div>
+            </div>
+
+            <p>
+                Log in to your account to view task details, submit your work, and track your progress.
+            </p>
+
+            <p>
+                If you have questions about this task, please reach out to your instructor or team.
+            </p>
+
+            <p>
+                Best regards,<br/>
+                <strong style="color: #14b8a6;">AfriTech Bridge Team</strong>
+            </p>
+        </div>
+
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+    def _get_task_graded_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #0f172a 0%, {% if is_approved %}#059669{% else %}#dc2626{% endif %} 100%);
+            padding: 36px 30px;
+            text-align: center;
+        }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+        }
+        .header p {
+            color: rgba(255,255,255,0.85);
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        .body-content {
+            padding: 32px;
+            color: #334155;
+        }
+        .body-content h2 {
+            color: #0f172a;
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+        .body-content p {
+            line-height: 1.7;
+            margin-bottom: 14px;
+        }
+        .result-card {
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            border: 2px solid {% if is_approved %}#059669{% else %}#dc2626{% endif %};
+            background: {% if is_approved %}#f0fdf4{% else %}#fef2f2{% endif %};
+        }
+        .result-card .status {
+            font-size: 16px;
+            font-weight: 700;
+            color: {% if is_approved %}#059669{% else %}#dc2626{% endif %};
+            margin-bottom: 8px;
+        }
+        .result-card .score {
+            font-size: 36px;
+            font-weight: 800;
+            text-align: center;
+            color: {% if is_approved %}#059669{% else %}#dc2626{% endif %};
+            margin: 12px 0;
+        }
+        .result-card .feedback {
+            color: #475569;
+            font-size: 14px;
+            line-height: 1.6;
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 8px;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .footer .brand {
+            color: #14b8a6;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{% if is_approved %}✅ Task Approved{% else %}📝 Task Reviewed{% endif %}</h1>
+            <p>{{ task_title }}</p>
+        </div>
+
+        <div class="body-content">
+            <h2>Hi {{ full_name }},</h2>
+            <p>Your submission for <strong>{{ task_title }}</strong> has been reviewed by <strong>{{ graded_by_name }}</strong>.</p>
+
+            <div class="result-card">
+                <div class="status">
+                    {% if is_approved %}✅ Approved{% else %}❌ Needs Revision{% endif %}
+                </div>
+                {% if score is not none %}
+                <div class="score">{{ score }}%</div>
+                {% endif %}
+                <div class="feedback">
+                    <strong>Feedback:</strong><br/>
+                    {{ feedback }}
+                </div>
+            </div>
+
+            <p>
+                Log in to your account to view the full details and continue working on your tasks.
+            </p>
+
+            <p>
+                Keep up the great work!<br/>
+                <strong style="color: #14b8a6;">AfriTech Bridge Team</strong>
+            </p>
+        </div>
+
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+    def _get_cohort_assigned_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #059669 0%, #14b8a6 100%);
+            padding: 36px 30px;
+            text-align: center;
+        }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+        }
+        .header p {
+            color: rgba(255,255,255,0.85);
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        .body-content {
+            padding: 32px;
+            color: #334155;
+        }
+        .body-content h2 {
+            color: #0f172a;
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+        .body-content p {
+            line-height: 1.7;
+            margin-bottom: 14px;
+        }
+        .cohort-card {
+            background: #f0fdfa;
+            border: 2px solid #14b8a6;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            text-align: center;
+        }
+        .cohort-card .name {
+            font-size: 20px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .cohort-card .detail {
+            color: #475569;
+            font-size: 14px;
+            margin-top: 6px;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p {
+            color: #94a3b8;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+        .footer .brand {
+            color: #14b8a6;
+            font-weight: 700;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Cohort Assigned</h1>
+            <p>{{ track_name }} Internship Program</p>
+        </div>
+
+        <div class="body-content">
+            <h2>Dear {{ full_name }},</h2>
+
+            <p>
+                You have been assigned to a cohort for the <strong>{{ track_name }}</strong> internship program!
+            </p>
+
+            <div class="cohort-card">
+                <div class="name">{{ cohort_name }}</div>
+                <div class="detail">📅 Start Date: {{ start_date }}</div>
+                <div class="detail">🆔 Ref: {{ reference_code }}</div>
+            </div>
+
+            <p>
+                You will receive further instructions about the program schedule, orientation,
+                and next steps soon. The instructor will be reaching out to guide you through
+                your internship journey.
+            </p>
+
+            <p>
+                <strong>Next Steps:</strong>
+            </p>
+            <ul style="padding-left: 20px; line-height: 2; color: #475569;">
+                <li>📋 Complete your profile and review program materials</li>
+                <li>💬 Connect with your cohort members and instructor</li>
+                <li>🎯 Start working on assigned tasks and projects</li>
+            </ul>
+
+            <p>
+                Welcome to the team! We're excited to have you on board.
+            </p>
+
+            <p>
+                Best regards,<br/>
+                <strong style="color: #14b8a6;">AfriTech Bridge Team</strong>
+            </p>
+        </div>
+
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
     def _get_reviewing_template(self):
         return '''
 <!DOCTYPE html>

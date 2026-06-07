@@ -63,6 +63,8 @@ export interface InternshipApplication {
   reviewed_at: string | null;
   interview_date: string | null;
   interview_notes: string | null;
+  interview_meeting_link: string | null;
+  interview_meeting_platform: 'zoom' | 'google_meet' | 'teams' | 'whatsapp' | 'other' | null;
   rejection_reason: string | null;
   status_logs?: ApplicationStatusLog[];
   created_at: string;
@@ -219,6 +221,8 @@ class InternshipService extends BaseApiService {
     status: string;
     note?: string;
     interview_date?: string;
+    interview_meeting_link?: string;
+    interview_meeting_platform?: string;
   }): Promise<{ success: boolean; message: string; data: InternshipApplication }> {
     return this.patch(`${this.BASE}/admin/applications/${id}/status`, data);
   }

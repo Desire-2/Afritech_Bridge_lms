@@ -396,6 +396,10 @@ def _auto_migrate():
             ('momo_ussd_code', 'VARCHAR(100)'),
             ('momo_recipient_name', 'VARCHAR(100)'),
         ],
+        'internship_applications': [
+            ('interview_meeting_link', 'VARCHAR(500)'),
+            ('interview_meeting_platform', 'VARCHAR(50)'),
+        ],
     }
 
     for table_name, columns in migrations.items():

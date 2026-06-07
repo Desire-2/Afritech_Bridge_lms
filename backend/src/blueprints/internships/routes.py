@@ -636,6 +636,12 @@ def update_application_status(app_id):
         if data.get('interview_date'):
             application.interview_date = datetime.fromisoformat(data['interview_date'])
         
+        # Save interview meeting link and platform
+        if data.get('interview_meeting_link'):
+            application.interview_meeting_link = data['interview_meeting_link']
+        if data.get('interview_meeting_platform'):
+            application.interview_meeting_platform = data['interview_meeting_platform']
+        
         # Create status log
         status_log = ApplicationStatusLog(
             application_id=app_id,
@@ -650,7 +656,10 @@ def update_application_status(app_id):
         
         # Send email notification
         user = User.query.get(user_id)
-        mailer.send_status_update(application, old_status, new_status, data.get('note'))
+        if new_status == ApplicationStatusEnum.INTERVIEW_SCHEDULED:
+            mailer.send_interview_scheduled(application, data.get('note'))
+        else:
+            mailer.send_status_update(application, old_status, new_status, data.get('note'))
         
         return success_response('Status updated successfully', application.to_dict())
     except Exception as e:
@@ -694,6 +703,18 @@ def assign_cohort(app_id):
         # Assign cohort
         application.cohort_id = data['cohort_id']
         db.session.commit()
+        
+        # Send email notification about cohort assignment
+        try:
+            user = User.query.get(int(get_jwt_identity()))
+            cohort_name = cohort.cohort_name or cohort.cohort_code
+            mailer.send_cohort_assigned(
+                application,
+                cohort_name=cohort_name,
+                assigned_by_name=f"{user.first_name} {user.last_name}" if user else 'Admin'
+            )
+        except Exception as mail_err:
+            logger.warning(f"Failed to send cohort assignment email: {mail_err}")
         
         return success_response('Cohort assigned successfully', application.to_dict())
     except Exception as e:
@@ -1196,9 +1217,12 @@ def batch_update_status():
                     'new_status': new_status.value,
                 })
 
-                # Send email notification
+                # Send email notification (use enhanced interview template if applicable)
                 try:
-                    mailer.send_status_update(application, old_status, new_status, note)
+                    if new_status == ApplicationStatusEnum.INTERVIEW_SCHEDULED:
+                        mailer.send_interview_scheduled(application, note)
+                    else:
+                        mailer.send_status_update(application, old_status, new_status, note)
                 except Exception as mail_err:
                     logger.warning(f"Failed to send status email for {app_id}: {mail_err}")
 
@@ -1817,6 +1841,9 @@ def create_task():
             ).all()
             intern_ids = [i.id for i in interns]
         
+        # Track assigned interns for email notifications
+        assigned_interns = []
+        
         for intern_id in intern_ids:
             assignment = InternshipTaskAssignment(
                 task_id=task.id,
@@ -1824,9 +1851,30 @@ def create_task():
                 status='pending',
             )
             db.session.add(assignment)
+            # Fetch intern info for email
+            intern = InternshipApplication.query.get(intern_id)
+            if intern:
+                assigned_interns.append(intern)
         
         db.session.commit()
         logger.info(f"Task created: {task.title} ({task.id}) with {len(intern_ids)} assignments")
+        
+        # Send email notifications to assigned interns
+        try:
+            user = User.query.get(user_id)
+            assigned_by_name = f"{user.first_name} {user.last_name}" if user else 'Instructor'
+            for intern in assigned_interns:
+                mailer.send_task_assigned(
+                    intern,
+                    task_title=task.title,
+                    task_description=task.description,
+                    due_date=task.due_date,
+                    priority=task.priority.value if task.priority else 'medium',
+                    assigned_by_name=assigned_by_name,
+                    cohort_name=task.cohort.cohort_name if task.cohort else None,
+                )
+        except Exception as mail_err:
+            logger.warning(f"Failed to send task assignment emails: {mail_err}")
         
         return success_response('Task created successfully', task.to_dict(), status_code=201)
     except Exception as e:
@@ -1910,6 +1958,7 @@ def assign_task_to_interns(task_id):
             intern_ids = [i.id for i in interns]
         
         count = 0
+        assigned_interns = []
         for intern_id in intern_ids:
             # Check if already assigned
             existing = InternshipTaskAssignment.query.filter_by(
@@ -1923,8 +1972,31 @@ def assign_task_to_interns(task_id):
                 )
                 db.session.add(assignment)
                 count += 1
+                intern = InternshipApplication.query.get(intern_id)
+                if intern:
+                    assigned_interns.append(intern)
         
         db.session.commit()
+        
+        # Send email notifications to newly assigned interns
+        if count > 0:
+            try:
+                task = InternshipTask.query.get(task_id)
+                user = User.query.get(int(get_jwt_identity()))
+                assigned_by_name = f"{user.first_name} {user.last_name}" if user else 'Instructor'
+                for intern in assigned_interns:
+                    mailer.send_task_assigned(
+                        intern,
+                        task_title=task.title if task else 'New Task',
+                        task_description=task.description if task else None,
+                        due_date=task.due_date if task else None,
+                        priority=task.priority.value if task and task.priority else 'medium',
+                        assigned_by_name=assigned_by_name,
+                        cohort_name=task.cohort.cohort_name if task and task.cohort else None,
+                    )
+            except Exception as mail_err:
+                logger.warning(f"Failed to send task assignment emails: {mail_err}")
+        
         return success_response(f'Task assigned to {count} new intern(s)', {'assigned_count': count})
     except Exception as e:
         db.session.rollback()
@@ -1956,6 +2028,25 @@ def grade_assignment(assignment_id):
             assignment.graded_at = datetime.utcnow()
         
         db.session.commit()
+        
+        # Send email notification to intern about grading
+        if data.get('status') in ('approved', 'rejected'):
+            try:
+                intern = InternshipApplication.query.get(assignment.intern_id)
+                user = User.query.get(user_id)
+                graded_by_name = f"{user.first_name} {user.last_name}" if user else 'Instructor'
+                if intern:
+                    mailer.send_task_graded(
+                        intern,
+                        task_title=assignment.task.title if assignment.task else 'Task',
+                        status=assignment.status.value if hasattr(assignment.status, 'value') else assignment.status,
+                        score=assignment.score,
+                        feedback=assignment.feedback,
+                        graded_by_name=graded_by_name,
+                    )
+            except Exception as mail_err:
+                logger.warning(f"Failed to send task grading email: {mail_err}")
+        
         return success_response('Assignment graded successfully', assignment.to_dict())
     except Exception as e:
         db.session.rollback()
