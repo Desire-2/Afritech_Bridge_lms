@@ -878,15 +878,17 @@ class CertificateService:
             pdf_canvas.roundRect(15*mm, 15*mm, width - 30*mm, height - 30*mm, 6*mm, fill=0, stroke=1)
             
             # Add circuit-like design elements in corners
-            def draw_circuit_node(x, y, size, color):
-                """Draw a circuit node (dot with connecting lines)"""
-                pdf_canvas.setFillColor(color)
-                pdf_canvas.setStrokeColor(color)
+            def draw_circuit_node(x, y, size, color, alpha=1.0):
+                """Draw a circuit node (dot with connecting lines) with optional alpha"""
+                r, g, b = color.red/255.0, color.green/255.0, color.blue/255.0
+                pdf_canvas.setFillColorRGB(r, g, b, alpha=alpha)
+                pdf_canvas.setStrokeColorRGB(r, g, b, alpha=alpha)
                 pdf_canvas.circle(x, y, size, fill=1, stroke=1)
             
-            def draw_circuit_line(x1, y1, x2, y2, color):
-                """Draw a circuit connection line"""
-                pdf_canvas.setStrokeColor(color)
+            def draw_circuit_line(x1, y1, x2, y2, color, alpha=1.0):
+                """Draw a circuit connection line with optional alpha"""
+                r, g, b = color.red/255.0, color.green/255.0, color.blue/255.0
+                pdf_canvas.setStrokeColorRGB(r, g, b, alpha=alpha)
                 pdf_canvas.setLineWidth(2)
                 pdf_canvas.line(x1, y1, x2, y2)
             
@@ -919,19 +921,19 @@ class CertificateService:
             pdf_canvas.line(arrow_x + 8*mm, arrow_y, arrow_x + 5*mm, arrow_y - 3*mm)
             pdf_canvas.line(arrow_x + 8*mm, arrow_y, arrow_x + 11*mm, arrow_y - 3*mm)
             
-            # Bottom left circuit pattern
-            draw_circuit_node(30*mm, 35*mm, 1.2*mm, teal)
-            draw_circuit_node(40*mm, 30*mm, 1*mm, light_teal)
-            draw_circuit_node(50*mm, 38*mm, 1.3*mm, teal)
-            draw_circuit_line(30*mm, 35*mm, 40*mm, 30*mm, teal)
-            draw_circuit_line(40*mm, 30*mm, 50*mm, 38*mm, light_teal)
+            # Bottom left circuit pattern — moved down 8mm, reduced opacity to avoid overlapping footer text
+            draw_circuit_node(30*mm, 27*mm, 1.0*mm, teal, alpha=0.35)
+            draw_circuit_node(40*mm, 22*mm, 0.8*mm, light_teal, alpha=0.3)
+            draw_circuit_node(50*mm, 30*mm, 1.1*mm, teal, alpha=0.35)
+            draw_circuit_line(30*mm, 27*mm, 40*mm, 22*mm, teal, alpha=0.25)
+            draw_circuit_line(40*mm, 22*mm, 50*mm, 30*mm, light_teal, alpha=0.25)
             
-            # Bottom right circuit pattern
-            draw_circuit_node(width - 35*mm, 32*mm, 1.2*mm, orange)
-            draw_circuit_node(width - 45*mm, 28*mm, 1*mm, light_orange)
-            draw_circuit_node(width - 50*mm, 35*mm, 1.3*mm, orange)
-            draw_circuit_line(width - 35*mm, 32*mm, width - 45*mm, 28*mm, orange)
-            draw_circuit_line(width - 45*mm, 28*mm, width - 50*mm, 35*mm, light_orange)
+            # Bottom right circuit pattern — moved down 8mm, reduced opacity
+            draw_circuit_node(width - 35*mm, 24*mm, 1.0*mm, orange, alpha=0.35)
+            draw_circuit_node(width - 45*mm, 20*mm, 0.8*mm, light_orange, alpha=0.3)
+            draw_circuit_node(width - 50*mm, 27*mm, 1.1*mm, orange, alpha=0.35)
+            draw_circuit_line(width - 35*mm, 24*mm, width - 45*mm, 20*mm, orange, alpha=0.25)
+            draw_circuit_line(width - 45*mm, 20*mm, width - 50*mm, 27*mm, light_orange, alpha=0.25)
             
             # Add curved arc design elements (inspired by logo)
             pdf_canvas.setStrokeColor(teal)
@@ -1404,9 +1406,9 @@ class CertificateService:
             pdf_canvas.setLineWidth(2)
             pdf_canvas.roundRect(qr_x, qr_y, qr_size, qr_size, 3*mm, fill=0, stroke=1)
             
-            # Corner accents (circuit nodes)
+            # Corner accents (circuit nodes) — reduced opacity to avoid visual clash with text below
             corner_size = 1.8*mm
-            pdf_canvas.setFillColor(orange)
+            pdf_canvas.setFillColorRGB(0.976, 0.451, 0.086, alpha=0.35)
             pdf_canvas.circle(qr_x, qr_y, corner_size, fill=1, stroke=0)
             pdf_canvas.circle(qr_x + qr_size, qr_y, corner_size, fill=1, stroke=0)
             pdf_canvas.circle(qr_x, qr_y + qr_size, corner_size, fill=1, stroke=0)
@@ -1424,9 +1426,8 @@ class CertificateService:
             pdf_canvas.drawCentredString(qr_x + qr_size/2, footer_y - 12.5*mm, verify_url)
             
             # Footer section with elegant badge design
-            footer_line_y = 20*mm
-            
-            # Horizontal divider line with gradient effect (draw segments)
+            # Horizontal divider line — lowered to 17mm to keep clear of verify URL text
+            footer_line_y = 17*mm
             pdf_canvas.setStrokeColor(teal)
             pdf_canvas.setLineWidth(1.5)
             pdf_canvas.line(30*mm, footer_line_y, width/2, footer_line_y)
@@ -1434,48 +1435,48 @@ class CertificateService:
             pdf_canvas.setStrokeColor(colors.HexColor('#8B5CF6'))  # Purple blend
             pdf_canvas.line(width/2, footer_line_y, width - 30*mm, footer_line_y)
             
-            # Left circular badge (Teal) at 20mm from left edge
+            # Left circular badge (Teal) — moved down to avoid crowding verify URL text above
             left_badge_x = 24*mm
-            badge_y = footer_line_y
-            badge_radius = 3*mm
+            badge_y = 16*mm  # Lowered from 20mm to increase gap from verify URL text above
+            badge_radius = 2.5*mm
             
             # Outer glow circle
-            pdf_canvas.setFillColorRGB(0.078, 0.722, 0.651, alpha=0.2)
-            pdf_canvas.circle(left_badge_x, badge_y, badge_radius + 1*mm, fill=1, stroke=0)
+            pdf_canvas.setFillColorRGB(0.078, 0.722, 0.651, alpha=0.15)
+            pdf_canvas.circle(left_badge_x, badge_y, badge_radius + 0.8*mm, fill=1, stroke=0)
             # Badge outer ring
             pdf_canvas.setStrokeColor(teal)
-            pdf_canvas.setLineWidth(2)
+            pdf_canvas.setLineWidth(1.5)
             pdf_canvas.circle(left_badge_x, badge_y, badge_radius, fill=0, stroke=1)
             # Middle layer
-            pdf_canvas.setFillColorRGB(0.078, 0.722, 0.651, alpha=0.3)
-            pdf_canvas.circle(left_badge_x, badge_y, badge_radius - 0.7*mm, fill=1, stroke=0)
+            pdf_canvas.setFillColorRGB(0.078, 0.722, 0.651, alpha=0.25)
+            pdf_canvas.circle(left_badge_x, badge_y, badge_radius - 0.5*mm, fill=1, stroke=0)
             # Inner core
             pdf_canvas.setFillColor(teal)
-            pdf_canvas.circle(left_badge_x, badge_y, badge_radius - 1.5*mm, fill=1, stroke=0)
+            pdf_canvas.circle(left_badge_x, badge_y, badge_radius - 1.0*mm, fill=1, stroke=0)
             # Inner highlight
             pdf_canvas.setFillColor(colors.HexColor('#5eead4'))
-            pdf_canvas.circle(left_badge_x, badge_y, badge_radius - 2*mm, fill=1, stroke=0)
+            pdf_canvas.circle(left_badge_x, badge_y, badge_radius - 1.5*mm, fill=1, stroke=0)
             
-            # Right circular badge (Teal/Orange blend) at 20mm from right edge
+            # Right circular badge (Teal/Orange blend) — moved down to avoid crowding verify URL text
             right_badge_x = width - 24*mm
             # Outer glow circle
-            pdf_canvas.setFillColorRGB(0.976, 0.451, 0.086, alpha=0.2)
-            pdf_canvas.circle(right_badge_x, badge_y, badge_radius + 1*mm, fill=1, stroke=0)
+            pdf_canvas.setFillColorRGB(0.976, 0.451, 0.086, alpha=0.15)
+            pdf_canvas.circle(right_badge_x, badge_y, badge_radius + 0.8*mm, fill=1, stroke=0)
             # Badge outer ring (teal)
             pdf_canvas.setStrokeColor(teal)
-            pdf_canvas.setLineWidth(2)
+            pdf_canvas.setLineWidth(1.5)
             pdf_canvas.circle(right_badge_x, badge_y, badge_radius, fill=0, stroke=1)
             # Middle layer (orange tint)
-            pdf_canvas.setFillColorRGB(0.976, 0.451, 0.086, alpha=0.3)
-            pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 0.7*mm, fill=1, stroke=0)
+            pdf_canvas.setFillColorRGB(0.976, 0.451, 0.086, alpha=0.25)
+            pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 0.5*mm, fill=1, stroke=0)
             # Inner core (teal)
             pdf_canvas.setFillColor(teal)
-            pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 1.5*mm, fill=1, stroke=0)
+            pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 1.0*mm, fill=1, stroke=0)
             # Inner highlight
             pdf_canvas.setFillColor(colors.HexColor('#5eead4'))
-            pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 2*mm, fill=1, stroke=0)
+            pdf_canvas.circle(right_badge_x, badge_y, badge_radius - 1.5*mm, fill=1, stroke=0)
             
-            # Footer text with better spacing and contrast — kept above inner border
+            # Footer text
             pdf_canvas.setFont('Helvetica', 7)
             pdf_canvas.setFillColor(colors.HexColor('#cbd5e1'))
             pdf_canvas.drawCentredString(width / 2, 20*mm, 'Empowering the next generation of African tech leaders')
