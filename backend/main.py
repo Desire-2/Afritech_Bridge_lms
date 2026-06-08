@@ -30,6 +30,9 @@ from src.models.file_models import FileComment, FileAnalysis # Import enhanced f
 from src.models.notification_models import Notification # Import notification model
 from src.models.excel_grading_models import ExcelGradingResult # Import Excel AI grading model
 from src.models.task_models import BackgroundTask, TaskStatus # Import background task models for multi-worker support
+from src.models.grading_models import (
+    Rubric, RubricCriterion, FeedbackTemplate, GradingHistory, GradingSession
+)  # Import grading enhancement models
 from src.models.internship_models import (
     InternshipTrack, InternshipCohort, InternshipApplication, ApplicationStatusLog, InternshipOfferLetter
 ) # Import internship models
@@ -73,6 +76,7 @@ from src.utils.db_health import get_pool_status, force_pool_cleanup, check_datab
 from src.services.background_service import background_service # Import background service for initialization
 from src.services.cohort_migration_scheduler import start_cohort_migration_scheduler # Import cohort migration scheduler
 from src.services.cohort_start_notification_scheduler import start_cohort_start_notification_scheduler  # Cohort start email notifications
+from flask_migrate import Migrate
 from flask_cors import CORS
 
 # Configure logging
@@ -277,6 +281,7 @@ app.config["JWT_BLOCKLIST_TOKEN_CHECKS"] = ["access", "refresh"]
 
 # Initialize extensions
 db.init_app(app)
+migrate = Migrate(app, db)  # Flask-Migrate for Alembic migration support
 jwt = JWTManager(app)
 
 # Initialize enhanced email service (Brevo + legacy compatibility)
@@ -341,100 +346,8 @@ app.register_blueprint(instructor_settings_bp) # Register instructor settings bl
 maintenance_mode = MaintenanceMode(app)
 logger.info("Maintenance mode middleware initialized and active")
 
-def _auto_migrate():
-    """
-    Automatically add any columns that exist in SQLAlchemy models but are missing
-    from the database. This prevents OperationalError on startup after
-    model changes without a full schema recreation.
-    Works for both SQLite (dev) and PostgreSQL (production).
-    """
-    db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    is_postgres = 'postgresql' in db_uri or 'postgres' in db_uri
-
-    from sqlalchemy import inspect, text
-    inspector = inspect(db.engine)
-
-    # Map of table_name -> [(column_name, column_type_sql)]
-    # Column types use SQLite syntax; for PostgreSQL we map common types.
-    migrations = {
-        'users': [
-            ('email_unsubscribe_token', 'VARCHAR(64)'),
-            ('last_login', 'DATETIME'),
-            ('last_activity', 'DATETIME'),
-            ('deleted_at', 'DATETIME'),
-            ('deleted_by', 'INTEGER'),
-            ('deletion_reason', 'TEXT'),
-            ('must_change_password', 'BOOLEAN DEFAULT 0'),
-            ('push_notifications', 'BOOLEAN DEFAULT 1'),
-            ('weekly_digest', 'BOOLEAN DEFAULT 1'),
-            ('show_progress', 'BOOLEAN DEFAULT 1'),
-            ('enable_gamification', 'BOOLEAN DEFAULT 1'),
-            ('show_leaderboard', 'BOOLEAN DEFAULT 1'),
-        ],
-        'enrollments': [
-            ('cohort_label', 'VARCHAR(100)'),
-            ('application_window_id', 'INTEGER'),
-            ('payment_status', 'VARCHAR(50)'),
-            ('payment_verified', 'BOOLEAN DEFAULT FALSE'),
-            ('payment_verified_at', 'TIMESTAMP'),
-            ('payment_verified_by', 'INTEGER'),
-            ('payment_slip_url', 'TEXT'),
-            ('payment_method', 'VARCHAR(30)'),
-            ('payment_slip_filename', 'VARCHAR(255)'),
-            ('migrated_from_window_id', 'INTEGER'),
-            ('application_id', 'INTEGER'),
-            ('cohort_start_date', 'TIMESTAMP'),
-            ('cohort_end_date', 'TIMESTAMP'),
-            ('status', 'VARCHAR(20)'),
-            ('terminated_at', 'TIMESTAMP'),
-            ('termination_reason', 'VARCHAR(255)'),
-            ('terminated_by', 'INTEGER'),
-            ('payment_reminder_sent', 'BOOLEAN DEFAULT FALSE'),
-            ('payment_reminder_sent_at', 'TIMESTAMP'),
-            ('cohort_start_notified', 'BOOLEAN DEFAULT FALSE'),
-        ],
-        'courses': [
-            ('momo_pay_code_enabled', 'BOOLEAN DEFAULT FALSE'),
-            ('momo_ussd_code', 'VARCHAR(100)'),
-            ('momo_recipient_name', 'VARCHAR(100)'),
-        ],
-        'internship_applications': [
-            ('interview_meeting_link', 'VARCHAR(500)'),
-            ('interview_meeting_platform', 'VARCHAR(50)'),
-        ],
-    }
-
-    for table_name, columns in migrations.items():
-        if not inspector.has_table(table_name):
-            continue
-        existing = {col['name'] for col in inspector.get_columns(table_name)}
-        with db.engine.begin() as conn:
-            for col_name, col_type in columns:
-                if col_name not in existing:
-                    try:
-                        conn.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}'))
-                        logger.info(f"✅ Auto-migrated: added {table_name}.{col_name}")
-                    except Exception as e:
-                        logger.warning(f"⚠️  Auto-migrate skipped {table_name}.{col_name}: {e}")
-
-        # ── Alter existing columns that need type changes ──
-        # Note: ALTER COLUMN TYPE is PostgreSQL-only; SQLite does not support it.
-        if is_postgres:
-            column_type_changes = [
-                ('enrollments', 'payment_slip_url', 'TEXT'),
-            ]
-            for tbl, col, new_type in column_type_changes:
-                try:
-                    with db.engine.begin() as conn:
-                        conn.execute(text(f'ALTER TABLE {tbl} ALTER COLUMN {col} TYPE {new_type}'))
-                        logger.info(f"✅ Auto-migrated: altered {tbl}.{col} to {new_type}")
-                except Exception as e:
-                    logger.warning(f"⚠️  Auto-migrate alter skipped {tbl}.{col}: {e}")
-
-
 with app.app_context():
     db.create_all()
-    _auto_migrate()
     if not Role.query.filter_by(name='student').first():
         db.session.add(Role(name='student'))
     if not Role.query.filter_by(name='instructor').first():
