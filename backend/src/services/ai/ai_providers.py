@@ -138,7 +138,7 @@ class AIProviderManager:
 
         try:
             # Lazy import to avoid circular imports at module load time
-            from ..models.system_settings_models import SystemSettingsManager
+            from ...models.system_settings_models import SystemSettingsManager
             openrouter_from_db = SystemSettingsManager.get_setting('openrouter_api_key')
             gemini_from_db = SystemSettingsManager.get_setting('gemini_api_key')
             gemini_model_from_db = SystemSettingsManager.get_setting('gemini_model_name')
@@ -212,7 +212,7 @@ class AIProviderManager:
         self._active_user_id = user_id
 
         try:
-            from ..models.system_settings_models import UserAISetting
+            from ...models.system_settings_models import UserAISetting
             user_settings = UserAISetting.query.filter_by(user_id=user_id).first()
             if user_settings and (user_settings.openrouter_api_key or user_settings.gemini_api_key):
                 # Use user's keys if they have any set
