@@ -40,6 +40,7 @@ class TaskStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    RATE_LIMITED = "rate_limited"
 
 
 @dataclass
@@ -70,9 +71,10 @@ class TaskInfo:
     steps: List[StepInfo] = field(default_factory=list)
     result: Optional[Any] = None
     error: Optional[str] = None
+    rate_limit_info: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result_dict = {
             "task_id": self.task_id,
             "task_type": self.task_type,
             "status": self.status.value,
@@ -96,6 +98,9 @@ class TaskInfo:
             ],
             "error": self.error,
         }
+        if self.rate_limit_info:
+            result_dict["rate_limit_info"] = self.rate_limit_info
+        return result_dict
 
 
 class BackgroundTaskManager:
@@ -190,6 +195,18 @@ class BackgroundTaskManager:
 
         task.status = TaskStatus.IN_PROGRESS
         task.started_at = datetime.utcnow().isoformat()
+
+        # Activate the user's personal AI provider settings for this background task.
+        # This ensures that multi-step AI generation uses the correct user's API keys
+        # and model configurations throughout.
+        if task.user_id:
+            try:
+                from .ai_providers import ai_provider_manager
+                ai_provider_manager.set_active_user(task.user_id)
+                logger.info(f"[TASK] Activated AI provider settings for user {task.user_id} "
+                            f"in background task {task_id[:8]}...")
+            except Exception as ctx_err:
+                logger.warning(f"[TASK] Failed to set user context for task {task_id[:8]}...: {ctx_err}")
 
         try:
             # Pass task_id to the function so it can report progress
@@ -310,13 +327,58 @@ class BackgroundTaskManager:
             return task.result or self.task_results.get(task_id)
         return None
 
+    # ===== Rate Limit Management =====
+
+    def update_task_rate_limit_status(self, task_id: str, wait_info: dict):
+        """
+        Update a task's rate limit status during a wait.
+        Called periodically by RateLimitHandler.wait_with_progress().
+
+        Args:
+            task_id: The task ID
+            wait_info: Dict with keys:
+                - is_waiting: bool
+                - wait_remaining_seconds: int
+                - wait_duration_seconds: int
+                - provider: str
+                - attempt: int
+                - step_label: str
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            return
+
+        task.status = TaskStatus.RATE_LIMITED
+        task.rate_limit_info = {
+            "is_waiting": wait_info.get("is_waiting", True),
+            "wait_started_at": task.started_at,
+            "wait_duration_seconds": wait_info.get("wait_duration_seconds", 0),
+            "wait_remaining_seconds": wait_info.get("wait_remaining_seconds", 0),
+            "provider": wait_info.get("provider"),
+            "attempt": wait_info.get("attempt", 0),
+            "step_label": wait_info.get("step_label", ""),
+        }
+        task.current_step_description = (
+            f"Rate limited on {wait_info.get('provider', 'unknown')}. "
+            f"Resuming in {wait_info.get('wait_remaining_seconds', 0)}s..."
+        )
+
+    def clear_task_rate_limit_status(self, task_id: str):
+        """Clear rate limit info when the wait is over and task resumes."""
+        task = self.tasks.get(task_id)
+        if not task:
+            return
+        task.rate_limit_info = None
+        if task.status == TaskStatus.RATE_LIMITED:
+            task.status = TaskStatus.IN_PROGRESS
+
     def get_user_tasks(self, user_id: int) -> List[Dict[str, Any]]:
-        """Get active (pending/in_progress) tasks for a specific user"""
+        """Get active (pending/in_progress/rate_limited) tasks for a specific user"""
         return [
             t.to_dict()
             for t in self.tasks.values()
             if t.user_id == user_id
-            and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS)
+            and t.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS, TaskStatus.RATE_LIMITED)
         ]
 
     # ===== Cleanup =====

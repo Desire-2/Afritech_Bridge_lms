@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any
 
 from .ai_providers import ai_provider_manager
 from .json_parser import json_parser
+from .rate_limit_handler import rate_limit_handler
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ class AssessmentGenerator:
     def generate_quiz_questions(self, course_title: str, module_title: str,
                                lesson_title: str, lesson_content: str,
                                num_questions: int = 5,
-                               question_types: Optional[List[str]] = None) -> Dict[str, Any]:
+                               question_types: Optional[List[str]] = None,
+                               session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate quiz questions based on lesson content
         
@@ -88,7 +90,15 @@ Return this exact JSON structure:
   ]
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating {num_questions} quiz questions for {lesson_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "quiz questions")
             if parsed:
@@ -103,7 +113,8 @@ Return this exact JSON structure:
     
     def generate_quiz_from_content(self, lesson_or_module_content: str, 
                                    content_title: str, content_type: str = "lesson",
-                                   num_questions: int = 10, difficulty: str = "mixed") -> Dict[str, Any]:
+                                   num_questions: int = 10, difficulty: str = "mixed",
+                                   session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate a quiz based on actual lesson or module content
         
@@ -169,7 +180,15 @@ Format as JSON:
   ]
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating quiz from {content_type}: {content_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "quiz from content")
             if parsed:
@@ -183,7 +202,8 @@ Format as JSON:
         return self._generate_fallback_quiz(content_title, num_questions)
     
     def generate_assignment(self, course_title: str, module_title: str,
-                          module_description: str, lessons_summary: str) -> Dict[str, Any]:
+                          module_description: str, lessons_summary: str,
+                          session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate assignment based on module content
         
@@ -223,7 +243,15 @@ Format as JSON:
   "grading_rubric": "• Criterion 1 (30%)\\n• Criterion 2 (40%)\\n• Criterion 3 (30%)"
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating assignment for {module_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "assignment")
             if parsed:
@@ -240,7 +268,8 @@ Format as JSON:
     
     def generate_assignment_from_content(self, lesson_or_module_content: str,
                                         content_title: str, content_type: str = "lesson",
-                                        assignment_type: str = "practical") -> Dict[str, Any]:
+                                        assignment_type: str = "practical",
+                                        session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate an assignment based on actual lesson or module content
         
@@ -298,7 +327,15 @@ Return valid JSON in this exact format:
   "submission_format": "Description of how to submit (file type, format, etc.)"
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating assignment from {content_type}: {content_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "assignment from content")
             if parsed:
@@ -312,7 +349,8 @@ Return valid JSON in this exact format:
         return self._generate_fallback_assignment(content_title, assignment_type)
     
     def generate_final_project(self, course_title: str, course_description: str,
-                              course_objectives: str, modules_summary: str) -> Dict[str, Any]:
+                              course_objectives: str, modules_summary: str,
+                              session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate capstone project for entire course
         
@@ -355,7 +393,15 @@ Format as JSON:
   "resources": "• Resource 1\\n• Resource 2"
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating final project for {course_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "final project")
             if parsed:
@@ -373,7 +419,8 @@ Format as JSON:
         }
     
     def generate_project_from_content(self, module_contents: List[Dict[str, str]],
-                                     module_title: str, course_title: str) -> Dict[str, Any]:
+                                     module_title: str, course_title: str,
+                                     session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate a project based on multiple lessons/modules content
         
@@ -428,7 +475,15 @@ Format as JSON:
   "submission_format": "What to submit and how"
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating project from {module_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "project from content")
             if parsed:

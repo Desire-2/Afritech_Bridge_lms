@@ -31,6 +31,7 @@ from .ai_providers import ai_provider_manager
 from .json_parser import json_parser
 from .content_validator import ContentValidator
 from .fallback_generators import fallback_generators
+from .rate_limit_handler import rate_limit_handler
 
 logger = logging.getLogger(__name__)
 
@@ -694,7 +695,13 @@ Provide a DETAILED analysis in JSON format:
 Be thorough and specific - this analysis drives the entire lesson structure."""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=self._current_session.session_id if hasattr(self, '_current_session') and self._current_session else None,
+                task_id=None,
+                step_label="Analyzing lesson topic",
+            )
             return json_parser.parse_json_response(response) or {}
         except Exception as e:
             logger.error(f"Topic analysis failed: {e}")
@@ -769,7 +776,13 @@ Each chapter should:
 - Include both theory and practical elements"""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=session.session_id if hasattr(self, '_current_session') and self._current_session else None,
+                task_id=None,
+                step_label="Generating chapter outline",
+            )
             return json_parser.parse_json_response(response) or {"chapters": []}
         except Exception as e:
             logger.error(f"Chapter outline generation failed: {e}")
@@ -853,7 +866,13 @@ Use markdown formatting with bold for emphasis.
 Do NOT use headers in the introduction - it should flow as continuous prose."""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=session.session_id if self._current_session else None,
+                task_id=None,
+                step_label=f"Generating chapter intro: {chapter.title}",
+            )
             return response.strip()
         except Exception as e:
             logger.error(f"Chapter introduction generation failed: {e}")
@@ -996,7 +1015,13 @@ EXAMPLE QUALITY REQUIREMENTS:
 - Include variations or edge cases where relevant"""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=session.session_id if self._current_session else None,
+                task_id=None,
+                step_label=f"Generating chapter examples: {chapter.title}",
+            )
             result = json_parser.parse_json_response(response)
             if result and "examples" in result:
                 return result["examples"]
@@ -1076,7 +1101,13 @@ EXERCISE QUALITY REQUIREMENTS:
 - Avoid simple yes/no or definition questions"""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=session.session_id if self._current_session else None,
+                task_id=None,
+                step_label=f"Generating chapter exercises: {chapter.title}",
+            )
             result = json_parser.parse_json_response(response)
             if result and "exercises" in result:
                 return result["exercises"]
@@ -1147,7 +1178,13 @@ SUMMARY QUALITY REQUIREMENTS:
 - Connect to professional practice"""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=session.session_id if self._current_session else None,
+                task_id=None,
+                step_label=f"Generating chapter summary: {chapter.title}",
+            )
             result = json_parser.parse_json_response(response)
             if result:
                 return result
@@ -1215,7 +1252,13 @@ Use markdown formatting with **bold** for emphasis on key terms.
 Make the conclusion feel like a proper wrap-up of substantial learning."""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.generate_content,
+                prompt,
+                session_id=session.session_id if self._current_session else None,
+                task_id=None,
+                step_label="Generating lesson conclusion",
+            )
             return response.strip()
         except Exception as e:
             logger.error(f"Lesson conclusion generation failed: {e}")

@@ -194,6 +194,40 @@ class SettingsValidator:
             'max': 10000,
             'description': 'AI max requests per day must be between 1 and 10000'
         },
+
+        # AI Provider API Keys
+        'openrouter_api_key': {
+            'type': 'string',
+            'required': False,
+            'min_length': 0,
+            'max_length': 500,
+            'description': 'OpenRouter API key for AI content generation'
+        },
+        'gemini_api_key': {
+            'type': 'string',
+            'required': False,
+            'min_length': 0,
+            'max_length': 500,
+            'description': 'Gemini API key for AI content generation fallback'
+        },
+
+        # Gemini Model Name
+        'gemini_model_name': {
+            'type': 'string',
+            'required': False,
+            'min_length': 1,
+            'max_length': 200,
+            'description': 'Gemini model name for AI content generation'
+        },
+
+        # OpenRouter Model Name
+        'openrouter_model_name': {
+            'type': 'string',
+            'required': False,
+            'min_length': 1,
+            'max_length': 200,
+            'description': 'OpenRouter model name for AI content generation'
+        },
     }
     
     # Cross-field validation rules

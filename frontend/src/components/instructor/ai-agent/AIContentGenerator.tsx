@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Sparkles, Loader2, AlertCircle, CheckCircle2, Clock, XCircle, CircleDot, Zap, Brain, Layers } from 'lucide-react';
+import { Sparkles, Loader2, AlertCircle, CheckCircle2, Clock, XCircle, CircleDot, Zap, Brain, Layers, TimerReset, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import aiAgentService, { TaskStatus } from '@/services/ai-agent.service';
+import aiAgentService, { TaskStatus, RateLimitInfo } from '@/services/ai-agent.service';
+import instructorSettingsService from '@/services/instructor-settings.service';
 import { toast } from 'sonner';
 
 interface AIContentGeneratorProps {
@@ -41,6 +42,15 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
   // Background task state
   const [taskId, setTaskId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
+  const [waitRemaining, setWaitRemaining] = useState(0);
+
+  // Activate the user's personal AI provider context on mount
+  // so their API keys and models are ready for content generation.
+  useEffect(() => {
+    instructorSettingsService.activateAIContext().catch(() => {
+      // Non-critical — activation is a best-effort warm-up
+    });
+  }, []);
 
   // Elapsed time tracker
   useEffect(() => {
@@ -59,6 +69,20 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [loading]);
+
+  // Rate limit countdown timer
+  useEffect(() => {
+    const rl = taskStatus?.rate_limit_info;
+    if (!rl?.is_waiting) {
+      setWaitRemaining(0);
+      return;
+    }
+    setWaitRemaining(rl.wait_remaining_seconds);
+    const interval = setInterval(() => {
+      setWaitRemaining(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [taskStatus?.rate_limit_info?.is_waiting, taskStatus?.rate_limit_info?.wait_remaining_seconds]);
 
   const handleProgressUpdate = useCallback((status: TaskStatus) => {
     setTaskStatus(status);
@@ -354,7 +378,11 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
             <div className="flex items-center gap-3">
               <div className="flex-1 h-2.5 bg-purple-100 dark:bg-purple-900/30 rounded-full overflow-hidden">
                 <div 
-                  className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full transition-all duration-700 ease-out"
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
+                    taskStatus?.status === 'rate_limited' 
+                      ? 'bg-gradient-to-r from-amber-400 to-amber-500' 
+                      : 'bg-gradient-to-r from-purple-500 to-indigo-500'
+                  }`}
                   style={{ width: `${Math.max(3, taskStatus ? progress : Math.min(10, elapsedSeconds))}%` }}
                 />
               </div>

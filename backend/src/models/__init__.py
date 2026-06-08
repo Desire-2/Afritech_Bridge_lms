@@ -74,6 +74,18 @@ try:
 except ImportError:
     pass  # Excel grading models optional
 
+# System Settings Models
+try:
+    from .system_settings_models import (
+        SystemSetting,
+        SettingAuditLog,
+        SystemSettingsManager,
+        UserAISetting,
+        initialize_default_settings
+    )
+except ImportError:
+    pass
+
 __all__ = [
     # Course Models
     'Course',

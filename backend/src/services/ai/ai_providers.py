@@ -9,11 +9,15 @@ import re
 import time
 import hashlib
 import logging
+import random
 import concurrent.futures
+import threading
 from typing import Dict, List, Optional, Any, Tuple
 from collections import deque
 from datetime import datetime
 import requests
+
+from .rate_limit_handler import rate_limit_handler, TaskCancelledError, RateLimitExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +35,9 @@ class AIProviderManager:
     
     # OpenRouter model configurations with fallback chain
     # Updated Feb 2026 - verified available on openrouter.ai/models
+    # The primary model name is now configurable via self.openrouter_model_name
     MODEL_CONFIGS = {
         'primary': {
-            'name': 'meta-llama/llama-3.3-70b-instruct:free',
             'max_tokens': 8000,
             'cost_per_1k_tokens': 0.0,
         },
@@ -48,10 +52,12 @@ class AIProviderManager:
             'cost_per_1k_tokens': 0.0,
         },
     }
-    
+
     def __init__(self):
+        # Load API keys and model names — check DB settings first (if app context available), fall back to env
+        self._load_api_keys_from_settings()
+        
         # OpenRouter configuration
-        self.openrouter_api_key = os.environ.get('OPENROUTER_API_KEY')
         self.openrouter_base_url = "https://openrouter.ai/api/v1/chat/completions"
         self.site_url = os.environ.get('SITE_URL', 'https://afritecbridge.com')
         self.site_name = os.environ.get('SITE_NAME', 'Afritec Bridge LMS')
@@ -60,7 +66,6 @@ class AIProviderManager:
         self.gemini_max_output_tokens = int(os.environ.get('GEMINI_MAX_OUTPUT_TOKENS', '8192'))
         
         # Gemini configuration (fallback)
-        self.gemini_api_key = os.environ.get('GEMINI_API_KEY')
         self.gemini_model = None
         
         # Provider state management
@@ -68,6 +73,21 @@ class AIProviderManager:
         self.provider_failure_counts = {'openrouter': 0, 'gemini': 0}
         self.provider_last_success = {'openrouter': time.time(), 'gemini': time.time()}
         self.max_provider_failures = 3
+
+        # Enhanced provider state for rate-limit awareness (thread-safe)
+        self._provider_lock = threading.Lock()
+        self._provider_state = {
+            'openrouter': {
+                'failure_count': 0,
+                'last_429_at': None,
+                'is_cooling_down': False,
+            },
+            'gemini': {
+                'failure_count': 0,
+                'last_429_at': None,
+                'is_cooling_down': False,
+            },
+        }
         
         # Rate limiting configuration (per provider)
         self.openrouter_max_rpm = int(os.environ.get('OPENROUTER_MAX_RPM', '200'))
@@ -75,9 +95,14 @@ class AIProviderManager:
         self.request_timestamps = {'openrouter': deque(maxlen=200), 'gemini': deque(maxlen=15)}
         self.min_request_interval = 0.3
         self.last_request_time = {'openrouter': 0, 'gemini': 0}
-        
+
         # Rate limit cooldown (set when 429 is received)
         self._rate_limit_cooldown_until = {'openrouter': 0, 'gemini': 0}
+
+        # Proactive throttling threshold (fraction of RPM limit)
+        self.proactive_threshold = float(os.environ.get(
+            'RATE_LIMIT_PROACTIVE_THRESHOLD', '0.9'
+        ))
         
         # Token/prompt optimization
         self.max_prompt_length = 100000
@@ -85,6 +110,10 @@ class AIProviderManager:
         # Response caching
         self.response_cache = {}
         self.cache_ttl = 3600
+
+        # Per-user context: active_user_id stores which user's keys are active.
+        # When set, keys are loaded from UserAISetting table.
+        self._active_user_id = None
         
         # Initialize HTTP session — no custom Retry adapter
         # urllib3's default Retry with max_retries=0 can swallow response objects
@@ -92,7 +121,171 @@ class AIProviderManager:
         self.session = requests.Session()
         
         self._initialize_providers()
-    
+
+    def _load_api_keys_from_settings(self):
+        """
+        Load API keys and model names from DB system settings first, falling back
+        to environment variables. This allows admin/instructors to configure
+        providers via the settings UI — no .env edits needed.
+        DB settings take precedence over .env values.
+        """
+        # Try loading from DB system settings (SystemSettingsManager)
+        # If app context isn't available yet, this will gracefully fall back to env vars
+        openrouter_from_db = None
+        gemini_from_db = None
+        gemini_model_from_db = None
+        openrouter_model_from_db = None
+
+        try:
+            # Lazy import to avoid circular imports at module load time
+            from ..models.system_settings_models import SystemSettingsManager
+            openrouter_from_db = SystemSettingsManager.get_setting('openrouter_api_key')
+            gemini_from_db = SystemSettingsManager.get_setting('gemini_api_key')
+            gemini_model_from_db = SystemSettingsManager.get_setting('gemini_model_name')
+            openrouter_model_from_db = SystemSettingsManager.get_setting('openrouter_model_name')
+        except Exception:
+            # No app context or DB not ready yet — fall through to env vars
+            pass
+
+        # Use DB value if non-empty, otherwise env var, otherwise None/default
+        self.openrouter_api_key = (
+            openrouter_from_db if openrouter_from_db
+            else os.environ.get('OPENROUTER_API_KEY')
+        )
+        self.gemini_api_key = (
+            gemini_from_db if gemini_from_db
+            else os.environ.get('GEMINI_API_KEY')
+        )
+        self.gemini_model_name = (
+            gemini_model_from_db if gemini_model_from_db
+            else os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-preview-09-2025')
+        )
+        self.openrouter_model_name = (
+            openrouter_model_from_db if openrouter_model_from_db
+            else os.environ.get('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free')
+        )
+
+        # Store copies of global values for fallback when user context is cleared
+        self._global_openrouter_api_key = self.openrouter_api_key
+        self._global_gemini_api_key = self.gemini_api_key
+        self._global_gemini_model_name = self.gemini_model_name
+        self._global_openrouter_model_name = self.openrouter_model_name
+
+    def reload_config(self):
+        """
+        Reload API keys and model names from DB system settings and reinitialize providers.
+        Call this after settings are updated via the admin/instructor UI.
+        This is safe to call at runtime — no restart needed.
+        """
+        old_or_key = self.openrouter_api_key
+        old_gem_key = self.gemini_api_key
+        old_gem_model = self.gemini_model_name
+        old_or_model = self.openrouter_model_name
+
+        self._load_api_keys_from_settings()
+
+        key_changed = (
+            old_or_key != self.openrouter_api_key
+            or old_gem_key != self.gemini_api_key
+            or old_gem_model != self.gemini_model_name
+            or old_or_model != self.openrouter_model_name
+        )
+
+        if not key_changed:
+            logger.info("[RELOAD] AI provider settings unchanged — no reconfiguration needed")
+            return False
+
+        logger.info("[RELOAD] AI provider settings changed — reinitializing providers")
+        self._initialize_providers()
+        return True
+
+    def set_active_user(self, user_id: int):
+        """
+        Activate a specific user's AI provider settings.
+        All subsequent AI requests will use this user's API keys and model names.
+        Call clear_active_user() to restore global defaults.
+        """
+        if user_id is None:
+            return self.clear_active_user()
+
+        logger.info(f"[USER CTX] Activating AI settings for user {user_id}")
+        self._active_user_id = user_id
+
+        try:
+            from ..models.system_settings_models import UserAISetting
+            user_settings = UserAISetting.query.filter_by(user_id=user_id).first()
+            if user_settings and (user_settings.openrouter_api_key or user_settings.gemini_api_key):
+                # Use user's keys if they have any set
+                self.openrouter_api_key = user_settings.openrouter_api_key or self._global_openrouter_api_key
+                self.gemini_api_key = user_settings.gemini_api_key or self._global_gemini_api_key
+                self.openrouter_model_name = user_settings.openrouter_model_name or self._global_openrouter_model_name
+                self.gemini_model_name = user_settings.gemini_model_name or self._global_gemini_model_name
+                logger.info(f"[USER CTX] User {user_id} has personal AI settings — activated")
+            else:
+                # User has no personal settings, use global defaults
+                self.openrouter_api_key = self._global_openrouter_api_key
+                self.gemini_api_key = self._global_gemini_api_key
+                self.openrouter_model_name = self._global_openrouter_model_name
+                self.gemini_model_name = self._global_gemini_model_name
+                logger.info(f"[USER CTX] User {user_id} has no personal AI settings — using global defaults")
+        except Exception as e:
+            logger.warning(f"[USER CTX] Failed to load per-user settings for {user_id}: {e}")
+            self.openrouter_api_key = self._global_openrouter_api_key
+            self.gemini_api_key = self._global_gemini_api_key
+            self.openrouter_model_name = self._global_openrouter_model_name
+            self.gemini_model_name = self._global_gemini_model_name
+
+        # Re-initialize providers (especially Gemini which needs genai.configure())
+        self._initialize_providers()
+
+    def clear_active_user(self):
+        """
+        Clear the per-user context and restore global/env AI provider settings.
+        """
+        if self._active_user_id:
+            logger.info(f"[USER CTX] Clearing active user {self._active_user_id} — restoring global defaults")
+        self._active_user_id = None
+        self.openrouter_api_key = self._global_openrouter_api_key
+        self.gemini_api_key = self._global_gemini_api_key
+        self.openrouter_model_name = self._global_openrouter_model_name
+        self.gemini_model_name = self._global_gemini_model_name
+        self._initialize_providers()
+
+    def update_api_key(self, provider: str, api_key: str) -> bool:
+        """
+        Dynamically update a single provider's API key at runtime.
+        Does NOT persist to DB — settings routes handle that.
+        Call reload_config() after persisting to DB for full reinitialization.
+
+        Args:
+            provider: 'openrouter' or 'gemini'
+            api_key: The new API key
+
+        Returns:
+            bool: True if the provider was successfully (re)initialized
+        """
+        if provider == 'openrouter':
+            self.openrouter_api_key = api_key
+            logger.info(f"[API KEY] OpenRouter API key updated in memory")
+            return True
+        elif provider == 'gemini':
+            self.gemini_api_key = api_key
+            if api_key and GENAI_AVAILABLE:
+                try:
+                    genai.configure(api_key=api_key)
+                    self.gemini_model = genai.GenerativeModel(self.gemini_model_name)
+                    logger.info(f"[API KEY] Gemini configured with new key")
+                    return True
+                except Exception as e:
+                    logger.error(f"[API KEY] Failed to reconfigure Gemini with new key: {e}")
+                    self.gemini_model = None
+                    return False
+            else:
+                self.gemini_model = None
+                return False
+        logger.error(f"[API KEY] Unknown provider: {provider}")
+        return False
+
     def _initialize_providers(self):
         """Initialize OpenRouter and Gemini providers"""
         if self.openrouter_api_key:
@@ -102,13 +295,12 @@ class AIProviderManager:
             self.current_provider = 'gemini'
         
         if not self.gemini_api_key:
-            logger.warning("GEMINI_API_KEY not found in environment variables")
+            logger.warning("GEMINI_API_KEY not found in environment variables or system settings")
         elif GENAI_AVAILABLE:
             try:
                 genai.configure(api_key=self.gemini_api_key)
-                model_name = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-preview-09-2025')
-                self.gemini_model = genai.GenerativeModel(model_name)
-                logger.info(f"Gemini AI initialized (Fallback provider: {model_name}, Rate limit: {self.gemini_max_rpm} RPM)")
+                self.gemini_model = genai.GenerativeModel(self.gemini_model_name)
+                logger.info(f"Gemini AI initialized (Fallback provider: {self.gemini_model_name}, Rate limit: {self.gemini_max_rpm} RPM)")
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini AI: {e}")
                 self.gemini_model = None
@@ -164,7 +356,10 @@ class AIProviderManager:
                 # Since we can't reverse the hash, iterate all and check by re-computing
                 for provider in ['openrouter', 'gemini']:
                     for model_tier in self.MODEL_CONFIGS:
-                        model_name = self.MODEL_CONFIGS[model_tier]['name']
+                        if model_tier == 'primary':
+                            model_name = self.openrouter_model_name
+                        else:
+                            model_name = self.MODEL_CONFIGS[model_tier].get('name', 'meta-llama/llama-3.3-70b-instruct:free')
                         expected_key = self._get_cache_key(prompt, provider, model_name)
                         if expected_key == key:
                             keys_to_remove.append(key)
@@ -187,11 +382,28 @@ class AIProviderManager:
     MAX_COOLDOWN_SLEEP = 120
 
     def _wait_for_rate_limit(self, provider: str = 'openrouter'):
-        """Implement provider-specific rate limiting with cooldown awareness"""
+        """Implement provider-specific rate limiting with cooldown awareness and proactive throttling"""
         current_time = time.time()
         max_rpm = self.openrouter_max_rpm if provider == 'openrouter' else self.gemini_max_rpm
         timestamps = self.request_timestamps[provider]
-        
+
+        # === PROACTIVE THROTTLING ===
+        # If we're approaching the RPM limit, proactively sleep before making the call
+        requests_last_minute = len(timestamps)
+        if max_rpm > 0 and requests_last_minute >= max_rpm * self.proactive_threshold:
+            # Calculate how long until the oldest request falls out of the 60s window
+            if timestamps:
+                oldest = timestamps[0]
+                window_elapsed = current_time - oldest
+                if window_elapsed < 60:
+                    wait_time = 60 - window_elapsed + 0.5
+                    logger.warning(
+                        f"[PROACTIVE] {provider} at {requests_last_minute}/{max_rpm} RPM. "
+                        f"Pausing {wait_time:.1f}s for window reset."
+                    )
+                    time.sleep(wait_time)
+                    current_time = time.time()
+
         # Check rate-limit cooldown (set when 429 is received from the provider)
         cooldown_until = self._rate_limit_cooldown_until.get(provider, 0)
         cooldown_remaining = cooldown_until - current_time
@@ -205,14 +417,15 @@ class AIProviderManager:
             logger.info(f"Rate limit cooldown active for {provider}: waiting {cooldown_remaining:.1f}s")
             time.sleep(cooldown_remaining)
             current_time = time.time()
-        
+
         time_since_last = current_time - self.last_request_time[provider]
         if time_since_last < self.min_request_interval:
             sleep_time = self.min_request_interval - time_since_last
             logger.debug(f"Rate limiting ({provider}): waiting {sleep_time:.2f}s before next request")
             time.sleep(sleep_time)
             current_time = time.time()
-        
+
+        # Check if we've hit the RPM limit (legacy check)
         if len(timestamps) >= max_rpm:
             oldest_request = timestamps[0]
             time_window = current_time - oldest_request
@@ -221,7 +434,7 @@ class AIProviderManager:
                 logger.warning(f"Rate limit reached for {provider} ({max_rpm} requests/min). Waiting {sleep_time:.2f}s")
                 time.sleep(sleep_time)
                 current_time = time.time()
-        
+
         timestamps.append(current_time)
         self.last_request_time[provider] = current_time
     
@@ -231,47 +444,86 @@ class AIProviderManager:
         """Determine if we should switch to fallback provider"""
         current = self.current_provider
         failures = self.provider_failure_counts[current]
-        
+
         if failures >= self.max_provider_failures:
-            logger.warning(f"Provider {current} has {failures} consecutive failures. Switching provider.")
+            logger.warning(
+                f"[PROVIDER] {current} has {failures} consecutive failures. Switching provider."
+            )
             return True
         return False
-    
+
     def _switch_provider(self):
         """Switch to alternative provider"""
+        old_provider = self.current_provider
         if self.current_provider == 'openrouter':
             if self.gemini_model:
                 self.current_provider = 'gemini'
-                logger.info("Switched to Gemini provider")
+                logger.info(
+                    f"[PROVIDER] Switched from {old_provider} to gemini "
+                    f"after {self.provider_failure_counts.get(old_provider, 0)} consecutive failures."
+                )
             else:
                 logger.error("Cannot switch provider: Gemini not available")
         else:
             if self.openrouter_api_key:
                 self.current_provider = 'openrouter'
-                logger.info("Switched to OpenRouter provider")
+                logger.info(
+                    f"[PROVIDER] Switched from {old_provider} to openrouter "
+                    f"after {self.provider_failure_counts.get(old_provider, 0)} consecutive failures."
+                )
             else:
                 logger.error("Cannot switch provider: OpenRouter not available")
-    
+
     def _mark_provider_success(self, provider: str):
         """Mark successful request for provider"""
         self.provider_failure_counts[provider] = 0
         self.provider_last_success[provider] = time.time()
-    
+        with self._provider_lock:
+            self._provider_state[provider]['failure_count'] = 0
+            self._provider_state[provider]['is_cooling_down'] = False
+
     def _mark_provider_failure(self, provider: str):
         """Mark failed request for provider"""
         self.provider_failure_counts[provider] += 1
+        with self._provider_lock:
+            self._provider_state[provider]['failure_count'] = self.provider_failure_counts[provider]
         logger.warning(f"Provider {provider} failure count: {self.provider_failure_counts[provider]}")
-    
+
+    def _mark_provider_429(self, provider: str):
+        """Mark a 429 rate-limit event for a provider"""
+        now = time.time()
+        with self._provider_lock:
+            self._provider_state[provider]['last_429_at'] = now
+            self._provider_state[provider]['is_cooling_down'] = True
+            self._provider_state[provider]['failure_count'] = self.provider_failure_counts.get(provider, 0) + 1
+        self.provider_failure_counts[provider] = self.provider_failure_counts.get(provider, 0) + 1
+        logger.warning(
+            f"[RATE LIMIT] {provider} → 429 recorded. "
+            f"Provider cooling down."
+        )
+
+    def _mark_provider_cooling_done(self, provider: str):
+        """Mark a provider as no longer cooling down from rate limits"""
+        with self._provider_lock:
+            self._provider_state[provider]['is_cooling_down'] = False
+
     def reset_provider_failures(self, provider: str = None):
         """Reset failure counts for a provider or all providers"""
         if provider:
             self.provider_failure_counts[provider] = 0
+            with self._provider_lock:
+                self._provider_state[provider]['failure_count'] = 0
+                self._provider_state[provider]['is_cooling_down'] = False
             logger.info(f"Reset failure count for {provider}")
         else:
             for p in self.provider_failure_counts:
                 self.provider_failure_counts[p] = 0
+            with self._provider_lock:
+                for p in self._provider_state:
+                    self._provider_state[p]['failure_count'] = 0
+                    self._provider_state[p]['is_cooling_down'] = False
             logger.info("Reset all provider failure counts")
-    
+
     def force_provider(self, provider: str):
         """Force use of a specific provider"""
         if provider in ['openrouter', 'gemini']:
@@ -310,7 +562,11 @@ class AIProviderManager:
             return None
         
         model_config = self.MODEL_CONFIGS.get(model_tier, self.MODEL_CONFIGS['primary'])
-        model_name = model_config['name']
+        # Primary model name is configurable via settings/UI; fallback tiers are hardcoded
+        if model_tier == 'primary':
+            model_name = self.openrouter_model_name
+        else:
+            model_name = model_config.get('name', 'meta-llama/llama-3.3-70b-instruct:free')
         
         cache_key = self._get_cache_key(prompt, 'openrouter', model_name)
         cached = self._get_cached_response(cache_key)
@@ -448,7 +704,8 @@ class AIProviderManager:
                             return self._make_openrouter_request(prompt, 'fast', 1, temperature, max_tokens)
                         # Don't chain further — let make_ai_request fall back to Gemini
                         self._mark_provider_failure('openrouter')
-                        return None
+                        # Raise so RateLimitHandler.execute_with_retry can catch and retry
+                        raise  # re-raise the requests.HTTPError for 429
                 
                 else:
                     # Other HTTP errors (500, 502, etc.)
@@ -578,13 +835,24 @@ class AIProviderManager:
                 if executor:
                     executor.shutdown(wait=False)
                     
-        self._mark_provider_failure('gemini')
-        return None
+        # If we get here, all retries exhausted on a rate limit — propagate
+        raise  # re-raise the last rate-limit exception
     
     def make_ai_request(self, prompt: str, temperature: float = 0.7, 
-                        max_tokens: int = 4096, prefer_fast: bool = False) -> Tuple[Optional[str], str]:
+                        max_tokens: int = 4096, prefer_fast: bool = False,
+                        _raise_on_rate_limit: bool = False) -> Tuple[Optional[str], str]:
         """
         Unified AI request method with automatic provider switching
+        
+        Args:
+            prompt: The prompt to send to the AI
+            temperature: Creativity level (0.0 - 1.0)
+            max_tokens: Maximum response tokens
+            prefer_fast: Use fast model tier if True
+            _raise_on_rate_limit: If True, raise requests.HTTPError when all providers
+                                   fail due to rate limits, instead of returning (None, 'none').
+                                   This allows RateLimitHandler.execute_with_retry to catch
+                                   and retry with proper 2-minute waits.
         
         Returns:
             Tuple of (response_text, provider_used)
@@ -594,47 +862,67 @@ class AIProviderManager:
         
         model_tier = 'fast' if prefer_fast else 'primary'
         
-        if self.current_provider == 'openrouter':
-            result = self._make_openrouter_request(prompt, model_tier, 2, temperature, max_tokens)
-            if result:
-                return result, 'openrouter'
-            
-            # Fallback to Gemini — give it enough retries to wait out rate limits
-            logger.warning("OpenRouter failed, falling back to Gemini")
-            result = self._make_gemini_request(prompt, 2, temperature)
-            if result:
-                return result, 'gemini'
-        else:
-            result = self._make_gemini_request(prompt, 2, temperature)
-            if result:
-                return result, 'gemini'
-            
-            # Fallback to OpenRouter with fewer retries
-            logger.warning("Gemini failed, falling back to OpenRouter")
-            result = self._make_openrouter_request(prompt, model_tier, 1, temperature, max_tokens)
-            if result:
-                return result, 'openrouter'
+        try:
+            if self.current_provider == 'openrouter':
+                result = self._make_openrouter_request(prompt, model_tier, 2, temperature, max_tokens)
+                if result:
+                    return result, 'openrouter'
+                
+                # Fallback to Gemini — give it enough retries to wait out rate limits
+                logger.warning("OpenRouter failed, falling back to Gemini")
+                result = self._make_gemini_request(prompt, 2, temperature)
+                if result:
+                    return result, 'gemini'
+            else:
+                result = self._make_gemini_request(prompt, 2, temperature)
+                if result:
+                    return result, 'gemini'
+                
+                # Fallback to OpenRouter with fewer retries
+                logger.warning("Gemini failed, falling back to OpenRouter")
+                result = self._make_openrouter_request(prompt, model_tier, 1, temperature, max_tokens)
+                if result:
+                    return result, 'openrouter'
+        except requests.HTTPError as e:
+            # Rate limit propagated from _make_openrouter_request or _make_gemini_request
+            if _raise_on_rate_limit and e.response and e.response.status_code == 429:
+                logger.warning(
+                    f"[RATE LIMIT] All providers exhausted due to rate limits. "
+                    f"Propagating to RateLimitHandler for retry with wait."
+                )
+                raise
+            # For direct callers without _raise_on_rate_limit, return None as before
+            logger.error("All AI providers failed")
+            return None, 'none'
         
-        logger.error("All AI providers failed")
+        logger.warning("All AI providers returned no content")
         return None, 'none'
     
     def get_provider_stats(self) -> Dict[str, Any]:
         """Get statistics about AI provider usage and performance"""
+        with self._provider_lock:
+            or_state = dict(self._provider_state.get('openrouter', {}))
+            gem_state = dict(self._provider_state.get('gemini', {}))
+
         return {
             "current_provider": self.current_provider,
             "openrouter": {
                 "available": bool(self.openrouter_api_key),
                 "failure_count": self.provider_failure_counts.get('openrouter', 0),
                 "last_success": datetime.fromtimestamp(min(self.provider_last_success.get('openrouter', 0), time.time())).isoformat(),
-                "requests_in_queue": len(self.request_timestamps['openrouter']),
-                "max_rpm": self.openrouter_max_rpm,
+                "requests_this_minute": len(self.request_timestamps['openrouter']),
+                "rpm_limit": self.openrouter_max_rpm,
+                "is_cooling_down": or_state.get('is_cooling_down', False),
+                "cooldown_remaining_seconds": self._get_cooldown_remaining('openrouter'),
             },
             "gemini": {
                 "available": bool(self.gemini_model),
                 "failure_count": self.provider_failure_counts.get('gemini', 0),
                 "last_success": datetime.fromtimestamp(min(self.provider_last_success.get('gemini', 0), time.time())).isoformat(),
-                "requests_in_queue": len(self.request_timestamps['gemini']),
-                "max_rpm": self.gemini_max_rpm,
+                "requests_this_minute": len(self.request_timestamps['gemini']),
+                "rpm_limit": self.gemini_max_rpm,
+                "is_cooling_down": gem_state.get('is_cooling_down', False),
+                "cooldown_remaining_seconds": self._get_cooldown_remaining('gemini'),
             },
             "cache": {
                 "size": len(self.response_cache),
@@ -642,6 +930,12 @@ class AIProviderManager:
                 "ttl_seconds": self.cache_ttl,
             }
         }
+
+    def _get_cooldown_remaining(self, provider: str) -> int:
+        """Get remaining cooldown time in seconds for a provider"""
+        cooldown_until = self._rate_limit_cooldown_until.get(provider, 0)
+        remaining = cooldown_until - time.time()
+        return max(0, int(remaining))
 
 
 # Singleton instance

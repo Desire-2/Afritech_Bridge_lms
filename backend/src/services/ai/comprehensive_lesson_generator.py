@@ -12,6 +12,7 @@ from .ai_providers import ai_provider_manager
 from .json_parser import json_parser
 from .content_validator import ContentValidator
 from .fallback_generators import fallback_generators
+from .rate_limit_handler import rate_limit_handler
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,15 @@ Format as JSON:
   "assessment_methods": ["Quiz", "Exercise"]
 }}"""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=2048)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating lesson outline",
+            temperature=0.7,
+            max_tokens=2048,
+        )
         return json_parser.parse_json_response(result, "lesson outline") if result else None
     
     def _generate_detailed_outline(self, course_title: str, module_title: str,
@@ -375,7 +384,15 @@ Return ONLY valid JSON:
   "assessment_methods": ["Concept check questions", "Practical exercises", "Quiz", "Project"]
 }}"""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=3000)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating detailed outline",
+            temperature=0.7,
+            max_tokens=3000,
+        )
         return json_parser.parse_json_response(result, "detailed outline") if result else None
     
     def _generate_introduction(self, lesson_title: str, content: Dict, 
@@ -414,7 +431,15 @@ Use **bold** for key terms, *italics* for emphasis, > blockquotes for important 
 DO NOT write generic content - be SPECIFIC with examples, data, and applications.
 Return ONLY markdown content - NO JSON wrapping."""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=2500)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating introduction",
+            temperature=0.7,
+            max_tokens=2500,
+        )
         return result
     
     def _generate_theory(self, lesson_title: str, content: Dict, 
@@ -472,7 +497,15 @@ For EACH key concept:
 
 Return ONLY markdown content - NO JSON wrapping."""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=5000)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating theory content",
+            temperature=0.7,
+            max_tokens=5000,
+        )
         return result
     
     def _generate_practical(self, lesson_title: str, content: Dict,
@@ -534,7 +567,15 @@ Provide 3 FULLY WORKED examples:
 
 Return ONLY markdown content - NO JSON wrapping."""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=5000)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating practical applications",
+            temperature=0.7,
+            max_tokens=5000,
+        )
         return result
     
     def _generate_exercises(self, lesson_title: str, content: Dict,
@@ -604,7 +645,15 @@ For EACH:
 
 Return ONLY markdown content - NO JSON wrapping."""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4000)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating exercises",
+            temperature=0.7,
+            max_tokens=4000,
+        )
         return result
     
     def _generate_summary(self, lesson_title: str, content: Dict) -> Optional[str]:
@@ -663,7 +712,15 @@ Provide 8-10 SPECIFIC, ACTIONABLE takeaways:
 
 Return ONLY markdown content - NO JSON wrapping."""
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=3000)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=getattr(self, '_session_id', None),
+            task_id=getattr(self, '_task_id', None),
+            step_label="Generating summary",
+            temperature=0.7,
+            max_tokens=3000,
+        )
         return result
     
     def _generate_section_with_validation(self, section_name: str, lesson_title: str,

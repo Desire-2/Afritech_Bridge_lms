@@ -37,6 +37,7 @@ from .ai_providers import ai_provider_manager
 from .json_parser import json_parser
 from .content_validator import ContentValidator
 from .fallback_generators import fallback_generators
+from .rate_limit_handler import rate_limit_handler, TaskCancelledError
 
 logger = logging.getLogger(__name__)
 
@@ -1149,11 +1150,15 @@ class TaskBasedLessonGenerator:
         # Determine optimal token limit for task type
         max_tokens = self._get_task_token_limit(task.task_type)
         
-        # Make AI request
-        result, provider = self.provider.make_ai_request(
+        # Make AI request with rate-limit handling
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
             prompt,
+            session_id=self._current_session.session_id if self._current_session else None,
+            task_id=task.task_id,
+            step_label=f"Task: {task.title}",
             temperature=0.7,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
         )
         
         if result:

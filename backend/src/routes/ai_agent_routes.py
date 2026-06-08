@@ -12,6 +12,7 @@ from ..models.user_models import db, User
 from ..models.course_models import Course, Module, Lesson, Quiz
 from ..services.ai_agent_service import ai_agent_service
 from ..services.ai.task_manager import task_manager
+from ..services.ai.ai_providers import ai_provider_manager
 from ..services.content_auto_save import handle_task_completion
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,14 @@ def instructor_required(f):
                 return jsonify({"message": f"Instructor access required. Current role: {user.role.name}"}), 403
             
             logger.info(f"Access granted for user {current_user_id} with role {user.role.name}")
+            
+            # Activate this user's personal AI provider settings so all subsequent
+            # AI requests within this request context use THEIR API keys and models.
+            try:
+                ai_provider_manager.set_active_user(int(current_user_id))
+            except Exception as ctx_err:
+                logger.warning(f"Failed to set active user context for AI: {ctx_err}")
+            
             return f(*args, **kwargs)
         except Exception as e:
             logger.error(f"Error in instructor_required: {str(e)}")
@@ -132,6 +141,9 @@ def health_check():
             message = "No AI providers configured"
             api_configured = False
         
+        # Get provider state from ai_provider_manager for rate limit awareness
+        provider_state = ai_provider_manager.get_provider_stats()
+        
         return jsonify({
             "status": status,
             "api_configured": api_configured,
@@ -139,11 +151,21 @@ def health_check():
             "providers": {
                 "openrouter": {
                     "configured": openrouter_configured,
-                    "current": ai_agent_service.provider.current_provider == 'openrouter'
+                    "current": ai_agent_service.provider.current_provider == 'openrouter',
+                    "is_cooling_down": provider_state.get('openrouter', {}).get('is_cooling_down', False),
+                    "cooldown_remaining_seconds": provider_state.get('openrouter', {}).get('cooldown_remaining_seconds', 0),
+                    "requests_this_minute": provider_state.get('openrouter', {}).get('requests_this_minute', 0),
+                    "rpm_limit": provider_state.get('openrouter', {}).get('rpm_limit', 200),
+                    "failure_count": provider_state.get('openrouter', {}).get('failure_count', 0),
                 },
                 "gemini": {
                     "configured": gemini_configured,
-                    "current": ai_agent_service.provider.current_provider == 'gemini'
+                    "current": ai_agent_service.provider.current_provider == 'gemini',
+                    "is_cooling_down": provider_state.get('gemini', {}).get('is_cooling_down', False),
+                    "cooldown_remaining_seconds": provider_state.get('gemini', {}).get('cooldown_remaining_seconds', 0),
+                    "requests_this_minute": provider_state.get('gemini', {}).get('requests_this_minute', 0),
+                    "rpm_limit": provider_state.get('gemini', {}).get('rpm_limit', 15),
+                    "failure_count": provider_state.get('gemini', {}).get('failure_count', 0),
                 }
             },
             "statistics": stats,
@@ -151,7 +173,8 @@ def health_check():
                 "smart_caching": True,
                 "progress_tracking": True,
                 "quality_validation": True,
-                "retry_logic": True
+                "retry_logic": True,
+                "rate_limit_handling": True
             }
         }), 200
         
@@ -310,6 +333,7 @@ def get_task_status(task_id):
         status = task_manager.get_task_status(task_id)
         if not status:
             return jsonify({"success": False, "message": "Task not found"}), 404
+        # rate_limit_info is already included in the status dict by task.to_dict()
         return jsonify({"success": True, "data": status}), 200
     except Exception as e:
         logger.error(f"Error getting task status: {e}")
@@ -2156,7 +2180,17 @@ def stream_task_progress(session_id):
                         for task_id, task_info in status.get('tasks', {}).items()
                     }
                 }
+                
+                # Include rate_limit_info if task is rate limited
+                if current_status == 'rate_limited' and 'rate_limit_info' in status:
+                    rl = status['rate_limit_info']
+                    yield f"event: rate_limit\ndata: {json.dumps({'wait_remaining_seconds': rl.get('wait_remaining_seconds', 0), 'provider': rl.get('provider', 'unknown'), 'attempt': rl.get('attempt', 0), 'step': rl.get('step_label', '')})}\n\n"
+                
                 yield f"data: {json.dumps(event_data)}\n\n"
+                
+                # Emit resuming event when leaving rate_limited state
+                if last_status == 'rate_limited' and current_status != 'rate_limited':
+                    yield f"event: resuming\ndata: {json.dumps({'message': 'Rate limit wait complete. Resuming generation...', 'step': status['progress'].get('current_task', '')})}\n\n"
                 
                 last_completed = current_completed
                 last_status = current_status
@@ -2568,6 +2602,7 @@ def stream_chapter_progress(session_id):
     def generate_events():
         last_completed = 0
         last_phase = ""
+        last_status = ""
         check_count = 0
         max_checks = 1200  # 20 minutes timeout
         
@@ -2581,28 +2616,41 @@ def stream_chapter_progress(session_id):
             current_completed = status['progress'].get('completed_chapters', 0)
             current_phase = status['progress'].get('phase', '')
             current_chapter = status['progress'].get('current_chapter')
+            current_status = status.get('status', '')
             
-            # Send update if progress changed
-            if current_completed != last_completed or current_phase != last_phase:
+            # --- Emit rate_limit event on every poll while rate limited ---
+            if current_status == 'rate_limited':
+                rl = status.get('rate_limit_info', {})
+                yield f"event: rate_limit\ndata: {json.dumps({'wait_remaining_seconds': rl.get('wait_remaining_seconds', 0), 'provider': rl.get('provider', 'unknown'), 'attempt': rl.get('attempt', 0), 'step': rl.get('step_label', '')})}\n\n"
+            
+            # --- Emit resuming event when leaving rate_limited state ---
+            if last_status == 'rate_limited' and current_status != 'rate_limited':
+                yield f"event: resuming\ndata: {json.dumps({'message': 'Rate limit wait complete. Resuming generation...', 'step': current_phase or current_status})}\n\n"
+            
+            # Send progress update if anything changed
+            if current_completed != last_completed or current_phase != last_phase or current_status != last_status:
                 event_data = {
                     'type': 'progress',
                     'session_id': session_id,
                     'phase': current_phase,
+                    'status': current_status,
                     'progress': status['progress'],
                     'current_chapter': current_chapter,
                     'chapters': status.get('chapters', [])
                 }
+                
                 yield f"data: {json.dumps(event_data)}\n\n"
                 
                 last_completed = current_completed
                 last_phase = current_phase
+                last_status = current_status
             
             # Check if complete
-            if status['status'] == 'completed':
+            if current_status == 'completed':
                 yield f"data: {json.dumps({'type': 'complete', 'session_id': session_id, 'progress': status['progress']})}\n\n"
                 break
             
-            if status['status'] == 'failed':
+            if current_status == 'failed':
                 yield f"data: {json.dumps({'type': 'error', 'session_id': session_id, 'message': 'Generation failed'})}\n\n"
                 break
             

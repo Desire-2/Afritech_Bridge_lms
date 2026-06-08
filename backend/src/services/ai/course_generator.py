@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any
 
 from .ai_providers import ai_provider_manager
 from .json_parser import json_parser
+from .rate_limit_handler import rate_limit_handler
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,10 @@ class CourseGenerator:
                 text += "\n    (no lessons yet)"
         text += "\n\n[CRITICAL: Review the above structure carefully. Any NEW modules you generate MUST cover topics NOT already addressed by existing modules or their lessons. Avoid topic overlap at both the module level and individual lesson level.]"
         return text
-    
-    def generate_course_outline(self, topic: str, target_audience: str = "", 
-                               learning_objectives: str = "") -> Dict[str, Any]:
+
+    def generate_course_outline(self, topic: str, target_audience: str = "",
+                               learning_objectives: str = "",
+                               session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate a complete course outline based on topic and requirements
         
@@ -53,6 +55,8 @@ class CourseGenerator:
             topic: The main course topic
             target_audience: Description of target learners
             learning_objectives: Desired learning outcomes
+            session_id: Optional session ID for rate-limit progress tracking
+            task_id: Optional task ID for rate-limit progress tracking
             
         Returns:
             Dict containing course title, description, objectives, and module suggestions
@@ -85,7 +89,15 @@ Format your response as JSON with the following structure:
   ]
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label="Generating course outline",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "course outline")
             if parsed:
@@ -105,7 +117,8 @@ Format your response as JSON with the following structure:
     def generate_multiple_modules(self, course_title: str, course_description: str,
                                   course_objectives: str, num_modules: int = 5,
                                   existing_modules: Optional[List[Dict[str, Any]]] = None,
-                                  course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                                  course_context: Optional[List[Dict[str, Any]]] = None,
+                                  session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate multiple module outlines at once for a course
         
@@ -188,7 +201,15 @@ Format as JSON:
   ]
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=8192)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating {num_modules} modules for {course_title}",
+            temperature=0.7,
+            max_tokens=8192,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "multiple modules")
             if parsed:
@@ -201,7 +222,8 @@ Format as JSON:
     def generate_module_content(self, course_title: str, course_description: str,
                                course_objectives: str, module_title: str = "",
                                existing_modules: Optional[List[Dict[str, Any]]] = None,
-                               course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                               course_context: Optional[List[Dict[str, Any]]] = None,
+                               session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate module details based on course context
         
@@ -277,7 +299,15 @@ Format as JSON:
   ]
 }}"""
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating module content: {module_title or 'Untitled'}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "module content")
             if parsed:

@@ -144,10 +144,37 @@ export interface BackgroundTaskResponse {
   message: string;
 }
 
+export interface RateLimitInfo {
+  is_waiting: boolean;
+  wait_duration_seconds: number;
+  wait_remaining_seconds: number;
+  provider: string;
+  attempt: number;
+  step_label?: string;
+}
+
+export interface ProviderStats {
+  primary_provider: string;
+  is_cooling_down: boolean;
+  cooldown_remaining_seconds: number;
+  requests_this_minute: number;
+  rpm_limit: number;
+  failure_count: number;
+  all_providers: {
+    name: string;
+    is_cooling_down: boolean;
+    cooldown_remaining_seconds: number;
+    requests_this_minute: number;
+    rpm_limit: number;
+    failure_count: number;
+  }[];
+}
+
+
 export interface TaskStatus {
   task_id: string;
   task_type: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'rate_limited';
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -164,6 +191,7 @@ export interface TaskStatus {
     completed_at: string | null;
   }[];
   error: string | null;
+  rate_limit_info?: RateLimitInfo;
 }
 
 export interface TaskProgressCallback {
@@ -195,7 +223,7 @@ class AIAgentService {
   async healthCheck(): Promise<{
     status: string;
     api_configured: boolean;
-    provider_stats?: any;
+    provider_stats?: ProviderStats;
     message: string;
   }> {
     try {
@@ -319,6 +347,12 @@ class AIAgentService {
               status: 'error',
               message: 'Task was cancelled',
             });
+            return;
+          }
+
+          // Rate limited — poll faster for countdown updates
+          if (status.status === 'rate_limited') {
+            setTimeout(poll, 1000); // Poll every 1s to update countdown
             return;
           }
 

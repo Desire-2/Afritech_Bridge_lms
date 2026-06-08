@@ -13,25 +13,30 @@ import {
   AlertTriangle,
   Zap,
   Cpu,
-  FileText
+  FileText,
+  TimerReset,
+  Ban
  } from 'lucide-react';
-import { GenerationProgress } from '@/services/ai-agent.service';
+import { GenerationProgress, RateLimitInfo } from '@/services/ai-agent.service';
 
 interface AIProgressTrackerProps {
   progress: GenerationProgress | null;
   onCancel?: () => void;
   showDetails?: boolean;
   className?: string;
+  rateLimitInfo?: RateLimitInfo | null;
 }
 
 export const AIProgressTracker: React.FC<AIProgressTrackerProps> = ({
   progress,
   onCancel,
   showDetails = true,
-  className = ''
+  className = '',
+  rateLimitInfo = null
 }) => {
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [startTime] = useState(Date.now());
+  const [waitRemaining, setWaitRemaining] = useState(rateLimitInfo?.wait_remaining_seconds ?? 0);
 
   useEffect(() => {
     if (!progress || progress.progress >= 100) return;
@@ -42,6 +47,19 @@ export const AIProgressTracker: React.FC<AIProgressTrackerProps> = ({
 
     return () => clearInterval(interval);
   }, [progress, startTime]);
+
+  // Rate limit countdown
+  useEffect(() => {
+    if (!rateLimitInfo?.is_waiting) {
+      setWaitRemaining(0);
+      return;
+    }
+    setWaitRemaining(rateLimitInfo.wait_remaining_seconds);
+    const interval = setInterval(() => {
+      setWaitRemaining(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [rateLimitInfo?.is_waiting, rateLimitInfo?.wait_remaining_seconds]);
 
   if (!progress) return null;
 
@@ -132,6 +150,42 @@ export const AIProgressTracker: React.FC<AIProgressTrackerProps> = ({
               </div>
             </div>
           </>
+        )}
+
+        {rateLimitInfo?.is_waiting && (
+          <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700/50 space-y-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+              <p className="font-medium text-amber-800 dark:text-amber-300">Rate Limited</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <p className="text-amber-600 dark:text-amber-400 text-xs font-medium">WAIT TIME</p>
+                <p className="text-2xl font-bold text-amber-900 dark:text-amber-100 tabular-nums">
+                  {Math.floor(waitRemaining / 60)}:{String(waitRemaining % 60).padStart(2, '0')}
+                </p>
+              </div>
+              <div>
+                <p className="text-amber-600 dark:text-amber-400 text-xs font-medium">PROVIDER</p>
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-100 capitalize">
+                  {rateLimitInfo.provider || 'Unknown'}
+                </p>
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Attempt {rateLimitInfo.attempt}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400">
+              <TimerReset className="w-3.5 h-3.5" />
+              <span>Auto-retrying after cooldown — no action needed</span>
+            </div>
+            <div className="w-full h-1.5 bg-amber-200 dark:bg-amber-700/50 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-amber-500 rounded-full transition-all duration-1000 ease-linear"
+                style={{ width: rateLimitInfo.wait_duration_seconds > 0 ? `${((rateLimitInfo.wait_duration_seconds - waitRemaining) / rateLimitInfo.wait_duration_seconds) * 100}%` : '0%' }}
+              />
+            </div>
+          </div>
         )}
 
         {progress.can_cancel && onCancel && progress.progress < 100 && (

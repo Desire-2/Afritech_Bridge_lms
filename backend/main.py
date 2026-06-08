@@ -43,6 +43,7 @@ from src.routes.student_support_routes import support_bp  # Import student suppo
 from src.routes.opportunity_routes import opportunity_bp # Import opportunity blueprint
 from src.routes.application_routes import application_bp
 from src.routes.instructor_routes import instructor_bp # Import instructor blueprint
+from src.routes.instructor_settings_routes import instructor_settings_bp # Import instructor settings blueprint
 from src.routes.course_creation_routes import course_creation_bp # Import course creation blueprint
 from src.routes.instructor_assessment_routes import instructor_assessment_bp # Import instructor assessment blueprint (consolidated - replaced old assessment_bp)
 from src.routes.dashboard_routes import dashboard_bp # Import dashboard blueprint
@@ -334,6 +335,7 @@ app.register_blueprint(waitlist_bp) # Register waitlist management routes
 app.register_blueprint(excel_grading_bp) # Register Excel AI grading routes
 app.register_blueprint(email_bp) # Register email preference/unsubscribe routes
 app.register_blueprint(internships_bp) # Register internship application blueprint
+app.register_blueprint(instructor_settings_bp) # Register instructor settings blueprint
 
 # Initialize maintenance mode middleware - MUST BE AFTER BLUEPRINT REGISTRATION
 maintenance_mode = MaintenanceMode(app)

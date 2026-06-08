@@ -18,10 +18,13 @@ import {
   Sparkles,
   FileText,
   BookOpen,
-  HelpCircle
+  HelpCircle,
+  BarChart3,
+  TimerReset,
+  Activity
 } from 'lucide-react';
 
-import aiAgentService from '@/services/ai-agent.service';
+import aiAgentService, { ProviderStats } from '@/services/ai-agent.service';
 import EnhancedAIContentGenerator from './EnhancedAIContentGenerator';
 
 interface AIDashboardProps {
@@ -171,22 +174,49 @@ export const AIDashboard: React.FC<AIDashboardProps> = ({
             {healthStatus?.provider_stats && (
               <div className="flex items-center gap-3 p-3 border rounded-lg">
                 <Cpu className="w-5 h-5 text-muted-foreground" />
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="font-medium text-sm">Active Provider</p>
-                  <p className="text-sm text-muted-foreground capitalize">
-                    {healthStatus.provider_stats.primary_provider || 'Auto-select'}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm text-muted-foreground capitalize truncate">
+                      {healthStatus.provider_stats.primary_provider || 'Auto-select'}
+                    </p>
+                    {healthStatus.provider_stats.is_cooling_down && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded text-xs font-medium">
+                        <TimerReset className="w-3 h-3" />
+                        {healthStatus.provider_stats.cooldown_remaining_seconds}s
+                      </span>
+                    )}
+                    {!healthStatus.provider_stats.is_cooling_down && healthStatus.provider_stats.failure_count > 0 && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-xs font-medium">
+                        <Activity className="w-3 h-3" />
+                        {healthStatus.provider_stats.failure_count} failures
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
             
-            <div className="flex items-center gap-3 p-3 border rounded-lg">
-              <TrendingUp className="w-5 h-5 text-muted-foreground" />
-              <div>
-                <p className="font-medium text-sm">Performance</p>
-                <p className="text-sm text-green-600">Optimal</p>
+            {healthStatus?.provider_stats && (
+              <div className="flex items-center gap-3 p-3 border rounded-lg">
+                <BarChart3 className="w-5 h-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium text-sm">RPM Usage</p>
+                  <p className={`text-sm ${(healthStatus.provider_stats.requests_this_minute || 0) >= (healthStatus.provider_stats.rpm_limit || 60) * 0.8 ? 'text-amber-600' : 'text-green-600'}`}>
+                    {healthStatus.provider_stats.requests_this_minute || 0} / {healthStatus.provider_stats.rpm_limit || 60}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
+            {!healthStatus?.provider_stats && (
+              <div className="flex items-center gap-3 p-3 border rounded-lg">
+                <TrendingUp className="w-5 h-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium text-sm">Performance</p>
+                  <p className="text-sm text-green-600">Optimal</p>
+                </div>
+              </div>
+            )}
           </div>
           
           {healthStatus?.message && (

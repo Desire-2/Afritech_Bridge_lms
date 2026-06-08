@@ -14,6 +14,7 @@ from ..models.system_settings_models import (
 )
 from ..utils.settings_validator import SettingsValidator, SettingsSecurityValidator
 from ..services.maintenance_notification_service import MaintenanceNotificationService
+from ..services.ai.ai_providers import ai_provider_manager
 
 logger = logging.getLogger(__name__)
 
@@ -380,6 +381,15 @@ def update_settings_bulk(current_user, validated_data):
             }
         }
         
+        # If AI provider settings were updated, reload config
+        ai_config_updated = any(k in settings_data for k in ('openrouter_api_key', 'gemini_api_key', 'gemini_model_name', 'openrouter_model_name'))
+        if ai_config_updated:
+            logger.info("[SETTINGS] AI provider settings changed via admin bulk update — reloading config")
+            try:
+                ai_provider_manager.reload_config()
+            except Exception as reload_err:
+                logger.warning(f"[SETTINGS] Failed to reload AI provider config: {reload_err}")
+
         # Add notification info if applicable
         if notification_result:
             response_data["data"]["notification"] = notification_result

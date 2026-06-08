@@ -13,6 +13,7 @@ from .ai_providers import ai_provider_manager
 from .json_parser import json_parser
 from .content_validator import content_validator
 from .fallback_generators import fallback_generators
+from .rate_limit_handler import rate_limit_handler
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,8 @@ class LessonGenerator:
                                module_description: str, module_objectives: str,
                                lesson_title: str = "", lesson_description: str = "",
                                existing_lessons: Optional[List[Dict[str, Any]]] = None,
-                               course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                               course_context: Optional[List[Dict[str, Any]]] = None,
+                               session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate detailed lesson content with markdown formatting
         
@@ -310,7 +312,15 @@ Format as JSON:
 }}"""
         
         # Request more tokens to accommodate comprehensive content (3000-4000 words)
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=8192)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating lesson content: {lesson_title or module_title}",
+            temperature=0.7,
+            max_tokens=8192,
+        )
         
         # If first attempt failed or returned low quality, try with alternative provider
         if result:
@@ -345,7 +355,15 @@ Format as JSON:
                 logger.info("Switched to OpenRouter for lesson generation retry")
             
             # Retry with alternative provider
-            result, provider = self.provider.make_ai_request(prompt, temperature=0.8, max_tokens=8192)
+            result, provider = rate_limit_handler.execute_with_retry(
+                self.provider.make_ai_request,
+                prompt,
+                session_id=session_id,
+                task_id=task_id,
+                step_label=f"Generating lesson content (fallback provider): {lesson_title or module_title}",
+                temperature=0.8,
+                max_tokens=8192,
+            )
             if result:
                 parsed = json_parser.parse_json_response(result, "lesson content")
                 if parsed:
@@ -378,7 +396,8 @@ Format as JSON:
                                   module_description: str, module_objectives: str,
                                   num_lessons: int = 5,
                                   existing_lessons: Optional[List[Dict[str, Any]]] = None,
-                                  course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                                  course_context: Optional[List[Dict[str, Any]]] = None,
+                                  session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate multiple lesson outlines at once for a module
         
@@ -500,7 +519,15 @@ Format as JSON:
 }}"""
         
         # Increase tokens significantly for multiple comprehensive lessons
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=16000)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating {num_lessons} lessons for {module_title}",
+            temperature=0.7,
+            max_tokens=16000,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "multiple lessons")
             if parsed:
@@ -521,7 +548,8 @@ Format as JSON:
                               module_description: str, lesson_title: str,
                               lesson_description: str = "",
                               template_id: Optional[str] = None,
-                              existing_sections: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+                              existing_sections: Optional[List[Dict[str, Any]]] = None,
+                              session_id: str = None, task_id: str = None) -> Dict[str, Any]:
         """
         Generate mixed content lesson with intelligent template-aware structure
         
@@ -565,7 +593,15 @@ Format as JSON:
             template_guidance, template_id
         )
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating mixed content: {lesson_title}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "mixed content")
             if parsed and 'sections' in parsed:
@@ -652,7 +688,8 @@ CRITICAL: Return ONLY valid JSON. Use \\\\n for newlines.
     
     def generate_lesson_section(self, lesson_title: str, section_type: str,
                                section_context: Dict[str, Any],
-                               difficulty_level: str = "intermediate") -> str:
+                               difficulty_level: str = "intermediate",
+                               session_id: str = None, task_id: str = None) -> str:
         """
         Generate a specific section of a lesson with professor-level quality
         
@@ -814,7 +851,15 @@ Use markdown formatting.""")
         if section_context:
             prompt += f"\n\nContext: {json.dumps(section_context)}"
         
-        result, _ = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4000)
+        result, _ = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating lesson section: {section_type}",
+            temperature=0.7,
+            max_tokens=4000,
+        )
         return result.strip() if result else f"## {section_type.capitalize()}\n\nContent to be generated..."
     
     def _generate_fallback_lesson_content(self, course_title: str, module_title: str, 
@@ -992,7 +1037,8 @@ This lesson has provided you with a comprehensive foundation in {lesson_title}. 
                                       module_description: str, module_objectives: str,
                                       lesson_title: str = "", lesson_description: str = "",
                                       existing_lessons: Optional[List[Dict[str, Any]]] = None,
-                                      course_context: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
+                                      course_context: Optional[List[Dict[str, Any]]] = None,
+                                      session_id: str = None, task_id: str = None) -> Optional[Dict[str, Any]]:
         """Step 1: Generate a detailed lesson outline with sections, topics, and structure."""
         existing_text = ""
         if existing_lessons:
@@ -1081,11 +1127,17 @@ REQUIREMENTS:
 - Each section must have SPECIFIC, unique topics (not generic)
 - Ensure NO overlap with existing lessons listed above
 - Each section should build on the previous one
-- Include practical applications and real-world examples in the plan
+- Include practical applications and real-world examples in the plan        CRITICAL: Return ONLY valid JSON. No markdown, no explanatory text, no code blocks — just the raw JSON object."""
 
-CRITICAL: Return ONLY valid JSON. No markdown, no explanatory text, no code blocks — just the raw JSON object."""
-
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.6, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating deep lesson outline for {lesson_title or module_title}",
+            temperature=0.6,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "lesson outline")
             if parsed:
@@ -1155,7 +1207,8 @@ CRITICAL: Return ONLY valid JSON. No markdown, no explanatory text, no code bloc
                                       lesson_title: str, lesson_description: str,
                                       section: Dict[str, Any],
                                       previous_sections_content: str = "",
-                                      course_context: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+                                      course_context: Optional[List[Dict[str, Any]]] = None,
+                                      session_id: str = None, task_id: str = None) -> Optional[str]:
         """Step 2+: Generate a single section of a lesson with full context."""
         course_ctx = self._build_course_context_text(course_context, module_title)
         
@@ -1188,17 +1241,24 @@ Key Topics to Cover: {', '.join(section.get('key_topics', []))}
 7. DO NOT repeat content from previous sections (shown above)
 8. DO NOT repeat content from other lessons in the course (shown in course structure)
 9. Build naturally on what came before — reference previous sections where relevant
-10. Write as a professor teaching, not summarizing
+10. Write as a professor teaching, not summarizing        Return ONLY the markdown content for this section (no JSON wrapper, no extra explanation)."""
 
-Return ONLY the markdown content for this section (no JSON wrapper, no extra explanation)."""
-
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating section: {section.get('heading', '')}",
+            temperature=0.7,
+            max_tokens=4096,
+        )
         return result.strip() if result else None
 
     def generate_lesson_deep_enhance(self, lesson_title: str, full_content: str,
                                       learning_objectives: List[str],
                                       course_context: Optional[List[Dict[str, Any]]] = None,
-                                      module_title: str = "") -> Optional[str]:
+                                      module_title: str = "",
+                                      session_id: str = None, task_id: str = None) -> Optional[str]:
         """Final step: Quality enhancement pass — fix gaps, improve transitions, add depth."""
         course_ctx = self._build_course_context_text(course_context, module_title)
 
@@ -1239,7 +1299,15 @@ Return ONLY a JSON object:
   "reference_summary": "Optional: summary table or framework reference in markdown"
 }}"""
 
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.6, max_tokens=4096)
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label="Quality enhancement pass",
+            temperature=0.6,
+            max_tokens=4096,
+        )
         if result:
             parsed = json_parser.parse_json_response(result, "enhancement pass")
             if parsed:

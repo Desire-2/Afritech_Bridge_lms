@@ -6,7 +6,7 @@ import json
 from sqlalchemy import text
 
 # Assuming db is initialized elsewhere
-from .user_models import db
+from .user_models import db, User
 
 class SystemSetting(db.Model):
     """
@@ -557,6 +557,52 @@ def initialize_default_settings():
             'is_public': False,
             'is_editable': True,
             'default_value': '100'
+        },
+
+        # AI Provider API Keys (stored in DB so admin/instructor can manage via UI)
+        {
+            'key': 'openrouter_api_key',
+            'value': '',
+            'data_type': 'string',
+            'category': 'ai',
+            'description': 'OpenRouter API key for AI content generation (overrides .env if set)',
+            'is_public': False,
+            'is_editable': True,
+            'default_value': ''
+        },
+        {
+            'key': 'gemini_api_key',
+            'value': '',
+            'data_type': 'string',
+            'category': 'ai',
+            'description': 'Gemini API key for AI content generation fallback (overrides .env if set)',
+            'is_public': False,
+            'is_editable': True,
+            'default_value': ''
+        },
+
+        # Gemini Model Name (configurable via UI instead of .env)
+        {
+            'key': 'gemini_model_name',
+            'value': 'gemini-2.5-flash-preview-09-2025',
+            'data_type': 'string',
+            'category': 'ai',
+            'description': 'Gemini model name used for AI content generation (overrides GEMINI_MODEL env var)',
+            'is_public': False,
+            'is_editable': True,
+            'default_value': 'gemini-2.5-flash-preview-09-2025'
+        },
+
+        # OpenRouter Model Name (configurable via UI)
+        {
+            'key': 'openrouter_model_name',
+            'value': 'meta-llama/llama-3.3-70b-instruct:free',
+            'data_type': 'string',
+            'category': 'ai',
+            'description': 'OpenRouter model name used for AI content generation (overrides .env config)',
+            'is_public': False,
+            'is_editable': True,
+            'default_value': 'meta-llama/llama-3.3-70b-instruct:free'
         }
     ]
     
@@ -579,3 +625,67 @@ def initialize_default_settings():
         print("ℹ️  All default system settings already exist")
     
     return created_count
+
+
+class UserAISetting(db.Model):
+    """
+    Per-user AI provider settings.
+    Each admin/instructor can have their own API keys and model configurations,
+    stored separately from global SystemSettings.
+    """
+    __tablename__ = 'user_ai_settings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
+    openrouter_api_key = db.Column(db.Text, nullable=True, default='')
+    gemini_api_key = db.Column(db.Text, nullable=True, default='')
+    openrouter_model_name = db.Column(db.String(200), nullable=True, default='')
+    gemini_model_name = db.Column(db.String(200), nullable=True, default='')
+    ai_agent_enabled = db.Column(db.Boolean, nullable=True, default=True)
+    ai_max_requests_per_day = db.Column(db.Integer, nullable=True, default=100)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('ai_settings', uselist=False))
+
+    def __repr__(self):
+        return f'<UserAISetting user_id={self.user_id}>'
+
+    def to_dict(self, mask_keys: bool = True) -> dict:
+        """Convert to dictionary. Masks API keys by default."""
+        def _mask(val):
+            if not val or len(val) < 8:
+                return ''
+            return val[:4] + '*' * (len(val) - 8) + val[-4:]
+
+        return {
+            'openrouter_api_key': _mask(self.openrouter_api_key) if mask_keys else (self.openrouter_api_key or ''),
+            'gemini_api_key': _mask(self.gemini_api_key) if mask_keys else (self.gemini_api_key or ''),
+            'openrouter_model_name': self.openrouter_model_name or '',
+            'gemini_model_name': self.gemini_model_name or '',
+            'ai_agent_enabled': self.ai_agent_enabled if self.ai_agent_enabled is not None else True,
+            'ai_max_requests_per_day': self.ai_max_requests_per_day or 100,
+        }
+
+    def update_from_dict(self, data: dict, mask_check: bool = True):
+        """
+        Update fields from a dictionary. Skips masked values if mask_check is True.
+        Returns list of updated field names.
+        """
+        updated = []
+        for key in ('openrouter_api_key', 'gemini_api_key', 'openrouter_model_name',
+                     'gemini_model_name', 'ai_agent_enabled', 'ai_max_requests_per_day'):
+            if key not in data:
+                continue
+            value = data[key]
+
+            # Skip masked API key values (unchanged from frontend)
+            if mask_check and key in ('openrouter_api_key', 'gemini_api_key'):
+                if isinstance(value, str) and '*' in value and len(value) > 8:
+                    continue
+
+            setattr(self, key, value)
+            updated.append(key)
+
+        self.updated_at = datetime.utcnow()
+        return updated

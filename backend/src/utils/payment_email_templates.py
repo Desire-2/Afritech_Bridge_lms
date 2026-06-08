@@ -937,6 +937,14 @@ def enrollment_payment_waived_email(enrollment, course_title, waiver_details=Non
             timezone=cohort_info.get('timezone', 'UTC')
         )
 
+    waiver_reason_section = ""
+    if reason:
+        waiver_reason_section = f'''
+        <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 30px 0;">
+            <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">Waiver Reason</p>
+            <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 14px;">{reason}</p>
+        </div>'''
+
     return f"""
     {get_email_header()}
 
@@ -967,10 +975,7 @@ def enrollment_payment_waived_email(enrollment, course_title, waiver_details=Non
 
                 {cohort_card}
 
-                {"""<div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 30px 0;">
-                    <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">📝 Waiver Reason</p>
-                    <p style="color: #bfdbfe; margin: 8px 0 0 0; font-size: 14px;">{reason}</p>
-                </div>""" if reason else ""}
+                {waiver_reason_section}
 
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
                     <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">🎯 What's Next?</h3>

@@ -4,7 +4,9 @@ Handles validation of AI-generated content quality
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
+
+from .rate_limit_handler import rate_limit_handler
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +158,16 @@ Current Content:
 Provide the enhanced version maintaining the original structure and format.
 """
         
-        result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+        # Wrap in execute_with_retry for production-grade rate limit handling
+        result = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            temperature=0.7,
+            max_tokens=4096,
+            step_label=f"Enhancing {content_type}"
+        )
+        if isinstance(result, tuple):
+            result = result[0]  # (text, provider) tuple
         return result if result else current_content
     
     def enhance_section_content(self, section_type: str, section_content: str,
@@ -201,7 +212,15 @@ Format: Markdown with headers (##, ###), lists, bold, code blocks, blockquotes
 
 Return ONLY the enhanced markdown content, no JSON wrapper."""
             
-            result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+            result = rate_limit_handler.execute_with_retry(
+                self.provider.make_ai_request,
+                prompt,
+                temperature=0.7,
+                max_tokens=4096,
+                step_label="Enhancing text section"
+            )
+            if isinstance(result, tuple):
+                result = result[0]
             if result:
                 return {"enhanced_content": result.strip()}
         
@@ -214,7 +233,15 @@ Position: {section_position}
 
 Return ONLY the improved heading text (no quotes, no explanation)."""
             
-            result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+            result = rate_limit_handler.execute_with_retry(
+                self.provider.make_ai_request,
+                prompt,
+                temperature=0.7,
+                max_tokens=4096,
+                step_label="Enhancing heading"
+            )
+            if isinstance(result, tuple):
+                result = result[0]
             if result:
                 return {"enhanced_content": result.strip().strip('"').strip("'")}
         
@@ -230,7 +257,15 @@ Return JSON:
   "description": "What this {section_type} should cover"
 }}"""
             
-            result, provider = self.provider.make_ai_request(prompt, temperature=0.7, max_tokens=4096)
+            result = rate_limit_handler.execute_with_retry(
+                self.provider.make_ai_request,
+                prompt,
+                temperature=0.7,
+                max_tokens=4096,
+                step_label=f"Enhancing {section_type}"
+            )
+            if isinstance(result, tuple):
+                result = result[0]
             if result:
                 parsed = json_parser.parse_json_response(result, "section enhancement")
                 if parsed:
