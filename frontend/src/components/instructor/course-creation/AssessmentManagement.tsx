@@ -82,6 +82,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     type: 'quiz' | 'assignment' | 'project';
     params: any;
   } | null>(null);
+  // Background task progress for AI generation (step-by-step + rate limit awareness)
+  const [aiTaskStatus, setAiTaskStatus] = useState<any>(null);
+  const [aiTaskId, setAiTaskId] = useState<string | null>(null);
 
   // AI Preview states
   const [showAIPreview, setShowAIPreview] = useState(false);
@@ -412,6 +415,25 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     setSelectedModuleId(null);
     setSelectedLessonId(null);
     setAIContentType('lesson');
+    setAiTaskStatus(null);
+    setAiTaskId(null);
+  };
+
+  const handleAIGenerateProgress = (status: any) => {
+    setAiTaskStatus(status);
+  };
+
+  const handleCancelAIGenerate = async () => {
+    if (aiTaskId) {
+      try {
+        await aiAgentService.cancelTask(aiTaskId);
+      } catch (e) {
+        console.error('Cancel AI generation failed:', e);
+      }
+      setAIGenerating(false);
+      setAiTaskId(null);
+      setAiTaskStatus(null);
+    }
   };
 
   const handleAIGenerate = async () => {
@@ -451,26 +473,54 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       // Show generating message — these run as background tasks
       setSuccessMessage('⏳ AI is generating in background... Please wait.');
 
+      // Step 1: Submit task to get task_id immediately (for cancel support)
+      let currentTaskId: string | null = null;
+
+      // Determine endpoint and params based on tab
+      let endpoint = '';
+      let requestData: any = {};
+
+      if (activeTab === 'quiz') {
+        endpoint = '/ai-agent/generate-quiz-from-content';
+        requestData = {
+          course_id: course.id,
+          content_type: aiContentType,
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+          module_id: selectedModuleId,
+          num_questions: aiNumQuestions,
+          difficulty: aiDifficulty
+        };
+      } else if (activeTab === 'assignment') {
+        endpoint = '/ai-agent/generate-assignment-from-content';
+        requestData = {
+          course_id: course.id,
+          content_type: aiContentType,
+          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
+          module_id: selectedModuleId,
+          assignment_type: aiAssignmentType
+        };
+      } else if (activeTab === 'project') {
+        endpoint = '/ai-agent/generate-project-from-content';
+        requestData = { course_id: course.id };
+        if (selectedModuleId) {
+          requestData.module_id = selectedModuleId;
+        }
+      }
+
+      console.log('Submitting background task to:', endpoint);
+      const taskResponse = await aiAgentService.submitBackground(endpoint, requestData);
+      currentTaskId = taskResponse.task_id;
+      setAiTaskId(currentTaskId);
+      console.log('Task submitted:', currentTaskId);
+
+      // Step 2: Poll until complete with progress callback
+      const response = await aiAgentService.pollUntilComplete(
+        currentTaskId,
+        handleAIGenerateProgress,
+      );
+
       // Generate based on active tab
       if (activeTab === 'quiz') {
-        console.log('Calling generateQuizFromContent API...');
-        console.log('API params:', {
-          course_id: course.id,
-          content_type: aiContentType,
-          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
-          module_id: selectedModuleId,
-          num_questions: aiNumQuestions,
-          difficulty: aiDifficulty
-        });
-        
-        const response = await aiAgentService.generateQuizFromContent({
-          course_id: course.id,
-          content_type: aiContentType,
-          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
-          module_id: selectedModuleId,
-          num_questions: aiNumQuestions,
-          difficulty: aiDifficulty
-        });
         console.log('Quiz generation response:', response);
         console.log('Response type:', typeof response);
         console.log('Response keys:', Object.keys(response || {}));
@@ -594,13 +644,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         });
         
       } else if (activeTab === 'assignment') {
-        const response = await aiAgentService.generateAssignmentFromContent({
-          course_id: course.id,
-          content_type: aiContentType,
-          lesson_id: aiContentType === 'lesson' ? selectedLessonId : undefined,
-          module_id: selectedModuleId,
-          assignment_type: aiAssignmentType
-        });
+        console.log('Assignment generation response:', response);
 
         // Handle both response.data and response.assignment formats
         const assignmentData = response.data || response.assignment || response;
@@ -679,17 +723,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         });
         
       } else if (activeTab === 'project') {
-        // For projects, support whole course or specific modules
-        const projectParams: any = {
-          course_id: course.id
-        };
-        
-        // If module selected, use it; otherwise project covers whole course
-        if (selectedModuleId) {
-          projectParams.module_id = selectedModuleId;
-        }
-        
-        const response = await aiAgentService.generateProjectFromContent(projectParams);
+        console.log('Project generation response:', response);
 
         // Handle both response.data and response.project formats
         const projectData = response.data || response.project || response;
@@ -771,6 +805,12 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         throw new Error(`Invalid active tab: ${activeTab}. Expected 'quiz', 'assignment', or 'project'.`);
       }
 
+      // Store task_id from response for cancel support
+      if (response && 'task_id' in response) {
+        currentTaskId = response.task_id as string;
+        setAiTaskId(currentTaskId);
+      }
+
       console.log('AI generation successful, opening preview');
       setShowAIModal(false);
       setShowAIPreview(true);
@@ -798,6 +838,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       setErrorMessage(errorMsg);
     } finally {
       console.log('AI generation complete, resetting loading state');
+      setAiTaskStatus(null);
+      setAiTaskId(null);
       setAIGenerating(false);
     }
   };
@@ -4291,6 +4333,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         setAssignmentType={setAIAssignmentType}
         isGenerating={aiGenerating}
       />
+        taskStatus={aiTaskStatus}
+        onCancelTask={handleCancelAIGenerate}
 
       {/* AI Preview Modal */}
       {showAIPreview && aiPreviewData && (

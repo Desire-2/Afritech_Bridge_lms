@@ -7,6 +7,7 @@ import instructorService from '@/services/api/instructor.service';
 import { CourseApplication, ApplicationStatistics } from '@/services/api/types';
 import type { CohortOption, CohortStatus } from '@/types/api';
 import { getStatusBadgeStyles as getCohortBadgeStyles } from '@/utils/cohort-utils';
+import { getSkillProfileLabel } from '@/utils/skillConfigFallback';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -759,8 +760,8 @@ export default function InstructorApplicationsManager() {
                           <span className="font-medium text-gray-500">Phone:</span> {app.phone}
                         </div>
                         <div>
-                          <span className="font-medium text-gray-500">Excel:</span>{' '}
-                          {app.excel_skill_level?.replace(/_/g, ' ')}
+                          <span className="font-medium text-gray-500">{getSkillProfileLabel(app.skill_profile_key)}:</span>{' '}
+                          {app.tool_skill_level || app.excel_skill_level?.replace(/_/g, ' ')}
                         </div>
                         <div>
                           <span className="font-medium text-gray-500">Location:</span>{' '}
@@ -868,7 +869,7 @@ export default function InstructorApplicationsManager() {
                       ['Education', selectedApplication.education_level || 'N/A'],
                       ['Status', selectedApplication.current_status || 'N/A'],
                       ['Field', selectedApplication.field_of_study || 'N/A'],
-                      ['Excel Level', selectedApplication.excel_skill_level],
+                      [`${getSkillProfileLabel(selectedApplication.skill_profile_key)} Level`, selectedApplication.tool_skill_level || selectedApplication.excel_skill_level],
                       ['Has Computer', selectedApplication.has_computer ? 'Yes' : 'No'],
                       ['Internet', selectedApplication.internet_access_type || 'N/A'],
                       ['Cohort', selectedApplication.cohort_label || 'N/A'],

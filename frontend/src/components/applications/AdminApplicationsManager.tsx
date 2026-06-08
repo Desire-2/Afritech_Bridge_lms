@@ -6,6 +6,7 @@ import waitlistService from '@/services/api/waitlist.service';
 import { CourseApplication, ApplicationStatistics } from '@/services/api/types';
 import type { CohortOption, CohortStatus } from '@/types/api';
 import { getStatusBadgeStyles as getCohortBadgeStyles } from '@/utils/cohort-utils';
+import { getSkillProfileLabel } from '@/utils/skillConfigFallback';
 import AdvancedFilters from './AdvancedFilters';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -1591,8 +1592,8 @@ export default function AdminApplicationsManager() {
                           <span className="font-medium">Phone:</span> {application.phone}
                         </div>
                         <div>
-                          <span className="font-medium">Excel Level:</span>{' '}
-                          {application.excel_skill_level?.replace('_', ' ')}
+                          <span className="font-medium">{getSkillProfileLabel(application.skill_profile_key)}:</span>{' '}
+                          {application.tool_skill_level || application.excel_skill_level?.replace('_', ' ')}
                         </div>
                         <div>
                           <span className="font-medium">Location:</span>{' '}
@@ -1801,8 +1802,8 @@ export default function AdminApplicationsManager() {
                       <p className="font-medium">{selectedApplication.field_of_study || 'N/A'}</p>
                     </div>
                     <div>
-                      <Label>Excel Skill Level</Label>
-                      <p className="font-medium">{selectedApplication.excel_skill_level}</p>
+                      <Label>{getSkillProfileLabel(selectedApplication.skill_profile_key)} Skill Level</Label>
+                      <p className="font-medium">{selectedApplication.tool_skill_level || selectedApplication.excel_skill_level}</p>
                     </div>
                     <div>
                       <Label>Has Computer</Label>

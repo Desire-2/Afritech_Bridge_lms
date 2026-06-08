@@ -101,6 +101,9 @@ export interface Course {
   installment_interval_days?: number | null;
   payment_deadline_days?: number | null;
   payment_summary?: PaymentSummary | null;
+  // Skill assessment config (used for dynamic Section 3 of application form)
+  skill_assessment_config?: SkillAssessmentConfig;
+
   // Application windows
   application_start_date?: string | null;
   application_end_date?: string | null;
@@ -462,6 +465,13 @@ export interface CourseApplication {
   education_level?: 'high_school' | 'diploma' | 'bachelors' | 'masters' | 'phd' | 'other';
   current_status?: 'student' | 'employed' | 'self_employed' | 'freelancer' | 'unemployed' | 'other';
   field_of_study?: string;
+  // Skill assessment fields (dynamic per course type)
+  skill_profile_key?: string;
+  has_used_tool?: boolean;
+  tool_skill_level?: string;
+  tool_tasks_done?: string[];
+  skill_open_answer?: string;
+  // Legacy Excel-specific fields (preserved for backward compatibility)
   has_used_excel: boolean;
   excel_skill_level: 'never_used' | 'beginner' | 'intermediate' | 'advanced' | 'expert';
   excel_tasks_done?: string[];
@@ -509,6 +519,13 @@ export interface ApplicationSubmitData {
   education_level?: string;
   current_status?: string;
   field_of_study?: string;
+  // New generic skill fields (for all course types)
+  skill_profile_key?: string;
+  has_used_tool?: boolean;
+  tool_skill_level?: string;
+  tool_tasks_done?: string[];
+  skill_open_answer?: string;
+  // Legacy Excel-specific fields
   has_used_excel: boolean;
   excel_skill_level: string;
   excel_tasks_done?: string[];

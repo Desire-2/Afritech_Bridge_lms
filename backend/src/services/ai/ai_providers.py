@@ -53,6 +53,29 @@ class AIProviderManager:
         },
     }
 
+    # Mapping of stale/deprecated Gemini model names to their current replacements.
+    # Any model name loaded from DB settings (global or per-user) that matches
+    # a key here will be auto-upgraded to the replacement value.
+    STALE_GEMINI_MODELS = {
+        'gemini-2.5-flash-preview-09-2025': 'gemini-2.0-flash',
+        'gemini-2.5-pro-preview-03-2025': 'gemini-2.0-pro',
+        'gemini-2.0-flash-exp': 'gemini-2.0-flash',
+    }
+
+    def _resolve_model_name(self, model_name: str, default: str = 'gemini-2.0-flash') -> str:
+        """
+        Check if a Gemini model name is stale/deprecated and return its replacement.
+        If the model name is not in the stale list, return it unchanged.
+        If the model name is None or empty, return the default.
+        """
+        if not model_name:
+            return default
+        replacement = self.STALE_GEMINI_MODELS.get(model_name)
+        if replacement:
+            logger.warning(f"[MODEL MIGRATION] Replaced stale Gemini model '{model_name}' with '{replacement}'")
+            return replacement
+        return model_name
+
     def __init__(self):
         # Load API keys and model names — check DB settings first (if app context available), fall back to env
         self._load_api_keys_from_settings()
@@ -156,13 +179,11 @@ class AIProviderManager:
             gemini_from_db if gemini_from_db
             else os.environ.get('GEMINI_API_KEY')
         )
-        self.gemini_model_name = (
-            gemini_model_from_db if gemini_model_from_db
-            else os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash-preview-09-2025')
-        )
+        raw_gemini_model = gemini_model_from_db if gemini_model_from_db else 'gemini-2.0-flash'
+        self.gemini_model_name = self._resolve_model_name(raw_gemini_model)
         self.openrouter_model_name = (
             openrouter_model_from_db if openrouter_model_from_db
-            else os.environ.get('OPENROUTER_MODEL', 'meta-llama/llama-3.3-70b-instruct:free')
+            else 'meta-llama/llama-3.3-70b-instruct:free'
         )
 
         # Store copies of global values for fallback when user context is cleared
@@ -219,7 +240,9 @@ class AIProviderManager:
                 self.openrouter_api_key = user_settings.openrouter_api_key or self._global_openrouter_api_key
                 self.gemini_api_key = user_settings.gemini_api_key or self._global_gemini_api_key
                 self.openrouter_model_name = user_settings.openrouter_model_name or self._global_openrouter_model_name
-                self.gemini_model_name = user_settings.gemini_model_name or self._global_gemini_model_name
+                # Resolve stale Gemini model names from per-user settings
+                raw_user_gemini = user_settings.gemini_model_name or self._global_gemini_model_name
+                self.gemini_model_name = self._resolve_model_name(raw_user_gemini)
                 logger.info(f"[USER CTX] User {user_id} has personal AI settings — activated")
             else:
                 # User has no personal settings, use global defaults
@@ -364,7 +387,7 @@ class AIProviderManager:
                         if expected_key == key:
                             keys_to_remove.append(key)
                     # Also check gemini model
-                    expected_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.5-flash')
+                    expected_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.0-flash')
                     if expected_key == key:
                         keys_to_remove.append(key)
         
@@ -736,7 +759,7 @@ class AIProviderManager:
             logger.warning("Gemini model not initialized")
             return None
         
-        cache_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.5-flash')
+        cache_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.0-flash')
         cached = self._get_cached_response(cache_key)
         if cached:
             return cached

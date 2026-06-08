@@ -9,23 +9,17 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Brain,
   Zap,
-  TrendingUp,
   Clock,
-  CheckCircle2,
   AlertTriangle,
-  Cpu,
-  Globe,
+  CheckCircle2,
   Sparkles,
   FileText,
   BookOpen,
   HelpCircle,
-  BarChart3,
-  TimerReset,
-  Activity
 } from 'lucide-react';
 
-import aiAgentService, { ProviderStats } from '@/services/ai-agent.service';
 import EnhancedAIContentGenerator from './EnhancedAIContentGenerator';
+import AIProviderHealthWidget from './AIProviderHealthWidget';
 
 interface AIDashboardProps {
   courseId?: number;
@@ -38,43 +32,8 @@ export const AIDashboard: React.FC<AIDashboardProps> = ({
   moduleId,
   onContentGenerated
 }) => {
-  const [healthStatus, setHealthStatus] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
   const [activeGenerator, setActiveGenerator] = useState<string | null>(null);
   const [recentGenerations, setRecentGenerations] = useState<any[]>([]);
-
-  useEffect(() => {
-    checkAIHealth();
-  }, []);
-
-  const checkAIHealth = async () => {
-    try {
-      const health = await aiAgentService.healthCheck();
-      setHealthStatus(health);
-    } catch (error) {
-      console.error('Health check failed:', error);
-      setHealthStatus({
-        status: 'error',
-        api_configured: false,
-        message: 'Unable to connect to AI service'
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'healthy':
-      case 'operational':
-        return <CheckCircle2 className="w-4 h-4 text-green-600" />;
-      case 'degraded':
-        return <AlertTriangle className="w-4 h-4 text-yellow-600" />;
-      case 'error':
-      default:
-        return <AlertTriangle className="w-4 h-4 text-red-600" />;
-    }
-  };
 
   const contentTypes = [
     {
@@ -121,111 +80,10 @@ export const AIDashboard: React.FC<AIDashboardProps> = ({
     setActiveGenerator(null);
   };
 
-  if (loading) {
-    return (
-      <Card>
-        <CardContent className="flex items-center justify-center py-8">
-          <div className="flex items-center gap-2">
-            <Brain className="w-6 h-6 animate-pulse" />
-            <span>Checking AI service status...</span>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Brain className="w-6 h-6" />
-              <div>
-                <CardTitle>AI Content Generator</CardTitle>
-                <CardDescription>Intelligent content creation powered by AI</CardDescription>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              {getStatusIcon(healthStatus?.status)}
-              <Badge 
-                variant={healthStatus?.status === 'healthy' ? 'default' : 'destructive'}
-                className="capitalize"
-              >
-                {healthStatus?.status || 'unknown'}
-              </Badge>
-            </div>
-          </div>
-        </CardHeader>
-        
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex items-center gap-3 p-3 border rounded-lg">
-              <Globe className="w-5 h-5 text-muted-foreground" />
-              <div>
-                <p className="font-medium text-sm">API Connection</p>
-                <p className={`text-sm ${healthStatus?.api_configured ? 'text-green-600' : 'text-red-600'}`}>
-                  {healthStatus?.api_configured ? 'Connected' : 'Disconnected'}
-                </p>
-              </div>
-            </div>
-            
-            {healthStatus?.provider_stats && (
-              <div className="flex items-center gap-3 p-3 border rounded-lg">
-                <Cpu className="w-5 h-5 text-muted-foreground" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm">Active Provider</p>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm text-muted-foreground capitalize truncate">
-                      {healthStatus.provider_stats.primary_provider || 'Auto-select'}
-                    </p>
-                    {healthStatus.provider_stats.is_cooling_down && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded text-xs font-medium">
-                        <TimerReset className="w-3 h-3" />
-                        {healthStatus.provider_stats.cooldown_remaining_seconds}s
-                      </span>
-                    )}
-                    {!healthStatus.provider_stats.is_cooling_down && healthStatus.provider_stats.failure_count > 0 && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded text-xs font-medium">
-                        <Activity className="w-3 h-3" />
-                        {healthStatus.provider_stats.failure_count} failures
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-            
-            {healthStatus?.provider_stats && (
-              <div className="flex items-center gap-3 p-3 border rounded-lg">
-                <BarChart3 className="w-5 h-5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium text-sm">RPM Usage</p>
-                  <p className={`text-sm ${(healthStatus.provider_stats.requests_this_minute || 0) >= (healthStatus.provider_stats.rpm_limit || 60) * 0.8 ? 'text-amber-600' : 'text-green-600'}`}>
-                    {healthStatus.provider_stats.requests_this_minute || 0} / {healthStatus.provider_stats.rpm_limit || 60}
-                  </p>
-                </div>
-              </div>
-            )}
-            {!healthStatus?.provider_stats && (
-              <div className="flex items-center gap-3 p-3 border rounded-lg">
-                <TrendingUp className="w-5 h-5 text-muted-foreground" />
-                <div>
-                  <p className="font-medium text-sm">Performance</p>
-                  <p className="text-sm text-green-600">Optimal</p>
-                </div>
-              </div>
-            )}
-          </div>
-          
-          {healthStatus?.message && (
-            <Alert className="mt-4">
-              <AlertDescription>{healthStatus.message}</AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
+      {/* Provider health widget with auto-refresh */}
+      <AIProviderHealthWidget autoRefreshInterval={15} />
 
       <Tabs defaultValue="generate" className="w-full">
         <TabsList className="grid w-full grid-cols-3">
@@ -278,14 +136,7 @@ export const AIDashboard: React.FC<AIDashboardProps> = ({
                 ))}
               </div>
               
-              {!healthStatus?.api_configured && (
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    AI service is not fully configured. Some features may be limited.
-                  </AlertDescription>
-                </Alert>
-              )}
+              {/* The AIProviderHealthWidget at the top shows provider status */}
             </>
           ) : (
             <div className="space-y-4">

@@ -612,6 +612,8 @@ export default function CourseApplicationPage() {
             courseTitle={course.title}
             courseData={course}
             selectedWindow={selectedWindow}
+            // Pass the skill assessment config for dynamic Section 3
+            skillAssessmentConfig={(course as any).skill_assessment_config}
             onSuccess={(applicationId) => {
               console.log('Application submitted:', applicationId);
               setTimeout(() => {

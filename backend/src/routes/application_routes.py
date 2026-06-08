@@ -369,7 +369,14 @@ def apply_for_course():
         current_status=current_status,
         field_of_study=data.get("field_of_study"),
         
-        # Section 3: Excel & Computer Skills
+        # Section 3: Skills Assessment (Dynamic per Course)
+        # New generic skill fields (for all course types)
+        skill_profile_key=data.get("skill_profile_key"),
+        has_used_tool=data.get("has_used_tool", data.get("has_used_excel", False)),
+        tool_skill_level=data.get("tool_skill_level", data.get("excel_skill_level")),
+        tool_tasks_done=parse_json_field(data.get("tool_tasks_done", data.get("excel_tasks_done"))),
+        skill_open_answer=data.get("skill_open_answer"),
+        # Legacy Excel-specific fields (kept for backward compatibility)
         has_used_excel=data.get("has_used_excel", False),
         excel_skill_level=excel_skill_level,
         excel_tasks_done=parse_json_field(data.get("excel_tasks_done")),
@@ -428,6 +435,8 @@ def apply_for_course():
                 'full_name', 'email', 'phone', 'whatsapp_number', 'gender', 'age_range',
                 'country', 'city', 'education_level', 'current_status', 'field_of_study',
                 'has_used_excel', 'excel_skill_level', 'excel_tasks_done',
+                'skill_profile_key', 'has_used_tool', 'tool_skill_level', 'tool_tasks_done',
+                'skill_open_answer',
                 'motivation', 'learning_outcomes', 'career_impact',
                 'has_computer', 'has_internet', 'internet_access_type', 'preferred_learning_mode',
                 'available_time', 'committed_to_complete', 'agrees_to_assessments', 'referral_source',
@@ -619,6 +628,13 @@ def save_application_draft():
         app.education_level = education_level
         app.current_status = current_status
         app.field_of_study = data.get("field_of_study")
+        # New generic skill fields
+        app.skill_profile_key = data.get("skill_profile_key")
+        app.has_used_tool = data.get("has_used_tool", data.get("has_used_excel", False))
+        app.tool_skill_level = data.get("tool_skill_level", data.get("excel_skill_level"))
+        app.tool_tasks_done = parse_json_field(data.get("tool_tasks_done", data.get("excel_tasks_done")))
+        app.skill_open_answer = data.get("skill_open_answer")
+        # Legacy Excel-specific fields (kept for backward compatibility)
         app.has_used_excel = data.get("has_used_excel", False)
         app.excel_skill_level = excel_skill_level
         app.excel_tasks_done = parse_json_field(data.get("excel_tasks_done"))

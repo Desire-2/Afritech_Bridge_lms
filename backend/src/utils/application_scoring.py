@@ -5,6 +5,57 @@ Evaluates applications across multiple dimensions for fair and comprehensive ran
 import json
 
 
+def _get_skill_level(application):
+    """
+    Resolve skill level from new generic fields first, falling back to
+    legacy Excel-specific fields for backward compatibility.
+    Returns (skill_level_str, tasks_list).
+    """
+    # Prefer new generic fields
+    skill_level = getattr(application, 'tool_skill_level', None)
+    tasks_raw = getattr(application, 'tool_tasks_done', None)
+
+    # Fall back to legacy Excel fields
+    if not skill_level:
+        skill_level = getattr(application, 'excel_skill_level', None) or ''
+    if not tasks_raw:
+        tasks_raw = getattr(application, 'excel_tasks_done', None)
+
+    # Parse tasks — may be a list, a JSON string, or None
+    tasks = []
+    if tasks_raw:
+        try:
+            tasks = json.loads(tasks_raw) if isinstance(tasks_raw, str) else tasks_raw
+            if not isinstance(tasks, list):
+                tasks = []
+        except (json.JSONDecodeError, TypeError):
+            tasks = []
+
+    return skill_level, tasks
+
+
+def _skill_level_to_legacy_enum(skill_level_str):
+    """
+    Map a free-form skill level string to one of the legacy enum values
+    (never_used, beginner, intermediate, advanced, expert) for the scoring
+    engine.  Uses keyword matching.
+    """
+    if not skill_level_str:
+        return 'never_used'
+    s = skill_level_str.lower()
+    if 'never' in s or 'no experience' in s or 'no ' in s:
+        return 'never_used'
+    if 'expert' in s:
+        return 'expert'
+    if 'advanced' in s:
+        return 'advanced'
+    if 'intermediate' in s:
+        return 'intermediate'
+    if 'beginner' in s:
+        return 'beginner'
+    return 'never_used'
+
+
 def calculate_risk(application):
     """
     Calculate risk score based on technical barriers and readiness.
@@ -26,13 +77,15 @@ def calculate_risk(application):
         risk += 10
     elif application.internet_access_type == "mobile_data":
         risk += 5
-    
-    # Subject/Digital Skills - 20 points
-    if application.excel_skill_level == "never_used":
+
+    # Subject/Digital Skills - 20 points (use new generic fields with fallback)
+    skill_level, _ = _get_skill_level(application)
+    legacy_level = _skill_level_to_legacy_enum(skill_level)
+    if legacy_level == "never_used":
         risk += 20
-    elif application.excel_skill_level == "beginner":
+    elif legacy_level == "beginner":
         risk += 10
-    elif application.excel_skill_level == "intermediate":
+    elif legacy_level == "intermediate":
         risk += 3
     
     # Learning Experience - 15 points
@@ -64,8 +117,10 @@ def calculate_readiness_score(application):
         score += 10
     if application.internet_access_type == "stable_broadband":
         score += 5
-    
+
     # Subject Skills & Experience (30 points)
+    skill_level, tasks = _get_skill_level(application)
+    legacy_level = _skill_level_to_legacy_enum(skill_level)
     excel_skill_map = {
         "expert": 30,
         "advanced": 25,
@@ -73,17 +128,12 @@ def calculate_readiness_score(application):
         "beginner": 10,
         "never_used": 0
     }
-    score += excel_skill_map.get(application.excel_skill_level or "never_used", 0)
+    score += excel_skill_map.get(legacy_level, 0)
     
     # Previous Subject Tasks (10 points bonus)
-    if application.excel_tasks_done:
-        try:
-            tasks = json.loads(application.excel_tasks_done) if isinstance(application.excel_tasks_done, str) else application.excel_tasks_done
-            if isinstance(tasks, list):
-                # Award 2 points per task, max 10
-                score += min(len(tasks) * 2, 10)
-        except:
-            pass
+    if tasks:
+        # Award 2 points per task, max 10
+        score += min(len(tasks) * 2, 10)
     
     # Education & Background (20 points)
     education_map = {
@@ -184,8 +234,10 @@ def calculate_application_score(application):
         score += 15
     if application.has_internet:
         score += 10
-    
-    # Subject Skills (25 points)
+
+    # Subject Skills (25 points) — use new generic fields with fallback
+    skill_level, _ = _get_skill_level(application)
+    legacy_level = _skill_level_to_legacy_enum(skill_level)
     excel_map = {
         "expert": 25,
         "advanced": 22,
@@ -193,7 +245,7 @@ def calculate_application_score(application):
         "beginner": 12,
         "never_used": 5  # Still award some points for honesty
     }
-    score += excel_map.get(application.excel_skill_level or "never_used", 0)
+    score += excel_map.get(legacy_level, 0)
     
     # Education Level (15 points)
     education_map = {

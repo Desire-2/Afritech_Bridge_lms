@@ -41,7 +41,8 @@ class CourseApplication(db.Model):
     )
     field_of_study = db.Column(db.String(150), nullable=True)  # e.g., Finance, Marketing
 
-    # ========== SECTION 3: Excel & Computer Skills Assessment ==========
+    # ========== SECTION 3: Skills Assessment (Dynamic per Course) ==========
+    # --- Legacy Excel-specific fields (kept for backward compatibility) ---
     has_used_excel = db.Column(db.Boolean, default=False)
     excel_skill_level = db.Column(
         db.Enum("never_used", "beginner", "intermediate", "advanced", "expert", name="excel_skill_level_type"),
@@ -49,6 +50,13 @@ class CourseApplication(db.Model):
     )
     # Store as JSON array of tasks: ["basic_formulas", "pivot_tables", "charts", etc.]
     excel_tasks_done = db.Column(db.Text, nullable=True)  # JSON array
+
+    # --- New generic skill fields (used for ALL courses, including Excel) ---
+    skill_profile_key = db.Column(db.String(50), nullable=True)  # e.g. "python", "web_development", "excel"
+    has_used_tool = db.Column(db.Boolean, nullable=True)  # Generic: "Have you used X before?"
+    tool_skill_level = db.Column(db.String(100), nullable=True)  # Generic skill level string
+    tool_tasks_done = db.Column(db.Text, nullable=True)  # JSON array of tasks
+    skill_open_answer = db.Column(db.Text, nullable=True)  # Optional freetext answer
 
     # ========== SECTION 4: Learning Goals ==========
     motivation = db.Column(db.Text, nullable=False)  # Why join this course
@@ -168,7 +176,14 @@ class CourseApplication(db.Model):
             "current_status": self.current_status,
             "field_of_study": self.field_of_study,
             
-            # Excel Skills
+            # Skills (new generic fields)
+            "skill_profile_key": self.skill_profile_key,
+            "has_used_tool": self.has_used_tool,
+            "tool_skill_level": self.tool_skill_level,
+            "skill_open_answer": self.skill_open_answer,
+            "tool_tasks_done": self.tool_tasks_done if include_sensitive else None,
+
+            # Excel Skills (legacy — preserved for backward compat)
             "has_used_excel": self.has_used_excel,
             "excel_skill_level": self.excel_skill_level,
             
@@ -228,6 +243,7 @@ class CourseApplication(db.Model):
                 "learning_outcomes": self.learning_outcomes,
                 "career_impact": self.career_impact,
                 "excel_tasks_done": self.excel_tasks_done,
+                "tool_tasks_done": self.tool_tasks_done,
                 "available_time": self.available_time,
                 "whatsapp_number": self.whatsapp_number,
                 "admin_notes": self.admin_notes,

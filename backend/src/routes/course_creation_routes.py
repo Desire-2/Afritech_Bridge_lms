@@ -17,6 +17,7 @@ from ..models.course_models import (
 )
 from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
+from ..config.course_skill_profiles import get_skill_profile_for_course
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,10 @@ def get_course_details(course_id):
         
         logger.debug(f"ENDPOINT - Building final response...")
         try:
+            course_data['skill_assessment_config'] = get_skill_profile_for_course(
+                course_title=course.title,
+                course_category=getattr(course, 'category', None)
+            )
             course_data.update({
                 'assignments': [assignment.to_dict() for assignment in assignments],
                 'quizzes': [quiz.to_dict() for quiz in quizzes],

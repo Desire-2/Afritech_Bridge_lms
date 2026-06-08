@@ -696,11 +696,13 @@ Be thorough and specific - this analysis drives the entire lesson structure."""
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=self._current_session.session_id if hasattr(self, '_current_session') and self._current_session else None,
                 task_id=None,
                 step_label="Analyzing lesson topic",
+                temperature=0.7,
+                max_tokens=3000,
             )
             return json_parser.parse_json_response(response) or {}
         except Exception as e:
@@ -777,11 +779,13 @@ Each chapter should:
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=session.session_id if hasattr(self, '_current_session') and self._current_session else None,
                 task_id=None,
                 step_label="Generating chapter outline",
+                temperature=0.7,
+                max_tokens=4000,
             )
             return json_parser.parse_json_response(response) or {"chapters": []}
         except Exception as e:
@@ -867,11 +871,13 @@ Do NOT use headers in the introduction - it should flow as continuous prose."""
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=session.session_id if self._current_session else None,
                 task_id=None,
                 step_label=f"Generating chapter intro: {chapter.title}",
+                temperature=0.7,
+                max_tokens=3000,
             )
             return response.strip()
         except Exception as e:
@@ -941,7 +947,15 @@ CONTENT QUALITY REQUIREMENTS:
 Each subsection should teach something concrete that the reader can apply immediately."""
 
         try:
-            response = self.provider.generate_content(prompt)
+            response, _ = rate_limit_handler.execute_with_retry(
+                self.provider.make_ai_request,
+                prompt,
+                session_id=session.session_id if self._current_session else None,
+                task_id=None,
+                step_label=f"Generating chapter theory: {chapter.title}",
+                temperature=0.7,
+                max_tokens=5000,
+            )
             result = json_parser.parse_json_response(response)
             if result:
                 return result
@@ -1016,11 +1030,13 @@ EXAMPLE QUALITY REQUIREMENTS:
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=session.session_id if self._current_session else None,
                 task_id=None,
                 step_label=f"Generating chapter examples: {chapter.title}",
+                temperature=0.7,
+                max_tokens=4000,
             )
             result = json_parser.parse_json_response(response)
             if result and "examples" in result:
@@ -1102,11 +1118,13 @@ EXERCISE QUALITY REQUIREMENTS:
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=session.session_id if self._current_session else None,
                 task_id=None,
                 step_label=f"Generating chapter exercises: {chapter.title}",
+                temperature=0.7,
+                max_tokens=4000,
             )
             result = json_parser.parse_json_response(response)
             if result and "exercises" in result:
@@ -1179,11 +1197,13 @@ SUMMARY QUALITY REQUIREMENTS:
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=session.session_id if self._current_session else None,
                 task_id=None,
                 step_label=f"Generating chapter summary: {chapter.title}",
+                temperature=0.7,
+                max_tokens=3000,
             )
             result = json_parser.parse_json_response(response)
             if result:
@@ -1253,11 +1273,13 @@ Make the conclusion feel like a proper wrap-up of substantial learning."""
 
         try:
             response, _ = rate_limit_handler.execute_with_retry(
-                self.provider.generate_content,
+                self.provider.make_ai_request,
                 prompt,
                 session_id=session.session_id if self._current_session else None,
                 task_id=None,
                 step_label="Generating lesson conclusion",
+                temperature=0.7,
+                max_tokens=3000,
             )
             return response.strip()
         except Exception as e:
