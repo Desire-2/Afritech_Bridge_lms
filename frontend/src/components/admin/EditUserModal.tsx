@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AdminService } from '@/services/admin.service';
 import { User } from '@/types/api';
 import { Eye, EyeOff, Check, X, AlertCircle, Loader2, Shield, Mail, UserIcon } from 'lucide-react';
@@ -33,6 +33,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
     confirm_password: ''
   });
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [roles, setRoles] = useState<any[]>([]);
@@ -40,9 +41,10 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [changePassword, setChangePassword] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const isDataReady = useRef(false);
 
   useEffect(() => {
-    fetchRoles();
+    fetchUserAndRoles();
   }, []);
 
   // Track if form has changes
@@ -58,6 +60,12 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
       is_active: user.is_active !== false,
     };
     
+    // Only track changes after initial data has been loaded from backend
+    if (!isDataReady.current) {
+      setHasChanges(false);
+      return;
+    }
+    
     const changed = Object.keys(originalData).some(
       key => formData[key as keyof typeof originalData] !== originalData[key as keyof typeof originalData]
     ) || (changePassword && formData.password);
@@ -65,12 +73,42 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
     setHasChanges(changed);
   }, [formData, user, changePassword]);
 
-  const fetchRoles = async () => {
+  const fetchUserAndRoles = async () => {
     try {
-      const data = await AdminService.getRoles();
-      setRoles(data.roles || []);
+      const [freshUser, rolesData] = await Promise.all([
+        AdminService.getUser(user.id),
+        AdminService.getRoles()
+      ]);
+      
+      // Re-initialize form with fresh data from backend
+      setFormData({
+        username: freshUser.username || '',
+        email: freshUser.email || '',
+        first_name: freshUser.first_name || '',
+        last_name: freshUser.last_name || '',
+        role_name: freshUser.role || 'student',
+        phone_number: freshUser.phone_number || '',
+        bio: freshUser.bio || '',
+        is_active: freshUser.is_active !== false,
+        password: '',
+        confirm_password: ''
+      });
+      // Mark data as ready AFTER re-initializing form with fresh backend data
+      isDataReady.current = true;
+      setRoles(rolesData.roles || []);
     } catch (err) {
-      console.error('Failed to fetch roles');
+      console.error('Failed to fetch user details or roles');
+      // Fallback: use the prop data and try roles separately
+      try {
+        const rolesData = await AdminService.getRoles();
+        setRoles(rolesData.roles || []);
+      } catch {
+        console.error('Failed to fetch roles');
+      }
+      // Even on error, mark data as ready so hasChanges can track user edits
+      isDataReady.current = true;
+    } finally {
+      setInitialLoading(false);
     }
   };
 
@@ -90,7 +128,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
     if (!username) return 'Username is required';
     if (username.length < 3) return 'Username must be at least 3 characters';
     if (username.length > 30) return 'Username must be less than 30 characters';
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) return 'Username can only contain letters, numbers, and underscores';
+    if (!/^[a-zA-Z0-9_.]+$/.test(username)) return 'Username can only contain letters, numbers, underscores, and dots';
     return '';
   };
 
@@ -183,12 +221,16 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
       await AdminService.updateUser(user.id, updateData);
       onSuccess();
     } catch (err: any) {
-      if (err.message?.includes('Username already exists')) {
+      const errorMsg = err.message || '';
+      // Backend returns errors like "Username already exists" or "Email already exists"
+      if (errorMsg.toLowerCase().includes('username already exists') || errorMsg.toLowerCase().includes('username already taken')) {
         setFieldErrors({ username: 'This username is already taken' });
-      } else if (err.message?.includes('Email already exists')) {
+      } else if (errorMsg.toLowerCase().includes('email already exists') || errorMsg.toLowerCase().includes('email already registered')) {
         setFieldErrors({ email: 'This email is already registered' });
+      } else if (errorMsg.toLowerCase().includes('role') && errorMsg.toLowerCase().includes('not found')) {
+        setFieldErrors({ role_name: 'Selected role is invalid. Please refresh and try again.' });
       } else {
-        setError(err.message || 'Failed to update user');
+        setError(errorMsg || 'Failed to update user');
       }
     } finally {
       setLoading(false);
@@ -218,6 +260,12 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
           </div>
         </div>
 
+        {initialLoading ? (
+          <div className="p-12 flex flex-col items-center justify-center">
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500 mb-4" />
+            <p className="text-gray-400">Loading user details...</p>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
@@ -244,7 +292,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                   value={formData.username}
                   onChange={(e) => handleFieldChange('username', e.target.value.toLowerCase())}
                   onBlur={() => handleBlur('username')}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                  className={`w-full px-4 py-2 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                     fieldErrors.username ? 'border-red-500' : 'border-white/15'
                   }`}
                 />
@@ -263,7 +311,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                   value={formData.email}
                   onChange={(e) => handleFieldChange('email', e.target.value)}
                   onBlur={() => handleBlur('email')}
-                  className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                  className={`w-full px-4 py-2 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                     fieldErrors.email ? 'border-red-500' : 'border-white/15'
                   }`}
                 />
@@ -280,7 +328,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                   type="text"
                   value={formData.first_name}
                   onChange={(e) => handleFieldChange('first_name', e.target.value)}
-                  className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                  className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                 />
               </div>
 
@@ -292,7 +340,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                   type="text"
                   value={formData.last_name}
                   onChange={(e) => handleFieldChange('last_name', e.target.value)}
-                  className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                  className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
                 />
               </div>
             </div>
@@ -306,10 +354,10 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                 required
                 value={formData.role_name}
                 onChange={(e) => handleFieldChange('role_name', e.target.value)}
-                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
               >
                 {roles.map((role) => (
-                  <option key={role.id} value={role.name}>
+                  <option key={role.id} value={role.name} className="bg-[#162844] text-white">
                     {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
                   </option>
                 ))}
@@ -361,7 +409,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                       value={formData.password}
                       onChange={(e) => handleFieldChange('password', e.target.value)}
                       onBlur={() => handleBlur('password')}
-                      className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                      className={`w-full px-4 py-2 pr-10 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                         fieldErrors.password ? 'border-red-500' : 'border-white/15'
                       }`}
                       placeholder="••••••••"
@@ -404,7 +452,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                       value={formData.confirm_password}
                       onChange={(e) => handleFieldChange('confirm_password', e.target.value)}
                       onBlur={() => handleBlur('confirm_password')}
-                      className={`w-full px-4 py-2 pr-10 border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
+                      className={`w-full px-4 py-2 pr-10 bg-[#162844] text-white border rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 ${
                         fieldErrors.confirm_password ? 'border-red-500' : 'border-white/15'
                       }`}
                       placeholder="••••••••"
@@ -445,7 +493,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                 type="tel"
                 value={formData.phone_number}
                 onChange={(e) => handleFieldChange('phone_number', e.target.value)}
-                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
               />
             </div>
 
@@ -457,7 +505,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
                 value={formData.bio}
                 onChange={(e) => handleFieldChange('bio', e.target.value)}
                 rows={3}
-                className="w-full px-4 py-2 border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 resize-none"
+                className="w-full px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30 resize-none"
               />
             </div>
           </div>
@@ -517,6 +565,7 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
             </div>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

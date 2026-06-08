@@ -490,6 +490,7 @@ def get_admin_applications():
             'track_id': request.args.get('track_id'),
             'cohort_id': request.args.get('cohort_id'),
             'search': request.args.get('search'),
+            'applicant_type': request.args.get('applicant_type'),
             'start_date': request.args.get('start_date'),
             'end_date': request.args.get('end_date'),
             'page': request.args.get('page', 1, type=int),
@@ -529,6 +530,14 @@ def get_admin_applications():
                 InternshipApplication.email.ilike(search_term),
                 InternshipApplication.reference_code.ilike(search_term),
             ))
+
+        # Filter by applicant type
+        if params['applicant_type']:
+            try:
+                atype = ApplicantTypeEnum(params['applicant_type'])
+                query = query.filter_by(applicant_type=atype)
+            except ValueError:
+                return error_response('Invalid applicant_type value', status_code=400)
         
         # Filter by date range
         if params['start_date']:
@@ -627,6 +636,12 @@ def update_application_status(app_id):
         if data.get('interview_date'):
             application.interview_date = datetime.fromisoformat(data['interview_date'])
         
+        # Save interview meeting link and platform
+        if data.get('interview_meeting_link'):
+            application.interview_meeting_link = data['interview_meeting_link']
+        if data.get('interview_meeting_platform'):
+            application.interview_meeting_platform = data['interview_meeting_platform']
+        
         # Create status log
         status_log = ApplicationStatusLog(
             application_id=app_id,
@@ -641,7 +656,10 @@ def update_application_status(app_id):
         
         # Send email notification
         user = User.query.get(user_id)
-        mailer.send_status_update(application, old_status, new_status, data.get('note'))
+        if new_status == ApplicationStatusEnum.INTERVIEW_SCHEDULED:
+            mailer.send_interview_scheduled(application, data.get('note'))
+        else:
+            mailer.send_status_update(application, old_status, new_status, data.get('note'))
         
         return success_response('Status updated successfully', application.to_dict())
     except Exception as e:
@@ -686,11 +704,178 @@ def assign_cohort(app_id):
         application.cohort_id = data['cohort_id']
         db.session.commit()
         
+        # Send email notification about cohort assignment
+        try:
+            user = User.query.get(int(get_jwt_identity()))
+            cohort_name = cohort.cohort_name or cohort.cohort_code
+            mailer.send_cohort_assigned(
+                application,
+                cohort_name=cohort_name,
+                assigned_by_name=f"{user.first_name} {user.last_name}" if user else 'Admin'
+            )
+        except Exception as mail_err:
+            logger.warning(f"Failed to send cohort assignment email: {mail_err}")
+        
         return success_response('Cohort assigned successfully', application.to_dict())
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error assigning cohort: {str(e)}")
         return error_response('Failed to assign cohort', status_code=500)
+
+
+@internships_bp.route('/admin/applications/export', methods=['GET'])
+@role_required(['admin', 'staff'])
+def export_applications_csv():
+    """Export applications data as CSV with current filters."""
+    try:
+        import csv
+        import io
+
+        status_filter = request.args.get('status')
+        track_id = request.args.get('track_id')
+        cohort_id = request.args.get('cohort_id')
+        search = request.args.get('search')
+        applicant_type = request.args.get('applicant_type')
+        start_date = request.args.get('start_date')
+        end_date = request.args.get('end_date')
+
+        query = InternshipApplication.query.order_by(InternshipApplication.created_at.desc())
+
+        if status_filter:
+            try:
+                query = query.filter_by(status=ApplicationStatusEnum(status_filter))
+            except ValueError:
+                pass
+        if track_id:
+            query = query.filter_by(track_id=track_id)
+        if cohort_id:
+            query = query.filter_by(cohort_id=cohort_id)
+        if applicant_type:
+            try:
+                query = query.filter_by(applicant_type=ApplicantTypeEnum(applicant_type))
+            except ValueError:
+                pass
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(or_(
+                InternshipApplication.full_name.ilike(search_term),
+                InternshipApplication.email.ilike(search_term),
+                InternshipApplication.reference_code.ilike(search_term),
+            ))
+        if start_date:
+            try:
+                query = query.filter(InternshipApplication.created_at >= datetime.fromisoformat(start_date))
+            except ValueError:
+                pass
+        if end_date:
+            try:
+                query = query.filter(InternshipApplication.created_at <= datetime.fromisoformat(end_date))
+            except ValueError:
+                pass
+
+        applications = query.all()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        writer.writerow([
+            'Reference Code', 'Full Name', 'Email', 'Phone', 'Applicant Type',
+            'Track', 'Cohort', 'Status', 'Motivation Letter',
+            'Portfolio URL', 'GitHub URL', 'LinkedIn URL',
+            'Reviewer', 'Reviewer Notes', 'Interview Date', 'Interview Notes',
+            'Applied Date', 'Last Updated'
+        ])
+
+        for app in applications:
+            writer.writerow([
+                app.reference_code,
+                app.full_name,
+                app.email,
+                app.phone,
+                app.applicant_type.value if app.applicant_type else '',
+                app.track.name if app.track else '',
+                app.cohort.cohort_code if app.cohort else '',
+                app.status.value if app.status else '',
+                app.motivation_letter[:200] if app.motivation_letter else '',
+                app.portfolio_url or '',
+                app.github_url or '',
+                app.linkedin_url or '',
+                f"{app.reviewer.first_name} {app.reviewer.last_name}" if app.reviewer else '',
+                app.reviewer_notes or '',
+                app.interview_date.strftime('%Y-%m-%d %H:%M') if app.interview_date else '',
+                app.interview_notes or '',
+                app.created_at.strftime('%Y-%m-%d') if app.created_at else '',
+                app.updated_at.strftime('%Y-%m-%d') if app.updated_at else '',
+            ])
+
+        output.seek(0)
+        csv_content = output.getvalue()
+        output.close()
+
+        response = current_app.response_class(
+            csv_content,
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment;filename=applications_export.csv'}
+        )
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting applications: {str(e)}")
+        return error_response('Failed to export applications', status_code=500)
+
+
+@internships_bp.route('/admin/applications/<app_id>/interview-notes', methods=['PUT'])
+@role_required(['admin', 'staff'])
+def update_interview_notes(app_id):
+    """Update interview notes for an application."""
+    try:
+        application = InternshipApplication.query.get(app_id)
+        if not application:
+            return error_response('Application not found', status_code=404)
+
+        data = request.get_json() or {}
+        interview_notes = data.get('interview_notes')
+
+        application.interview_notes = interview_notes
+        db.session.commit()
+
+        return success_response('Interview notes updated', {'interview_notes': interview_notes})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating interview notes: {str(e)}")
+        return error_response('Failed to update interview notes', status_code=500)
+
+
+@internships_bp.route('/admin/applications/<app_id>/send-email', methods=['POST'])
+@role_required(['admin', 'staff'])
+def send_applicant_email(app_id):
+    """Send an email to an applicant directly from the admin panel."""
+    try:
+        application = InternshipApplication.query.get(app_id)
+        if not application:
+            return error_response('Application not found', status_code=404)
+
+        data = request.get_json() or {}
+        subject = data.get('subject', 'Message from AfriTech Bridge')
+        message = data.get('message', '')
+
+        if not message:
+            return error_response('Message body is required', status_code=400)
+
+        # Use the existing mailer to send a custom email
+        try:
+            mailer.send_custom_email(application, subject, message)
+        except Exception as mail_err:
+            logger.error(f"Failed to send email to {application.email}: {mail_err}")
+            return error_response('Failed to send email. Please try again.', status_code=500)
+
+        return success_response('Email sent successfully', {
+            'to': application.email,
+            'subject': subject,
+        })
+    except Exception as e:
+        logger.error(f"Error sending email: {str(e)}")
+        return error_response('Failed to send email', status_code=500)
 
 
 @internships_bp.route('/admin/applications/<app_id>/cv', methods=['GET'])
@@ -1032,9 +1217,12 @@ def batch_update_status():
                     'new_status': new_status.value,
                 })
 
-                # Send email notification
+                # Send email notification (use enhanced interview template if applicable)
                 try:
-                    mailer.send_status_update(application, old_status, new_status, note)
+                    if new_status == ApplicationStatusEnum.INTERVIEW_SCHEDULED:
+                        mailer.send_interview_scheduled(application, note)
+                    else:
+                        mailer.send_status_update(application, old_status, new_status, note)
                 except Exception as mail_err:
                     logger.warning(f"Failed to send status email for {app_id}: {mail_err}")
 
@@ -1274,6 +1462,217 @@ def get_admin_stats():
         return error_response('Failed to fetch statistics', status_code=500)
 
 
+# ============= ADMIN INTERN MANAGEMENT =============
+
+@internships_bp.route('/admin/interns', methods=['GET'])
+@role_required(['admin', 'staff'])
+def get_admin_interns():
+    """
+    Get all accepted interns across all cohorts with task progress.
+    Admin-only view with richer filtering than instructor view.
+    Query params:
+    - cohort_id: str (optional)
+    - track_id: str (optional)
+    - search: str (optional)
+    - status: str (optional) - filter by offer letter status (sent, accepted, declined, revoked)
+    - page: int (default: 1)
+    - per_page: int (default: 50)
+    - sort_by: str (default: full_name)
+    - sort_order: str (default: asc)
+    """
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 50, type=int)
+        cohort_id = request.args.get('cohort_id')
+        track_id = request.args.get('track_id')
+        search = request.args.get('search')
+        offer_status = request.args.get('offer_status')
+        sort_by = request.args.get('sort_by', 'full_name')
+        sort_order = request.args.get('sort_order', 'asc').lower()
+
+        if page < 1 or per_page < 1 or per_page > 100:
+            return error_response('Invalid pagination parameters', status_code=400)
+
+        # Base query: only accepted applications
+        query = InternshipApplication.query.filter_by(
+            status=ApplicationStatusEnum.ACCEPTED
+        )
+
+        if cohort_id:
+            query = query.filter_by(cohort_id=cohort_id)
+
+        if track_id:
+            query = query.filter_by(track_id=track_id)
+
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(db.or_(
+                InternshipApplication.full_name.ilike(search_term),
+                InternshipApplication.email.ilike(search_term),
+                InternshipApplication.reference_code.ilike(search_term),
+            ))
+
+        if offer_status:
+            # Filter by offer letter status via join
+            query = query.join(
+                InternshipOfferLetter,
+                InternshipApplication.id == InternshipOfferLetter.application_id,
+                isouter=True
+            ).filter(InternshipOfferLetter.status == offer_status)
+
+        # Sorting
+        sort_col = {
+            'full_name': InternshipApplication.full_name,
+            'email': InternshipApplication.email,
+            'created_at': InternshipApplication.created_at,
+            'updated_at': InternshipApplication.updated_at,
+            'reference_code': InternshipApplication.reference_code,
+        }.get(sort_by, InternshipApplication.full_name)
+
+        query = query.order_by(sort_col.asc() if sort_order == 'asc' else sort_col.desc())
+
+        # Paginate
+        result = paginate_query(query, page, per_page)
+
+        # Enrich with task stats and offer info
+        interns_data = []
+        for intern in result['data']:
+            intern_dict = intern.to_dict(include_logs=False)
+
+            # Task progress stats
+            total_assigned = InternshipTaskAssignment.query.filter_by(intern_id=intern.id).count()
+            completed = InternshipTaskAssignment.query.filter_by(intern_id=intern.id, status='approved').count()
+            submitted = InternshipTaskAssignment.query.filter_by(intern_id=intern.id, status='submitted').count()
+            in_progress = InternshipTaskAssignment.query.filter_by(intern_id=intern.id, status='in_progress').count()
+            pending = InternshipTaskAssignment.query.filter_by(intern_id=intern.id, status='pending').count()
+            avg_score_query = db.session.query(db.func.avg(InternshipTaskAssignment.score)).filter(
+                InternshipTaskAssignment.intern_id == intern.id,
+                InternshipTaskAssignment.score.isnot(None)
+            ).scalar()
+
+            intern_dict['task_stats'] = {
+                'total_assigned': total_assigned,
+                'completed': completed,
+                'submitted': submitted,
+                'in_progress': in_progress,
+                'pending': pending,
+                'progress_pct': round((completed / total_assigned * 100)) if total_assigned > 0 else 0,
+                'avg_score': round(float(avg_score_query), 1) if avg_score_query else None,
+            }
+
+            # Offer letter info
+            offer = InternshipOfferLetter.query.filter_by(application_id=intern.id).first()
+            intern_dict['offer'] = {
+                'id': offer.id,
+                'offer_number': offer.offer_number,
+                'status': offer.status,
+                'sent_at': offer.sent_at.isoformat() if offer.sent_at else None,
+                'social_shares': offer.social_shares,
+            } if offer else None
+
+            interns_data.append(intern_dict)
+
+        result['data'] = interns_data
+
+        # Compute summary stats
+        total_accepted = InternshipApplication.query.filter_by(
+            status=ApplicationStatusEnum.ACCEPTED
+        ).count()
+        with_cohort = InternshipApplication.query.filter_by(
+            status=ApplicationStatusEnum.ACCEPTED
+        ).filter(InternshipApplication.cohort_id.isnot(None)).count()
+
+        result['summary'] = {
+            'total_accepted': total_accepted,
+            'with_cohort': with_cohort,
+            'unassigned': total_accepted - with_cohort,
+            'with_offers': InternshipOfferLetter.query.count(),
+            'offers_accepted': InternshipOfferLetter.query.filter_by(status='accepted').count(),
+        }
+
+        return success_response('Interns retrieved', result)
+    except Exception as e:
+        logger.error(f"Error fetching admin interns: {str(e)}")
+        return error_response('Failed to fetch interns', status_code=500)
+
+
+@internships_bp.route('/admin/interns/export', methods=['GET'])
+@role_required(['admin', 'staff'])
+def export_admin_interns_csv():
+    """Export interns data as CSV for reporting."""
+    try:
+        import csv
+        import io
+
+        cohort_id = request.args.get('cohort_id')
+        track_id = request.args.get('track_id')
+
+        query = InternshipApplication.query.filter_by(
+            status=ApplicationStatusEnum.ACCEPTED
+        ).order_by(InternshipApplication.full_name.asc())
+
+        if cohort_id:
+            query = query.filter_by(cohort_id=cohort_id)
+        if track_id:
+            query = query.filter_by(track_id=track_id)
+
+        interns = query.all()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header
+        writer.writerow([
+            'Reference Code', 'Full Name', 'Email', 'Phone',
+            'Track', 'Cohort', 'Status', 'Offer Number', 'Offer Status',
+            'Total Tasks', 'Completed', 'Progress %', 'Avg Score',
+            'Applied Date', 'Last Updated'
+        ])
+
+        for intern in interns:
+            offer = InternshipOfferLetter.query.filter_by(application_id=intern.id).first()
+
+            total_assigned = InternshipTaskAssignment.query.filter_by(intern_id=intern.id).count()
+            completed = InternshipTaskAssignment.query.filter_by(intern_id=intern.id, status='approved').count()
+            avg_score_query = db.session.query(db.func.avg(InternshipTaskAssignment.score)).filter(
+                InternshipTaskAssignment.intern_id == intern.id,
+                InternshipTaskAssignment.score.isnot(None)
+            ).scalar()
+
+            writer.writerow([
+                intern.reference_code,
+                intern.full_name,
+                intern.email,
+                intern.phone,
+                intern.track.name if intern.track else '',
+                intern.cohort.cohort_code if intern.cohort else '',
+                intern.status.value if intern.status else '',
+                offer.offer_number if offer else '',
+                offer.status if offer else '',
+                total_assigned,
+                completed,
+                round((completed / total_assigned * 100)) if total_assigned > 0 else 0,
+                round(float(avg_score_query), 1) if avg_score_query else '',
+                intern.created_at.strftime('%Y-%m-%d') if intern.created_at else '',
+                intern.updated_at.strftime('%Y-%m-%d') if intern.updated_at else '',
+            ])
+
+        output.seek(0)
+        csv_content = output.getvalue()
+        output.close()
+
+        response = current_app.response_class(
+            csv_content,
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment;filename=interns_export.csv'}
+        )
+        return response
+
+    except Exception as e:
+        logger.error(f"Error exporting interns: {str(e)}")
+        return error_response('Failed to export interns', status_code=500)
+
+
 # ============= INSTRUCTOR ROUTES (Task Management & Progress Tracking) =============
 
 @internships_bp.route('/instructor/cohorts', methods=['GET'])
@@ -1442,6 +1841,9 @@ def create_task():
             ).all()
             intern_ids = [i.id for i in interns]
         
+        # Track assigned interns for email notifications
+        assigned_interns = []
+        
         for intern_id in intern_ids:
             assignment = InternshipTaskAssignment(
                 task_id=task.id,
@@ -1449,9 +1851,30 @@ def create_task():
                 status='pending',
             )
             db.session.add(assignment)
+            # Fetch intern info for email
+            intern = InternshipApplication.query.get(intern_id)
+            if intern:
+                assigned_interns.append(intern)
         
         db.session.commit()
         logger.info(f"Task created: {task.title} ({task.id}) with {len(intern_ids)} assignments")
+        
+        # Send email notifications to assigned interns
+        try:
+            user = User.query.get(user_id)
+            assigned_by_name = f"{user.first_name} {user.last_name}" if user else 'Instructor'
+            for intern in assigned_interns:
+                mailer.send_task_assigned(
+                    intern,
+                    task_title=task.title,
+                    task_description=task.description,
+                    due_date=task.due_date,
+                    priority=task.priority.value if task.priority else 'medium',
+                    assigned_by_name=assigned_by_name,
+                    cohort_name=task.cohort.cohort_name if task.cohort else None,
+                )
+        except Exception as mail_err:
+            logger.warning(f"Failed to send task assignment emails: {mail_err}")
         
         return success_response('Task created successfully', task.to_dict(), status_code=201)
     except Exception as e:
@@ -1535,6 +1958,7 @@ def assign_task_to_interns(task_id):
             intern_ids = [i.id for i in interns]
         
         count = 0
+        assigned_interns = []
         for intern_id in intern_ids:
             # Check if already assigned
             existing = InternshipTaskAssignment.query.filter_by(
@@ -1548,8 +1972,31 @@ def assign_task_to_interns(task_id):
                 )
                 db.session.add(assignment)
                 count += 1
+                intern = InternshipApplication.query.get(intern_id)
+                if intern:
+                    assigned_interns.append(intern)
         
         db.session.commit()
+        
+        # Send email notifications to newly assigned interns
+        if count > 0:
+            try:
+                task = InternshipTask.query.get(task_id)
+                user = User.query.get(int(get_jwt_identity()))
+                assigned_by_name = f"{user.first_name} {user.last_name}" if user else 'Instructor'
+                for intern in assigned_interns:
+                    mailer.send_task_assigned(
+                        intern,
+                        task_title=task.title if task else 'New Task',
+                        task_description=task.description if task else None,
+                        due_date=task.due_date if task else None,
+                        priority=task.priority.value if task and task.priority else 'medium',
+                        assigned_by_name=assigned_by_name,
+                        cohort_name=task.cohort.cohort_name if task and task.cohort else None,
+                    )
+            except Exception as mail_err:
+                logger.warning(f"Failed to send task assignment emails: {mail_err}")
+        
         return success_response(f'Task assigned to {count} new intern(s)', {'assigned_count': count})
     except Exception as e:
         db.session.rollback()
@@ -1581,6 +2028,25 @@ def grade_assignment(assignment_id):
             assignment.graded_at = datetime.utcnow()
         
         db.session.commit()
+        
+        # Send email notification to intern about grading
+        if data.get('status') in ('approved', 'rejected'):
+            try:
+                intern = InternshipApplication.query.get(assignment.intern_id)
+                user = User.query.get(user_id)
+                graded_by_name = f"{user.first_name} {user.last_name}" if user else 'Instructor'
+                if intern:
+                    mailer.send_task_graded(
+                        intern,
+                        task_title=assignment.task.title if assignment.task else 'Task',
+                        status=assignment.status.value if hasattr(assignment.status, 'value') else assignment.status,
+                        score=assignment.score,
+                        feedback=assignment.feedback,
+                        graded_by_name=graded_by_name,
+                    )
+            except Exception as mail_err:
+                logger.warning(f"Failed to send task grading email: {mail_err}")
+        
         return success_response('Assignment graded successfully', assignment.to_dict())
     except Exception as e:
         db.session.rollback()
@@ -1667,6 +2133,102 @@ def get_instructor_stats():
 
 
 # ============= OFFER LETTER ROUTES =============
+
+@internships_bp.route('/admin/applications/<app_id>/offer/regenerate', methods=['POST'])
+@role_required(['admin', 'staff'])
+def regenerate_offer_letter(app_id):
+    """
+    Regenerate an offer letter for an application that already has one.
+    Revokes the old offer, generates a new one with a fresh offer number,
+    new PDF, new credentials, and sends the email.
+    """
+    try:
+        user_id = int(get_jwt_identity())
+        admin_user = User.query.get(user_id)
+        if not admin_user:
+            return error_response('Admin user not found', status_code=401)
+
+        application = InternshipApplication.query.get(app_id)
+        if not application:
+            return error_response('Application not found', status_code=404)
+
+        if application.status != ApplicationStatusEnum.ACCEPTED:
+            return error_response('Can only regenerate offer for accepted applications', status_code=400)
+
+        offer_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'uploads',
+            'offer_letters'
+        )
+
+        success, message, new_offer, password = InternshipOfferService.regenerate_offer(
+            application, admin_user, offer_dir
+        )
+
+        if not success:
+            return error_response(message, status_code=400)
+
+        # Send the new offer email
+        try:
+            mailer.send_offer_letter(application, new_offer, password=password)
+        except Exception as mail_err:
+            logger.error(f"Failed to send regenerated offer email: {mail_err}")
+
+        offer_data = new_offer.to_dict()
+
+        return success_response(
+            message,
+            {
+                'offer': offer_data,
+                'username': new_offer.generated_username,
+                'message': message,
+            },
+            status_code=201
+        )
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error regenerating offer letter: {str(e)}", exc_info=True)
+        return error_response('Failed to regenerate offer letter', status_code=500)
+
+
+@internships_bp.route('/admin/applications/<app_id>/offer/resend', methods=['POST'])
+@role_required(['admin', 'staff'])
+def resend_offer_email(app_id):
+    """
+    Resend the offer letter email for an application that already has an offer.
+    Useful when the applicant didn't receive the email or needs it re-sent.
+    """
+    try:
+        application = InternshipApplication.query.get(app_id)
+        if not application:
+            return error_response('Application not found', status_code=404)
+
+        if application.status != ApplicationStatusEnum.ACCEPTED:
+            return error_response('Can only resend offer for accepted applications', status_code=400)
+
+        offer = InternshipOfferLetter.query.filter_by(application_id=app_id).first()
+        if not offer:
+            return error_response('No offer letter found for this application. Generate one first.', status_code=404)
+
+        # Resend the offer email (password=None since it's already been sent)
+        try:
+            mailer.send_offer_letter(application, offer, password=None)
+        except Exception as mail_err:
+            logger.error(f"Failed to resend offer email for {app_id}: {mail_err}")
+            return error_response('Failed to resend email. Please try again.', status_code=500)
+
+        logger.info(f"Offer email resent for application {app_id} (offer={offer.offer_number})")
+
+        return success_response('Offer email resent successfully', {
+            'offer_number': offer.offer_number,
+            'sent_to': application.email,
+        })
+
+    except Exception as e:
+        logger.error(f"Error resending offer email: {str(e)}")
+        return error_response('Failed to resend offer email', status_code=500)
+
 
 @internships_bp.route('/admin/applications/<app_id>/offer', methods=['POST'])
 @role_required(['admin', 'staff'])

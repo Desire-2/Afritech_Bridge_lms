@@ -591,8 +591,9 @@ def create_user_admin():
             return jsonify({"error": "Username must be at least 3 characters long"}), 400
         if len(username) > 30:
             return jsonify({"error": "Username must be less than 30 characters"}), 400
-        if not username.replace('_', '').isalnum():
-            return jsonify({"error": "Username can only contain letters, numbers, and underscores"}), 400
+        # Allow letters, numbers, underscores, and dots (dots are used by auto-generated usernames)
+        if not re.match(r'^[a-zA-Z0-9_.]+$', username):
+            return jsonify({"error": "Username can only contain letters, numbers, underscores, and dots"}), 400
         
         # Validate email format
         import re

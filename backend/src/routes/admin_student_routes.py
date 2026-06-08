@@ -17,6 +17,7 @@ from ..models.student_models import (
     StudentBookmark, Certificate, LearningAnalytics
 )
 from ..services.certificate_service import CertificateService
+from ..utils.payment_notifications import send_enrollment_payment_notification
 import logging
 
 logger = logging.getLogger(__name__)
@@ -600,6 +601,19 @@ def update_enrollment(student_id, enrollment_id):
 
         db.session.commit()
         logger.info(f"Enrollment {enrollment_id} updated: {action}")
+
+        # ──── Send payment notification if payment was set to 'completed' ────
+        if action == "update_payment" and enrollment.payment_status == 'completed':
+            try:
+                send_enrollment_payment_notification(
+                    enrollment=enrollment,
+                    payment_status='completed',
+                    notes=data.get('reason') or 'Payment verified by admin'
+                )
+                logger.info(f"✅ Payment notification sent for enrollment #{enrollment_id}")
+            except Exception as notif_err:
+                logger.warning(f"⚠️ Failed to send payment notification for enrollment #{enrollment_id}: {notif_err}")
+        # ────────────────────────────────────────────────────────────────────────
 
         return jsonify({
             "message": f"Enrollment {action} successful",

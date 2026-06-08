@@ -207,10 +207,15 @@ def application_saved_payment_pending_email(application, course_title, payment_i
     """
 
 
-def payment_confirmation_email(application, course_title, payment_details, cohort_info=None, unsubscribe_token=None):
+def payment_confirmation_email(application, course_title, payment_details, cohort_info=None, unsubscribe_token=None, application_end_date=None):
     """
-    ✅ Email sent when payment is successfully confirmed
-    
+    ✅ Email sent when payment is successfully confirmed (CourseApplication level)
+
+    Includes the cohort enrollment timeline explaining:
+    - Payment confirmed
+    - Student will be enrolled in the cohort after the application period
+    - Login credentials will be sent before the cohort starts
+
     Args:
         application: CourseApplication object
         course_title: str - Course title
@@ -226,6 +231,7 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
             - cohort_end_date: datetime or str
             - timezone: str
         unsubscribe_token: str - User's unsubscribe token
+        application_end_date: datetime or str - When the application period ends (optional)
     """
     amount = payment_details.get('amount_paid', 0)
     currency = payment_details.get('currency', 'USD')
@@ -247,6 +253,9 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
             cohort_end_date=cohort_info.get('cohort_end_date'),
             timezone=cohort_info.get('timezone', 'UTC')
         )
+
+    # Build the enrollment journey timeline
+    enrollment_journey = _format_cohort_enrollment_timeline(cohort_info, application_end_date)
     
     return f"""
     {get_email_header()}
@@ -255,18 +264,18 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
             <div class="email-content" style="padding: 50px 35px;">
                 <!-- Success Icon & Title -->
                 <div style="text-align: center; margin-bottom: 35px;">
-                    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); width: 120px; height: 120px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 15px 40px rgba(16, 185, 129, 0.4); animation: pulse 2s infinite;">
+                    <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); width: 120px; height: 120px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 15px 40px rgba(16, 185, 129, 0.4);">
                         <table width="120" height="120" cellpadding="0" cellspacing="0" border="0">
                             <tr>
                                 <td style="text-align: center; vertical-align: middle; font-size: 60px;">✅</td>
                             </tr>
                         </table>
                     </div>
-                    <h2 style="color: #10b981; margin: 0; font-size: 36px; font-weight: 700; letter-spacing: -0.5px;">
+                    <h2 style="color: #10b981; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
                         Payment Confirmed! 🎉
                     </h2>
                     <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
-                        Welcome to the Course - Let's Start Learning!
+                        Your Spot is Secured
                     </p>
                 </div>
                 
@@ -280,7 +289,8 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                 </p>
                 
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
-                    You now have full access to all course materials, and we're thrilled to have you as part of our learning community!
+                    Your spot is now <strong style="color: #10b981;">secured</strong>. Your enrollment will be activated in the cohort you applied for. 
+                    Please review the timeline below for the next steps.
                 </p>
                 
                 {cohort_card}
@@ -290,16 +300,16 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                     <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
                         <tr>
                             <td style="vertical-align: middle; padding-right: 12px;">
-                                <span style="font-size: 32px;">🧾</span>
+                                <span style="font-size: 28px;">🧾</span>
                             </td>
                             <td style="vertical-align: middle;">
-                                <h3 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 700;">Payment Receipt</h3>
-                                <p style="margin: 5px 0 0 0; color: #bdc3c7; font-size: 13px;">Keep this for your records</p>
+                                <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Payment Receipt</h3>
+                                <p style="margin: 5px 0 0 0; color: #bdc3c7; font-size: 12px;">Keep this for your records</p>
                             </td>
                         </tr>
                     </table>
                     
-                    <div style="background-color: #1a252f; border-radius: 12px; padding: 25px; margin: 20px 0;">
+                    <div style="background-color: #1a252f; border-radius: 12px; padding: 25px;">
                         <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
                             <tr>
                                 <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;">
@@ -352,49 +362,28 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                         </table>
                     </div>
                 </div>
-                
-                <!-- Next Steps -->
-                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
-                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">
-                        <span style="margin-right: 8px;">🎯</span> What's Next?
-                    </h3>
-                    
-                    <div style="margin: 15px 0;">
-                        <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
-                            <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
-                                <span style="margin-right: 8px;">1️⃣</span> Access Your Dashboard
-                            </p>
-                            <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
-                                Log in to your student dashboard to start exploring course modules and lessons
-                            </p>
-                        </div>
-                        
-                        <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
-                            <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
-                                <span style="margin-right: 8px;">2️⃣</span> Review Course Materials
-                            </p>
-                            <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
-                                Familiarize yourself with the syllabus and download any required materials
-                            </p>
-                        </div>
-                        
-                        <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
-                            <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
-                                <span style="margin-right: 8px;">3️⃣</span> Start Learning!
-                            </p>
-                            <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
-                                Begin with Module 1 and progress at your own pace
-                            </p>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Action Button -->
-                <div style="text-align: center; margin: 40px 0;">
-                    <a href="{_frontend_url('student/dashboard')}" 
-                       style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);">
-                        🚀 Go to Dashboard
-                    </a>
+
+                <!-- Enrollment Journey Timeline -->
+                {enrollment_journey}
+
+                <!-- While You Wait -->
+                <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                            <td style="vertical-align: top; padding-right: 12px;">
+                                <span style="font-size: 24px;">💡</span>
+                            </td>
+                            <td>
+                                <p style="color: #60a5fa; margin: 0 0 8px 0; font-size: 15px; font-weight: 600;">While You Wait</p>
+                                <ul style="color: #bfdbfe; margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+                                    <li>Ensure your email address is accessible — login credentials will be sent there</li>
+                                    <li>Add <strong>afritech.bridge@yahoo.com</strong> to your contacts to avoid missing emails</li>
+                                    <li>Prepare a quiet study space with a reliable internet connection</li>
+                                    <li>Join our <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="color: #34d399; text-decoration: underline;">WhatsApp community</a> to connect with fellow learners</li>
+                                </ul>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
                 
                 <!-- Support Section -->
@@ -410,7 +399,8 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                 
                 <!-- Closing -->
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
-                    Welcome aboard! We're excited to support you on your learning journey! 🎓✨
+                    Thank you for choosing Afritech Bridge! We're excited to have you on board 
+                    and look forward to supporting you throughout your learning journey! 🎓✨
                 </p>
                 
                 <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
@@ -776,9 +766,200 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
     """
 
 
-def enrollment_payment_confirmed_email(enrollment, course_title, payment_details, cohort_info=None, unsubscribe_token=None):
+def _format_cohort_enrollment_timeline(cohort_info, application_end_date):
+    """
+    📅 Build the cohort enrollment timeline section explaining the process
+    after payment is confirmed.
+    """
+    cohort_label = cohort_info.get('cohort_label', '') if cohort_info else ''
+    cohort_start = cohort_info.get('cohort_start_date') if cohort_info else None
+    cohort_end = cohort_info.get('cohort_end_date') if cohort_info else None
+
+    # Format dates
+    cohort_start_str = ""
+    if cohort_start:
+        if isinstance(cohort_start, str):
+            cohort_start_str = cohort_start
+        else:
+            cohort_start_str = cohort_start.strftime('%B %d, %Y')
+
+    cohort_end_str = ""
+    if cohort_end:
+        if isinstance(cohort_end, str):
+            cohort_end_str = cohort_end
+        else:
+            cohort_end_str = cohort_end.strftime('%B %d, %Y')
+
+    app_end_str = ""
+    if application_end_date:
+        if isinstance(application_end_date, str):
+            app_end_str = application_end_date
+        else:
+            app_end_str = application_end_date.strftime('%B %d, %Y')
+
+    has_cohort_info = bool(cohort_label or cohort_start_str or cohort_end_str)
+
+    if not has_cohort_info:
+        # Generic timeline without cohort specifics
+        return f"""
+        <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
+            <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">
+                <span style="margin-right: 8px;">📋</span> What Happens Next?
+            </h3>
+
+            <div style="margin: 15px 0;">
+                <div style="background-color: #1e3a5f; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                    <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
+                        <span style="margin-right: 8px;">✅</span> Payment Confirmed
+                    </p>
+                    <p style="color: #bfdbfe; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
+                        Your payment has been verified. You are now confirmed for the program.
+                    </p>
+                </div>
+
+                <div style="background-color: #1e3a5f; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                    <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
+                        <span style="margin-right: 8px;">⏳</span> Enrolling in Cohort
+                    </p>
+                    <p style="color: #bfdbfe; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
+                        You will be enrolled in the cohort you applied for once the application period ends. 
+                        Our team is processing all applications and will assign you to your cohort.
+                    </p>
+                </div>
+
+                <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                    <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
+                        <span style="margin-right: 8px;">📧</span> Enrollment Email with Login Credentials
+                    </p>
+                    <p style="color: #bfdbfe; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
+                        Before the cohort starts, you will receive an enrollment email containing your 
+                        <strong style="color: #60a5fa;">login credentials</strong> to access the course platform. 
+                        Please watch your inbox (including spam folder) for this important message.
+                    </p>
+                </div>
+
+                <div style="background-color: #064e3b; border-left: 4px solid #22c55e; border-radius: 8px; padding: 15px; margin: 12px 0;">
+                    <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">
+                        <span style="margin-right: 8px;">🚀</span> Start Learning!
+                    </p>
+                    <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px; line-height: 1.6;">
+                        Once the cohort begins, log in with your credentials and start your learning journey!
+                    </p>
+                </div>
+            </div>
+        </div>"""
+
+    return f"""
+    <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
+        <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">
+            <span style="margin-right: 8px;">📋</span> Your Enrollment Journey
+        </h3>
+
+        <!-- Timeline Steps -->
+        <div style="margin: 15px 0;">
+            <!-- Step 1: Payment Confirmed -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                <tr>
+                    <td width="50" style="vertical-align: top; padding-right: 15px;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border-radius: 50%; text-align: center; line-height: 36px; box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);">
+                            <span style="color: white; font-weight: 700; font-size: 14px;">✅</span>
+                        </div>
+                        <div style="width: 2px; height: 100%; background: #10b981; margin: 5px auto;"></div>
+                    </td>
+                    <td style="vertical-align: top;">
+                        <div style="background-color: #064e3b; padding: 15px 20px; border-radius: 10px;">
+                            <p style="margin: 0; color: #34d399; font-size: 15px; font-weight: 600;">Payment Confirmed ✅</p>
+                            <p style="margin: 5px 0 0 0; color: #a7f3d0; font-size: 13px; line-height: 1.6;">
+                                Your payment has been verified. You are confirmed for <strong>{cohort_label}.</strong>
+                            </p>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Step 2: Enrollment Processing -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                <tr>
+                    <td width="50" style="vertical-align: top; padding-right: 15px;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); border-radius: 50%; text-align: center; line-height: 36px; box-shadow: 0 4px 10px rgba(245, 158, 11, 0.3);">
+                            <span style="color: white; font-weight: 700; font-size: 14px;">⏳</span>
+                        </div>
+                        <div style="width: 2px; height: 100%; background: #475569; margin: 5px auto;"></div>
+                    </td>
+                    <td style="vertical-align: top;">
+                        <div style="background-color: #1e3a5f; padding: 15px 20px; border-radius: 10px;">
+                            <p style="margin: 0; color: #fbbf24; font-size: 15px; font-weight: 600;">Enrollment Processing</p>
+                            <p style="margin: 5px 0 0 0; color: #bfdbfe; font-size: 13px; line-height: 1.6;">
+                                {"Applications close on <strong>" + app_end_str + "</strong>. " if app_end_str else ""}
+                                After that, our team will process enrollments and assign you to <strong>{cohort_label}</strong>.
+                            </p>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Step 3: Credentials Email -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 15px;">
+                <tr>
+                    <td width="50" style="vertical-align: top; padding-right: 15px;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); border-radius: 50%; text-align: center; line-height: 36px; box-shadow: 0 4px 10px rgba(59, 130, 246, 0.3);">
+                            <span style="color: white; font-weight: 700; font-size: 14px;">📧</span>
+                        </div>
+                        <div style="width: 2px; height: 100%; background: #475569; margin: 5px auto;"></div>
+                    </td>
+                    <td style="vertical-align: top;">
+                        <div style="background-color: #1e3a5f; padding: 15px 20px; border-radius: 10px;">
+                            <p style="margin: 0; color: #60a5fa; font-size: 15px; font-weight: 600;">Receive Login Credentials</p>
+                            <p style="margin: 5px 0 0 0; color: #bfdbfe; font-size: 13px; line-height: 1.6;">
+                                {"Before the cohort starts on <strong>" + cohort_start_str + "</strong>, " if cohort_start_str else "Before the cohort begins, "}
+                                you will receive an email with your <strong style="color: #93c5fd;">username and password</strong> 
+                                to access the learning platform. 
+                                <span style="color: #fca5a5;">⚠️ Check your spam folder if you don't see it!</span>
+                            </p>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Step 4: Start Learning -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                    <td width="50" style="vertical-align: top; padding-right: 15px;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); border-radius: 50%; text-align: center; line-height: 36px; box-shadow: 0 4px 10px rgba(139, 92, 246, 0.3);">
+                            <span style="color: white; font-weight: 700; font-size: 14px;">🚀</span>
+                        </div>
+                    </td>
+                    <td style="vertical-align: top;">
+                        <div style="background-color: #2c3e50; padding: 15px 20px; border-radius: 10px; border: 1px solid #8b5cf6;">
+                            <p style="margin: 0; color: #a78bfa; font-size: 15px; font-weight: 600;">Start Learning!</p>
+                            <p style="margin: 5px 0 0 0; color: #e5e7eb; font-size: 13px; line-height: 1.6;">
+                                {"Beginning <strong>" + cohort_start_str + "</strong>" if cohort_start_str else "Once the cohort starts"} — 
+                                log in with your credentials and begin your learning journey! 🎓
+                            </p>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Duration Badge -->
+        {f'''<div style="display: inline-block; background-color: #374151; padding: 8px 18px; border-radius: 20px; margin-top: 20px;">
+            <span style="color: #94a3b8; font-size: 12px;">📅 Cohort Duration: </span>
+            <span style="color: #ffffff; font-size: 13px; font-weight: 600;">{cohort_start_str}</span>
+            <span style="color: #94a3b8;"> → </span>
+            <span style="color: #ffffff; font-size: 13px; font-weight: 600;">{cohort_end_str}</span>
+        </div>''' if cohort_start_str and cohort_end_str else ''}
+    </div>"""
+
+
+def enrollment_payment_confirmed_email(enrollment, course_title, payment_details, cohort_info=None, unsubscribe_token=None, application_end_date=None):
     """
     ✅ Email sent when enrollment-level payment is confirmed by admin
+
+    Now includes a clear timeline explaining the cohort enrollment process:
+    - Payment is confirmed
+    - Student will be enrolled in their chosen cohort after the application period
+    - Before cohort starts, they'll receive login credentials via email
 
     Args:
         enrollment: Enrollment object
@@ -791,6 +972,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
             - payment_date: datetime
         cohort_info: dict with cohort details (optional)
         unsubscribe_token: str - User's unsubscribe token
+        application_end_date: datetime or str - When the application period ends (optional)
     """
     amount = payment_details.get('amount_paid', 0)
     currency = payment_details.get('currency', 'USD')
@@ -814,6 +996,9 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
             timezone=cohort_info.get('timezone', 'UTC')
         )
 
+    # Build the enrollment journey timeline
+    enrollment_journey = _format_cohort_enrollment_timeline(cohort_info, application_end_date)
+
     return f"""
     {get_email_header()}
 
@@ -827,11 +1012,11 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                             </tr>
                         </table>
                     </div>
-                    <h2 style="color: #10b981; margin: 0; font-size: 36px; font-weight: 700; letter-spacing: -0.5px;">
+                    <h2 style="color: #10b981; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
                         Payment Verified! 🎉
                     </h2>
                     <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
-                        Course Access Activated
+                        Your Spot is Secured
                     </p>
                 </div>
 
@@ -840,20 +1025,31 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                 </p>
 
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
-                    Great news! Your payment for <strong style="color: #10b981; font-size: 16px;">{course_title}</strong> has been verified by an administrator! 🚀
+                    Great news! Your payment for <strong style="color: #10b981; font-size: 16px;">{course_title}</strong> 
+                    has been verified by an administrator! 🚀
                 </p>
 
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
-                    Your course access is now <strong style="color: #10b981;">active</strong>. You can start learning immediately.
+                    Your spot in the program is now <strong style="color: #10b981;">confirmed</strong>. 
+                    Your enrollment will be activated in the cohort you applied for. 
+                    Please review the timeline below for the next steps.
                 </p>
 
                 {cohort_card}
 
                 <!-- Payment Receipt Card -->
                 <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0; box-shadow: 0 4px 15px rgba(0,0,0,0.3); border: 2px solid #10b981;">
-                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 22px; font-weight: 700;">
-                        <span style="margin-right: 8px;">🧾</span> Payment Receipt
-                    </h3>
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 12px;">
+                                <span style="font-size: 28px;">🧾</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Payment Receipt</h3>
+                                <p style="margin: 5px 0 0 0; color: #bdc3c7; font-size: 12px;">Keep this for your records</p>
+                            </td>
+                        </tr>
+                    </table>
                     <div style="background-color: #1a252f; border-radius: 12px; padding: 25px;">
                         <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
                             <tr>
@@ -880,28 +1076,52 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                     </div>
                 </div>
 
-                <!-- Next Steps -->
-                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 30px 0;">
-                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 20px; font-weight: 700;">🎯 What's Next?</h3>
-                    <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
-                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">1️⃣ Access Your Course</p>
-                        <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px;">Log in to your student dashboard and start exploring course modules.</p>
-                    </div>
-                    <div style="background-color: #064e3b; border-left: 4px solid #10b981; border-radius: 8px; padding: 15px; margin: 12px 0;">
-                        <p style="color: #ffffff; margin: 0; font-size: 15px; font-weight: 600;">2️⃣ Begin Learning</p>
-                        <p style="color: #a7f3d0; margin: 8px 0 0 28px; font-size: 14px;">Start with Module 1 and progress through the course at your own pace.</p>
-                    </div>
+                <!-- Enrollment Journey Timeline -->
+                {enrollment_journey}
+
+                <!-- While You Wait -->
+                <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                    <table cellpadding="0" cellspacing="0" border="0">
+                        <tr>
+                            <td style="vertical-align: top; padding-right: 12px;">
+                                <span style="font-size: 24px;">💡</span>
+                            </td>
+                            <td>
+                                <p style="color: #60a5fa; margin: 0 0 8px 0; font-size: 15px; font-weight: 600;">While You Wait</p>
+                                <ul style="color: #bfdbfe; margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+                                    <li>Ensure your email address is accessible — login credentials will be sent there</li>
+                                    <li>Add <strong>afritech.bridge@yahoo.com</strong> to your contacts to avoid missing emails</li>
+                                    <li>Prepare a quiet study space with a reliable internet connection</li>
+                                    <li>Review any pre-course materials shared by the instructor</li>
+                                    <li>Join our <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="color: #34d399; text-decoration: underline;">WhatsApp community</a> to connect with fellow learners</li>
+                                </ul>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
 
-                <div style="text-align: center; margin: 40px 0;">
-                    <a href="{_frontend_url('student/mylearning')}"
-                       style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);">
-                        🚀 Go to My Learning
-                    </a>
+                <!-- Payment slip attached note -->
+                <div style="background-color: #064e3b; border-left: 4px solid #22c55e; border-radius: 8px; padding: 16px; margin: 20px 0; text-align: center;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 10px;">
+                                <span style="font-size: 24px;">📎</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <p style="color: #a7f3d0; margin: 0; font-size: 14px; font-weight: 600;">
+                                    Payment Slip Attached 📄
+                                </p>
+                                <p style="color: #d1fae5; margin: 4px 0 0 0; font-size: 13px;">
+                                    Your official payment slip is attached as a PDF to this email.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
 
                 <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
-                    Welcome aboard! We're excited to support you on your learning journey! 🎓✨
+                    Thank you for choosing Afritech Bridge! We're excited to have you on board and 
+                    look forward to supporting you throughout your learning journey! 🎓✨
                 </p>
                 <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
                     Best regards,<br><strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙

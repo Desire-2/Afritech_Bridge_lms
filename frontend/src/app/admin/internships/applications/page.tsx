@@ -3,8 +3,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import internshipService, { type InternshipApplication, type InternshipTrack, type InternshipCohort } from '@/services/api/internship.service';
-import { Search, ChevronLeft, ChevronRight, ArrowUpDown, Eye, FileText, RefreshCw, CheckSquare, Square, Tag, Users, X, Send, CheckCircle, Award } from 'lucide-react';
+import internshipService, { type InternshipApplication, type InternshipTrack, type InternshipCohort, type InternshipStats } from '@/services/api/internship.service';
+import { Search, ChevronLeft, ChevronRight, ArrowUpDown, Eye, FileText, RefreshCw, CheckSquare, Square, Tag, Users, X, Send, CheckCircle, Award, Download, Calendar, List } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
@@ -36,9 +36,16 @@ const InternshipApplicationsPage = () => {
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '');
   const [trackFilter, setTrackFilter] = useState(searchParams.get('track_id') || '');
   const [searchQuery, setSearchQuery] = useState(searchParams.get('search') || '');
+  const [applicantTypeFilter, setApplicantTypeFilter] = useState(searchParams.get('applicant_type') || '');
+  const [startDate, setStartDate] = useState(searchParams.get('start_date') || '');
+  const [endDate, setEndDate] = useState(searchParams.get('end_date') || '');
   const [page, setPage] = useState(parseInt(searchParams.get('page') || '1'));
+  const [perPage, setPerPage] = useState(parseInt(searchParams.get('per_page') || '20'));
   const [sortBy, setSortBy] = useState('created_at');
   const [sortOrder, setSortOrder] = useState('desc');
+
+  // Stats summary
+  const [stats, setStats] = useState<InternshipStats | null>(null);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -69,8 +76,11 @@ const InternshipApplicationsPage = () => {
         status: statusFilter || undefined,
         track_id: trackFilter || undefined,
         search: searchQuery || undefined,
+        applicant_type: applicantTypeFilter || undefined,
+        start_date: startDate || undefined,
+        end_date: endDate || undefined,
         page,
-        per_page: 20,
+        per_page: perPage,
         sort_by: sortBy,
         sort_order: sortOrder,
       });
@@ -81,7 +91,7 @@ const InternshipApplicationsPage = () => {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, trackFilter, searchQuery, page, sortBy, sortOrder]);
+  }, [statusFilter, trackFilter, searchQuery, applicantTypeFilter, startDate, endDate, page, perPage, sortBy, sortOrder]);
 
   const fetchTracks = useCallback(async () => {
     try {
@@ -90,9 +100,17 @@ const InternshipApplicationsPage = () => {
     } catch { /* ignore */ }
   }, []);
 
+  const fetchStats = useCallback(async () => {
+    try {
+      const result = await internshipService.getStats();
+      setStats(result);
+    } catch { /* ignore */ }
+  }, []);
+
   useEffect(() => {
     fetchTracks();
-  }, [fetchTracks]);
+    fetchStats();
+  }, [fetchTracks, fetchStats]);
 
   useEffect(() => {
     fetchApplications();
@@ -228,10 +246,26 @@ const InternshipApplicationsPage = () => {
     setStatusFilter('');
     setTrackFilter('');
     setSearchQuery('');
+    setApplicantTypeFilter('');
+    setStartDate('');
+    setEndDate('');
     setPage(1);
   };
 
-  const hasFilters = statusFilter || trackFilter || searchQuery;
+  const hasFilters = statusFilter || trackFilter || searchQuery || applicantTypeFilter || startDate || endDate;
+
+  // CSV Export
+  const handleExportCSV = () => {
+    const url = internshipService.getApplicationsExportUrl({
+      status: statusFilter || undefined,
+      track_id: trackFilter || undefined,
+      search: searchQuery || undefined,
+      applicant_type: applicantTypeFilter || undefined,
+      start_date: startDate || undefined,
+      end_date: endDate || undefined,
+    });
+    window.open(url, '_blank');
+  };
 
   const statusOptions = [
     { value: '', label: 'All Statuses' },
@@ -243,6 +277,19 @@ const InternshipApplicationsPage = () => {
     { value: 'rejected', label: 'Rejected' },
   ];
 
+  const perPageOptions = [10, 20, 50, 100];
+
+  // Stats cards data
+  const statCards = stats ? [
+    { label: 'Total', value: stats.total_applications, color: 'text-blue-400', bg: 'bg-blue-900/40' },
+    { label: 'Pending', value: stats.by_status?.pending || 0, color: 'text-yellow-400', bg: 'bg-yellow-900/40' },
+    { label: 'Reviewing', value: stats.by_status?.reviewing || 0, color: 'text-blue-400', bg: 'bg-blue-900/40' },
+    { label: 'Shortlisted', value: stats.by_status?.shortlisted || 0, color: 'text-purple-400', bg: 'bg-purple-900/40' },
+    { label: 'Interview', value: stats.by_status?.interview_scheduled || 0, color: 'text-indigo-400', bg: 'bg-indigo-900/40' },
+    { label: 'Accepted', value: stats.by_status?.accepted || 0, color: 'text-green-400', bg: 'bg-green-900/40' },
+    { label: 'Rejected', value: stats.by_status?.rejected || 0, color: 'text-red-400', bg: 'bg-red-900/40' },
+  ] : [];
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -252,6 +299,14 @@ const InternshipApplicationsPage = () => {
           <p className="text-gray-400 mt-1">Review and manage all internship applications</p>
         </div>
         <div className="mt-4 md:mt-0 flex items-center gap-3">
+          <button
+            onClick={handleExportCSV}
+            disabled={pagination.total === 0}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition text-sm font-medium"
+          >
+            <Download className="h-4 w-4" />
+            Export CSV
+          </button>
           <button
             onClick={fetchApplications}
             disabled={loading}
@@ -263,17 +318,29 @@ const InternshipApplicationsPage = () => {
         </div>
       </div>
 
+      {/* Quick Stats Bar */}
+      {statCards.length > 0 && (
+        <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
+          {statCards.map((card, i) => (
+            <div key={i} className="bg-[#162844] rounded-xl border border-white/10 p-3 text-center hover:shadow-lg hover:shadow-blue-900/10 transition-all">
+              <p className="text-lg font-bold text-white">{typeof card.value === 'number' ? card.value.toLocaleString() : card.value}</p>
+              <p className="text-gray-500 text-xs mt-0.5">{card.label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Filters */}
       <div className="bg-[#162844] rounded-xl border border-white/10 p-4">
-        <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-3">
+        <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-2">
           {/* Search */}
-          <div className="relative flex-1">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              placeholder="Search by name, email, or reference code..."
+              placeholder="Search by name, email, or ref code..."
               className="w-full pl-10 pr-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition text-sm"
             />
           </div>
@@ -282,7 +349,7 @@ const InternshipApplicationsPage = () => {
           <select
             value={statusFilter}
             onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
-            className="px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
+            className="px-3 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
           >
             {statusOptions.map(opt => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -293,7 +360,7 @@ const InternshipApplicationsPage = () => {
           <select
             value={trackFilter}
             onChange={e => { setTrackFilter(e.target.value); setPage(1); }}
-            className="px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
+            className="px-3 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
           >
             <option value="">All Tracks</option>
             {tracks.map(track => (
@@ -301,10 +368,42 @@ const InternshipApplicationsPage = () => {
             ))}
           </select>
 
+          {/* Applicant Type Filter */}
+          <select
+            value={applicantTypeFilter}
+            onChange={e => { setApplicantTypeFilter(e.target.value); setPage(1); }}
+            className="px-3 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm"
+          >
+            <option value="">All Types</option>
+            <option value="graduate">Graduate</option>
+            <option value="short_course_alumni">Short Course Alumni</option>
+            <option value="external">External</option>
+          </select>
+
+          {/* Date Range */}
+          <div className="flex items-center gap-1">
+            <Calendar className="h-4 w-4 text-gray-500 ml-1" />
+            <input
+              type="date"
+              value={startDate}
+              onChange={e => { setStartDate(e.target.value); setPage(1); }}
+              className="px-2 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm w-[140px]"
+              title="Start date"
+            />
+            <span className="text-gray-500 text-xs">—</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={e => { setEndDate(e.target.value); setPage(1); }}
+              className="px-2 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-sm w-[140px]"
+              title="End date"
+            />
+          </div>
+
           {/* Search Button */}
           <button
             type="submit"
-            className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium text-sm"
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition font-medium text-sm"
           >
             Search
           </button>
@@ -314,20 +413,36 @@ const InternshipApplicationsPage = () => {
             <button
               type="button"
               onClick={clearFilters}
-              className="px-4 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-400 hover:text-white transition text-sm"
+              className="px-3 py-2.5 bg-[#0a1628] border border-white/10 rounded-lg text-gray-400 hover:text-white transition text-sm"
             >
-              Clear
+              <X className="h-4 w-4" />
             </button>
           )}
         </form>
 
         {/* Results summary */}
-        <div className="mt-3 text-sm text-gray-400">
-          {pagination.total > 0 ? (
-            <span>Showing {((page - 1) * pagination.per_page) + 1}-{Math.min(page * pagination.per_page, pagination.total)} of {pagination.total} applications</span>
-          ) : (
-            <span>No applications found</span>
-          )}
+        <div className="mt-3 flex items-center justify-between">
+          <p className="text-sm text-gray-400">
+            {pagination.total > 0 ? (
+              <span>Showing {((page - 1) * pagination.per_page) + 1}-{Math.min(page * pagination.per_page, pagination.total)} of {pagination.total} applications</span>
+            ) : (
+              <span>No applications found</span>
+            )}
+          </p>
+          {/* Per page selector */}
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <List className="h-3.5 w-3.5" />
+            <span>Per page:</span>
+            <select
+              value={perPage}
+              onChange={e => { setPerPage(parseInt(e.target.value)); setPage(1); }}
+              className="px-2 py-1 bg-[#0a1628] border border-white/10 rounded-lg text-gray-300 focus:outline-none focus:border-blue-500 transition text-xs"
+            >
+              {perPageOptions.map(n => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 

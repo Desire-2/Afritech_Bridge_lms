@@ -1,6 +1,7 @@
 # src/utils/brevo_email_service.py
 import os
 import logging
+import base64
 import sib_api_v3_sdk
 from sib_api_v3_sdk.rest import ApiException
 
@@ -59,11 +60,13 @@ class BrevoEmailService:
     
     def send_email(self, to_emails, subject, html_content=None, text_content=None, 
                    template_id=None, params=None, cc=None, bcc=None, reply_to=None,
-                   headers=None):
+                   headers=None, attachments=None):
         """Send email using Brevo API
         
         Args:
             headers: dict - optional custom headers (e.g. List-Unsubscribe)
+            attachments: list - optional list of attachment dicts with 'name' and 'content' (base64-encoded str)
+                        Example: [{'name': 'receipt.pdf', 'content': base64_encoded_str}]
         """
         if not self.is_configured:
             logger.warning("Brevo email service not configured - skipping email send")
@@ -113,6 +116,10 @@ class BrevoEmailService:
             # Add custom headers (e.g. List-Unsubscribe for RFC 8058 compliance)
             if headers:
                 email_data["headers"] = headers
+            
+            # Add file attachments (base64-encoded content)
+            if attachments:
+                email_data["attachment"] = attachments
             
             send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(**email_data)
             

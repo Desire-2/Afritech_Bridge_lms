@@ -150,6 +150,8 @@ class InternshipApplication(db.Model):
     # Interview
     interview_date = db.Column(db.DateTime, nullable=True)
     interview_notes = db.Column(db.Text, nullable=True)
+    interview_meeting_link = db.Column(db.String(500), nullable=True)
+    interview_meeting_platform = db.Column(db.String(50), nullable=True)  # e.g., zoom, google_meet, teams, whatsapp, other
     
     # Rejection
     rejection_reason = db.Column(db.Text, nullable=True)
@@ -195,6 +197,8 @@ class InternshipApplication(db.Model):
             'reviewed_at': self.reviewed_at.isoformat() if self.reviewed_at else None,
             'interview_date': self.interview_date.isoformat() if self.interview_date else None,
             'interview_notes': self.interview_notes,
+            'interview_meeting_link': self.interview_meeting_link,
+            'interview_meeting_platform': self.interview_meeting_platform,
             'rejection_reason': self.rejection_reason,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

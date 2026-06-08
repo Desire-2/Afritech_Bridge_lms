@@ -32,6 +32,7 @@ requests==2.31.0
 SQLAlchemy==2.0.36
 typing_extensions==4.15.0
 urllib3==2.0.7
+weasyprint==69.0
 Werkzeug==2.3.7
 google-api-python-client==2.149.0
 google-auth==2.34.0

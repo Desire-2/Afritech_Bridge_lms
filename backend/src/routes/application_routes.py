@@ -33,6 +33,7 @@ from ..utils.payment_notifications import (
     send_payment_confirmation_notification,
     send_payment_failed_notification,
     send_payment_refund_notification,
+    send_enrollment_payment_notification,
     get_payment_info_from_application_window,
     get_payment_info_from_course
 )
@@ -1831,6 +1832,20 @@ def approve_application(app_id):
                 logger.info(f"Module progress already exists for user {user.id}, module {module.id}")
         
         db.session.commit()
+        
+        # ──── Send payment notification with PDF slip if payment was already completed ────
+        payment_notification_sent = False
+        if requires_payment and app_payment in ('completed', 'confirmed'):
+            try:
+                payment_notification_sent = send_enrollment_payment_notification(
+                    enrollment=enrollment,
+                    payment_status='completed',
+                )
+                if payment_notification_sent:
+                    logger.info(f"✅ Payment notification with PDF slip sent for enrollment #{enrollment.id}")
+            except Exception as notify_err:
+                logger.warning(f"⚠️ Failed to send payment notification for enrollment #{enrollment.id}: {notify_err}")
+        # ────────────────────────────────────────────────────────────────────────────────────
         
         # Send welcome email with course details
         email_sent = False

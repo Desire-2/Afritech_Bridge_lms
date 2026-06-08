@@ -113,6 +113,11 @@ class ApplicationStatusUpdateSchema(Schema):
     )
     note = fields.Str(validate=validate.Length(max=2000), allow_none=True)
     interview_date = fields.DateTime(allow_none=True)
+    interview_meeting_link = fields.Str(validate=validate.Length(max=500), allow_none=True)
+    interview_meeting_platform = fields.Str(
+        validate=validate.OneOf(['zoom', 'google_meet', 'teams', 'whatsapp', 'other']),
+        allow_none=True
+    )
 
 
 class AssignCohortSchema(Schema):

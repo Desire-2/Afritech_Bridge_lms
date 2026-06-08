@@ -12,6 +12,7 @@ import uuid
 from io import BytesIO
 from datetime import datetime
 from typing import Tuple, Optional, Dict, Any
+import math
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -138,18 +139,64 @@ class InternshipOfferService:
 
             # ── Company Header ──
             # Logo area (left)
-            logo_center_x = 32 * mm
+            logo_center_x = 38 * mm
             logo_center_y = height - 32 * mm
 
-            # Logo frame
-            pdf_canvas.setStrokeColor(teal)
-            pdf_canvas.setLineWidth(2)
-            pdf_canvas.circle(logo_center_x, logo_center_y, 12 * mm, fill=0, stroke=1)
-            pdf_canvas.setStrokeColor(orange)
-            pdf_canvas.setLineWidth(1)
-            pdf_canvas.circle(logo_center_x, logo_center_y, 10 * mm, fill=0, stroke=1)
+            # Draw logo image with circular clip + decorative rings
+            logo_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "static", "images", "logo.jpg"
+            )
+            if os.path.exists(logo_path):
+                # Circular clip – crop logo to a circle
+                pdf_canvas.saveState()
+                p = pdf_canvas.beginPath()
+                p.circle(logo_center_x, logo_center_y, 11 * mm)
+                pdf_canvas.clipPath(p, stroke=0)
+                pdf_canvas.drawImage(
+                    logo_path,
+                    logo_center_x - 12 * mm,
+                    logo_center_y - 12 * mm,
+                    width=24 * mm,
+                    height=24 * mm,
+                    preserveAspectRatio=True,
+                    mask="auto",
+                )
+                pdf_canvas.restoreState()
 
-            # Company name
+                # Inner decorative ring (teal, right at clip edge)
+                pdf_canvas.setStrokeColor(teal)
+                pdf_canvas.setLineWidth(2.5)
+                pdf_canvas.circle(logo_center_x, logo_center_y, 11.5 * mm, fill=0, stroke=1)
+
+                # Outer decorative ring (orange)
+                pdf_canvas.setStrokeColor(orange)
+                pdf_canvas.setLineWidth(1.2)
+                pdf_canvas.circle(logo_center_x, logo_center_y, 13.5 * mm, fill=0, stroke=1)
+
+                # Small accent dots on the outer ring (at 45° angles)
+                pdf_canvas.setFillColor(teal)
+                for angle_deg in [45, 135, 225, 315]:
+                    rad = math.radians(angle_deg)
+                    dx = 13.5 * mm * math.cos(rad)
+                    dy = 13.5 * mm * math.sin(rad)
+                    pdf_canvas.circle(
+                        logo_center_x + dx,
+                        logo_center_y + dy,
+                        0.6 * mm,
+                        fill=1,
+                        stroke=0,
+                    )
+            else:
+                # Fallback: concentric placeholder circles
+                pdf_canvas.setStrokeColor(teal)
+                pdf_canvas.setLineWidth(2)
+                pdf_canvas.circle(logo_center_x, logo_center_y, 12 * mm, fill=0, stroke=1)
+                pdf_canvas.setStrokeColor(orange)
+                pdf_canvas.setLineWidth(1)
+                pdf_canvas.circle(logo_center_x, logo_center_y, 10 * mm, fill=0, stroke=1)
+
+            # Company name below logo
             pdf_canvas.setFont("Helvetica-Bold", 11)
             pdf_canvas.setFillColor(teal)
             pdf_canvas.drawCentredString(logo_center_x, logo_center_y - 17 * mm, "✦ AFRITECH BRIDGE ✦")
@@ -182,25 +229,25 @@ class InternshipOfferService:
             # ── Subject Line ──
             pdf_canvas.setFont("Helvetica-Bold", 16)
             pdf_canvas.setFillColor(white)
-            pdf_canvas.drawCentredString(width / 2, height - 54 * mm, "OFFER OF INTERNSHIP")
+            pdf_canvas.drawCentredString(width / 2, height - 59 * mm, "OFFER OF INTERNSHIP")
             pdf_canvas.setFont("Helvetica", 10)
             pdf_canvas.setFillColor(light_gray)
-            pdf_canvas.drawCentredString(width / 2, height - 60 * mm, f"for the {application.track.name} Program")
+            pdf_canvas.drawCentredString(width / 2, height - 65 * mm, f"for the {application.track.name} Program")
 
             # ── Candidate Name ──
             pdf_canvas.setFont("Helvetica-Bold", 24)
             pdf_canvas.setFillColor(white)
-            pdf_canvas.drawCentredString(width / 2, height - 74 * mm, application.full_name)
+            pdf_canvas.drawCentredString(width / 2, height - 79 * mm, application.full_name)
 
             # Name underline
             pdf_canvas.setStrokeColor(teal)
             pdf_canvas.setLineWidth(1.5)
-            pdf_canvas.line(width / 2 - 60 * mm, height - 77 * mm, width / 2, height - 77 * mm)
+            pdf_canvas.line(width / 2 - 60 * mm, height - 82 * mm, width / 2, height - 82 * mm)
             pdf_canvas.setStrokeColor(orange)
-            pdf_canvas.line(width / 2, height - 77 * mm, width / 2 + 60 * mm, height - 77 * mm)
+            pdf_canvas.line(width / 2, height - 82 * mm, width / 2 + 60 * mm, height - 82 * mm)
 
             # ── Offer Body ──
-            body_start_y = height - 90 * mm
+            body_start_y = height - 95 * mm
             line_height = 6 * mm
 
             pdf_canvas.setFont("Helvetica", 10)
@@ -218,7 +265,7 @@ class InternshipOfferService:
                 pdf_canvas.drawCentredString(width / 2, body_start_y - i * line_height, line)
 
             # ── Offer Details Box ──
-            details_y = body_start_y - len(body_text) * line_height - 25 * mm
+            details_y = body_start_y - len(body_text) * line_height - 30 * mm
             box_height = 32 * mm
             box_width = 140 * mm
 
@@ -304,7 +351,7 @@ class InternshipOfferService:
             pdf_canvas.drawString(col2_x, creds_y + creds_box_height - 17 * mm, "● ● ● ● ● ● ● ● ● ● ● ●")
 
             # ── Closing ──
-            closing_y = creds_y - 12 * mm
+            closing_y = creds_y - 6 * mm
             pdf_canvas.setFont("Helvetica", 10)
             pdf_canvas.setFillColor(slate)
             closing_lines = (
@@ -348,12 +395,21 @@ class InternshipOfferService:
             )
             if os.path.exists(signature_path):
                 try:
+                    # Draw light background so signature is visible on dark navy
+                    sig_img_x = width / 2 - 12 * mm
+                    sig_img_y = sig_line_y + 1 * mm
+                    sig_img_w = 24 * mm
+                    sig_img_h = 6 * mm
+                    pdf_canvas.setFillColor(colors.HexColor('#f8fafc'))
+                    pdf_canvas.roundRect(
+                        sig_img_x - 0.5 * mm, sig_img_y - 0.5 * mm,
+                        sig_img_w + 1 * mm, sig_img_h + 1 * mm,
+                        1.5 * mm, fill=1, stroke=0
+                    )
                     pdf_canvas.drawImage(
                         signature_path,
-                        width / 2 - 12 * mm,
-                        sig_line_y + 1 * mm,
-                        width=24 * mm,
-                        height=6 * mm,
+                        sig_img_x, sig_img_y,
+                        width=sig_img_w, height=sig_img_h,
                         preserveAspectRatio=True,
                         mask="auto",
                     )
@@ -372,9 +428,9 @@ class InternshipOfferService:
 
             # ── QR Code for Verification ──
             import qrcode
-            qr_size = 16 * mm
-            qr_x = width - 38 * mm
-            qr_y = sig_y + sig_box_h + 12 * mm
+            qr_size = 24 * mm
+            qr_x = width - 46 * mm
+            qr_y = sig_y + sig_box_h + 4 * mm
 
             verification_url = (
                 f"https://study.afritechbridge.online/verify-offer/{offer.verification_hash}"
@@ -417,7 +473,7 @@ class InternshipOfferService:
             pdf_canvas.setFont("Helvetica-Bold", 6)
             pdf_canvas.setFillColor(teal)
             pdf_canvas.drawCentredString(
-                width / 2, 13 * mm,
+                width / 2, 14 * mm,
                 f"© 2026 AfriTech Bridge  |  Offer No: {offer.offer_number}  |  Issued: {datetime.utcnow().strftime('%d %B %Y')}"
             )
 
@@ -588,6 +644,137 @@ class InternshipOfferService:
         except Exception as e:
             logger.error(f"Error verifying offer PDF: {str(e)}")
             return False, f"Verification error: {str(e)}"
+
+    @staticmethod
+    def regenerate_offer(application: InternshipApplication, admin_user: User, offer_dir: str) -> Tuple[bool, str, Optional[InternshipOfferLetter], Optional[str]]:
+        """
+        Regenerate an offer letter for an application that already has one.
+        Revokes the old offer, creates a new one with a fresh offer number,
+        a new PDF, and new credentials (new user account created).
+
+        Args:
+            application: The accepted InternshipApplication
+            admin_user: The admin User who is regenerating
+            offer_dir: Directory path to save PDF files
+
+        Returns:
+            Tuple of (success, message, new_offer_record, password)
+        """
+        try:
+            if application.status != ApplicationStatusEnum.ACCEPTED:
+                return False, "Application must be in 'accepted' status to receive an offer", None, None
+
+            # Find and revoke the existing offer
+            old_offer = InternshipOfferLetter.query.filter_by(application_id=application.id).first()
+            if not old_offer:
+                return False, "No existing offer to regenerate. Generate one first.", None, None
+
+            # Revoke the old offer for audit trail
+            old_offer.status = "revoked"
+            db.session.flush()
+            logger.info(f"Revoked old offer {old_offer.offer_number} for application {application.id}")
+
+            # ── Create or update user account ──
+            # Check if a user already exists with this email (e.g. from the previous offer)
+            intern_user = User.query.filter_by(email=application.email).first()
+
+            if intern_user:
+                # User already exists — update their username and password
+                username = InternshipOfferService._generate_username(application.full_name)
+                password = InternshipOfferService._generate_password()
+
+                # Ensure unique username
+                existing_username = User.query.filter_by(username=username).filter(User.id != intern_user.id).first()
+                if existing_username:
+                    username = f"{username}.{secrets.token_hex(2)}"
+
+                intern_user.username = username
+                intern_user.set_password(password)
+                intern_user.must_change_password = True
+                logger.info(f"Updated existing user {intern_user.id} with new username/password for regeneration")
+            else:
+                # Create new user account
+                username = InternshipOfferService._generate_username(application.full_name)
+                password = InternshipOfferService._generate_password()
+
+                existing_user = User.query.filter_by(username=username).first()
+                if existing_user:
+                    username = f"{username}.{secrets.token_hex(2)}"
+
+                student_role = Role.query.filter_by(name='student').first()
+                student_role_id = student_role.id if student_role else 4
+
+                intern_user = User(
+                    username=username,
+                    email=application.email,
+                    first_name=application.full_name.split()[0] if application.full_name.split() else application.full_name,
+                    last_name=" ".join(application.full_name.split()[1:]) if len(application.full_name.split()) > 1 else "",
+                    role_id=student_role_id,
+                    is_active=True,
+                    must_change_password=True,
+                )
+                intern_user.set_password(password)
+                db.session.add(intern_user)
+
+            db.session.flush()
+
+            # Link application to the user
+            application.user_id = intern_user.id
+            db.session.flush()
+
+            # ── Update the existing offer record in-place with new values ──
+            # (application_id has a UNIQUE constraint, so we must reuse the same row)
+            new_offer_number = InternshipOfferService._generate_offer_number()
+            share_token = InternshipOfferService._generate_share_token()
+            verification_hash = hashlib.sha256(
+                f"{new_offer_number}:{application.id}:{application.reference_code}:{secrets.token_hex(8)}".encode()
+            ).hexdigest()
+
+            # Update the old (revoked) offer record with fresh values
+            old_offer.offer_number = new_offer_number
+            old_offer.generated_username = username
+            old_offer.generated_password_hash = intern_user.password_hash
+            old_offer.verification_hash = verification_hash
+            old_offer.share_token = share_token
+            old_offer.status = "sent"
+            old_offer.created_by_id = admin_user.id
+            old_offer.sent_at = datetime.utcnow()
+            old_offer.accepted_at = None
+            old_offer.accepted_by_user_id = None
+            old_offer.social_shares = 0
+            old_offer.pdf_hash = None
+            old_offer.pdf_path = None
+            db.session.flush()
+
+            # ── Generate new PDF ──
+            pdf_buffer = InternshipOfferService.generate_offer_pdf(application, old_offer)
+            if not pdf_buffer:
+                db.session.rollback()
+                return False, "Failed to generate new offer letter PDF", None, None
+
+            pdf_hash = InternshipOfferService._compute_pdf_hash(pdf_buffer)
+            old_offer.pdf_hash = pdf_hash
+
+            os.makedirs(offer_dir, exist_ok=True)
+            pdf_filename = f"{new_offer_number}_{application.reference_code}.pdf"
+            pdf_path = os.path.join(offer_dir, pdf_filename)
+            with open(pdf_path, "wb") as f:
+                f.write(pdf_buffer.getvalue())
+
+            old_offer.pdf_path = pdf_path
+            db.session.commit()
+
+            logger.info(
+                f"Offer regenerated: {new_offer_number} replaces revoked offer for "
+                f"{application.full_name}"
+            )
+
+            return True, f"Offer regenerated: new offer {new_offer_number} issued", old_offer, password
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error(f"Error regenerating offer letter: {str(e)}", exc_info=True)
+            return False, f"Failed to regenerate offer letter: {str(e)}", None, None
 
     @staticmethod
     def get_share_url(offer: InternshipOfferLetter) -> str:

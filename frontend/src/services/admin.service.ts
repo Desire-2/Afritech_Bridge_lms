@@ -99,6 +99,7 @@ export class AdminService {
   static async getUser(userId: number): Promise<User> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/users/${userId}`);
+      // Backend returns the user dict directly (including optional statistics)
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
@@ -108,7 +109,8 @@ export class AdminService {
   static async updateUser(userId: number, userData: Partial<User>): Promise<User> {
     try {
       const response = await apiClient.put(`${this.BASE_PATH}/users/${userId}`, userData);
-      return response.data;
+      // Backend returns { message: "...", user: { ... } }
+      return response.data.user || response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);
     }

@@ -5,7 +5,8 @@ export class ApiErrorHandler {
   static handleError(error: unknown): ApiError {
     if (error instanceof AxiosError) {
       const status = error.response?.status;
-      const message = error.response?.data?.message || error.message;
+      // Backend may return error in 'message' or 'error' field
+      const message = error.response?.data?.message || error.response?.data?.error || error.message;
       const details = error.response?.data?.details || {};
       const errorType = error.response?.data?.error_type;
 

@@ -4,6 +4,7 @@ Centralizes payment-related email notifications
 """
 import logging
 import os
+import base64
 from datetime import datetime
 from typing import Optional, Dict
 from .payment_email_templates import (
@@ -24,6 +25,14 @@ try:
 except (ImportError, ModuleNotFoundError) as e:
     brevo_service = None  # type: ignore
     BREVO_AVAILABLE = False
+
+# Import payment slip service for PDF attachment
+try:
+    from ..services.payment_slip_service import generate_payment_slip_pdf
+    PAYMENT_SLIP_AVAILABLE = True
+except (ImportError, ModuleNotFoundError) as e:
+    generate_payment_slip_pdf = None  # type: ignore
+    PAYMENT_SLIP_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +271,47 @@ def send_payment_refund_notification(application, course_title: str, refund_deta
         return False
 
 
+def _get_payment_info_from_enrollment(enrollment):
+    """
+    Extract payment information from an enrollment object for email templates
+    and payment slips.
+
+    Args:
+        enrollment: Enrollment object
+
+    Returns:
+        dict with payment details (amount_paid, currency, payment_method, etc.)
+    """
+    course = enrollment.course
+    window = enrollment.application_window
+
+    amount = 0
+    currency = 'USD'
+
+    if window:
+        amount = window.get_effective_price() or 0
+        currency = window.get_effective_currency() or 'USD'
+    elif course:
+        amount = course.price or 0
+        currency = course.currency or 'USD'
+
+    # Resolve payment method from enrollment
+    payment_method = getattr(enrollment, 'payment_method', None) or 'Manual Payment'
+    payment_reference = getattr(enrollment, 'payment_reference', None) or ''
+    payment_status = getattr(enrollment, 'payment_status', None) or 'completed'
+    # Use verification time — this function is always called at payment verification time
+    payment_date = datetime.utcnow()
+
+    return {
+        'amount_paid': amount,
+        'currency': currency,
+        'payment_method': payment_method,
+        'payment_reference': payment_reference or f'ENR-{enrollment.id}',
+        'payment_date': payment_date,
+        'payment_status': payment_status,
+    }
+
+
 def send_enrollment_payment_notification(
     enrollment,
     payment_status: str,
@@ -294,6 +344,7 @@ def send_enrollment_payment_notification(
 
         # Build cohort info for email template
         cohort_info = None
+        application_end_date = None
         window = enrollment.application_window
         if window:
             cohort_info = {
@@ -302,34 +353,60 @@ def send_enrollment_payment_notification(
                 'cohort_end_date': window.cohort_end,
                 'timezone': 'UTC',
             }
+            # Get application window close date (when application period ends)
+            application_end_date = window.closes_at
 
         if payment_status == 'completed':
-            # Resolve payment amount from window or course (Enrollment model has no amount column)
-            window = enrollment.application_window
-            if window:
-                amount = window.get_effective_price() or 0
-                currency = window.get_effective_currency() or 'USD'
-            elif course:
-                amount = course.price or 0
-                currency = course.currency or 'USD'
-            else:
-                amount = 0
-                currency = 'USD'
+            payment_details = _get_payment_info_from_enrollment(enrollment)
 
-            payment_details = {
-                'amount_paid': amount,
-                'currency': currency,
-                'payment_method': 'Manual Payment',
-                'payment_reference': f'ENR-{enrollment.id}',
-                'payment_date': datetime.utcnow(),
-            }
             email_html = enrollment_payment_confirmed_email(
                 enrollment=enrollment,
                 course_title=course_title,
                 payment_details=payment_details,
                 cohort_info=cohort_info,
+                application_end_date=application_end_date,
             )
-            subject = f"✅ Payment Verified - Welcome to {course_title}! 🎉"
+            subject = f"✅ Payment Verified - Your Spot in {course_title} is Confirmed! 🎉"
+
+            # Generate PDF payment slip attachment
+            pdf_attachment = None
+            if PAYMENT_SLIP_AVAILABLE and generate_payment_slip_pdf:
+                try:
+                    student_name = f"{student.first_name} {student.last_name}".strip() if student else "Student"
+                    student_phone = getattr(student, 'phone_number', None) or ""
+                    window = enrollment.application_window
+                    cohort_label = window.cohort_label if window else None
+                    cohort_start = window.cohort_start if window else None
+                    cohort_end = window.cohort_end if window else None
+                    admin_name = "Administrator"
+
+                    pdf_bytes, pdf_filename = generate_payment_slip_pdf(
+                        student_name=student_name,
+                        student_email=student.email,
+                        student_phone=student_phone,
+                        course_title=course_title,
+                        cohort_label=cohort_label,
+                        cohort_start_date=cohort_start,
+                        cohort_end_date=cohort_end,
+                        amount_paid=payment_details.get('amount_paid', 0),
+                        currency=payment_details.get('currency', 'USD'),
+                        payment_method=payment_details.get('payment_method', 'Manual Payment'),
+                        payment_reference=payment_details.get('payment_reference', ''),
+                        payment_date=payment_details.get('payment_date'),
+                        payment_status='completed',
+                        enrollment_id=enrollment.id,
+                        admin_name=admin_name,
+                    )
+                    # Base64 encode the PDF for Brevo attachment
+                    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                    pdf_attachment = [{
+                        'name': pdf_filename,
+                        'content': pdf_base64,
+                    }]
+                    logger.info(f"📄 Payment slip PDF generated: {pdf_filename} for enrollment #{enrollment.id}")
+                except Exception as slip_err:
+                    logger.warning(f"⚠️ Failed to generate payment slip PDF: {slip_err}")
+                    pdf_attachment = None
 
         elif payment_status == 'waived':
             waiver_details = {'reason': notes or ''} if notes else {}
@@ -355,11 +432,16 @@ def send_enrollment_payment_notification(
             logger.info(f"No email template for enrollment payment status '{payment_status}' - skipping")
             return False
 
-        success = brevo_service.send_email(
-            to_emails=[student.email],
-            subject=subject,
-            html_content=email_html
-        )
+        # Prepare email kwargs with optional PDF attachment
+        email_kwargs = {
+            'to_emails': [student.email],
+            'subject': subject,
+            'html_content': email_html,
+        }
+        if payment_status == 'completed' and pdf_attachment:
+            email_kwargs['attachments'] = pdf_attachment
+
+        success = brevo_service.send_email(**email_kwargs)
 
         if success:
             logger.info(f"📧 Enrollment payment '{payment_status}' email sent to {student.email} for enrollment #{enrollment.id}")
@@ -486,40 +568,37 @@ def send_enrollment_payment_admin_alert(
 
 def get_payment_info_from_application_window(application_window) -> Dict:
     """
-    Extract payment information from ApplicationWindow for email templates
-    
+    Extract payment information from ApplicationWindow for email templates.
+    Properly handles cohort-level pricing and scholarship discounts.
+
     Args:
         application_window: ApplicationWindow object
-    
+
     Returns:
         dict: Payment information dictionary
     """
     try:
         payment_info = {}
-        
-        # Get enrollment type
-        enrollment_type = getattr(application_window, 'enrollment_type', 'free')
+
+        # Get enrollment type (cohort-level override or inherit from course)
+        enrollment_type = application_window.get_effective_enrollment_type() if hasattr(application_window, 'get_effective_enrollment_type') else getattr(application_window, 'enrollment_type', 'free')
         payment_info['enrollment_type'] = enrollment_type
-        
-        # Get pricing information
+
+        # Get pricing using ApplicationWindow's effective methods (handles scholarship)
         if enrollment_type in ['paid', 'scholarship']:
-                payment_info['amount'] = float(getattr(application_window, 'cohort_price', 0) or 0)
-                payment_info['currency'] = getattr(application_window, 'cohort_currency', 'USD') or 'USD'
-                payment_info['original_price'] = float(getattr(application_window, 'cohort_price', 0) or 0)
-                
-                # Check for scholarship
-                scholarship_type = getattr(application_window, 'scholarship_type', None)
-                scholarship_pct = float(getattr(application_window, 'scholarship_percentage', 0) or 0)
-                
-                if scholarship_type and scholarship_pct:
-                    payment_info['scholarship_type'] = scholarship_type
-                    payment_info['scholarship_percentage'] = scholarship_pct
-                    
-                    # Calculate effective price after scholarship
-                    if scholarship_type == 'full':
-                        payment_info['amount'] = 0.0
-                    elif scholarship_type == 'partial' and scholarship_pct > 0:
-                        original = float(payment_info['amount'])
+            effective_price = application_window.get_effective_price() if hasattr(application_window, 'get_effective_price') else 0
+            effective_currency = application_window.get_effective_currency() if hasattr(application_window, 'get_effective_currency') else 'USD'
+
+            payment_info['amount'] = float(effective_price or 0)
+            payment_info['currency'] = effective_currency or 'USD'
+            payment_info['original_price'] = float(getattr(application_window, 'price', 0) or (application_window.course.price if application_window.course else 0))
+
+            # Attach scholarship metadata for email templates
+            scholarship_type = getattr(application_window, 'scholarship_type', None)
+            scholarship_pct = getattr(application_window, 'scholarship_percentage', None)
+            if scholarship_type:
+                payment_info['scholarship_type'] = scholarship_type
+                payment_info['scholarship_percentage'] = float(scholarship_pct or 0)
         
         # Get deadline if available
         application_deadline = getattr(application_window, 'application_deadline', None)
