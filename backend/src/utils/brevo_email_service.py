@@ -60,13 +60,14 @@ class BrevoEmailService:
     
     def send_email(self, to_emails, subject, html_content=None, text_content=None, 
                    template_id=None, params=None, cc=None, bcc=None, reply_to=None,
-                   headers=None, attachments=None):
+                   headers=None, attachments=None, sender_name=None):
         """Send email using Brevo API
         
         Args:
             headers: dict - optional custom headers (e.g. List-Unsubscribe)
             attachments: list - optional list of attachment dicts with 'name' and 'content' (base64-encoded str)
                         Example: [{'name': 'receipt.pdf', 'content': base64_encoded_str}]
+            sender_name: str - optional override for sender name (defaults to self.sender_name)
         """
         if not self.is_configured:
             logger.warning("Brevo email service not configured - skipping email send")
@@ -85,7 +86,7 @@ class BrevoEmailService:
                 "to": recipients,
                 "sender": {
                     "email": self.sender_email,
-                    "name": self.sender_name
+                    "name": sender_name or self.sender_name
                 },
                 "subject": subject
             }

@@ -634,7 +634,7 @@ def update_application_status(app_id):
         application.reviewer_notes = data.get('note')
         
         if data.get('interview_date'):
-            application.interview_date = datetime.fromisoformat(data['interview_date'])
+            application.interview_date = data['interview_date']
         
         # Save interview meeting link and platform
         if data.get('interview_meeting_link'):
@@ -654,12 +654,45 @@ def update_application_status(app_id):
         db.session.add(status_log)
         db.session.commit()
         
-        # Send email notification
+        # Send email notifications
         user = User.query.get(user_id)
+        changed_by_name = f"{user.first_name} {user.last_name}" if user else 'Admin'
+        
+        # Notify applicant about status change
         if new_status == ApplicationStatusEnum.INTERVIEW_SCHEDULED:
             mailer.send_interview_scheduled(application, data.get('note'))
         else:
             mailer.send_status_update(application, old_status, new_status, data.get('note'))
+        
+        # Notify admin when application is accepted (for onboarding prep)
+        if new_status == ApplicationStatusEnum.ACCEPTED:
+            try:
+                mailer.send_admin_application_accepted_alert(application, changed_by_name=changed_by_name)
+            except Exception as admin_mail_err:
+                logger.warning(f"Failed to send admin accepted alert: {admin_mail_err}")
+        
+        # Notify admins when interview details (date/platform/link) are set or changed
+        has_interview_details = any(k in data for k in ('interview_date', 'interview_meeting_link', 'interview_meeting_platform'))
+        if has_interview_details:
+            try:
+                interview_date_obj = data.get('interview_date')
+                if interview_date_obj:
+                    try:
+                        formatted_date = interview_date_obj.strftime('%d %B %Y at %I:%M %p')
+                    except (ValueError, TypeError):
+                        formatted_date = str(interview_date_obj)
+                else:
+                    formatted_date = None
+
+                mailer.send_admin_interview_details_updated(
+                    application,
+                    updated_by_name=changed_by_name,
+                    interview_date=formatted_date,
+                    meeting_platform=data.get('interview_meeting_platform'),
+                    meeting_link=data.get('interview_meeting_link'),
+                )
+            except Exception as int_mail_err:
+                logger.warning(f"Failed to send admin interview details alert: {int_mail_err}")
         
         return success_response('Status updated successfully', application.to_dict())
     except Exception as e:
@@ -827,8 +860,11 @@ def export_applications_csv():
 @internships_bp.route('/admin/applications/<app_id>/interview-notes', methods=['PUT'])
 @role_required(['admin', 'staff'])
 def update_interview_notes(app_id):
-    """Update interview notes for an application."""
+    """Update interview notes for an application.
+    Notifies other admins via email so they stay in the loop.
+    """
     try:
+        user_id = int(get_jwt_identity())
         application = InternshipApplication.query.get(app_id)
         if not application:
             return error_response('Application not found', status_code=404)
@@ -838,6 +874,14 @@ def update_interview_notes(app_id):
 
         application.interview_notes = interview_notes
         db.session.commit()
+
+        # Notify other admins that interview notes were updated
+        try:
+            user = User.query.get(user_id)
+            updated_by_name = f"{user.first_name} {user.last_name}" if user else 'Admin'
+            mailer.send_admin_interview_notes_updated(application, updated_by_name=updated_by_name)
+        except Exception as mail_err:
+            logger.warning(f"Failed to send admin interview notes alert: {mail_err}")
 
         return success_response('Interview notes updated', {'interview_notes': interview_notes})
     except Exception as e:
@@ -1226,6 +1270,15 @@ def batch_update_status():
                 except Exception as mail_err:
                     logger.warning(f"Failed to send status email for {app_id}: {mail_err}")
 
+                # Notify admin when application is accepted (for onboarding prep)
+                if new_status == ApplicationStatusEnum.ACCEPTED:
+                    try:
+                        admin_user = User.query.get(user_id)
+                        changed_by_name = f"{admin_user.first_name} {admin_user.last_name}" if admin_user else 'Admin'
+                        mailer.send_admin_application_accepted_alert(application, changed_by_name=changed_by_name)
+                    except Exception as admin_mail_err:
+                        logger.warning(f"Failed to send admin accepted alert for {app_id}: {admin_mail_err}")
+
             except Exception as e:
                 results['errors'].append({'id': app_id, 'reason': str(e)})
                 logger.error(f"Error processing batch update for {app_id}: {str(e)}")
@@ -1275,6 +1328,7 @@ def batch_assign_cohort():
 
         results = {'updated': [], 'skipped': [], 'errors': []}
         spots_remaining = cohort.capacity - cohort.get_accepted_count() if cohort.capacity else None
+        assigned_applications = []
 
         for app_id in application_ids:
             try:
@@ -1309,12 +1363,32 @@ def batch_assign_cohort():
                     'name': application.full_name,
                     'cohort_code': cohort.cohort_code,
                 })
+                assigned_applications.append(application)
 
             except Exception as e:
                 results['errors'].append({'id': app_id, 'reason': str(e)})
                 logger.error(f"Error processing batch assign for {app_id}: {str(e)}")
 
         db.session.commit()
+
+        # Send cohort assignment emails to all assigned applicants
+        if assigned_applications:
+            try:
+                current_user_id = int(get_jwt_identity())
+                admin_user = User.query.get(current_user_id)
+                assigned_by_name = f"{admin_user.first_name} {admin_user.last_name}" if admin_user else 'Admin'
+                cohort_name = cohort.cohort_name or cohort.cohort_code
+                for app in assigned_applications:
+                    try:
+                        mailer.send_cohort_assigned(
+                            app,
+                            cohort_name=cohort_name,
+                            assigned_by_name=assigned_by_name
+                        )
+                    except Exception as mail_err:
+                        logger.warning(f"Failed to send cohort assignment email for {app.id}: {mail_err}")
+            except Exception as mail_err:
+                logger.warning(f"Failed to send batch cohort assignment emails: {mail_err}")
 
         logger.info(f"Batch cohort assign: {len(results['updated'])} assigned, {len(results['skipped'])} skipped, {len(results['errors'])} errors")
 

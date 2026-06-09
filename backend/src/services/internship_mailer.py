@@ -85,6 +85,44 @@ class InternshipMailer:
             logger.error(f"Error sending admin alert: {str(e)}")
             return False
     
+    def send_admin_application_accepted_alert(self, application, changed_by_name='Admin'):
+        """
+        Send notification to admin when an application is accepted so they can
+        prepare onboarding materials, assign cohort, and generate offer letter.
+        """
+        try:
+            subject = f'🎉 Application Accepted - {application.full_name} - {application.reference_code}'
+            
+            html_content = render_template_string(self._get_admin_accepted_alert_template(),
+                reference_code=application.reference_code,
+                full_name=application.full_name,
+                email=application.email,
+                phone=application.phone,
+                track_name=application.track.name if application.track else 'Unknown',
+                applicant_type=application.applicant_type.value.replace('_', ' ').title() if application.applicant_type else 'N/A',
+                application_date=application.created_at.strftime('%d %B %Y'),
+                accepted_date=application.reviewed_at.strftime('%d %B %Y %H:%M') if application.reviewed_at else datetime.utcnow().strftime('%d %B %Y %H:%M'),
+                changed_by_name=changed_by_name,
+                admin_link=f'{current_app.config.get("FRONTEND_URL", "")}/admin/internships/applications/{application.id}',
+            )
+            
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': self.admin_email, 'name': 'AfriTech Bridge Admin'}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+            
+            if success:
+                logger.info(f"Admin accepted alert sent for {application.reference_code}")
+            else:
+                logger.warning(f"Failed to send admin accepted alert for {application.reference_code}")
+            
+            return success
+        except Exception as e:
+            logger.error(f"Error sending admin accepted alert: {str(e)}")
+            return False
+    
     def send_status_update(self, application, old_status, new_status, note=None):
         """
         Send status update email to applicant.
@@ -159,74 +197,227 @@ class InternshipMailer:
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { color: #1a2d5a; text-align: center; margin-bottom: 30px; }
-        .header h1 { margin: 0; font-size: 28px; }
-        .content { color: #333; line-height: 1.6; }
-        .reference-box { background-color: #e8f4f8; border-left: 4px solid #1ab3a8; padding: 20px; margin: 20px 0; border-radius: 4px; }
-        .reference-box .label { color: #666; font-size: 14px; }
-        .reference-box .code { font-size: 24px; font-weight: bold; color: #1ab3a8; font-family: 'Courier New', monospace; }
-        .details { background-color: #f9f9f9; padding: 20px; margin: 20px 0; border-radius: 4px; }
-        .detail-row { margin: 10px 0; }
-        .detail-label { color: #666; font-weight: bold; }
-        .detail-value { color: #333; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
-        .button { display: inline-block; background-color: #1ab3a8; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-        .accent { color: #1ab3a8; font-weight: bold; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #14b8a6 100%);
+            padding: 40px 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(20,184,166,0.15) 0%, transparent 50%);
+        }
+        .header-content { position: relative; z-index: 1; }
+        .header .icon { font-size: 48px; margin-bottom: 12px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 15px; }
+        .body-content {
+            padding: 36px;
+            color: #334155;
+        }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 12px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .accent { color: #14b8a6; font-weight: bold; }
+        .reference-card {
+            background: linear-gradient(135deg, #eff6ff 0%, #f0fdfa 100%);
+            border: 2px solid #14b8a6;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .reference-card .label {
+            color: #64748b;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .reference-card .code {
+            font-size: 28px;
+            font-weight: bold;
+            color: #0f172a;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 2px;
+            margin: 8px 0;
+        }
+        .reference-card .hint { color: #64748b; font-size: 13px; }
+        .details-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 20px 0;
+        }
+        .detail-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .detail-item .dlabel {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+        .detail-item .dvalue {
+            font-size: 14px;
+            color: #0f172a;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+        .timeline {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .timeline h3 { color: #0f172a; font-size: 16px; margin-bottom: 16px; text-align: center; }
+        .step {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 10px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .step:last-child { border-bottom: none; }
+        .step-num {
+            width: 28px; height: 28px;
+            background: linear-gradient(135deg, #14b8a6, #0d9488);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-size: 13px; font-weight: 700;
+            flex-shrink: 0;
+        }
+        .step-content { flex: 1; }
+        .step-content .s-title { font-weight: 600; color: #0f172a; font-size: 14px; }
+        .step-content .s-desc { color: #64748b; font-size: 13px; margin-top: 2px; }
+        .status-track {
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            text-align: center;
+        }
+        .status-track p { color: #92400e; font-size: 13px; margin: 0; }
+        .footer {
+            background: #0f172a;
+            padding: 28px 36px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; margin: 0; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+            .details-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Application Received! 🎉</h1>
+            <div class="header-content">
+                <span class="icon">🎉</span>
+                <h1>Application Received!</h1>
+                <p>Your journey with AfriTech Bridge begins here</p>
+            </div>
         </div>
-        
-        <div class="content">
-            <p>Hi {{ full_name }},</p>
-            
-            <p>Thank you for submitting your internship application to AfriTech Bridge! We're excited to review your profile.</p>
-            
-            <div class="reference-box">
-                <div class="label">Your Application Reference Code:</div>
+        <div class="body-content">
+            <h2>Hi {{ full_name }},</h2>
+            <p>Thank you for submitting your application to the <strong>{{ track_name }}</strong> internship program! We're thrilled about your interest and can't wait to review your profile.</p>
+
+            <div class="reference-card">
+                <div class="label">Your Application Reference Code</div>
                 <div class="code">{{ reference_code }}</div>
-                <p style="margin: 10px 0 0 0; color: #666; font-size: 13px;">Save this code to check your application status anytime</p>
+                <div class="hint">📌 Save this code to check your application status anytime</div>
             </div>
-            
-            <div class="details">
-                <div class="detail-row">
-                    <span class="detail-label">Track Applied For:</span>
-                    <span class="detail-value">{{ track_name }}</span>
+
+            <div class="details-grid">
+                <div class="detail-item">
+                    <div class="dlabel">Program Track</div>
+                    <div class="dvalue">{{ track_name }}</div>
                 </div>
-                <div class="detail-row">
-                    <span class="detail-label">Application Date:</span>
-                    <span class="detail-value">{{ application_date }}</span>
+                <div class="detail-item">
+                    <div class="dlabel">Submitted On</div>
+                    <div class="dvalue">{{ application_date }}</div>
                 </div>
             </div>
-            
-            <h3 style="color: #1a2d5a;">What Happens Next?</h3>
-            <ol>
-                <li><span class="accent">Review (1-2 weeks)</span> - Our team will review your application</li>
-                <li><span class="accent">Shortlisting</span> - If selected, you'll be notified to proceed to interviews</li>
-                <li><span class="accent">Interview</span> - Meet our team members</li>
-                <li><span class="accent">Final Decision</span> - We'll inform you of the outcome</li>
-            </ol>
-            
-            <p><strong>Check your application status:</strong></p>
-            <p style="background-color: #f0f0f0; padding: 10px; border-radius: 4px;">
-                Visit our portal and enter your reference code <span class="accent">{{ reference_code }}</span> to track your progress.
-            </p>
-            
-            <p style="margin-top: 30px;">If you have any questions, don't hesitate to reach out to us.</p>
-            
+
+            <div class="timeline">
+                <h3>🚀 What Happens Next?</h3>
+                <div class="step">
+                    <div class="step-num">1</div>
+                    <div class="step-content">
+                        <div class="s-title">Application Review</div>
+                        <div class="s-desc">Our team carefully reviews your profile and motivation (1-2 weeks)</div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-num">2</div>
+                    <div class="step-content">
+                        <div class="s-title">Shortlisting</div>
+                        <div class="s-desc">If selected, you'll be invited to the next stage</div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-num">3</div>
+                    <div class="step-content">
+                        <div class="s-title">Interview</div>
+                        <div class="s-desc">Meet our team and discuss your potential</div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-num">4</div>
+                    <div class="step-content">
+                        <div class="s-title">Final Decision</div>
+                        <div class="s-desc">We'll notify you of the outcome via email</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-track">
+                <p>🔍 <strong>Track your progress:</strong> Visit our portal and enter <strong>{{ reference_code }}</strong> to see your application status in real time.</p>
+            </div>
+
+            <p>If you have any questions, feel free to reach out to us at <a href="mailto:info@afritechbridge.online" style="color: #14b8a6;">info@afritechbridge.online</a>.</p>
+
             <p>Best regards,<br/>
-            <span class="accent">AfriTech Bridge Team</span></p>
+            <strong style="color: #14b8a6;">AfriTech Bridge Team</strong></p>
         </div>
-        
         <div class="footer">
-            <p>© 2026 AfriTech Bridge. All rights reserved.</p>
-            <p>This is an automated email. Please do not reply directly to this message.</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+            <p style="margin-top: 6px;">© 2026 AfriTech Bridge. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -239,114 +430,986 @@ class InternshipMailer:
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { color: #f47c20; text-align: center; margin-bottom: 30px; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .details { background-color: #f9f9f9; padding: 20px; margin: 20px 0; border-radius: 4px; }
-        .detail-row { margin: 10px 0; display: flex; }
-        .detail-label { color: #666; font-weight: bold; width: 120px; }
-        .detail-value { color: #333; flex: 1; }
-        .button { display: inline-block; background-color: #1ab3a8; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 30px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            padding: 36px 30px;
+            text-align: center;
+        }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 14px; }
+        .body-content { padding: 32px; color: #334155; }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 16px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .applicant-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .info-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .info-row .ilabel {
+            font-weight: 600;
+            color: #64748b;
+            width: 100px;
+            font-size: 13px;
+        }
+        .info-row .ivalue {
+            color: #0f172a;
+            font-weight: 500;
+            font-size: 14px;
+            flex: 1;
+        }
+        .cta-button {
+            display: block;
+            text-align: center;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 700;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(245,158,11,0.3);
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+            .info-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .info-row .ilabel { width: auto; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>⚡ New Application Received</h1>
+            <p>{{ full_name }}</p>
         </div>
-        
-        <div class="details">
-            <div class="detail-row">
-                <span class="detail-label">Name:</span>
-                <span class="detail-value">{{ full_name }}</span>
+        <div class="body-content">
+            <p>A new internship application requires your attention. Review the applicant details below.</p>
+
+            <div class="applicant-card">
+                <div class="info-row">
+                    <span class="ilabel">👤 Name</span>
+                    <span class="ivalue"><strong>{{ full_name }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📧 Email</span>
+                    <span class="ivalue">{{ email }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📞 Phone</span>
+                    <span class="ivalue">{{ phone }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">🎯 Track</span>
+                    <span class="ivalue">{{ track_name }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📋 Type</span>
+                    <span class="ivalue">{{ applicant_type }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">🆔 Ref Code</span>
+                    <span class="ivalue" style="font-family: monospace; font-weight: 700; color: #14b8a6;">{{ reference_code }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📅 Submitted</span>
+                    <span class="ivalue">{{ application_date }}</span>
+                </div>
             </div>
-            <div class="detail-row">
-                <span class="detail-label">Email:</span>
-                <span class="detail-value">{{ email }}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Phone:</span>
-                <span class="detail-value">{{ phone }}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Track:</span>
-                <span class="detail-value">{{ track_name }}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Type:</span>
-                <span class="detail-value">{{ applicant_type }}</span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Ref Code:</span>
-                <span class="detail-value"><strong>{{ reference_code }}</strong></span>
-            </div>
-            <div class="detail-row">
-                <span class="detail-label">Submitted:</span>
-                <span class="detail-value">{{ application_date }}</span>
-            </div>
+
+            <a href="{{ admin_link }}" class="cta-button">🔍 Review Application →</a>
+
+            <p style="text-align: center; color: #94a3b8; font-size: 13px;">Log in to the admin panel to review, shortlist, or schedule an interview.</p>
         </div>
-        
-        <p style="text-align: center;">
-            <a href="{{ admin_link }}" class="button">Review Application →</a>
-        </p>
-        
         <div class="footer">
-            <p>Log in to the admin panel to review, shortlist, or schedule an interview.</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
         </div>
     </div>
 </body>
 </html>
 '''
     
+    def _get_admin_accepted_alert_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            padding: 40px 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(16,185,129,0.2) 0%, transparent 50%);
+        }
+        .header-content { position: relative; z-index: 1; }
+        .header .icon { font-size: 48px; margin-bottom: 10px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 14px; }
+        .body-content { padding: 32px; color: #334155; }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 16px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .celebration-banner {
+            background: linear-gradient(135deg, #f0fdfa 0%, #ecfdf5 100%);
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 16px 0;
+            text-align: center;
+        }
+        .celebration-banner .big {
+            font-size: 20px;
+            font-weight: 700;
+            color: #065f46;
+            margin-bottom: 6px;
+        }
+        .celebration-banner p { color: #065f46; font-size: 14px; margin: 0; }
+        .applicant-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .info-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .info-row .ilabel {
+            font-weight: 600;
+            color: #64748b;
+            width: 100px;
+            font-size: 13px;
+        }
+        .info-row .ivalue {
+            color: #0f172a;
+            font-weight: 500;
+            font-size: 14px;
+            flex: 1;
+        }
+        .action-checklist {
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .action-checklist h3 {
+            color: #92400e;
+            font-size: 15px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .action-checklist .item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .action-checklist .item:last-child { margin-bottom: 0; }
+        .action-checklist .item .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .action-checklist .item .dot.assign { background: #3b82f6; }
+        .action-checklist .item .dot.offer { background: #10b981; }
+        .action-checklist .item .dot.onboard { background: #f59e0b; }
+        .action-checklist .item-text { color: #78350f; font-size: 13px; }
+        .cta-button {
+            display: block;
+            text-align: center;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 700;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(5,150,105,0.3);
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+            .info-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .info-row .ilabel { width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-content">
+                <span class="icon">🎉</span>
+                <h1>Application Accepted!</h1>
+                <p>Onboarding actions required for {{ full_name }}</p>
+            </div>
+        </div>
+        <div class="body-content">
+            <p>An internship applicant has been accepted. Please take the necessary steps to prepare onboarding materials.</p>
+
+            <div class="celebration-banner">
+                <div class="big">✅ Accepted by {{ changed_by_name }}</div>
+                <p>{{ accepted_date }}</p>
+            </div>
+
+            <div class="applicant-card">
+                <div class="info-row">
+                    <span class="ilabel">👤 Name</span>
+                    <span class="ivalue"><strong>{{ full_name }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📧 Email</span>
+                    <span class="ivalue">{{ email }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📞 Phone</span>
+                    <span class="ivalue">{{ phone }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">🎯 Track</span>
+                    <span class="ivalue"><strong>{{ track_name }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📋 Type</span>
+                    <span class="ivalue">{{ applicant_type }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">🆔 Ref Code</span>
+                    <span class="ivalue" style="font-family: monospace; font-weight: 700; color: #059669;">{{ reference_code }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📅 Applied</span>
+                    <span class="ivalue">{{ application_date }}</span>
+                </div>
+            </div>
+
+            <div class="action-checklist">
+                <h3>📋 Next Steps — Prepare Onboarding</h3>
+                <div class="item">
+                    <span class="dot assign"></span>
+                    <span class="item-text"><strong>Assign to a cohort</strong> — Select a cohort with available spots for this track</span>
+                </div>
+                <div class="item">
+                    <span class="dot offer"></span>
+                    <span class="item-text"><strong>Generate offer letter</strong> — Create a tamper-proof PDF offer with login credentials</span>
+                </div>
+                <div class="item">
+                    <span class="dot onboard"></span>
+                    <span class="item-text"><strong>Schedule orientation</strong> — Prepare onboarding materials and welcome the new intern</span>
+                </div>
+            </div>
+
+            <a href="{{ admin_link }}" class="cta-button">🚀 Go to Application →</a>
+
+            <p style="text-align: center; color: #94a3b8; font-size: 13px;">Open the application in the admin panel to assign cohort and generate offer letter.</p>
+        </div>
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+    
+    def _get_admin_interview_details_updated_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #0891b2 100%);
+            padding: 36px 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(8,145,178,0.2) 0%, transparent 50%);
+        }
+        .header-content { position: relative; z-index: 1; }
+        .header .icon { font-size: 44px; margin-bottom: 10px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 14px; }
+        .body-content { padding: 32px; color: #334155; }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 16px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .updated-by-banner {
+            background: linear-gradient(135deg, #ecfeff 0%, #cffafe 100%);
+            border: 2px solid #0891b2;
+            border-radius: 12px;
+            padding: 18px 24px;
+            margin: 16px 0;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .updated-by-banner .avatar {
+            width: 44px; height: 44px;
+            background: linear-gradient(135deg, #0891b2, #0e7490);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px; flex-shrink: 0;
+        }
+        .updated-by-banner .info { flex: 1; }
+        .updated-by-banner .info .who {
+            font-weight: 700; color: #164e63; font-size: 15px;
+        }
+        .updated-by-banner .info .when {
+            color: #0891b2; font-size: 13px; margin-top: 2px;
+        }
+        .applicant-card {
+            background: #f8fafc; border: 1px solid #e2e8f0;
+            border-radius: 12px; padding: 20px; margin: 16px 0;
+        }
+        .info-row {
+            display: flex; align-items: center;
+            padding: 10px 14px; background: white;
+            border-radius: 8px; margin-bottom: 6px;
+        }
+        .info-row .ilabel {
+            font-weight: 600; color: #64748b;
+            width: 100px; font-size: 13px;
+        }
+        .info-row .ivalue {
+            color: #0f172a; font-weight: 500;
+            font-size: 14px; flex: 1;
+        }
+        .details-card {
+            background: #f0fdfa; border: 2px solid #14b8a6;
+            border-radius: 12px; padding: 20px; margin: 16px 0;
+        }
+        .details-card .details-header {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+        }
+        .details-card .details-header h3 {
+            color: #065f46; font-size: 15px; font-weight: 700;
+        }
+        .details-card .details-header .badge-updated {
+            background: #14b8a6; color: white; font-size: 10px; font-weight: 700;
+            padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .detail-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 14px; background: rgba(255,255,255,0.8);
+            border-radius: 8px; margin-bottom: 6px;
+        }
+        .detail-row:last-child { margin-bottom: 0; }
+        .detail-row .dicon { font-size: 16px; width: 24px; text-align: center; }
+        .detail-row .dlabel { font-weight: 600; color: #065f46; width: 110px; font-size: 13px; }
+        .detail-row .dvalue { color: #0f172a; font-weight: 500; font-size: 14px; flex: 1; }
+        .detail-row .dvalue .link {
+            color: #0891b2; font-weight: 600; word-break: break-all;
+        }
+        .detail-row .dvalue .na { color: #94a3b8; font-style: italic; }
+        .cta-button {
+            display: block; text-align: center;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%);
+            color: #ffffff !important; text-decoration: none;
+            border-radius: 10px; font-size: 15px; font-weight: 700;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(8,145,178,0.3);
+        }
+        .footer {
+            background: #0f172a; padding: 24px 32px; text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+            .info-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .info-row .ilabel { width: auto; }
+            .updated-by-banner { flex-direction: column; text-align: center; }
+            .detail-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .detail-row .dlabel { width: auto; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-content">
+                <span class="icon">&#128197;</span>
+                <h1>Interview Details Updated</h1>
+                <p>{{ full_name }} &mdash; {{ track_name }}</p>
+            </div>
+        </div>
+        <div class="body-content">
+            <p>Interview details have been updated for an internship applicant. Review the latest information below.</p>
+            <div class="updated-by-banner">
+                <div class="avatar">&#9998;&#65039;</div>
+                <div class="info">
+                    <div class="who">Updated by {{ updated_by_name }}</div>
+                    <div class="when">{{ updated_at }}</div>
+                </div>
+            </div>
+            <div class="applicant-card">
+                <div class="info-row">
+                    <span class="ilabel">&#128100; Name</span>
+                    <span class="ivalue"><strong>{{ full_name }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">&#128231; Email</span>
+                    <span class="ivalue">{{ email }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">&#128222; Phone</span>
+                    <span class="ivalue">{{ phone }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">&#127919; Track</span>
+                    <span class="ivalue">{{ track_name }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">&#128203; Type</span>
+                    <span class="ivalue">{{ applicant_type }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">&#127987; Ref Code</span>
+                    <span class="ivalue" style="font-family: monospace; font-weight: 700; color: #0891b2;">{{ reference_code }}</span>
+                </div>
+            </div>
+            <div class="details-card">
+                <div class="details-header">
+                    <h3>&#128203; Interview Details</h3>
+                    <span class="badge-updated">Updated</span>
+                </div>
+                <div class="detail-row">
+                    <span class="dicon">&#128197;</span>
+                    <span class="dlabel">Date &amp; Time</span>
+                    <span class="dvalue">{{ interview_date }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="dicon">&#128187;</span>
+                    <span class="dlabel">Platform</span>
+                    <span class="dvalue">{{ meeting_platform }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="dicon">&#128279;</span>
+                    <span class="dlabel">Meeting Link</span>
+                    <span class="dvalue">
+                        {% if meeting_link and meeting_link != 'Not provided' %}
+                        <a href="{{ meeting_link }}" class="link" target="_blank">{{ meeting_link }}</a>
+                        {% else %}
+                        <span class="na">Not provided</span>
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+            <a href="{{ admin_link }}" class="cta-button">&#128269; View Full Application</a>
+            <p style="text-align: center; color: #94a3b8; font-size: 13px;">
+                Open in admin panel to see the complete application and interview history.
+            </p>
+        </div>
+        <div class="footer">
+            <p class="brand">&#10026; AFRITECH BRIDGE &#10026;</p>
+            <p>Empowering the next generation of African tech leaders</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
+
+    def _get_admin_interview_notes_updated_template(self):
+        return '''
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            padding: 36px 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(99,102,241,0.2) 0%, transparent 50%);
+        }
+        .header-content { position: relative; z-index: 1; }
+        .header .icon { font-size: 44px; margin-bottom: 10px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 14px; }
+        .body-content { padding: 32px; color: #334155; }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 16px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .updated-by-banner {
+            background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+            border: 2px solid #6366f1;
+            border-radius: 12px;
+            padding: 18px 24px;
+            margin: 16px 0;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .updated-by-banner .avatar {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+        .updated-by-banner .info { flex: 1; }
+        .updated-by-banner .info .who {
+            font-weight: 700;
+            color: #1e1b4b;
+            font-size: 15px;
+        }
+        .updated-by-banner .info .when {
+            color: #6366f1;
+            font-size: 13px;
+            margin-top: 2px;
+        }
+        .applicant-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .info-row {
+            display: flex;
+            align-items: center;
+            padding: 10px 14px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 6px;
+        }
+        .info-row .ilabel {
+            font-weight: 600;
+            color: #64748b;
+            width: 100px;
+            font-size: 13px;
+        }
+        .info-row .ivalue {
+            color: #0f172a;
+            font-weight: 500;
+            font-size: 14px;
+            flex: 1;
+        }
+        .notes-card {
+            background: #fffbeb;
+            border: 2px solid #f59e0b;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .notes-card .notes-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .notes-card .notes-header h3 {
+            color: #92400e;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        .notes-card .notes-header .badge-new {
+            background: #f59e0b;
+            color: white;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .notes-card .notes-content {
+            background: rgba(255,255,255,0.8);
+            border-radius: 8px;
+            padding: 16px;
+            color: #78350f;
+            font-size: 14px;
+            line-height: 1.7;
+            white-space: pre-wrap;
+        }
+        .notes-card .notes-content .empty {
+            color: #d97706;
+            font-style: italic;
+        }
+        .cta-button {
+            display: block;
+            text-align: center;
+            padding: 14px 24px;
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 700;
+            margin: 20px 0;
+            box-shadow: 0 4px 15px rgba(99,102,241,0.3);
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+            .info-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+            .info-row .ilabel { width: auto; }
+            .updated-by-banner { flex-direction: column; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-content">
+                <span class="icon">📝</span>
+                <h1>Interview Notes Updated</h1>
+                <p>{{ full_name }} — {{ track_name }}</p>
+            </div>
+        </div>
+        <div class="body-content">
+            <p>Interview notes have been updated for an internship applicant. Review the latest notes below.</p>
+
+            <div class="updated-by-banner">
+                <div class="avatar">✍️</div>
+                <div class="info">
+                    <div class="who">Updated by {{ updated_by_name }}</div>
+                    <div class="when">{{ updated_at }}</div>
+                </div>
+            </div>
+
+            <div class="applicant-card">
+                <div class="info-row">
+                    <span class="ilabel">👤 Name</span>
+                    <span class="ivalue"><strong>{{ full_name }}</strong></span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📧 Email</span>
+                    <span class="ivalue">{{ email }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📞 Phone</span>
+                    <span class="ivalue">{{ phone }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">🎯 Track</span>
+                    <span class="ivalue">{{ track_name }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📋 Type</span>
+                    <span class="ivalue">{{ applicant_type }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">🆔 Ref Code</span>
+                    <span class="ivalue" style="font-family: monospace; font-weight: 700; color: #6366f1;">{{ reference_code }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="ilabel">📅 Interview</span>
+                    <span class="ivalue">{{ interview_date }}</span>
+                </div>
+            </div>
+
+            <div class="notes-card">
+                <div class="notes-header">
+                    <h3>📋 Interview Notes</h3>
+                    <span class="badge-new">Updated</span>
+                </div>
+                <div class="notes-content">
+                    {{ interview_notes }}
+                </div>
+            </div>
+
+            <a href="{{ admin_link }}" class="cta-button">🔍 View Full Application →</a>
+
+            <p style="text-align: center; color: #94a3b8; font-size: 13px;">
+                Open in admin panel to see the complete interview history and take action.
+            </p>
+        </div>
+        <div class="footer">
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+        </div>
+    </div>
+</body>
+</html>
+'''
+
     def _get_shortlisted_template(self):
         return '''
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { color: #1ab3a8; text-align: center; margin-bottom: 30px; }
-        .header h1 { margin: 0; font-size: 28px; }
-        .content { color: #333; line-height: 1.6; }
-        .accent { color: #1ab3a8; font-weight: bold; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+            padding: 40px 30px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 70% 30%, rgba(168,85,247,0.2) 0%, transparent 50%);
+        }
+        .header-content { position: relative; z-index: 1; }
+        .header .icon { font-size: 52px; margin-bottom: 12px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 15px; }
+        .body-content {
+            padding: 36px;
+            color: #334155;
+        }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 12px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .accent { color: #7c3aed; font-weight: bold; }
+        .celebration-box {
+            background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+            border: 2px solid #7c3aed;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .celebration-box .big {
+            font-size: 18px;
+            font-weight: 700;
+            color: #6d28d9;
+            margin-bottom: 8px;
+        }
+        .steps-list {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .steps-list h3 { color: #0f172a; font-size: 16px; margin-bottom: 12px; }
+        .steps-list ul {
+            padding-left: 20px;
+            line-height: 2;
+            color: #475569;
+            font-size: 14px;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 28px 36px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎉 Congratulations!</h1>
+            <div class="header-content">
+                <span class="icon">🎉</span>
+                <h1>Congratulations!</h1>
+                <p>You've been shortlisted for {{ track_name }}</p>
+            </div>
         </div>
-        
-        <div class="content">
-            <p>Hi {{ full_name }},</p>
-            
-            <p>We're thrilled to let you know that you've been <span class="accent">shortlisted</span> for the {{ track_name }} internship track!</p>
-            
-            <p>Your application stood out among many qualified candidates. The next step is an interview where you'll get to meet our team and learn more about the opportunity.</p>
-            
-            <h3>Next Steps:</h3>
-            <ul>
-                <li>You'll receive interview details shortly</li>
-                <li>Prepare to discuss your experience and goals</li>
-                <li>Reach out if you have any questions</li>
-            </ul>
-            
-            <p>Your Reference Code: <span class="accent">{{ reference_code }}</span></p>
-            
-            <p>Thank you for your interest in AfriTech Bridge. We're looking forward to learning more about you!</p>
-            
+        <div class="body-content">
+            <h2>Great news, {{ full_name }}! 🎊</h2>
+            <p>We're thrilled to let you know that you've been <span class="accent">shortlisted</span> for the <strong>{{ track_name }}</strong> internship track!</p>
+            <p>Your application truly stood out among many qualified candidates. The next step is an interview where you'll get to meet our team and learn more about this exciting opportunity.</p>
+
+            <div class="celebration-box">
+                <div class="big">🌟 You're moving to the next stage!</div>
+                <p style="color: #6d28d9; margin: 0;">Reference Code: <strong>{{ reference_code }}</strong></p>
+            </div>
+
+            <div class="steps-list">
+                <h3>📋 What's Next?</h3>
+                <ul>
+                    <li>📅 <strong>Interview Scheduling</strong> — You'll receive interview details shortly</li>
+                    <li>💼 <strong>Prepare</strong> — Review your experience and goals for the discussion</li>
+                    <li>💬 <strong>Ask Questions</strong> — Reach out if you need any clarification</li>
+                </ul>
+            </div>
+
+            <p>We're looking forward to getting to know you better. Get ready for an exciting conversation!</p>
+
             <p>Best regards,<br/>
-            <span class="accent">AfriTech Bridge Team</span></p>
+            <strong style="color: #7c3aed;">AfriTech Bridge Team</strong></p>
         </div>
-        
         <div class="footer">
-            <p>© 2026 AfriTech Bridge. All rights reserved.</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+            <p style="margin-top: 6px;">© 2026 AfriTech Bridge. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -354,64 +1417,7 @@ class InternshipMailer:
 '''
     
     def _get_interview_scheduled_template(self):
-        return '''
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { color: #1a2d5a; text-align: center; margin-bottom: 30px; }
-        .header h1 { margin: 0; font-size: 28px; }
-        .content { color: #333; line-height: 1.6; }
-        .interview-box { background-color: #fff3cd; border-left: 4px solid #f47c20; padding: 20px; margin: 20px 0; border-radius: 4px; }
-        .interview-box h3 { margin: 0 0 10px 0; color: #f47c20; }
-        .accent { color: #1ab3a8; font-weight: bold; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>📅 Your Interview is Scheduled</h1>
-        </div>
-        
-        <div class="content">
-            <p>Hi {{ full_name }},</p>
-            
-            <p>We're excited to move forward with your application! Your interview has been scheduled.</p>
-            
-            <div class="interview-box">
-                <h3>Interview Details:</h3>
-                <p><strong>Date & Time:</strong> {{ interview_date }}</p>
-                <p><strong>Track:</strong> {{ track_name }}</p>
-                <p><strong>Reference Code:</strong> {{ reference_code }}</p>
-            </div>
-            
-            <h3>Preparation Tips:</h3>
-            <ul>
-                <li>Review your motivation letter and projects</li>
-                <li>Prepare questions about the internship and AfriTech Bridge</li>
-                <li>Test your internet connection and audio/video setup</li>
-                <li>Be ready 5 minutes before the scheduled time</li>
-            </ul>
-            
-            <p>{{ note }}</p>
-            
-            <p>If you have any questions or need to reschedule, please reach out as soon as possible.</p>
-            
-            <p>Looking forward to meeting you!<br/>
-            <span class="accent">AfriTech Bridge Team</span></p>
-        </div>
-        
-        <div class="footer">
-            <p>© 2026 AfriTech Bridge. All rights reserved.</p>
-        </div>
-    </div>
-</body>
-</html>
-'''
+        return self._get_interview_scheduled_enhanced_template()
     
     def _get_accepted_template(self):
         return '''
@@ -419,53 +1425,189 @@ class InternshipMailer:
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { background: linear-gradient(135deg, #1ab3a8 0%, #1a2d5a 100%); color: white; text-align: center; margin: -40px -40px 30px -40px; padding: 40px 20px; border-radius: 8px 8px 0 0; }
-        .header h1 { margin: 0; font-size: 32px; }
-        .content { color: #333; line-height: 1.6; }
-        .accent { color: #1ab3a8; font-weight: bold; }
-        .next-steps { background-color: #e8f4f8; border-left: 4px solid #1ab3a8; padding: 20px; margin: 20px 0; border-radius: 4px; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #059669 0%, #14b8a6 50%, #0f172a 100%);
+            padding: 44px 30px 36px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%; left: -50%;
+            width: 200%; height: 200%;
+            background: radial-gradient(circle at 30% 50%, rgba(20,184,166,0.2) 0%, transparent 50%);
+        }
+        .header-content { position: relative; z-index: 1; }
+        .header .icon { font-size: 56px; margin-bottom: 12px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 30px;
+            font-weight: 800;
+            margin-bottom: 6px;
+            letter-spacing: -0.5px;
+        }
+        .header p { color: rgba(255,255,255,0.9); font-size: 16px; }
+        .header .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #ffffff;
+            padding: 4px 16px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-top: 10px;
+        }
+        .body-content {
+            padding: 36px;
+            color: #334155;
+        }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 12px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .accent { color: #059669; font-weight: bold; }
+        .welcome-card {
+            background: linear-gradient(135deg, #f0fdfa 0%, #ecfdf5 100%);
+            border: 2px solid #059669;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .welcome-card .big {
+            font-size: 18px;
+            font-weight: 700;
+            color: #065f46;
+            margin-bottom: 8px;
+        }
+        .welcome-card p { color: #065f46; font-size: 14px; margin: 0; }
+        .next-steps-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .next-steps-box h3 { color: #0f172a; font-size: 16px; margin-bottom: 12px; }
+        .next-steps-box ul {
+            padding-left: 20px;
+            line-height: 2.2;
+            color: #475569;
+            font-size: 14px;
+        }
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin: 16px 0;
+        }
+        .detail-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .detail-item .dlabel {
+            font-size: 11px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+        .detail-item .dvalue {
+            font-size: 14px;
+            color: #0f172a;
+            font-weight: 600;
+            margin-top: 4px;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 28px 36px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 32px 20px; }
+            .body-content { padding: 24px; }
+            .detail-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 Welcome to AfriTech Bridge!</h1>
+            <div class="header-content">
+                <span class="icon">🚀</span>
+                <h1>Welcome to AfriTech Bridge!</h1>
+                <p>You've been accepted into the <strong>{{ track_name }}</strong> internship program</p>
+                <span class="badge">Ref: {{ reference_code }}</span>
+            </div>
         </div>
-        
-        <div class="content">
-            <p>Hi {{ full_name }},</p>
-            
-            <p>We're delighted to offer you a position in our <span class="accent">{{ track_name }}</span> internship program!</p>
-            
-            <p>Your passion, skills, and potential impressed our team, and we can't wait to have you join us on this journey to transform tech in Africa.</p>
-            
-            <div class="next-steps">
-                <h3 style="margin-top: 0; color: #1ab3a8;">What Happens Next?</h3>
-                <ul style="padding-left: 20px;">
-                    <li>You'll receive onboarding details shortly</li>
-                    <li>Internship orientation will be scheduled</li>
-                    <li>Get ready to make an impact!</li>
+        <div class="body-content">
+            <h2>Dear {{ full_name }},</h2>
+            <p>We are absolutely delighted to welcome you to the <span class="accent">{{ track_name }}</span> internship program! Your passion, skills, and potential truly impressed our team, and we can't wait to have you on board.</p>
+
+            <div class="welcome-card">
+                <div class="big">🎊 Congratulations on Your Acceptance!</div>
+                <p>You're about to embark on an exciting journey to transform tech in Africa. Your future starts here!</p>
+            </div>
+
+            <div class="detail-grid">
+                <div class="detail-item">
+                    <div class="dlabel">Program Track</div>
+                    <div class="dvalue">{{ track_name }}</div>
+                </div>
+                <div class="detail-item">
+                    <div class="dlabel">Reference Code</div>
+                    <div class="dvalue" style="font-family: monospace;">{{ reference_code }}</div>
+                </div>
+            </div>
+
+            <div class="next-steps-box">
+                <h3>📋 What Happens Next?</h3>
+                <ul>
+                    <li>📄 <strong>Offer Letter</strong> — You'll receive your official offer letter with login credentials</li>
+                    <li>🎯 <strong>Cohort Assignment</strong> — You'll be assigned to a cohort with your fellow interns</li>
+                    <li>📅 <strong>Orientation</strong> — An orientation session will be scheduled to get you started</li>
+                    <li>💪 <strong>Make an Impact</strong> — Dive into projects and start transforming ideas into reality!</li>
                 </ul>
             </div>
-            
-            <p><strong>Your Details:</strong></p>
-            <ul>
-                <li>Program: {{ track_name }}</li>
-                <li>Reference Code: <span class="accent">{{ reference_code }}</span></li>
-            </ul>
-            
-            <p>{{ note }}</p>
-            
-            <p>If you have any questions, we're here to help. Welcome aboard!<br/><br/>
-            <span class="accent">AfriTech Bridge Team</span></p>
+
+            {% if note %}
+            <div style="background: #f0fdfa; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                <p style="color: #065f46; font-style: italic; margin: 0;">{{ note }}</p>
+            </div>
+            {% endif %}
+
+            <p>If you have any questions before starting, feel free to reach out to us at <a href="mailto:info@afritechbridge.online" style="color: #059669; font-weight: 600;">info@afritechbridge.online</a>.</p>
+
+            <p>Welcome aboard! We can't wait to see the incredible things you'll achieve.<br/><br/>
+            <strong style="color: #059669;">AfriTech Bridge Team</strong></p>
         </div>
-        
         <div class="footer">
-            <p>© 2026 AfriTech Bridge. All rights reserved.</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+            <p style="margin-top: 6px;">© 2026 AfriTech Bridge. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -478,41 +1620,105 @@ class InternshipMailer:
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { color: #1a2d5a; text-align: center; margin-bottom: 30px; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { color: #333; line-height: 1.6; }
-        .accent { color: #1ab3a8; font-weight: bold; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            padding: 40px 30px;
+            text-align: center;
+        }
+        .header .icon { font-size: 48px; margin-bottom: 12px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p { color: rgba(255,255,255,0.7); font-size: 14px; }
+        .body-content {
+            padding: 36px;
+            color: #334155;
+        }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 12px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .feedback-box {
+            background: #fef2f2;
+            border: 2px solid #fca5a5;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .feedback-box h3 { color: #b91c1c; font-size: 15px; margin-bottom: 8px; }
+        .feedback-box p { color: #991b1b; font-size: 14px; margin: 0; }
+        .encourage-box {
+            background: linear-gradient(135deg, #eff6ff 0%, #f0fdfa 100%);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 24px;
+            margin: 20px 0;
+            text-align: center;
+        }
+        .encourage-box .big { font-size: 18px; font-weight: 700; color: #1e40af; margin-bottom: 8px; }
+        .encourage-box p { color: #1e40af; font-size: 14px; margin: 0; line-height: 1.6; }
+        .footer {
+            background: #0f172a;
+            padding: 28px 36px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
+            <span class="icon">💙</span>
             <h1>Application Status Update</h1>
+            <p>{{ track_name }} Internship Program</p>
         </div>
-        
-        <div class="content">
-            <p>Hi {{ full_name }},</p>
-            
-            <p>Thank you for your interest in the {{ track_name }} internship program at AfriTech Bridge. We appreciate the time and effort you invested in your application.</p>
-            
-            <p>After careful consideration, we regret to inform you that we have decided not to move forward with your application at this time.</p>
-            
-            <p><strong>Feedback:</strong> {{ rejection_reason }}</p>
-            
-            <p>We encourage you to apply again in the future. Many exceptional candidates don't make it on the first try, but their persistence pays off. Continue developing your skills, and we'd love to see you apply for future opportunities.</p>
-            
-            <p>If you'd like feedback on your application, feel free to reach out to us. We're here to support your growth.</p>
-            
-            <p>Best of luck with your career journey!<br/>
-            <span class="accent">AfriTech Bridge Team</span></p>
+        <div class="body-content">
+            <h2>Dear {{ full_name }},</h2>
+            <p>Thank you for taking the time to apply for the <strong>{{ track_name }}</strong> internship program. We truly appreciate the effort you put into your application.</p>
+            <p>After careful consideration, we regret to inform you that we are unable to move forward with your application at this time.</p>
+
+            <div class="feedback-box">
+                <h3>📝 Feedback</h3>
+                <p>{{ rejection_reason }}</p>
+            </div>
+
+            <div class="encourage-box">
+                <div class="big">🌟 This Is Not the End</div>
+                <p>Many successful candidates don't make it on their first attempt. We encourage you to continue developing your skills and apply again for future opportunities. Your persistence will pay off!</p>
+                <p style="margin-top: 12px;">If you'd like more detailed feedback, we're here to help — just reach out to us at <a href="mailto:info@afritechbridge.online" style="color: #3b82f6; font-weight: 600;">info@afritechbridge.online</a>.</p>
+            </div>
+
+            <p>We wish you the very best in your career journey and future endeavors!</p>
+
+            <p>Best regards,<br/>
+            <strong style="color: #14b8a6;">AfriTech Bridge Team</strong></p>
         </div>
-        
         <div class="footer">
-            <p>© 2026 AfriTech Bridge. All rights reserved.</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
+            <p style="margin-top: 6px;">© 2026 AfriTech Bridge. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -930,6 +2136,85 @@ class InternshipMailer:
 </html>
 '''
 
+    def send_admin_interview_details_updated(self, application, updated_by_name='Admin', interview_date=None, meeting_platform=None, meeting_link=None):
+        """
+        Send notification to admin when interview details (date, platform, link)
+        are changed via the status update route, keeping all admins in the loop.
+        """
+        try:
+            subject = f'📅 Interview Details Updated - {application.full_name} - {application.reference_code}'
+
+            html_content = render_template_string(self._get_admin_interview_details_updated_template(),
+                reference_code=application.reference_code,
+                full_name=application.full_name,
+                email=application.email,
+                phone=application.phone,
+                track_name=application.track.name if application.track else 'Unknown',
+                applicant_type=application.applicant_type.value.replace('_', ' ').title() if application.applicant_type else 'N/A',
+                interview_date=interview_date or application.interview_date.strftime('%d %B %Y at %I:%M %p') if application.interview_date else 'To be confirmed',
+                meeting_platform=meeting_platform or 'Not specified',
+                meeting_link=meeting_link or 'Not provided',
+                updated_by_name=updated_by_name,
+                updated_at=datetime.utcnow().strftime('%d %B %Y %H:%M'),
+                admin_link=f'{current_app.config.get("FRONTEND_URL", "")}/admin/internships/applications/{application.id}',
+            )
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': self.admin_email, 'name': 'AfriTech Bridge Admin'}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Admin interview details alert sent for {application.reference_code}")
+            else:
+                logger.warning(f"Failed to send admin interview details alert for {application.reference_code}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending admin interview details alert: {str(e)}")
+            return False
+
+    def send_admin_interview_notes_updated(self, application, updated_by_name='Admin'):
+        """
+        Send notification to admin when interview notes are updated on an application,
+        to keep other admins in the loop about applicant interactions.
+        """
+        try:
+            subject = f'📝 Interview Notes Updated - {application.full_name} - {application.reference_code}'
+
+            html_content = render_template_string(self._get_admin_interview_notes_updated_template(),
+                reference_code=application.reference_code,
+                full_name=application.full_name,
+                email=application.email,
+                phone=application.phone,
+                track_name=application.track.name if application.track else 'Unknown',
+                applicant_type=application.applicant_type.value.replace('_', ' ').title() if application.applicant_type else 'N/A',
+                interview_notes=application.interview_notes or 'No notes recorded',
+                interview_date=application.interview_date.strftime('%d %B %Y at %I:%M %p') if application.interview_date else 'Not scheduled',
+                updated_by_name=updated_by_name,
+                updated_at=datetime.utcnow().strftime('%d %B %Y %H:%M'),
+                admin_link=f'{current_app.config.get("FRONTEND_URL", "")}/admin/internships/applications/{application.id}',
+            )
+
+            success = self.brevo_service.send_email(
+                to_emails=[{'email': self.admin_email, 'name': 'AfriTech Bridge Admin'}],
+                subject=subject,
+                html_content=html_content,
+                sender_name=self.sender_name,
+            )
+
+            if success:
+                logger.info(f"Admin interview notes alert sent for {application.reference_code}")
+            else:
+                logger.warning(f"Failed to send admin interview notes alert for {application.reference_code}")
+
+            return success
+        except Exception as e:
+            logger.error(f"Error sending admin interview notes alert: {str(e)}")
+            return False
+
     def send_custom_email(self, application, subject, message):
         """
         Send a custom email to an applicant from the admin panel.
@@ -965,31 +2250,77 @@ class InternshipMailer:
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { border-bottom: 3px solid #1ab3a8; padding-bottom: 20px; margin-bottom: 30px; }
-        .header h1 { color: #1a2d5a; font-size: 22px; margin: 0; }
-        .content { color: #333; line-height: 1.7; }
-        .message-box { background-color: #f9f9f9; padding: 20px; border-left: 4px solid #1ab3a8; margin: 20px 0; border-radius: 4px; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: #0f172a;
+            padding: 24px 32px;
+            border-bottom: 3px solid #14b8a6;
+        }
+        .header h1 { color: #ffffff; font-size: 20px; font-weight: 700; }
+        .header .ref {
+            color: #14b8a6;
+            font-family: monospace;
+            font-size: 12px;
+            margin-top: 4px;
+        }
+        .body-content {
+            padding: 32px;
+            color: #334155;
+        }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .message-box {
+            background: #f8fafc;
+            border-left: 4px solid #14b8a6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 16px 0;
+        }
+        .message-box p { color: #0f172a; line-height: 1.8; margin: 0; }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 20px; }
+            .body-content { padding: 24px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>AfriTech Bridge</h1>
+            <div class="ref">Ref: {{ reference_code }}</div>
         </div>
-        <div class="content">
+        <div class="body-content">
             <p>Dear {{ full_name }},</p>
             <div class="message-box">
-                {{ message }}
+                <p>{{ message }}</p>
             </div>
-            <p>If you have any questions, please don't hesitate to reach out.</p>
-            <p>Best regards,<br/><strong style="color: #1ab3a8;">AfriTech Bridge Team</strong></p>
+            <p>If you have any questions, please don't hesitate to reach out to us at <a href="mailto:info@afritechbridge.online" style="color: #14b8a6;">info@afritechbridge.online</a>.</p>
+            <p>Best regards,<br/><strong style="color: #14b8a6;">AfriTech Bridge Team</strong></p>
         </div>
         <div class="footer">
-            <p>© 2026 AfriTech Bridge | Ref: {{ reference_code }}</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
         </div>
     </div>
 </body>
@@ -1835,39 +3166,116 @@ class InternshipMailer:
 <html>
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background-color: white; padding: 40px; border-radius: 8px; }
-        .header { color: #1a2d5a; text-align: center; margin-bottom: 30px; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { color: #333; line-height: 1.6; }
-        .accent { color: #1ab3a8; font-weight: bold; }
-        .footer { text-align: center; color: #999; font-size: 12px; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .header {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            padding: 36px 30px;
+            text-align: center;
+        }
+        .header .icon { font-size: 44px; margin-bottom: 10px; display: block; }
+        .header h1 {
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .header p { color: rgba(255,255,255,0.85); font-size: 14px; }
+        .body-content {
+            padding: 32px;
+            color: #334155;
+        }
+        .body-content h2 { color: #0f172a; font-size: 18px; margin-bottom: 12px; }
+        .body-content p { line-height: 1.7; margin-bottom: 16px; }
+        .status-card {
+            background: #eff6ff;
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            text-align: center;
+        }
+        .status-card .status-icon { font-size: 36px; margin-bottom: 8px; display: block; }
+        .status-card .status-text { font-size: 16px; font-weight: 700; color: #1d4ed8; }
+        .status-card .status-info { color: #64748b; font-size: 13px; margin-top: 8px; }
+        .reference-note {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 14px;
+            margin: 16px 0;
+            text-align: center;
+        }
+        .reference-note p { color: #64748b; font-size: 13px; margin: 0; }
+        .reference-note .code {
+            font-family: monospace;
+            font-weight: 700;
+            color: #2563eb;
+            font-size: 15px;
+        }
+        .footer {
+            background: #0f172a;
+            padding: 24px 32px;
+            text-align: center;
+        }
+        .footer p { color: #94a3b8; font-size: 12px; line-height: 1.6; }
+        .footer .brand { color: #14b8a6; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+        @media (max-width: 480px) {
+            .header { padding: 28px 20px; }
+            .body-content { padding: 24px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>📋 Your Application is Under Review</h1>
+            <span class="icon">🔍</span>
+            <h1>Your Application is Under Review</h1>
+            <p>{{ track_name }} Internship Program</p>
         </div>
-        
-        <div class="content">
-            <p>Hi {{ full_name }},</p>
-            
-            <p>Thank you for your interest in the {{ track_name }} internship program. We've started reviewing your application and will notify you of our decision soon.</p>
-            
-            <p>The review process typically takes 1-2 weeks. Your Reference Code is <span class="accent">{{ reference_code }}</span>.</p>
-            
-            <p>{{ note }}</p>
-            
-            <p>Keep an eye on your inbox for updates!</p>
-            
+        <div class="body-content">
+            <h2>Hi {{ full_name }},</h2>
+            <p>Great news! We've started reviewing your application for the <strong>{{ track_name }}</strong> internship program. Our team is carefully evaluating your profile and will notify you as soon as a decision has been made.</p>
+
+            <div class="status-card">
+                <span class="status-icon">⏳</span>
+                <div class="status-text">Under Review</div>
+                <div class="status-info">The review process typically takes <strong>1-2 weeks</strong>. We appreciate your patience!</div>
+            </div>
+
+            <div class="reference-note">
+                <p>Your Reference Code: <span class="code">{{ reference_code }}</span></p>
+                <p style="margin-top: 6px;">Use this code to check your status anytime on our portal.</p>
+            </div>
+
+            {% if note %}
+            <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin: 16px 0;">
+                <p style="color: #475569; font-style: italic; margin: 0;">{{ note }}</p>
+            </div>
+            {% endif %}
+
+            <p>Keep an eye on your inbox — we'll be in touch soon! 📬</p>
+
             <p>Best regards,<br/>
-            <span class="accent">AfriTech Bridge Team</span></p>
+            <strong style="color: #2563eb;">AfriTech Bridge Team</strong></p>
         </div>
-        
         <div class="footer">
-            <p>© 2026 AfriTech Bridge. All rights reserved.</p>
+            <p class="brand">✦ AFRITECH BRIDGE ✦</p>
+            <p>Empowering the next generation of African tech leaders</p>
         </div>
     </div>
 </body>

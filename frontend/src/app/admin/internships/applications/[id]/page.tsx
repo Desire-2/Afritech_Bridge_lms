@@ -768,7 +768,9 @@ const ApplicationDetailPage = () => {
                                 whatsapp: `https://wa.me/?text=${text}%20${encodeURIComponent(shareUrl)}`,
                               };
                               window.open(urls[platform.name.toLowerCase()] || shareUrl, '_blank', 'noopener,noreferrer,width=600,height=400');
-                            } catch { /* ignore */ }
+                            } catch (err: any) {
+                              showNotification('error', 'Sharing failed: ' + (err?.message || 'Unable to generate share link'));
+                            }
                           }}
                           className={`flex items-center gap-1.5 px-3 py-1.5 ${platform.color} text-white rounded-lg transition text-xs font-medium`}
                         >
