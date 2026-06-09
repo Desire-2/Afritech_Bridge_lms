@@ -1725,9 +1725,15 @@ class InternshipMailer:
 </html>
 '''
     
-    def send_offer_letter(self, application, offer, password=None):
+    def send_offer_letter(self, application, offer, password=None, is_existing_user=False):
         """
         Send an internship offer letter email with credentials and next steps.
+        
+        Args:
+            application: The InternshipApplication
+            offer: The InternshipOfferLetter
+            password: The clear-text password (None for existing users)
+            is_existing_user: Whether this applicant already had an account
         """
         try:
             frontend_url = current_app.config.get('FRONTEND_URL', 'https://study.afritechbridge.online')
@@ -1739,12 +1745,14 @@ class InternshipMailer:
                 reference_code=application.reference_code,
                 offer_number=offer.offer_number,
                 username=offer.generated_username,
-                password=password or 'Use your existing password (or use Forgot Password to reset it)',
+                password=password or 'Use your existing account password',
                 login_url=f'{frontend_url}/auth/login',
+                forgot_password_url=f'{frontend_url}/auth/forgot-password',
                 cohort_name=application.cohort.cohort_name if application.cohort else 'Your Cohort',
                 start_date=application.cohort.start_date.strftime('%d %B %Y') if application.cohort else 'TBD',
                 share_url=InternshipOfferService.get_share_url(offer),
                 verification_hash=offer.verification_hash,
+                is_existing_user=is_existing_user,
             )
 
             success = self.brevo_service.send_email(
@@ -2057,7 +2065,32 @@ class InternshipMailer:
                 </div>
             </div>
 
-            <!-- Credentials Box -->
+            {% if is_existing_user %}
+            <!-- Existing User - No New Credentials -->
+            <div class="creds-box" style="border-color: #f59e0b;">
+                <h3>🔑 Your Account</h3>
+                <div class="creds-row">
+                    <span class="creds-label">Username</span>
+                    <span class="creds-value">{{ username }}</span>
+                </div>
+                <div class="creds-row" style="background: rgba(254,243,199,0.5);">
+                    <span class="creds-label">Password</span>
+                    <span class="creds-value" style="font-family: 'Segoe UI', sans-serif; letter-spacing: 0; font-size: 13px; color: #92400e;">
+                        Use your existing password
+                    </span>
+                </div>
+                <p style="text-align: center; margin-top: 12px;">
+                    <a href="{{ forgot_password_url }}" style="display: inline-block; background: #f59e0b; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: 700;">
+                        🔑 Forgot Password? Reset It
+                    </a>
+                </p>
+                <p class="creds-note" style="color: #92400e;">
+                    ℹ️ You already have an account with us. Log in with your existing credentials.
+                    If you've forgotten your password, click the button above to reset it.
+                </p>
+            </div>
+            {% else %}
+            <!-- New User - Show Credentials -->
             <div class="creds-box">
                 <h3>🔑 Your Login Credentials</h3>
                 <div class="creds-row">
@@ -2070,6 +2103,7 @@ class InternshipMailer:
                 </div>
                 <p class="creds-note">⚠️ For security, you will be required to change your password on first login.</p>
             </div>
+            {% endif %}
 
             <!-- Call to Action -->
             <a href="{{ login_url }}" class="cta-button">

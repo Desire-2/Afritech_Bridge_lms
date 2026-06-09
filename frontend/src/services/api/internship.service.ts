@@ -685,6 +685,7 @@ export interface InternshipOfferLetter {
   // Optional fields from server
   is_authentic?: boolean;
   verification_message?: string;
+  is_existing_user?: boolean;
 }
 
 const internshipService = new InternshipService();

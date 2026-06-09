@@ -1466,7 +1466,8 @@ def batch_generate_offers():
 
                 # Send email
                 try:
-                    mailer.send_offer_letter(application, offer, password=password)
+                    is_existing_user = password is None
+                    mailer.send_offer_letter(application, offer, password=password, is_existing_user=is_existing_user)
                 except Exception as mail_err:
                     logger.warning(f"Failed to send offer email for {app_id}: {mail_err}")
 
@@ -2243,8 +2244,9 @@ def regenerate_offer_letter(app_id):
             return error_response(message, status_code=400)
 
         # Send the new offer email
+        is_existing_user = password is None
         try:
-            mailer.send_offer_letter(application, new_offer, password=password)
+            mailer.send_offer_letter(application, new_offer, password=password, is_existing_user=is_existing_user)
         except Exception as mail_err:
             logger.error(f"Failed to send regenerated offer email: {mail_err}")
 
@@ -2256,6 +2258,7 @@ def regenerate_offer_letter(app_id):
                 'offer': offer_data,
                 'username': new_offer.generated_username,
                 'message': message,
+                'is_existing_user': is_existing_user,
             },
             status_code=201
         )
@@ -2285,9 +2288,13 @@ def resend_offer_email(app_id):
         if not offer:
             return error_response('No offer letter found for this application. Generate one first.', status_code=404)
 
+        # Determine if this applicant already had an account before the offer
+        intern_user = User.query.filter_by(email=application.email).first()
+        is_existing_user = intern_user is not None
+
         # Resend the offer email (password=None since it's already been sent)
         try:
-            mailer.send_offer_letter(application, offer, password=None)
+            mailer.send_offer_letter(application, offer, password=None, is_existing_user=is_existing_user)
         except Exception as mail_err:
             logger.error(f"Failed to resend offer email for {app_id}: {mail_err}")
             return error_response('Failed to resend email. Please try again.', status_code=500)
@@ -2343,8 +2350,9 @@ def generate_offer_letter(app_id):
             return error_response(message, status_code=400 if offer else 500)
 
         # Send offer email with the generated clear-text password
+        is_existing_user = password is None
         try:
-            mailer.send_offer_letter(application, offer, password=password)
+            mailer.send_offer_letter(application, offer, password=password, is_existing_user=is_existing_user)
         except Exception as mail_err:
             logger.error(f"Failed to send offer email: {mail_err}")
             # Don't fail the request — the offer was still generated
@@ -2357,6 +2365,7 @@ def generate_offer_letter(app_id):
                 'offer': offer_data,
                 'username': offer.generated_username,
                 'message': message,
+                'is_existing_user': is_existing_user,
             },
             status_code=201
         )
@@ -2387,6 +2396,10 @@ def get_offer_letter(app_id):
         offer_data['is_authentic'] = is_authentic
         offer_data['verification_message'] = verify_message
         offer_data.pop('generated_password_hash', None)
+
+        # Determine if the applicant already had an account before this offer
+        intern_user = User.query.filter_by(email=application.email).first()
+        offer_data['is_existing_user'] = intern_user is not None
 
         return success_response('Offer letter retrieved', offer_data)
 
@@ -2512,3 +2525,629 @@ def public_verify_offer(verification_hash):
     except Exception as e:
         logger.error(f"Error in public verification: {str(e)}")
         return error_response('Failed to verify offer', status_code=500)
+
+# ============= INTERN-FACING ROUTES (JWT-authenticated, self-serve) =============
+# All endpoints under /intern/ require a valid JWT and 'intern' role
+
+def _get_intern_application():
+    """
+    Helper: get the InternshipApplication linked to the current JWT user.
+    Returns (application, None) on success, (None, error_response) on failure.
+    """
+    user_id = int(get_jwt_identity())
+    user = User.query.get(user_id)
+    if not user:
+        return None, error_response('User not found', status_code=401)
+
+    # Find the application linked to this user (only ACCEPTED ones - they're interns)
+    application = InternshipApplication.query.filter_by(
+        user_id=user_id,
+        status=ApplicationStatusEnum.ACCEPTED
+    ).first()
+
+    if not application:
+        return None, error_response(
+            'No active internship found. You must be accepted into an internship to access this portal.',
+            status_code=404
+        )
+
+    return application, None
+
+
+# --- Dashboard ---
+
+@internships_bp.route('/intern/dashboard', methods=['GET'])
+@jwt_required()
+def get_intern_dashboard():
+    """
+    Get intern dashboard overview:
+    - Personal info, track, cohort
+    - Task summary (total, pending, submitted, approved, avg score)
+    - Offer letter status
+    - Upcoming deadlines
+    """
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        user_id = int(get_jwt_identity())
+        user = User.query.get(user_id)
+
+        # Task statistics
+        total_assigned = InternshipTaskAssignment.query.filter_by(intern_id=application.id).count()
+        completed = InternshipTaskAssignment.query.filter_by(intern_id=application.id, status='approved').count()
+        submitted = InternshipTaskAssignment.query.filter_by(intern_id=application.id, status='submitted').count()
+        in_progress = InternshipTaskAssignment.query.filter_by(intern_id=application.id, status='in_progress').count()
+        pending = InternshipTaskAssignment.query.filter_by(intern_id=application.id, status='pending').count()
+
+        avg_score = db.session.query(db.func.avg(InternshipTaskAssignment.score)).filter(
+            InternshipTaskAssignment.intern_id == application.id,
+            InternshipTaskAssignment.score.isnot(None)
+        ).scalar()
+
+        # Upcoming deadlines (pending/in_progress tasks sorted by due_date)
+        upcoming_assignments = InternshipTaskAssignment.query.filter(
+            InternshipTaskAssignment.intern_id == application.id,
+            InternshipTaskAssignment.status.in_(['pending', 'in_progress']),
+            InternshipTask.due_date >= datetime.utcnow()
+        ).join(InternshipTask).order_by(InternshipTask.due_date.asc()).limit(5).all()
+
+        upcoming_tasks = []
+        for asgn in upcoming_assignments:
+            task = asgn.task
+            upcoming_tasks.append({
+                'assignment_id': asgn.id,
+                'task_id': task.id,
+                'title': task.title,
+                'task_type': task.task_type.value if hasattr(task.task_type, 'value') else task.task_type,
+                'priority': task.priority.value if hasattr(task.priority, 'value') else task.priority,
+                'due_date': task.due_date.isoformat() if task.due_date else None,
+                'status': asgn.status.value if hasattr(asgn.status, 'value') else asgn.status,
+            })
+
+        # Offer letter status
+        offer = InternshipOfferLetter.query.filter_by(application_id=application.id).first()
+
+        dashboard_data = {
+            'intern': {
+                'full_name': application.full_name,
+                'email': application.email,
+                'phone': application.phone,
+                'reference_code': application.reference_code,
+                'username': user.username if user else None,
+            },
+            'program': {
+                'track': application.track.name if application.track else None,
+                'cohort': application.cohort.cohort_name if application.cohort else None,
+                'cohort_start': application.cohort.start_date.isoformat() if application.cohort and application.cohort.start_date else None,
+                'cohort_end': application.cohort.end_date.isoformat() if application.cohort and application.cohort.end_date else None,
+                'status': application.status.value if application.status else None,
+            },
+            'tasks': {
+                'total_assigned': total_assigned,
+                'completed': completed,
+                'submitted': submitted,
+                'in_progress': in_progress,
+                'pending': pending,
+                'progress_pct': round((completed / total_assigned * 100)) if total_assigned > 0 else 0,
+                'avg_score': round(float(avg_score), 1) if avg_score else None,
+            },
+            'upcoming_deadlines': upcoming_tasks,
+            'offer': {
+                'id': offer.id,
+                'offer_number': offer.offer_number,
+                'status': offer.status,
+                'sent_at': offer.sent_at.isoformat() if offer.sent_at else None,
+            } if offer else None,
+        }
+
+        return success_response('Dashboard data retrieved', dashboard_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern dashboard: {str(e)}")
+        return error_response('Failed to fetch dashboard data', status_code=500)
+
+
+# --- Profile ---
+
+@internships_bp.route('/intern/profile', methods=['GET'])
+@jwt_required()
+def get_intern_profile():
+    """Get the intern's full profile including application info and linked user details."""
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        user_id = int(get_jwt_identity())
+        user = User.query.get(user_id)
+
+        profile_data = {
+            'id': application.id,
+            'reference_code': application.reference_code,
+            'full_name': application.full_name,
+            'email': application.email,
+            'phone': application.phone,
+            'national_id': application.national_id,
+            'applicant_type': application.applicant_type.value if application.applicant_type else None,
+            'track_name': application.track.name if application.track else None,
+            'cohort_name': application.cohort.cohort_name if application.cohort else None,
+            'portfolio_url': application.portfolio_url,
+            'github_url': application.github_url,
+            'linkedin_url': application.linkedin_url,
+            'status': application.status.value if application.status else None,
+            'created_at': application.created_at.isoformat() if application.created_at else None,
+            'interview_date': application.interview_date.isoformat() if application.interview_date else None,
+            # User account info
+            'username': user.username if user else None,
+            'first_name': user.first_name if user else None,
+            'last_name': user.last_name if user else None,
+            'must_change_password': user.must_change_password if user else True,
+        }
+
+        return success_response('Profile retrieved', profile_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern profile: {str(e)}")
+        return error_response('Failed to fetch profile', status_code=500)
+
+
+@internships_bp.route('/intern/profile', methods=['PUT'])
+@jwt_required()
+def update_intern_profile():
+    """Update the intern's profile (phone, portfolio, GitHub, LinkedIn URLs)."""
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+
+        # Update allowed fields on the application
+        if 'phone' in data:
+            if not validate_phone_number(data['phone']):
+                return error_response('Invalid phone number format', status_code=400)
+            application.phone = data['phone'].strip()
+        if 'portfolio_url' in data:
+            application.portfolio_url = data['portfolio_url'] or None
+        if 'github_url' in data:
+            application.github_url = data['github_url'] or None
+        if 'linkedin_url' in data:
+            application.linkedin_url = data['linkedin_url'] or None
+
+        # Update user account name fields if provided
+        user = User.query.get(user_id)
+        if user:
+            if 'first_name' in data:
+                user.first_name = data['first_name']
+            if 'last_name' in data:
+                user.last_name = data['last_name']
+
+        db.session.commit()
+
+        return success_response('Profile updated successfully')
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating intern profile: {str(e)}")
+        return error_response('Failed to update profile', status_code=500)
+
+
+# --- Cohort ---
+
+@internships_bp.route('/intern/cohort', methods=['GET'])
+@jwt_required()
+def get_intern_cohort():
+    """Get the intern's cohort details including fellow interns and track info."""
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        cohort = application.cohort
+        if not cohort:
+            return error_response('No cohort assigned yet', status_code=404)
+
+        track = cohort.track
+
+        # Fellow interns in the same cohort
+        fellow_interns = InternshipApplication.query.filter(
+            InternshipApplication.cohort_id == cohort.id,
+            InternshipApplication.status == ApplicationStatusEnum.ACCEPTED,
+            InternshipApplication.id != application.id
+        ).all()
+
+        cohort_data = {
+            'cohort': cohort.to_dict(),
+            'track': track.to_dict() if track else None,
+            'fellow_interns': [
+                {
+                    'id': i.id,
+                    'full_name': i.full_name,
+                    'email': i.email,
+                    'reference_code': i.reference_code,
+                }
+                for i in fellow_interns
+            ],
+            'total_interns': len(fellow_interns) + 1,
+        }
+
+        return success_response('Cohort data retrieved', cohort_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern cohort: {str(e)}")
+        return error_response('Failed to fetch cohort', status_code=500)
+
+
+# --- Offer Letter ---
+
+@internships_bp.route('/intern/offer', methods=['GET'])
+@jwt_required()
+def get_intern_offer():
+    """Get the intern's offer letter details."""
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        offer = InternshipOfferLetter.query.filter_by(application_id=application.id).first()
+        if not offer:
+            return error_response('No offer letter found', status_code=404)
+
+        offer_data = offer.to_dict()
+        # Remove sensitive fields
+        offer_data.pop('generated_password_hash', None)
+        offer_data.pop('verification_hash', None)
+        offer_data.pop('share_token', None)
+        # Add public verification URL
+        frontend_url = current_app.config.get('FRONTEND_URL', 'https://study.afritechbridge.online')
+        offer_data['verification_url'] = f'{frontend_url}/verify-offer/{offer.verification_hash}'
+        offer_data['share_url'] = InternshipOfferService.get_share_url(offer)
+        offer_data['is_authentic'] = True
+        if offer.pdf_path:
+            is_auth, msg = InternshipOfferService.verify_offer_pdf(offer)
+            offer_data['is_authentic'] = is_auth
+            offer_data['verification_message'] = msg
+
+        return success_response('Offer letter retrieved', offer_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern offer: {str(e)}")
+        return error_response('Failed to fetch offer letter', status_code=500)
+
+
+# --- Tasks ---
+
+@internships_bp.route('/intern/tasks', methods=['GET'])
+@jwt_required()
+def get_intern_tasks_list():
+    """
+    Get all tasks assigned to the intern with optional filtering.
+    Query params:
+    - status: str (pending, in_progress, submitted, approved, rejected)
+    - task_type: str
+    - sort_by: str (due_date, priority, created_at)
+    - sort_order: str (asc, desc)
+    """
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        status_filter = request.args.get('status')
+        task_type = request.args.get('task_type')
+        sort_by = request.args.get('sort_by', 'created_at')
+        sort_order = request.args.get('sort_order', 'desc')
+
+        query = InternshipTaskAssignment.query.filter_by(
+            intern_id=application.id
+        ).join(InternshipTask)
+
+        if status_filter:
+            query = query.filter(InternshipTaskAssignment.status == status_filter)
+        if task_type:
+            query = query.filter(InternshipTask.task_type == task_type)
+
+        sort_map = {
+            'due_date': InternshipTask.due_date,
+            'priority': InternshipTask.priority,
+            'created_at': InternshipTask.created_at,
+            'title': InternshipTask.title,
+        }
+        sort_col = sort_map.get(sort_by, InternshipTask.created_at)
+        if sort_order == 'asc':
+            query = query.order_by(sort_col.asc())
+        else:
+            query = query.order_by(sort_col.desc())
+
+        assignments = query.all()
+
+        tasks_data = []
+        for asgn in assignments:
+            task = asgn.task
+            tasks_data.append({
+                'assignment_id': asgn.id,
+                'task_id': task.id,
+                'title': task.title,
+                'description': task.description,
+                'task_type': task.task_type.value if hasattr(task.task_type, 'value') else task.task_type,
+                'priority': task.priority.value if hasattr(task.priority, 'value') else task.priority,
+                'max_score': task.max_score,
+                'due_date': task.due_date.isoformat() if task.due_date else None,
+                'status': asgn.status.value if hasattr(asgn.status, 'value') else asgn.status,
+                'score': asgn.score,
+                'feedback': asgn.feedback,
+                'submission_text': asgn.submission_text,
+                'submission_file_path': asgn.submission_file_path,
+                'submitted_at': asgn.submitted_at.isoformat() if asgn.submitted_at else None,
+                'graded_at': asgn.graded_at.isoformat() if asgn.graded_at else None,
+                'created_at': task.created_at.isoformat() if task.created_at else None,
+            })
+
+        return success_response('Tasks retrieved', tasks_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern tasks: {str(e)}")
+        return error_response('Failed to fetch tasks', status_code=500)
+
+
+@internships_bp.route('/intern/tasks/<assignment_id>', methods=['GET'])
+@jwt_required()
+def get_intern_task_detail(assignment_id):
+    """Get a single task assignment detail with full task info."""
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        asgn = InternshipTaskAssignment.query.filter_by(
+            id=assignment_id,
+            intern_id=application.id
+        ).first()
+
+        if not asgn:
+            return error_response('Task assignment not found', status_code=404)
+
+        task = asgn.task
+        task_data = {
+            'assignment_id': asgn.id,
+            'task_id': task.id,
+            'title': task.title,
+            'description': task.description,
+            'task_type': task.task_type.value if hasattr(task.task_type, 'value') else task.task_type,
+            'priority': task.priority.value if hasattr(task.priority, 'value') else task.priority,
+            'max_score': task.max_score,
+            'due_date': task.due_date.isoformat() if task.due_date else None,
+            'status': asgn.status.value if hasattr(asgn.status, 'value') else asgn.status,
+            'score': asgn.score,
+            'feedback': asgn.feedback,
+            'submission_text': asgn.submission_text,
+            'submission_file_path': asgn.submission_file_path,
+            'submitted_at': asgn.submitted_at.isoformat() if asgn.submitted_at else None,
+            'graded_at': asgn.graded_at.isoformat() if asgn.graded_at else None,
+            'created_at': task.created_at.isoformat() if task.created_at else None,
+            'updated_at': task.updated_at.isoformat() if task.updated_at else None,
+            'cohort_name': task.cohort.cohort_name if task.cohort else None,
+            'track_name': application.track.name if application.track else None,
+        }
+
+        return success_response('Task detail retrieved', task_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern task detail: {str(e)}")
+        return error_response('Failed to fetch task', status_code=500)
+
+
+@internships_bp.route('/intern/tasks/<assignment_id>/submit', methods=['POST'])
+@jwt_required()
+def submit_intern_task(assignment_id):
+    """
+    Submit work for an assigned task.
+    Accepts:
+    - submission_text: str (optional)
+    - submission_file: file upload (optional)
+    At least one of submission_text or submission_file is required.
+    """
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        asgn = InternshipTaskAssignment.query.filter_by(
+            id=assignment_id,
+            intern_id=application.id
+        ).first()
+
+        if not asgn:
+            return error_response('Task assignment not found', status_code=404)
+
+        if asgn.status in ('approved', 'rejected'):
+            return error_response(
+                f"Cannot submit. This task has already been {asgn.status}.",
+                status_code=400
+            )
+
+        submission_text = None
+        submission_file_path = None
+
+        if request.is_json:
+            data = request.get_json() or {}
+            submission_text = data.get('submission_text')
+        else:
+            submission_text = request.form.get('submission_text')
+
+        if request.files and 'submission_file' in request.files:
+            file = request.files['submission_file']
+            if file and file.filename:
+                upload_dir = os.path.join(
+                    current_app.root_path,
+                    '..',
+                    'uploads',
+                    'intern_submissions',
+                    application.id
+                )
+                os.makedirs(upload_dir, exist_ok=True)
+                filename = secure_filename(f"{assignment_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{file.filename}")
+                file_path = os.path.join(upload_dir, filename)
+                file.save(file_path)
+                submission_file_path = file_path
+
+        if not submission_text and not submission_file_path:
+            return error_response(
+                'Please provide your submission text or upload a file.',
+                status_code=400
+            )
+
+        if submission_text:
+            asgn.submission_text = submission_text
+        if submission_file_path:
+            asgn.submission_file_path = submission_file_path
+        asgn.status = 'submitted'
+        asgn.submitted_at = datetime.utcnow()
+
+        db.session.commit()
+
+        try:
+            task = asgn.task
+            logger.info(f"Intern {application.full_name} submitted task '{task.title}' (assignment={assignment_id})")
+        except Exception as notify_err:
+            logger.warning(f"Failed to notify about submission: {notify_err}")
+
+        return success_response('Task submitted successfully', {
+            'assignment_id': asgn.id,
+            'status': 'submitted',
+            'submitted_at': asgn.submitted_at.isoformat() if asgn.submitted_at else None,
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error submitting intern task: {str(e)}")
+        return error_response('Failed to submit task', status_code=500)
+
+
+# --- Grades ---
+
+@internships_bp.route('/intern/grades', methods=['GET'])
+@jwt_required()
+def get_intern_grades():
+    """
+    Get all grades and feedback for the intern's submitted/approved tasks.
+    Includes overall statistics.
+    """
+    try:
+        application, err = _get_intern_application()
+        if err:
+            return err
+
+        graded_assignments = InternshipTaskAssignment.query.filter_by(
+            intern_id=application.id
+        ).filter(
+            InternshipTaskAssignment.status.in_(['approved', 'rejected'])
+        ).join(InternshipTask).order_by(InternshipTaskAssignment.graded_at.desc()).all()
+
+        graded_data = []
+        total_score = 0
+        max_total = 0
+        for asgn in graded_assignments:
+            task = asgn.task
+            graded_data.append({
+                'assignment_id': asgn.id,
+                'task_title': task.title,
+                'task_type': task.task_type.value if hasattr(task.task_type, 'value') else task.task_type,
+                'status': asgn.status.value if hasattr(asgn.status, 'value') else asgn.status,
+                'score': asgn.score,
+                'max_score': task.max_score,
+                'feedback': asgn.feedback,
+                'submitted_at': asgn.submitted_at.isoformat() if asgn.submitted_at else None,
+                'graded_at': asgn.graded_at.isoformat() if asgn.graded_at else None,
+            })
+            if asgn.score is not None:
+                total_score += asgn.score
+                max_total += task.max_score or 100
+
+        pending_assignments = InternshipTaskAssignment.query.filter_by(
+            intern_id=application.id,
+            status='submitted'
+        ).join(InternshipTask).order_by(InternshipTaskAssignment.submitted_at.desc()).all()
+
+        pending_data = []
+        for asgn in pending_assignments:
+            task = asgn.task
+            pending_data.append({
+                'assignment_id': asgn.id,
+                'task_title': task.title,
+                'task_type': task.task_type.value if hasattr(task.task_type, 'value') else task.task_type,
+                'submitted_at': asgn.submitted_at.isoformat() if asgn.submitted_at else None,
+            })
+
+        total_graded = len(graded_assignments)
+        approved_count = sum(1 for a in graded_assignments if a.status == 'approved')
+
+        grades_data = {
+            'summary': {
+                'total_graded': total_graded,
+                'approved': approved_count,
+                'rejected': total_graded - approved_count,
+                'pending_review': len(pending_assignments),
+                'overall_score_pct': round((total_score / max_total * 100)) if max_total > 0 else None,
+                'total_score': total_score,
+                'max_total': max_total,
+            },
+            'graded': graded_data,
+            'pending_review': pending_data,
+        }
+
+        return success_response('Grades retrieved', grades_data)
+
+    except Exception as e:
+        logger.error(f"Error fetching intern grades: {str(e)}")
+        return error_response('Failed to fetch grades', status_code=500)
+
+
+# --- Change Password ---
+
+@internships_bp.route('/intern/change-password', methods=['PUT'])
+@jwt_required()
+def change_intern_password():
+    """Change the intern's account password."""
+    try:
+        user_id = int(get_jwt_identity())
+        user = User.query.get(user_id)
+
+        if not user:
+            return error_response('User not found', status_code=401)
+
+        data = request.get_json() or {}
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
+        confirm_password = data.get('confirm_password')
+
+        if not current_password or not new_password or not confirm_password:
+            return error_response(
+                'current_password, new_password, and confirm_password are all required',
+                status_code=400
+            )
+
+        if new_password != confirm_password:
+            return error_response('New password and confirm password do not match', status_code=400)
+
+        if len(new_password) < 8:
+            return error_response('New password must be at least 8 characters long', status_code=400)
+
+        if not user.check_password(current_password):
+            return error_response('Current password is incorrect', status_code=401)
+
+        user.set_password(new_password)
+        user.must_change_password = False
+        db.session.commit()
+
+        logger.info(f"Password changed for intern user {user_id}")
+
+        return success_response('Password changed successfully')
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error changing intern password: {str(e)}")
+        return error_response('Failed to change password', status_code=500)

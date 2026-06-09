@@ -75,6 +75,7 @@ const ApplicationDetailPage = () => {
   const [generatedUsername, setGeneratedUsername] = useState<string | null>(null);
   const [showOfferConfirm, setShowOfferConfirm] = useState(false);
   const [copiedField, setCopiedField] = useState<'username' | null>(null);
+  const [isExistingUser, setIsExistingUser] = useState(false);
 
   const fetchApplication = useCallback(async () => {
     try {
@@ -99,6 +100,7 @@ const ApplicationDetailPage = () => {
           const offerResult = await internshipService.getOffer(id);
           if (offerResult) {
             setOfferLetter(offerResult);
+            setIsExistingUser(offerResult.is_existing_user || false);
           }
         } catch { /* not yet issued — ignore */ }
       }
@@ -157,6 +159,7 @@ const ApplicationDetailPage = () => {
       const result = await internshipService.generateOffer(id);
       setOfferLetter(result.offer);
       setGeneratedUsername(result.username);
+      setIsExistingUser(result.is_existing_user || false);
       setShowOfferConfirm(true);
       await fetchApplication();
       showNotification('success', 'Offer letter generated and sent successfully');
@@ -234,6 +237,7 @@ const ApplicationDetailPage = () => {
       const result = await internshipService.regenerateOffer(id);
       setOfferLetter(result.offer);
       setGeneratedUsername(result.username);
+      setIsExistingUser(result.is_existing_user || false);
       setShowOfferConfirm(true);
       showNotification('success', 'Offer letter regenerated successfully. New email sent.');
     } catch (err: any) {
@@ -676,7 +680,10 @@ const ApplicationDetailPage = () => {
                         </button>
                       </div>
                       <p className="text-gray-500 text-xs mt-2">
-                        Password was sent to the applicant via email. They'll be prompted to change it on first login.
+                        {isExistingUser
+                          ? 'This applicant already has an account. They should use their existing password. If forgotten, they can reset it via the "Forgot Password" link on the login page.'
+                          : 'Password was sent to the applicant via email. They\'ll be prompted to change it on first login.'
+                        }
                       </p>
                     </div>
                   )}

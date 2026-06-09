@@ -354,6 +354,8 @@ with app.app_context():
         db.session.add(Role(name='instructor'))
     if not Role.query.filter_by(name='admin').first():
         db.session.add(Role(name='admin'))
+    if not Role.query.filter_by(name='intern').first():
+        db.session.add(Role(name='intern'))
     db.session.commit()
     
     # Initialize default system settings

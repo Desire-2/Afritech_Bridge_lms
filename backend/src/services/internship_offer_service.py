@@ -537,16 +537,16 @@ class InternshipOfferService:
                 if existing_user:
                     username = f"{username}.{secrets.token_hex(2)}"
 
-                # Look up student role by name instead of hardcoding ID
-                student_role = Role.query.filter_by(name='student').first()
-                student_role_id = student_role.id if student_role else 4
+                # Look up intern role by name instead of hardcoding ID
+                intern_role = Role.query.filter_by(name='intern').first()
+                intern_role_id = intern_role.id if intern_role else Role.query.filter_by(name='student').first().id or 4
 
                 intern_user = User(
                     username=username,
                     email=application.email,
                     first_name=application.full_name.split()[0] if application.full_name.split() else application.full_name,
                     last_name=" ".join(application.full_name.split()[1:]) if len(application.full_name.split()) > 1 else "",
-                    role_id=student_role_id,
+                    role_id=intern_role_id,
                     is_active=True,
                     must_change_password=True,  # Force password change on first login
                 )
@@ -674,24 +674,17 @@ class InternshipOfferService:
             db.session.flush()
             logger.info(f"Revoked old offer {old_offer.offer_number} for application {application.id}")
 
-            # ── Create or update user account ──
+            # ── Create or find existing user account ──
             # Check if a user already exists with this email (e.g. from the previous offer)
             intern_user = User.query.filter_by(email=application.email).first()
 
             if intern_user:
-                # User already exists — update their username and password
-                username = InternshipOfferService._generate_username(application.full_name)
-                password = InternshipOfferService._generate_password()
-
-                # Ensure unique username
-                existing_username = User.query.filter_by(username=username).filter(User.id != intern_user.id).first()
-                if existing_username:
-                    username = f"{username}.{secrets.token_hex(2)}"
-
-                intern_user.username = username
-                intern_user.set_password(password)
-                intern_user.must_change_password = True
-                logger.info(f"Updated existing user {intern_user.id} with new username/password for regeneration")
+                # User already exists — preserve their existing credentials
+                logger.info(
+                    f"User already exists for email {application.email} (id={intern_user.id}) — using existing credentials"
+                )
+                username = intern_user.username
+                password = None  # Don't regenerate password for existing users
             else:
                 # Create new user account
                 username = InternshipOfferService._generate_username(application.full_name)
@@ -701,15 +694,16 @@ class InternshipOfferService:
                 if existing_user:
                     username = f"{username}.{secrets.token_hex(2)}"
 
-                student_role = Role.query.filter_by(name='student').first()
-                student_role_id = student_role.id if student_role else 4
+                # Look up intern role by name instead of hardcoding ID
+                intern_role = Role.query.filter_by(name='intern').first()
+                intern_role_id = intern_role.id if intern_role else Role.query.filter_by(name='student').first().id or 4
 
                 intern_user = User(
                     username=username,
                     email=application.email,
                     first_name=application.full_name.split()[0] if application.full_name.split() else application.full_name,
                     last_name=" ".join(application.full_name.split()[1:]) if len(application.full_name.split()) > 1 else "",
-                    role_id=student_role_id,
+                    role_id=intern_role_id,
                     is_active=True,
                     must_change_password=True,
                 )

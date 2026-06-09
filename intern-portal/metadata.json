@@ -1,0 +1,6 @@
+{
+  "name": "AfriTech Bridge Intern Portal",
+  "description": "An all-in-one portal for accepted interns to track their lifecycle, including onboarding, tasks submission, grades tracking, cohort directory, and verified offer letters.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
