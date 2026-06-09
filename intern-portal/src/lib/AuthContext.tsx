@@ -1,10 +1,15 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ *
+ * Auth context with:
+ *  - Token expiry check on startup (proactive, not just reactive)
+ *  - Pre-emptive token refresh via jwt-decode (refreshes 5 min before expiry)
+ *  - Uses the main frontend pattern for auth initialization
  */
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { api } from './api';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { api, isTokenExpired, getLoginErrorMessage, extractApiError, scheduleTokenRefresh } from './api';
 
 interface AuthContextType {
   user: {
@@ -29,16 +34,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  const refreshUser = () => {
+  // -----------------------------------------------------------------------
+  // Auth initialization — runs once on mount
+  // -----------------------------------------------------------------------
+  const refreshUser = useCallback(() => {
     const savedUser = localStorage.getItem('user');
     const savedToken = localStorage.getItem('token');
-    
+
     if (savedUser && savedToken) {
+      // ── Token expiry guard: if expired, try silent refresh ──
+      if (isTokenExpired(savedToken)) {
+        api.trySilentRefresh()
+          .then((refreshed) => {
+            if (refreshed) {
+              const newToken = localStorage.getItem('token');
+              setToken(newToken);
+              try { setUser(JSON.parse(savedUser!)); } catch { setUser(null); }
+            } else {
+              localStorage.removeItem('user');
+              localStorage.removeItem('refreshToken');
+              localStorage.removeItem('token');
+              setUser(null);
+              setToken(null);
+            }
+          })
+          .catch(() => {
+            localStorage.removeItem('user');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('token');
+            setUser(null);
+            setToken(null);
+          })
+          .finally(() => setLoading(false));
+        return;
+      }
+
+      // ── Token is still valid — restore session ──
       try {
         setUser(JSON.parse(savedUser));
         setToken(savedToken);
-      } catch (e) {
-        // Clear corrupt state
+      } catch {
         localStorage.removeItem('user');
         localStorage.removeItem('token');
         setUser(null);
@@ -48,42 +83,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(null);
       setToken(null);
     }
-  };
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     refreshUser();
-    setLoading(false);
+  }, [refreshUser]);
 
-    // Listen to sandbox mode toggles to sync auth cleanly
-    const handleSandboxChange = () => {
-      refreshUser();
-    };
+  // -----------------------------------------------------------------------
+  // Pre-emptive token refresh — refresh when < 5 min until expiry
+  // -----------------------------------------------------------------------
+  useEffect(() => {
+    if (!token) return;
+    const cancel = scheduleTokenRefresh();
+    return cancel;
+  }, [token]);
 
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
-  }, []);
-
+  // -----------------------------------------------------------------------
+  // Login
+  // -----------------------------------------------------------------------
   const login = async (email: string, password: string) => {
-    setLoading(true);
     try {
       const session = await api.login(email, password);
       setUser(session.user);
       setToken(session.access_token);
-    } catch (e) {
-      throw e;
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      // Rethrow with user-friendly message matching main frontend's pattern
+      const apiErr = extractApiError(err);
+      throw new Error(getLoginErrorMessage(apiErr));
     }
   };
 
+  // -----------------------------------------------------------------------
+  // Logout
+  // -----------------------------------------------------------------------
   const logout = () => {
     api.logout();
     setUser(null);
     setToken(null);
   };
 
+  // -----------------------------------------------------------------------
+  // Helper: update must_change_password flag in local state + storage
+  // -----------------------------------------------------------------------
   const updateMustChangePasswordState = (state: boolean) => {
     if (user) {
       const updatedUser = { ...user, must_change_password: state };
@@ -93,14 +135,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      token, 
-      loading, 
-      login, 
-      logout, 
+    <AuthContext.Provider value={{
+      user,
+      token,
+      loading,
+      login,
+      logout,
       updateMustChangePasswordState,
-      refreshUser 
+      refreshUser,
     }}>
       {children}
     </AuthContext.Provider>

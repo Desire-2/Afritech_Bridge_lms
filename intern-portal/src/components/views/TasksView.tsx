@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, extractApiError } from '../../lib/api';
 import { TaskAssignment } from '../../types';
 import { 
   Filter, 
@@ -42,17 +42,18 @@ export const TasksView: React.FC<TasksViewProps> = ({ onNavigate }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getTasks({
+      const tasksData = await api.getTasks({
         status: statusFilter,
         task_type: typeFilter,
         sort_by: sortBy,
         sort_order: sortOrder
       });
-      if (response.success) {
-        setTasks(response.data);
+      if (tasksData && Array.isArray(tasksData)) {
+        setTasks(tasksData);
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed connecting to remote tasks engine.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed connecting to remote tasks engine.');
     } finally {
       setLoading(false);
     }
@@ -60,17 +61,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     fetchTasks();
-  }, [statusFilter, typeFilter, sortBy, sortOrder]);
-
-  useEffect(() => {
-    // Listen to sandbox mode changes
-    const handleSandboxChange = () => {
-      fetchTasks();
-    };
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
   }, [statusFilter, typeFilter, sortBy, sortOrder]);
 
   const getPriorityColor = (priority: string) => {

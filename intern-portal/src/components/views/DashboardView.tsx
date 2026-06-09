@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
-import { api, setSandboxMode } from '../../lib/api';
+import React, { useEffect, useState, useCallback } from 'react';
+import { api, extractApiError } from '../../lib/api';
 import { DashboardData } from '../../types';
 import { 
   Calendar, 
   Clock, 
   Award, 
-  FileCheck, 
   ChevronRight, 
   BookOpen, 
   Code, 
@@ -30,34 +29,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getDashboard();
-      if (response.success) {
-        setData(response.data);
-      } else {
-        setError('Failed to extract dashboard datasets');
-      }
+      const dashData = await api.getDashboard();
+      setData(dashData);
     } catch (err: any) {
-      setError(err?.message || 'Failed connecting to server. Attempting offline backup.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed connecting to server.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchDashboardData();
-
-    const handleSandboxChange = () => {
-      fetchDashboardData();
-    };
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
-  }, []);
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchDashboardData, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchDashboardData]);
 
   const getPriorityColor = (priority: string) => {
     switch (priority?.toLowerCase()) {
@@ -156,15 +147,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ onNavigate }) => {
             className="px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl hover:border-slate-700 hover:bg-slate-800 text-slate-300 font-semibold transition-all cursor-pointer"
           >
             Retry Connection
-          </button>
-          <button
-            onClick={() => {
-              setSandboxMode(true);
-              fetchDashboardData();
-            }}
-            className="px-4 py-2 bg-teal-600 hover:bg-teal-500 text-white font-semibold rounded-xl hover:bg-teal-500 transition-all cursor-pointer"
-          >
-            Switch to Sandbox Offline
           </button>
         </div>
       </div>

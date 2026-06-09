@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, extractApiError } from '../../lib/api';
 import { useAuth } from '../../lib/AuthContext';
 import { InternProfile } from '../../types';
 import { 
@@ -47,9 +47,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onNavigate }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getProfile();
-      if (response.success && response.data) {
-        const data = response.data;
+      const profileData = await api.getProfile();
+      if (profileData && profileData.email) {
+        const data = profileData;
         setProfile(data);
         setFirstName(data.first_name || '');
         setLastName(data.last_name || '');
@@ -59,7 +59,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onNavigate }) => {
         setLinkedinUrl(data.linkedin_url || '');
       }
     } catch (err: any) {
-      setError(err?.message || 'Remote profile synchronizing failed.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Remote profile synchronizing failed.');
     } finally {
       setLoading(false);
     }
@@ -67,14 +68,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     fetchProfile();
-
-    const handleSandboxChange = () => {
-      fetchProfile();
-    };
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
   }, []);
 
   const handleUpdateProfileSubmit = async (e: React.FormEvent) => {
@@ -93,15 +86,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ onNavigate }) => {
     };
 
     try {
-      const response = await api.updateProfile(payload);
-      if (response.success) {
-        setSuccess('Profile attributes updated successfully in active registries!');
-        setProfile(response.data);
-        refreshUser(); // sync context state
-        setTimeout(() => setSuccess(null), 3000);
-      }
+      const updated = await api.updateProfile(payload);
+      setSuccess('Profile attributes updated successfully in active registries!');
+      if (updated) setProfile(updated);
+      refreshUser();
+      setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {
-      setError(err?.message || 'Failed saving profile updates. Please verify types.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed saving profile updates. Please verify types.');
     } finally {
       setSaving(false);
     }

@@ -30,9 +30,9 @@ export const ForgotPasswordView: React.FC<ForgotPasswordViewProps> = ({ onNaviga
 
     try {
       const response = await api.forgotPassword(email);
-      if (response.success) {
-        setSuccess(response.message || 'Verification link has been sent to your email.');
-      }
+      // Auth endpoints don't wrap in { success: true } — they return { message } directly
+      // If fetchJson didn't throw (non-2xx), the request succeeded
+      setSuccess(response.message || 'If an account exists with this email, a password reset link has been sent.');
     } catch (err: any) {
       setError(err?.message || 'Server error. Please try again.');
     } finally {

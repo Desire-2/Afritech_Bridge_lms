@@ -298,12 +298,13 @@ def forgot_password():
     # Check if user exists
     user = User.query.filter_by(email=email).first()
     if not user:
-        # Now we'll be explicit about the user not existing
         current_app.logger.info(f"Password reset requested for non-existent email: {email}")
+        # Always return 200 with a generic message for security.
+        # Do NOT reveal whether the email exists in our system.
         return jsonify({
-            'message': 'No account found with this email address',
-            'status': 'user_not_found'  # Clear status for frontend to handle
-        }), 404  # Using 404 status code for not found
+            'message': 'If an account with this email exists, password reset instructions have been sent',
+            'status': 'processed'
+        }), 200
         
     # Generate a reset token
     token = user.generate_reset_token()

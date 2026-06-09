@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import Markdown from 'react-markdown';
-import { api } from '../../lib/api';
+import { api, extractApiError } from '../../lib/api';
 import { TaskAssignment } from '../../types';
 import { 
   ArrowLeft, 
@@ -38,7 +38,7 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
 
   // Submission States
   const [solutionText, setSolutionText] = useState('');
-  const [attachmentName, setAttachmentName] = useState<string | null>(null);
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -46,16 +46,17 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getTaskDetail(assignmentId);
-      if (response.success) {
-        setTask(response.data);
-        setSolutionText(response.data.submission_text || '');
-        if (response.data.submission_file) {
-          setAttachmentName(response.data.submission_file);
+      const taskData = await api.getTaskDetail(assignmentId);
+      if (taskData && taskData.assignment_id) {
+        setTask(taskData);
+        setSolutionText(taskData.submission_text || '');
+        if (taskData.submission_file_path) {
+          // Previously uploaded file — show the path as label (no File object available)
         }
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed connecting to remote databases.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed connecting to remote databases.');
     } finally {
       setLoading(false);
     }
@@ -83,13 +84,13 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
 
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
-      setAttachmentName(file.name);
+      setAttachmentFile(file);
     }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setAttachmentName(e.target.files[0].name);
+      setAttachmentFile(e.target.files[0]);
     }
   };
 
@@ -99,7 +100,7 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
 
   const handleSubmissionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!solutionText.trim() && !attachmentName) {
+    if (!solutionText.trim() && !attachmentFile) {
       setError('Please provide a text response or drop a file attachment to submit your assignment.');
       return;
     }
@@ -108,38 +109,19 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
     setError(null);
 
     try {
-      const response = await api.submitTask(assignmentId, {
+      const submitResult = await api.submitTask(assignmentId, {
         submission_text: solutionText,
-        submission_file: attachmentName || undefined
+        submission_file: attachmentFile || undefined
       });
-      if (response.success) {
-        setTask(response.data);
-        // Refresh details
+      if (submitResult) {
+        setTask(submitResult);
         await fetchTaskDetail();
       }
     } catch (err: any) {
-      setError(err?.message || 'Technical submission error. Please try again.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Technical submission error. Please try again.');
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const startTaskStatus = async () => {
-    if (!task) return;
-    try {
-      // Transitioning task locally to 'in_progress' to simulate state cleanly
-      const tasksStr = localStorage.getItem('atb_sb_tasks');
-      if (tasksStr) {
-        const list: TaskAssignment[] = JSON.parse(tasksStr);
-        const idx = list.findIndex(t => t.assignment_id === task.assignment_id);
-        if (idx !== -1 && list[idx].status === 'pending') {
-          list[idx].status = 'in_progress';
-          localStorage.setItem('atb_sb_tasks', JSON.stringify(list));
-          setTask({ ...task, status: 'in_progress' });
-        }
-      }
-    } catch {
-      // Ignore fallback
     }
   };
 
@@ -224,11 +206,6 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
   const isSubmitted = task.status === 'submitted';
   const isApproved = task.status === 'approved';
   const isRejected = task.status === 'rejected';
-
-  // Automatically start task on visit
-  if (isPending) {
-    startTaskStatus();
-  }
 
   return (
     <div className="space-y-8 font-sans animate-fadeIn" id="task-detail-pane">
@@ -429,10 +406,10 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
                     accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
                   />
                   
-                  {attachmentName ? (
+                  {attachmentFile ? (
                     <div className="flex items-center space-x-2 text-teal-400 font-mono text-xs max-w-full truncate">
                       <FileDown className="h-4.5 w-4.5 shrink-0" />
-                      <span className="truncate">{attachmentName}</span>
+                      <span className="truncate">{attachmentFile.name}</span>
                     </div>
                   ) : (
                     <>
@@ -445,10 +422,10 @@ export const TaskDetailView: React.FC<TaskDetailViewProps> = ({ assignmentId, on
                   )}
                 </div>
 
-                {attachmentName && !(isApproved || isSubmitted) && (
+                {attachmentFile && !(isApproved || isSubmitted) && (
                   <button
                     type="button"
-                    onClick={() => setAttachmentName(null)}
+                    onClick={() => setAttachmentFile(null)}
                     className="text-[10px] text-rose-455 hover:underline focus:outline-none block pt-0.5"
                   >
                     Remove attachment

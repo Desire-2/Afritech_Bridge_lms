@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, extractApiError } from '../../lib/api';
 import { GradesSummary, TaskAssignment } from '../../types';
 import { 
   Award, 
@@ -34,12 +34,13 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getGrades();
-      if (response.success) {
-        setData(response.data);
+      const gradesData = await api.getGrades();
+      if (gradesData && gradesData.summary) {
+        setData(gradesData);
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed connecting to remote academic engines.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed connecting to remote academic engines.');
     } finally {
       setLoading(false);
     }
@@ -47,14 +48,6 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
 
   useEffect(() => {
     fetchGrades();
-
-    const handleSandboxChange = () => {
-      fetchGrades();
-    };
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
   }, []);
 
   const getTaskIcon = (type: string) => {
@@ -124,8 +117,8 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
   }
 
   // Segment tasks list
-  const gradedList = data.list.filter(t => t.status === 'approved' || t.status === 'rejected');
-  const awaitingList = data.list.filter(t => t.status === 'submitted');
+  const gradedList = data.graded;
+  const awaitingList = data.pending_review;
 
   return (
     <div className="space-y-8 font-sans animate-fadeIn" id="grades-view-panel">
@@ -151,16 +144,16 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
           <div className="space-y-2">
             <div className="flex justify-between items-end text-xs font-mono">
               <span className="text-slate-500">Graduation Cutoff (75% Minimum Required)</span>
-              <span className={`font-black text-sm ${getPercentageColor(data.overall_percentage)}`}>
-                {data.overall_percentage}% Overall
+              <span className={`font-black text-sm ${getPercentageColor(data.summary.overall_score_pct)}`}>
+                {data.summary.overall_score_pct}% Overall
               </span>
             </div>
             
             {/* Horizontal progress gauge */}
             <div className="w-full h-3 bg-slate-950 border border-slate-850 rounded-full overflow-hidden p-0.5">
               <div 
-                className={`h-full rounded-full transition-all duration-1000 ${getProgressGaugeColor(data.overall_percentage)}`}
-                style={{ width: `${Math.min(data.overall_percentage, 100)}%` }}
+                className={`h-full rounded-full transition-all duration-1000 ${getProgressGaugeColor(data.summary.overall_score_pct)}`}
+                style={{ width: `${Math.min(data.summary.overall_score_pct, 100)}%` }}
               />
             </div>
           </div>
@@ -170,15 +163,15 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850 text-center space-y-0.5">
             <span className="block text-[8px] uppercase text-slate-500 font-mono">GRADED</span>
-            <span className="text-md font-bold text-white font-mono">{data.total_graded}</span>
+            <span className="text-md font-bold text-white font-mono">{data.summary.total_graded}</span>
           </div>
           <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850 text-center space-y-0.5">
             <span className="block text-[8px] uppercase text-emerald-400 font-mono">APPROVED</span>
-            <span className="text-md font-bold text-emerald-300 font-mono">{data.approved_count}</span>
+            <span className="text-md font-bold text-emerald-300 font-mono">{data.summary.approved}</span>
           </div>
           <div className="bg-slate-950 p-3 rounded-2xl border border-slate-850 text-center space-y-0.5">
             <span className="block text-[8px] uppercase text-rose-450 font-mono">REJECTED</span>
-            <span className="text-md font-bold text-rose-350 font-mono">{data.rejected_count}</span>
+            <span className="text-md font-bold text-rose-350 font-mono">{data.summary.rejected}</span>
           </div>
         </div>
       </section>
@@ -219,7 +212,7 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
                         </div>
                         <div className="min-w-0">
                           <h4 className="text-xs font-bold text-slate-200 group-hover:text-teal-300 transition-all truncate leading-snug">
-                            {item.title}
+                            {item.task_title}
                           </h4>
                           <span className="text-[9px] text-slate-500 font-mono uppercase block mt-1">
                             Evaluated {formatSimpleDate(item.graded_at)}
@@ -286,7 +279,7 @@ export const GradesView: React.FC<GradesViewProps> = ({ onNavigate }) => {
                     </div>
                     <div className="min-w-0">
                       <h4 className="text-xs font-bold text-slate-350 truncate">
-                        {item.title}
+                        {item.task_title}
                       </h4>
                       <div className="text-[9px] text-slate-500 font-mono mt-1">
                         Submitted {formatSimpleDate(item.submitted_at)}

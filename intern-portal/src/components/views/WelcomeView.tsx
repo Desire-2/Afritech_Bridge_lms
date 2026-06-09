@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { api } from '../../lib/api';
+import { api, extractApiError, getStatusCheckErrorMessage } from '../../lib/api';
 import { ApplicationStatus } from '../../types';
 import { Check, Clipboard, Search, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -17,7 +17,7 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onNavigate }) => {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusResult, setStatusResult] = useState<ApplicationStatus['data'] | null>(null);
+  const [statusResult, setStatusResult] = useState<ApplicationStatus | null>(null);
 
   const handleTrackStatus = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,22 +31,18 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onNavigate }) => {
     setStatusResult(null);
 
     try {
-      const response = await api.checkApplicationStatus(refCode, email);
-      if (response.success && response.data.full_name) {
-        setStatusResult(response.data);
+      const data = await api.checkApplicationStatus(refCode, email);
+      if (data && data.full_name) {
+        setStatusResult(data);
       } else {
         setError('No active application found matching this reference code and email combined.');
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed connecting to server. Please verify credentials.');
+      const apiErr = extractApiError(err);
+      setError(getStatusCheckErrorMessage(apiErr, refCode.trim()));
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadSandboxTester = () => {
-    setRefCode('ATB-26-A3F2');
-    setEmail('john@example.com');
   };
 
   return (
@@ -173,19 +169,6 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onNavigate }) => {
             </button>
           </form>
 
-          {/* Sandbox Helper Hint */}
-          <div className="text-center">
-            <span className="text-[11px] text-slate-500">
-              Testing? {' '}
-              <button 
-                onClick={loadSandboxTester}
-                className="text-teal-400 font-medium hover:underline focus:outline-none"
-              >
-                Auto-fill sandbox criteria
-              </button>
-            </span>
-          </div>
-
           {/* Status Result View */}
           {statusResult && (
             <div className="pt-4 border-t border-slate-800 animate-fadeIn space-y-4">
@@ -200,31 +183,21 @@ export const WelcomeView: React.FC<WelcomeViewProps> = ({ onNavigate }) => {
               </div>
 
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800/80 space-y-1">
-                <div className="text-xs text-slate-400">Assigned Cohort Track:</div>
-                <div className="text-sm font-bold text-white">{statusResult.track}</div>
-                <div className="text-[11px] text-teal-400/85">{statusResult.cohort_name}</div>
+                <div className="text-xs text-slate-400">Assigned Track:</div>
+                <div className="text-sm font-bold text-white">{statusResult.track_name}</div>
               </div>
 
-              {/* Status Stepper Timeline */}
-              <div className="space-y-3.5 pl-2 pt-1">
-                {statusResult.timeline.map((step, idx) => (
-                  <div key={idx} className="flex space-x-3.5 relative">
-                    {idx < statusResult.timeline.length - 1 && (
-                      <div className={`absolute left-2.5 top-6 bottom-[-16px] w-[2px] ${step.completed ? 'bg-teal-500' : 'bg-slate-800'}`} />
-                    )}
-                    <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 z-10 ${
-                      step.completed ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-500'
-                    }`}>
-                      <Check className="h-3 w-3" />
-                    </div>
-                    <div>
-                      <h5 className={`text-xs font-semibold ${step.active ? 'text-teal-400' : 'text-slate-300'}`}>
-                        {step.step}
-                      </h5>
-                      {step.date && <p className="text-[10px] text-slate-500">{step.date}</p>}
-                    </div>
-                  </div>
-                ))}
+              {/* Current Review Stage */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800/80">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-slate-400">Current stage:</span>
+                  <span className="px-3 py-1 bg-teal-950 border border-teal-500/30 text-teal-300 text-xs font-semibold rounded-full">
+                    {statusResult.review_stage}
+                  </span>
+                </div>
+                <div className="mt-2 text-[10px] text-slate-500">
+                  Last updated: {new Date(statusResult.updated_at).toLocaleDateString()}
+                </div>
               </div>
 
               <div className="pt-1.5">

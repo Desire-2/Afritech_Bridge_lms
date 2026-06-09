@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, extractApiError } from '../../lib/api';
 import { CohortData } from '../../types';
 import { 
   Users, 
@@ -29,12 +29,13 @@ export const CohortView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getCohort();
-      if (response.success) {
-        setData(response.data);
+      const cohortData = await api.getCohort();
+      if (cohortData && cohortData.cohort) {
+        setData(cohortData);
       }
     } catch (err: any) {
-      setError(err?.message || 'Failed to extract cohort directory datasets.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed to load cohort data.');
     } finally {
       setLoading(false);
     }
@@ -42,14 +43,6 @@ export const CohortView: React.FC = () => {
 
   useEffect(() => {
     fetchCohort();
-
-    const handleSandboxChange = () => {
-      fetchCohort();
-    };
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
   }, []);
 
   const formatSimpleDate = (isoString?: string) => {
@@ -105,7 +98,7 @@ export const CohortView: React.FC = () => {
     );
   }
 
-  const { cohort, track, fellows } = data;
+  const { cohort, track, fellow_interns: fellows } = data;
 
   return (
     <div className="space-y-8 font-sans animate-fadeIn" id="cohort-view-card">
@@ -131,7 +124,7 @@ export const CohortView: React.FC = () => {
             </div>
             <div>
               <h3 className="font-bold text-slate-200 text-sm leading-snug">Registration profile</h3>
-              <span className="text-[10px] font-mono text-slate-500">{cohort.code}</span>
+              <span className="text-[10px] font-mono text-slate-500">{cohort.cohort_code}</span>
             </div>
           </div>
 

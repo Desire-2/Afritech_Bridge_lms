@@ -5,22 +5,20 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../lib/AuthContext';
-import { isSandboxMode, setSandboxMode, api } from '../../lib/api';
-import { 
-  LayoutDashboard, 
-  CheckSquare, 
-  GraduationCap, 
-  Users, 
-  FileText, 
-  User, 
-  LogOut, 
-  Menu, 
-  X, 
+import { api } from '../../lib/api';
+import { TaskAssignment } from '../../types';
+import {
+  LayoutDashboard,
+  CheckSquare,
+  GraduationCap,
+  Users,
+  FileText,
+  User,
+  LogOut,
+  Menu,
+  X,
   Lock,
-  Wifi, 
-  WifiOff, 
-  RefreshCw,
-  Bell
+  Bell,
 } from 'lucide-react';
 
 interface DashboardLayoutProps {
@@ -32,49 +30,26 @@ interface DashboardLayoutProps {
 export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, currentPath, onNavigate }) => {
   const { user, logout } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sandbox, setSandbox] = useState(isSandboxMode());
   const [taskCount, setTaskCount] = useState<number | null>(null);
-  const [loadingCount, setLoadingCount] = useState(false);
 
   // Load counter of active (pending + in_progress) tasks
   const fetchTaskCounts = async () => {
-    setLoadingCount(true);
     try {
-      const response = await api.getTasks();
-      if (response.success) {
-        const count = response.data.filter(t => t.status === 'pending' || t.status === 'in_progress').length;
+      const tasksData = await api.getTasks();
+      if (tasksData && Array.isArray(tasksData)) {
+        const count = tasksData.filter((t: TaskAssignment) => t.status === 'pending' || t.status === 'in_progress').length;
         setTaskCount(count);
       }
     } catch {
       // Quiet fail
-    } finally {
-      setLoadingCount(false);
     }
   };
 
   useEffect(() => {
     fetchTaskCounts();
-
-    const handleSandboxChange = () => {
-      setSandbox(isSandboxMode());
-      fetchTaskCounts();
-    };
-
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    // Refresh count on a periodic basis
     const id = setInterval(fetchTaskCounts, 20000);
-
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-      clearInterval(id);
-    };
+    return () => clearInterval(id);
   }, []);
-
-  const toggleSandbox = () => {
-    const nextMode = !sandbox;
-    setSandbox(nextMode);
-    setSandboxMode(nextMode);
-  };
 
   const navItems = [
     { name: 'Dashboard', path: '/intern/dashboard', icon: LayoutDashboard },
@@ -85,7 +60,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
     { name: 'Profile & Settings', path: '/intern/profile', icon: User },
   ];
 
-  const getInitials = (fullName: string) => {
+  const getInitials = (fullName?: string | null) => {
+    if (!fullName) return '?';
     const parts = fullName.split(' ');
     if (parts.length >= 2) {
       return (parts[0][0] + parts[1][0]).toUpperCase();
@@ -93,9 +69,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
     return fullName.substring(0, 2).toUpperCase();
   };
 
-  const isCurrent = (itemPath: string) => {
-    return currentPath === itemPath;
-  };
+  const isCurrent = (itemPath: string) => currentPath === itemPath;
 
   const handleLogoutClick = () => {
     logout();
@@ -107,7 +81,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
     setSidebarOpen(false);
   };
 
-  // Get active page breadcrumb
   const getBreadcrumb = () => {
     const found = navItems.find(item => item.path === currentPath);
     if (found) return found.name;
@@ -118,7 +91,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col md:flex-row font-sans" id="dashboard-layout">
-      
+
       {/* MOBILE HEADER BAR */}
       <div className="md:hidden bg-slate-900 border-b border-slate-800 px-4 py-3.5 flex justify-between items-center shrink-0 z-30">
         <div className="flex items-center space-x-2.5">
@@ -131,20 +104,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
         </div>
 
         <div className="flex items-center space-x-3">
-          {/* Connection badge */}
-          <button 
-            onClick={toggleSandbox}
-            className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] uppercase font-mono ${
-              sandbox 
-                ? 'bg-amber-950/45 border border-amber-500/20 text-amber-400' 
-                : 'bg-teal-950/45 border border-teal-500/20 text-teal-400'
-            }`}
-          >
-            {sandbox ? <WifiOff className="h-3 w-3" /> : <Wifi className="h-3 w-3" />}
-            <span>{sandbox ? 'Sandbox' : 'Live'}</span>
-          </button>
-
-          <button 
+          <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-1 px-1.5 bg-slate-800 border border-slate-700 rounded text-slate-200"
           >
@@ -158,10 +118,10 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
         fixed inset-y-0 left-0 bg-slate-900 w-64 border-r border-slate-800 transform z-40 transition-transform duration-200 ease-in-out md:relative md:transform-none md:flex md:flex-col justify-between shrink-0
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `} id="side-navigation-dock">
-        
+
         {/* TOP SECTION: User Details & Logo */}
         <div className="flex flex-col flex-1 divide-y divide-slate-800/60 overflow-y-auto">
-          
+
           {/* Brand Panel */}
           <div className="p-5 flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -173,8 +133,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
                 <span className="text-[9px] font-mono tracking-wider text-teal-400 uppercase">Intern Workspace</span>
               </div>
             </div>
-            
-            <button 
+
+            <button
               onClick={() => setSidebarOpen(false)}
               className="md:hidden p-1.5 text-slate-400 hover:text-white"
             >
@@ -229,31 +189,8 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
           </nav>
         </div>
 
-        {/* BOTTOM SECTION: Control Widgets & Logout */}
+        {/* BOTTOM SECTION: Logout */}
         <div className="p-4 border-t border-slate-800 shrink-0 space-y-4">
-          
-          {/* Connection status card */}
-          <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-slate-400 font-mono">CONNECTION BRIDGE:</span>
-              <span className={`w-2 h-2 rounded-full ${sandbox ? 'bg-amber-400 animate-pulse' : 'bg-teal-400'}`} />
-            </div>
-            
-            <div className="flex items-center justify-between text-xs">
-              <div className="flex flex-col">
-                <span className="font-bold text-slate-200">{sandbox ? 'Sandbox (Local)' : 'Production (LMS)'}</span>
-                <span className="text-[9px] text-slate-500 leading-none mt-0.5 truncate max-w-[120px]">{sandbox ? 'Offline Storage' : 'Render Live API'}</span>
-              </div>
-              <button
-                onClick={toggleSandbox}
-                title="Toggle offline/cloud bridge connection mode"
-                className="p-1 px-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-750 text-slate-300 hover:text-white rounded transition-all cursor-pointer"
-              >
-                <RefreshCw className="h-3 w-3" />
-              </button>
-            </div>
-          </div>
-
           <div className="space-y-1">
             {user?.must_change_password && (
               <button
@@ -278,15 +215,15 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
 
       {/* MOBILE SIDEBAR CLOSE MASK */}
       {sidebarOpen && (
-        <div 
+        <div
           onClick={() => setSidebarOpen(false)}
-          className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-xs z-30" 
+          className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-xs z-30"
         />
       )}
 
       {/* MAIN LAYOUT CANVAS */}
       <div className="flex-1 flex flex-col min-w-0">
-        
+
         {/* DESKTOP TOP BAR */}
         <header className="hidden md:flex bg-slate-900/50 border-b border-slate-900 px-8 py-4 items-center justify-between shrink-0 z-20">
           <div className="flex items-center space-x-3">
@@ -298,12 +235,6 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
           </div>
 
           <div className="flex items-center space-x-5">
-            {/* Health indicators */}
-            <div className="flex items-center space-x-2 bg-slate-900 border border-slate-800 px-3 py-1 rounded-full text-xs">
-              <span className={`w-1.5 h-1.5 rounded-full ${sandbox ? 'bg-amber-400' : 'bg-teal-400'}`} />
-              <span className="text-slate-400 text-[10px] font-mono tracking-tight font-semibold uppercase">{sandbox ? 'Sandbox Mode' : 'Connected'}</span>
-            </div>
-
             {/* Notification bell */}
             <button className="relative p-1 px-1.5 bg-slate-900 border border-slate-850 hover:border-slate-800 text-slate-400 hover:text-slate-200 rounded-lg transition-all">
               <Bell className="h-4.5 w-4.5" />
@@ -312,7 +243,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({ children, curr
           </div>
         </header>
 
-        {/* WORKSPACE CONTENT AREA WITH GENTLE TRANSITIONS */}
+        {/* WORKSPACE CONTENT AREA */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 relative bg-slate-950/40">
           <div className="max-w-7xl mx-auto h-full" id="portal-inner-workspace">
             {children}

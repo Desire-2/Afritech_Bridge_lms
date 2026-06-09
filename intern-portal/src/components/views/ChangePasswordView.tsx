@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { api } from '../../lib/api';
+import { api, extractApiError } from '../../lib/api';
 import { useAuth } from '../../lib/AuthContext';
 import { Lock, ArrowRight, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -42,16 +42,15 @@ export const ChangePasswordView: React.FC<ChangePasswordViewProps> = ({ onNaviga
     setError(null);
 
     try {
-      const response = await api.changePassword(newPassword);
-      if (response.success) {
-        setSuccess(true);
-        updateMustChangePasswordState(false);
-        setTimeout(() => {
-          onNavigate('/intern/dashboard');
-        }, 1500);
-      }
+      await api.changePassword(currentPassword, newPassword, confirmPassword);
+      setSuccess(true);
+      updateMustChangePasswordState(false);
+      setTimeout(() => {
+        onNavigate('/intern/dashboard');
+      }, 1500);
     } catch (err: any) {
-      setError(err?.message || 'Failed to update password. Please check your credentials.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Failed to update password. Please check your credentials.');
     } finally {
       setLoading(false);
     }

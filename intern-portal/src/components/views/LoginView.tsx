@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '../../lib/AuthContext';
+import { extractApiError } from '../../lib/api';
 import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react';
 
 interface LoginViewProps {
@@ -35,15 +36,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onNavigate }) => {
       // The router in App.tsx will redirect appropriately
       onNavigate('/intern/dashboard');
     } catch (err: any) {
-      setError(err?.message || 'Invalid email or password. Please verify credentials.');
+      const apiErr = extractApiError(err);
+      // AuthContext rethrows with getLoginErrorMessage, but handle raw errors too
+      setError(apiErr.message || 'Invalid email or password. Please verify credentials.');
     } finally {
       setLoading(false);
     }
-  };
-
-  const autofillIntern = () => {
-    setEmail('john@example.com');
-    setPassword('intern2026!');
   };
 
   return (
@@ -76,7 +74,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onNavigate }) => {
               <Mail className="absolute left-3.5 top-3.5 h-4.5 w-4.5 text-slate-500" />
               <input
                 id="login-email"
-                type="email"
+                type="text"
+                autoComplete="username"
                 placeholder="john@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -103,6 +102,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onNavigate }) => {
               <input
                 id="login-password"
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
                 placeholder="••••••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -141,20 +141,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onNavigate }) => {
             )}
           </button>
         </form>
-
-        {/* Testing helper tool */}
-        <div className="bg-slate-950 rounded-xl p-3 border border-slate-800 flex flex-col space-y-1.5 text-center">
-          <span className="text-[11px] text-slate-400">
-            Evaluating this interface offline or with Render slow starts?
-          </span>
-          <button
-            type="button"
-            onClick={autofillIntern}
-            className="text-xs bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-teal-400 font-semibold py-1.5 rounded-lg transition-all cursor-pointer"
-          >
-            Use Sandbox Intern Demo Account
-          </button>
-        </div>
 
         <div className="text-center pt-2">
           <button

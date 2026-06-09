@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { api } from '../../lib/api';
+import { api, getBackendUrl, extractApiError } from '../../lib/api';
 import { OfferData } from '../../types';
 import { 
   FileCheck2, 
@@ -30,12 +30,13 @@ export const OfferView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getOffer();
-      if (response.success) {
-        setData(response.data);
+      const offerData = await api.getOffer();
+      if (offerData && offerData.id) {
+        setData(offerData);
       }
     } catch (err: any) {
-      setError(err?.message || 'Admissions offer datasets are currently offline.');
+      const apiErr = extractApiError(err);
+      setError(apiErr.message || 'Admissions offer datasets are currently offline.');
     } finally {
       setLoading(false);
     }
@@ -43,14 +44,6 @@ export const OfferView: React.FC = () => {
 
   useEffect(() => {
     fetchOffer();
-
-    const handleSandboxChange = () => {
-      fetchOffer();
-    };
-    window.addEventListener('sandbox_mode_changed', handleSandboxChange);
-    return () => {
-      window.removeEventListener('sandbox_mode_changed', handleSandboxChange);
-    };
   }, []);
 
   const handleShareCopy = () => {
@@ -277,7 +270,7 @@ export const OfferView: React.FC = () => {
 
             <div className="space-y-2.5 pt-1">
               <a
-                href={data.download_url}
+                href={`${getBackendUrl()}/api/v1/internships/admin/offers/${data.id}/download`}
                 download
                 target="_blank"
                 referrerPolicy="no-referrer"
@@ -289,7 +282,7 @@ export const OfferView: React.FC = () => {
                   </div>
                   <div className="text-left font-sans">
                     <span className="block font-bold">Download Admissions PDF</span>
-                    <span className="text-[10px] font-mono text-slate-500">Official Acceptance Letter</span>
+                    <span className="text-[10px] font-mono text-slate-500">Official Acceptance Letter (PDF)</span>
                   </div>
                 </div>
 
