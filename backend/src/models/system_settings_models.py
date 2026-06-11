@@ -596,13 +596,13 @@ def initialize_default_settings():
         # OpenRouter Model Name (configurable via UI)
         {
             'key': 'openrouter_model_name',
-            'value': 'meta-llama/llama-3.3-70b-instruct:free',
+            'value': 'nvidia/nemotron-3-super-120b-a12b:free',
             'data_type': 'string',
             'category': 'ai',
             'description': 'OpenRouter model name used for AI content generation (overrides .env config)',
             'is_public': False,
             'is_editable': True,
-            'default_value': 'meta-llama/llama-3.3-70b-instruct:free'
+            'default_value': 'nvidia/nemotron-3-super-120b-a12b:free'
         }
     ]
     

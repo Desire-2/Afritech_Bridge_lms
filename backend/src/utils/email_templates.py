@@ -462,6 +462,46 @@ def application_received_email(application, course_title, cohort_info=None, paym
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
+def _build_community_section(cohort_info: dict = None) -> str:
+    """Build the community/social section for email templates.
+    Uses cohort-specific community_link if provided, otherwise falls back to default WhatsApp link.
+    
+    Args:
+        cohort_info: dict with optional 'community_link' and 'community_link_label' keys
+    
+    Returns:
+        HTML string with community section
+    """
+    default_link = 'https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f'
+    default_label = 'WhatsApp Group'
+    
+    community_link = default_link
+    community_label = default_label
+    if cohort_info:
+        if cohort_info.get('community_link'):
+            community_link = cohort_info['community_link']
+        if cohort_info.get('community_link_label'):
+            community_label = cohort_info['community_link_label']
+    
+    return f'''
+    <div style="background-color: #2c3e50; border: 3px solid #25D366; border-radius: 8px; padding: 25px; margin: 25px 0; color: white;">
+        <div style="text-align: center; margin-bottom: 15px;">
+            <span style="font-size: 40px; display: block; margin-bottom: 10px;">📱</span>
+            <h2 style="margin: 0; color: white; font-size: 20px; font-weight: 700;">
+                Join Our Learning Community!
+            </h2>
+            <p style="color: #e5e7eb; margin: 8px 0 0 0; font-size: 14px;">
+                Connect with fellow students and get course updates
+            </p>
+        </div>
+        <div style="text-align: center; margin-top: 20px;">
+            <a href="{community_link}" style="display: inline-block; background-color: #25D366; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; border: 2px solid #25D366;">
+                💬 Join {community_label}
+            </a>
+        </div>
+    </div>'''
+
+
 def _build_cohort_info_section(cohort_info: dict) -> str:
     """Build a cohort information section for approval emails.
     
@@ -793,24 +833,7 @@ def application_approved_email(application, course, username, temp_password, cus
                 
                 {credentials_section}
         
-        <!-- Community Section -->
-        <div style="background-color: #2c3e50; border: 3px solid #25D366; border-radius: 8px; padding: 25px; margin: 25px 0; color: white;">
-            <div style="text-align: center; margin-bottom: 15px;">
-                <span style="font-size: 40px; display: block; margin-bottom: 10px;">📱</span>
-                <h2 style="margin: 0; color: white; font-size: 20px; font-weight: 700;">
-                    Join Our Learning Community!
-                </h2>
-                <p style="color: #e5e7eb; margin: 8px 0 0 0; font-size: 14px;">
-                    Connect with fellow students and get course updates
-                </p>
-            </div>
-            
-            <div style="text-align: center; margin-top: 20px;">
-                <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #25D366; color: #ffffff; padding: 12px 30px; text-decoration: none; border-radius: 25px; font-weight: 600; font-size: 14px; border: 2px solid #25D366;">
-                    💬 Join WhatsApp Group
-                </a>
-            </div>
-        </div>
+        {_build_community_section(cohort_info) if cohort_info else _build_community_section()}
         
         <!-- Course Information -->
         <div style="background-color: #2c3e50; border-radius: 8px; padding: 20px; margin: 20px 0;">
@@ -1648,6 +1671,8 @@ def course_announcement_email(student_name, course_title, announcement_title, an
                 View Full Announcement
             </a>
         </div>
+        
+        {_build_community_section(cohort_context)}
         
         <p style="color: #e5e7eb; line-height: 1.6; text-align: center;">
             Stay engaged and check your course regularly for updates!<br><br>

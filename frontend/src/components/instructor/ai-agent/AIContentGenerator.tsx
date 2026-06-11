@@ -260,6 +260,18 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
   const config = getTypeConfig();
   const progress = taskStatus?.progress ?? 0;
   const isBatchWithSteps = taskStatus && taskStatus.total_steps > 1;
+  const batchPhase = taskStatus?.batch_phase;
+  const batchTotalItems = taskStatus?.batch_total_items;
+  const batchCurrentItem = taskStatus?.batch_current_item;
+
+  const getBatchPhaseLabel = () => {
+    if (!batchPhase) return null;
+    if (batchPhase === 'outlines') return 'Phase 1/2: Planning outlines...';
+    if (batchPhase === 'content' && batchTotalItems) {
+      return `Phase 2/2: Generating content${batchCurrentItem ? ` (${batchCurrentItem}/${batchTotalItems})` : ''}`;
+    }
+    return null;
+  };
 
   const getTypeIcon = () => {
     switch (type) {
@@ -390,6 +402,16 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
                 {taskStatus ? `${Math.round(progress)}%` : `${elapsedSeconds}s`}
               </span>
             </div>
+
+            {/* Batch phase indicator */}
+            {getBatchPhaseLabel() && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50/80 dark:bg-indigo-900/20 rounded-lg border border-indigo-200/60 dark:border-indigo-700/40">
+                <Zap className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                  {getBatchPhaseLabel()}
+                </span>
+              </div>
+            )}
 
             {/* Step list for multi-step tasks */}
             {isBatchWithSteps && taskStatus.steps.length > 0 && (

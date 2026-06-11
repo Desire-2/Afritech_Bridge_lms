@@ -34,7 +34,7 @@ class AIProviderManager:
     """Manages AI provider connections, rate limiting, and request handling"""
     
     # OpenRouter model configurations with fallback chain
-    # Updated Feb 2026 - verified available on openrouter.ai/models
+    # Updated Jun 2026 - verified available on openrouter.ai/models
     # The primary model name is now configurable via self.openrouter_model_name
     MODEL_CONFIGS = {
         'primary': {
@@ -42,7 +42,7 @@ class AIProviderManager:
             'cost_per_1k_tokens': 0.0,
         },
         'secondary': {
-            'name': 'deepseek/deepseek-r1-0528:free',
+            'name': 'nvidia/nemotron-3-ultra-550b-a55b:free',
             'max_tokens': 8000,
             'cost_per_1k_tokens': 0.0,
         },
@@ -51,6 +51,16 @@ class AIProviderManager:
             'max_tokens': 8000,
             'cost_per_1k_tokens': 0.0,
         },
+    }
+
+    # Mapping of stale/deprecated OpenRouter model names to their current replacements.
+    # Any model name loaded from DB settings (per-user) that matches a key here
+    # will be auto-upgraded to the replacement value.
+    STALE_OPENROUTER_MODELS = {
+        'deepseek/deepseek-r1-0528:free': 'nvidia/nemotron-3-super-120b-a12b:free',
+        'sourceful/riverflow-v2.5-fast:free': 'nvidia/nemotron-3-nano-30b-a3b:free',
+        'deepseek/deepseek-r1:free': 'nvidia/nemotron-3-super-120b-a12b:free',
+        'meta-llama/llama-3.3-70b-instruct:free': 'nvidia/nemotron-3-super-120b-a12b:free',
     }
 
     # Mapping of stale/deprecated Gemini model names to their current replacements.
@@ -73,6 +83,19 @@ class AIProviderManager:
         replacement = self.STALE_GEMINI_MODELS.get(model_name)
         if replacement:
             logger.warning(f"[MODEL MIGRATION] Replaced stale Gemini model '{model_name}' with '{replacement}'")
+            return replacement
+        return model_name
+
+    def _resolve_openrouter_model(self, model_name: str, default: str = 'nvidia/nemotron-3-super-120b-a12b:free') -> str:
+        """
+        Check if an OpenRouter model name is stale/deprecated and return its replacement.
+        Handles broken model slugs from per-user DB settings that return 404.
+        """
+        if not model_name:
+            return default
+        replacement = self.STALE_OPENROUTER_MODELS.get(model_name)
+        if replacement:
+            logger.warning(f"[MODEL MIGRATION] Replaced stale OpenRouter model '{model_name}' with '{replacement}'")
             return replacement
         return model_name
 
@@ -181,10 +204,8 @@ class AIProviderManager:
         )
         raw_gemini_model = gemini_model_from_db if gemini_model_from_db else 'gemini-2.0-flash'
         self.gemini_model_name = self._resolve_model_name(raw_gemini_model)
-        self.openrouter_model_name = (
-            openrouter_model_from_db if openrouter_model_from_db
-            else 'meta-llama/llama-3.3-70b-instruct:free'
-        )
+        raw_or_model = openrouter_model_from_db if openrouter_model_from_db else 'nvidia/nemotron-3-super-120b-a12b:free'
+        self.openrouter_model_name = self._resolve_openrouter_model(raw_or_model)
 
         # Store copies of global values for fallback when user context is cleared
         self._global_openrouter_api_key = self.openrouter_api_key
@@ -235,12 +256,20 @@ class AIProviderManager:
         try:
             from ...models.system_settings_models import UserAISetting
             user_settings = UserAISetting.query.filter_by(user_id=user_id).first()
-            if user_settings and (user_settings.openrouter_api_key or user_settings.gemini_api_key):
-                # Use user's keys if they have any set
+            # Check for ANY personal settings — API keys OR model name overrides
+            has_personal_settings = (
+                user_settings.openrouter_api_key or
+                user_settings.gemini_api_key or
+                user_settings.openrouter_model_name or
+                user_settings.gemini_model_name
+            ) if user_settings else False
+            if has_personal_settings:
+                # Use user's keys if they have any set, otherwise fall back to global
                 self.openrouter_api_key = user_settings.openrouter_api_key or self._global_openrouter_api_key
                 self.gemini_api_key = user_settings.gemini_api_key or self._global_gemini_api_key
-                self.openrouter_model_name = user_settings.openrouter_model_name or self._global_openrouter_model_name
-                # Resolve stale Gemini model names from per-user settings
+                # Resolve stale model names from per-user settings
+                raw_user_or = user_settings.openrouter_model_name or self._global_openrouter_model_name
+                self.openrouter_model_name = self._resolve_openrouter_model(raw_user_or)
                 raw_user_gemini = user_settings.gemini_model_name or self._global_gemini_model_name
                 self.gemini_model_name = self._resolve_model_name(raw_user_gemini)
                 logger.info(f"[USER CTX] User {user_id} has personal AI settings — activated")
@@ -382,12 +411,12 @@ class AIProviderManager:
                         if model_tier == 'primary':
                             model_name = self.openrouter_model_name
                         else:
-                            model_name = self.MODEL_CONFIGS[model_tier].get('name', 'meta-llama/llama-3.3-70b-instruct:free')
+                            model_name = self.MODEL_CONFIGS[model_tier].get('name', 'nvidia/nemotron-3-super-120b-a12b:free')
                         expected_key = self._get_cache_key(prompt, provider, model_name)
                         if expected_key == key:
                             keys_to_remove.append(key)
-                    # Also check gemini model
-                    expected_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.0-flash')
+                    # Also check gemini model (use actual configured model name)
+                    expected_key = self._get_cache_key(prompt, 'gemini', self.gemini_model_name)
                     if expected_key == key:
                         keys_to_remove.append(key)
         
@@ -589,7 +618,7 @@ class AIProviderManager:
         if model_tier == 'primary':
             model_name = self.openrouter_model_name
         else:
-            model_name = model_config.get('name', 'meta-llama/llama-3.3-70b-instruct:free')
+            model_name = model_config.get('name', 'nvidia/nemotron-3-super-120b-a12b:free')
         
         cache_key = self._get_cache_key(prompt, 'openrouter', model_name)
         cached = self._get_cached_response(cache_key)
@@ -669,6 +698,16 @@ class AIProviderManager:
                     _match = re.search(r'\b(4\d{2}|5\d{2})\b', error_msg)
                     if _match:
                         status_code = int(_match.group(1))
+
+                if status_code == 404:
+                    # Model not found — don't retry, immediately try next tier
+                    logger.warning(f"OpenRouter model '{model_name}' not found (404). Trying next tier.")
+                    self._mark_provider_failure('openrouter')
+                    if model_tier == 'primary':
+                        return self._make_openrouter_request(prompt, 'secondary', 1, temperature, max_tokens)
+                    elif model_tier == 'secondary':
+                        return self._make_openrouter_request(prompt, 'fast', 1, temperature, max_tokens)
+                    return None
 
                 if status_code in [401, 402, 403]:
                     logger.error(f"OpenRouter auth/billing error (status {status_code}): {error_msg}")
@@ -759,7 +798,7 @@ class AIProviderManager:
             logger.warning("Gemini model not initialized")
             return None
         
-        cache_key = self._get_cache_key(prompt, 'gemini', 'gemini-2.0-flash')
+        cache_key = self._get_cache_key(prompt, 'gemini', self.gemini_model_name)
         cached = self._get_cached_response(cache_key)
         if cached:
             return cached

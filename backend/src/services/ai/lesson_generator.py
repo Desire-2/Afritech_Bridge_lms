@@ -1314,6 +1314,228 @@ Return ONLY a JSON object:
                 return parsed
         return None
 
+    # =====================================================================
+    # BATCH LESSON OUTLINE GENERATION
+    # Generates ALL lesson outlines (titles, descriptions, objectives) in
+    # ONE API call. Content is generated separately later. This dramatically
+    # reduces API calls from N to 1 for lesson planning.
+    # =====================================================================
+
+    def generate_all_lesson_outlines(self, course_title: str, module_title: str,
+                                      module_description: str, module_objectives: str,
+                                      num_lessons: int = 5,
+                                      existing_lessons: Optional[List[Dict[str, Any]]] = None,
+                                      course_context: Optional[List[Dict[str, Any]]] = None,
+                                      session_id: str = None, task_id: str = None) -> Dict[str, Any]:
+        """
+        Generate ALL lesson outlines (titles, descriptions, objectives) for a module
+        in a SINGLE API call. No content is generated — just the plan.
+        
+        This is 5-8x more efficient than stepwise generation for reducing
+        rate limit hits.
+        
+        Args:
+            course_title: Parent course title
+            module_title: Parent module title
+            module_description: Module description
+            module_objectives: Module learning objectives
+            num_lessons: Number of lesson outlines to generate
+            existing_lessons: Existing lessons to avoid duplication
+            course_context: Full course structure for cross-reference
+            
+        Returns:
+            Dict with "lessons" list containing title, description, objectives, duration
+        """
+        existing_text = ""
+        start_num = 1
+        if existing_lessons and len(existing_lessons) > 0:
+            existing_text = f"\n\nExisting Lessons ({len(existing_lessons)}):\n"
+            for les in existing_lessons:
+                existing_text += f"  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
+                if les.get('description'):
+                    existing_text += f" — {les['description'][:100]}"
+                existing_text += "\n"
+            start_num = len(existing_lessons) + 1
+            existing_text += f"\n[Generate {num_lessons} NEW lessons starting from Lesson {start_num}. DO NOT repeat existing topics.]"
+        
+        course_ctx = self._build_course_context_text(course_context, module_title)
+        
+        prompt = f"""You are an expert curriculum designer. Plan {num_lessons} lesson outlines for a module.
+
+Course: {course_title}
+Module: {module_title}
+Description: {module_description}
+Objectives: {module_objectives}{existing_text}{course_ctx}
+
+===== CRITICAL =====
+- Each lesson title MUST be SPECIFIC and UNIQUE — no generic titles
+- Ensure ZERO overlap between lessons — each covers a distinct sub-topic
+- Content will be generated SEPARATELY — just provide the outline here
+- Progress from fundamentals to advanced topics
+
+Return ONLY valid JSON:
+{{
+  "lessons": [
+    {{
+      "order": {start_num},
+      "title": "Specific descriptive lesson title",
+      "description": "2-3 sentences on what this lesson covers and its value",
+      "learning_objectives": "• Objective 1\\n• Objective 2\\n• Objective 3",
+      "duration_minutes": 60
+    }}
+  ]
+}}"""
+        
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Planning {num_lessons} lesson outlines for {module_title}",
+            temperature=0.6,
+            max_tokens=4096,
+        )
+        if result:
+            parsed = json_parser.parse_json_response(result, "lesson outlines")
+            if parsed and 'lessons' in parsed:
+                lessons = parsed['lessons']
+                # Validate and fix generic titles
+                for idx, lesson in enumerate(lessons):
+                    lesson_num = lesson.get('order', idx + start_num)
+                    if self._is_generic_title(lesson.get('title', '')):
+                        lesson['title'] = self._generate_meaningful_title(
+                            module_title, course_title, existing_lessons, lesson_num
+                        )
+                    lesson['order'] = lesson_num
+                # Validate and normalize order numbers
+                for idx, lesson in enumerate(lessons):
+                    lesson['order'] = idx + start_num
+                # Validate and normalize order numbers
+                for idx, lesson in enumerate(lessons):
+                    lesson['order'] = idx + start_num
+                logger.info(f"Batch generated {len(lessons)} lesson outlines using {provider}")
+                return {"lessons": lessons}
+        
+        logger.warning("Failed to generate lesson outlines, returning empty")
+        return {"lessons": []}
+
+    def generate_content_for_lesson_batch(self, course_title: str, module_title: str,
+                                           module_description: str, module_objectives: str,
+                                           lessons_to_generate: List[Dict[str, Any]],
+                                           existing_content: Optional[List[Dict[str, Any]]] = None,
+                                           course_context: Optional[List[Dict[str, Any]]] = None,
+                                           session_id: str = None, task_id: str = None) -> Dict[str, Any]:
+        """
+        Generate content for a BATCH of 2-3 lessons in ONE API call.
+        Each lesson gets full content but they share a single request.
+        
+        This is 2-3x more efficient than generating one lesson at a time.
+        
+        Args:
+            lessons_to_generate: List of lesson outlines to fill with content
+            existing_content: Previously generated lesson content for context
+            
+        Returns:
+            Dict with "lessons" list containing full content for each lesson
+        """
+        batch_size = len(lessons_to_generate)
+        
+        # Build context from already-generated content
+        existing_text = ""
+        if existing_content and len(existing_content) > 0:
+            existing_text = "\n\nAlready Generated Lessons (for context — DO NOT repeat their topics):\n"
+            for les in existing_content:
+                existing_text += f"\n  {les.get('order', '?')}. {les.get('title', 'Untitled')}"
+                if les.get('description'):
+                    existing_text += f" — {les['description'][:100]}"
+                if les.get('content_summary'):
+                    existing_text += f"\n    Topics: {les['content_summary'][:150]}"
+        
+        # Build lesson plan text
+        lesson_plan_text = "\n\nLessons to generate content for:\n"
+        for les in lessons_to_generate:
+            lesson_plan_text += f"\n  {les.get('order', '?')}. {les.get('title', 'Untitled')}\n"
+            if les.get('description'):
+                lesson_plan_text += f"     Description: {les['description']}\n"
+            if les.get('learning_objectives'):
+                lesson_plan_text += f"     Objectives: {les['learning_objectives'][:200]}\n"
+        
+        course_ctx = self._build_course_context_text(course_context, module_title)
+        
+        prompt = f"""You are an expert professor creating comprehensive lesson content.
+
+Course: {course_title}
+Module: {module_title}
+Description: {module_description}
+Objectives: {module_objectives}{existing_text}{lesson_plan_text}{course_ctx}
+
+===== CRITICAL REQUIREMENTS =====
+Generate COMPLETE, DETAILED content for EACH of the {batch_size} lessons listed above.
+
+For EACH lesson, provide:
+1. title, description, learning_objectives, duration_minutes (from outline above)
+2. content_data: Full lesson content (2000-3000 words) with:
+   - Introduction with real-world hook
+   - 4-5 main content sections with ## headers
+   - Worked examples with step-by-step solutions
+   - Key takeaways
+   - Discussion questions
+
+===== NO REPETITION RULES =====
+- Each lesson MUST cover a DISTINCT sub-topic
+- Do NOT repeat content from already-generated lessons listed above
+- Cross-reference but don't duplicate
+- Use proper markdown formatting
+
+Return ONLY valid JSON:
+{{
+  "lessons": [
+    {{
+      "order": 1,
+      "title": "Lesson Title",
+      "description": "Lesson description",
+      "learning_objectives": "• Obj 1\\n• Obj 2",
+      "duration_minutes": 60,
+      "content_type": "text",
+      "content_data": "# Full markdown content here..."
+    }}
+  ]
+}}"""
+        
+        # Use higher token limit for batch content generation
+        result, provider = rate_limit_handler.execute_with_retry(
+            self.provider.make_ai_request,
+            prompt,
+            session_id=session_id,
+            task_id=task_id,
+            step_label=f"Generating content for {batch_size} lessons in {module_title}",
+            temperature=0.7,
+            max_tokens=16000,
+        )
+        if result:
+            parsed = json_parser.parse_json_response(result, "lesson content batch")
+            if parsed and 'lessons' in parsed:
+                lessons = parsed['lessons']
+                # Validate titles
+                for idx, lesson in enumerate(lessons):
+                    if self._is_generic_title(lesson.get('title', '')):
+                        lesson['title'] = self._generate_meaningful_title(
+                            module_title, course_title, existing_content, lesson.get('order', idx + 1)
+                        )
+                # Validate and normalize order numbers
+                for idx, lesson in enumerate(lessons):
+                    if 'order' not in lesson or not isinstance(lesson.get('order'), int):
+                        lesson['order'] = idx + 1
+                # Validate and normalize order numbers
+                for idx, lesson in enumerate(lessons):
+                    if 'order' not in lesson or not isinstance(lesson.get('order'), int):
+                        lesson['order'] = idx + 1
+                logger.info(f"Batch generated content for {len(lessons)} lessons using {provider}")
+                return {"lessons": lessons}
+        
+        logger.warning("Failed to generate batch lesson content")
+        return {"lessons": []}
+
 
 # Singleton instance
 lesson_generator = LessonGenerator()

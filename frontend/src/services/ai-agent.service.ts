@@ -182,6 +182,12 @@ export interface TaskStatus {
   current_step: number;
   total_steps: number;
   current_step_description: string;
+  /** Batch phase: 'outlines' = planning all items, 'content' = generating full content */
+  batch_phase?: 'outlines' | 'content' | null;
+  /** Total count of items being generated in batch mode */
+  batch_total_items?: number;
+  /** Index of current item being processed in batch content phase */
+  batch_current_item?: number;
   steps: {
     step_number: number;
     total_steps: number;

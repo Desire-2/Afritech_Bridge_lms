@@ -1,6 +1,8 @@
 # Email Service for Internship Application System
 
 import logging
+import os
+import base64
 from flask import render_template_string, current_app
 from datetime import datetime
 from src.utils.brevo_email_service import brevo_service
@@ -1728,7 +1730,8 @@ class InternshipMailer:
     def send_offer_letter(self, application, offer, password=None, is_existing_user=False):
         """
         Send an internship offer letter email with credentials and next steps.
-        
+        The generated PDF offer letter is included as an email attachment.
+
         Args:
             application: The InternshipApplication
             offer: The InternshipOfferLetter
@@ -1755,11 +1758,24 @@ class InternshipMailer:
                 is_existing_user=is_existing_user,
             )
 
+            # Build PDF attachment from the saved offer letter file
+            attachments = None
+            if offer.pdf_path and os.path.exists(offer.pdf_path):
+                try:
+                    with open(offer.pdf_path, 'rb') as f:
+                        pdf_content = base64.b64encode(f.read()).decode('utf-8')
+                    attachment_filename = f"Offer_Letter_{application.reference_code}.pdf"
+                    attachments = [{'name': attachment_filename, 'content': pdf_content}]
+                    logger.info(f"PDF attachment prepared: {attachment_filename}")
+                except Exception as attach_err:
+                    logger.warning(f"Could not attach offer PDF: {attach_err}")
+
             success = self.brevo_service.send_email(
                 to_emails=[{'email': application.email, 'name': application.full_name}],
                 subject=subject,
                 html_content=html_content,
                 sender_name=self.sender_name,
+                attachments=attachments,
             )
 
             if success:

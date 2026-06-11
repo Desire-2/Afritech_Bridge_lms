@@ -430,6 +430,10 @@ class ApplicationWindow(db.Model):
     installment_count = db.Column(db.Integer, nullable=True)
     installment_interval_days = db.Column(db.Integer, nullable=True)
 
+    # ── Cohort-level community / communication settings ──
+    community_link = db.Column(db.String(500), nullable=True)  # URL to community group (WhatsApp, Discord, etc.)
+    community_link_label = db.Column(db.String(100), nullable=True)  # Display label (e.g. 'WhatsApp Community', 'Discord Server')
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -743,6 +747,9 @@ class ApplicationWindow(db.Model):
             "effective_price": self.get_effective_price(),
             "effective_currency": self.get_effective_currency(),
             "payment_summary": self.get_payment_summary(),
+            # Community / communication settings
+            "community_link": self.community_link,
+            "community_link_label": self.community_link_label,
             # Module release overrides (NULL = inheriting from course)
             "module_release_count": self.module_release_count,
             "module_release_interval": self.module_release_interval,

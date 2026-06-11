@@ -84,9 +84,10 @@ def send_payment_pending_notification(application, course_title: str, payment_in
         return False
 
 
-def send_payment_confirmation_notification(application, course_title: str, payment_details: Dict) -> bool:
+def send_payment_confirmation_notification(application, course_title: str, payment_details: Dict, cohort_info: Optional[Dict] = None) -> bool:
     """
-    Send email when payment is successfully confirmed
+    Send email when payment is successfully confirmed.
+    Includes a PDF payment slip attachment.
     
     Args:
         application: CourseApplication object
@@ -97,6 +98,10 @@ def send_payment_confirmation_notification(application, course_title: str, payme
             - payment_method: str
             - payment_reference: str
             - payment_date: datetime
+        cohort_info: dict with cohort details (optional)
+            - cohort_label: str
+            - cohort_start_date: datetime
+            - cohort_end_date: datetime
     
     Returns:
         bool: True if email sent successfully, False otherwise
@@ -106,19 +111,81 @@ def send_payment_confirmation_notification(application, course_title: str, payme
             logger.warning("📧 Email service not available - cannot send payment confirmation")
             return False
         
+        # Resolve cohort info from application if not provided
+        if not cohort_info:
+            cohort_label = getattr(application, 'cohort_label', None)
+            cohort_start = getattr(application, 'cohort_start_date', None)
+            cohort_end = getattr(application, 'cohort_end_date', None)
+            if cohort_label or cohort_start or cohort_end:
+                cohort_info = {
+                    'cohort_label': cohort_label,
+                    'cohort_start_date': cohort_start,
+                    'cohort_end_date': cohort_end,
+                    'timezone': 'UTC',
+                }
+        # Ensure community_link is included in cohort_info if available from the application window
+        if cohort_info and not cohort_info.get('community_link'):
+            window = getattr(application, 'application_window', None)
+            if window:
+                cohort_info['community_link'] = getattr(window, 'community_link', None)
+                cohort_info['community_link_label'] = getattr(window, 'community_link_label', None)
+
         # Build email content
         email_html = payment_confirmation_email(
             application=application,
             course_title=course_title,
-            payment_details=payment_details
+            payment_details=payment_details,
+            cohort_info=cohort_info,
         )
-        
-        # Send email
-        success = brevo_service.send_email(
-            to_emails=[application.email],
-            subject=f"✅ Payment Confirmed - Welcome to {course_title}! 🎉",
-            html_content=email_html
-        )
+
+        # Generate PDF payment slip attachment
+        pdf_attachment = None
+        if PAYMENT_SLIP_AVAILABLE and generate_payment_slip_pdf:
+            try:
+                student_name = application.full_name or "Student"
+                student_phone = getattr(application, 'phone', None) or ""
+                app_cohort_label = (cohort_info or {}).get('cohort_label') or getattr(application, 'cohort_label', None)
+                app_cohort_start = (cohort_info or {}).get('cohort_start_date') or getattr(application, 'cohort_start_date', None)
+                app_cohort_end = (cohort_info or {}).get('cohort_end_date') or getattr(application, 'cohort_end_date', None)
+
+                pdf_bytes, pdf_filename = generate_payment_slip_pdf(
+                    student_name=student_name,
+                    student_email=application.email,
+                    student_phone=student_phone,
+                    course_title=course_title,
+                    cohort_label=app_cohort_label,
+                    cohort_start_date=app_cohort_start,
+                    cohort_end_date=app_cohort_end,
+                    amount_paid=payment_details.get('amount_paid', 0),
+                    currency=payment_details.get('currency', 'USD'),
+                    payment_method=payment_details.get('payment_method', 'Payment Gateway'),
+                    payment_reference=payment_details.get('payment_reference', ''),
+                    payment_date=payment_details.get('payment_date'),
+                    payment_status='completed',
+                    application_id=application.id,
+                    admin_name='Payment System',
+                )
+                # Base64 encode the PDF for Brevo attachment
+                pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                pdf_attachment = [{
+                    'name': pdf_filename,
+                    'content': pdf_base64,
+                }]
+                logger.info(f"📄 Payment slip PDF generated: {pdf_filename} for application #{application.id}")
+            except Exception as slip_err:
+                logger.warning(f"⚠️ Failed to generate payment slip PDF for application #{application.id}: {slip_err}")
+                pdf_attachment = None
+
+        # Prepare email kwargs with optional PDF attachment
+        email_kwargs = {
+            'to_emails': [application.email],
+            'subject': f"✅ Payment Confirmed - Welcome to {course_title}! 🎉",
+            'html_content': email_html,
+        }
+        if pdf_attachment:
+            email_kwargs['attachments'] = pdf_attachment
+
+        success = brevo_service.send_email(**email_kwargs)
         
         if success:
             logger.info(f"📧 Payment confirmation email sent to {application.email} for application #{application.id}")
@@ -352,6 +419,8 @@ def send_enrollment_payment_notification(
                 'cohort_start_date': window.cohort_start,
                 'cohort_end_date': window.cohort_end,
                 'timezone': 'UTC',
+                'community_link': getattr(window, 'community_link', None),
+                'community_link_label': getattr(window, 'community_link_label', None),
             }
             # Get application window close date (when application period ends)
             application_end_date = window.closes_at

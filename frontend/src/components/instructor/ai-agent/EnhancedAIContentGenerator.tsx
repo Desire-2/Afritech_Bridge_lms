@@ -14,7 +14,8 @@ import {
   XCircle,
   CircleDot,
   AlertTriangle,
-  TimerReset
+  TimerReset,
+  Zap
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,6 +41,10 @@ interface EnhancedAIContentGeneratorProps {
   moduleId?: number;
   onGenerate?: (data: any) => void;
   className?: string;
+  /** Enable batch generation mode for modules/lessons */
+  batchMode?: boolean;
+  /** Number of items to generate in batch mode */
+  batchCount?: number;
 }
 
 const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
@@ -47,7 +52,9 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
   courseId,
   moduleId,
   onGenerate,
-  className = ''
+  className = '',
+  batchMode = false,
+  batchCount = 5
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [result, setResult] = useState<any>(null);
@@ -161,10 +168,17 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
             setIsGenerating(false);
             return;
           }
-          response = await aiAgentService.generateModuleContent(
-            { course_id: courseId, module_title: formData.title.trim() },
-            handleProgressUpdate,
-          );
+          if (batchMode) {
+            response = await aiAgentService.generateMultipleModules(
+              { course_id: courseId, num_modules: batchCount },
+              handleProgressUpdate,
+            );
+          } else {
+            response = await aiAgentService.generateModuleContent(
+              { course_id: courseId, module_title: formData.title.trim() },
+              handleProgressUpdate,
+            );
+          }
           break;
 
         case 'lesson':
@@ -173,15 +187,22 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
             setIsGenerating(false);
             return;
           }
-          response = await aiAgentService.generateLessonContent(
-            {
-              course_id: courseId,
-              module_id: moduleId,
-              lesson_title: formData.title.trim(),
-              lesson_description: formData.description,
-            },
-            handleProgressUpdate,
-          );
+          if (batchMode) {
+            response = await aiAgentService.generateMultipleLessons(
+              { course_id: courseId, module_id: moduleId, num_lessons: batchCount },
+              handleProgressUpdate,
+            );
+          } else {
+            response = await aiAgentService.generateLessonContent(
+              {
+                course_id: courseId,
+                module_id: moduleId,
+                lesson_title: formData.title.trim(),
+                lesson_description: formData.description,
+              },
+              handleProgressUpdate,
+            );
+          }
           break;
 
         case 'quiz':
@@ -240,6 +261,18 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
 
   const progress = taskStatus?.progress ?? 0;
   const isBatchWithSteps = taskStatus && taskStatus.total_steps > 1;
+  const batchPhase = taskStatus?.batch_phase;
+  const batchTotalItems = taskStatus?.batch_total_items;
+  const batchCurrentItem = taskStatus?.batch_current_item;
+
+  const getBatchPhaseLabel = () => {
+    if (!batchPhase) return null;
+    if (batchPhase === 'outlines') return 'Phase 1/2: Planning outlines...';
+    if (batchPhase === 'content' && batchTotalItems) {
+      return `Phase 2/2: Generating content${batchCurrentItem ? ` (${batchCurrentItem}/${batchTotalItems})` : ''}`;
+    }
+    return null;
+  };
 
   return (
     <div className={`space-y-6 ${className}`}>
@@ -391,6 +424,16 @@ const EnhancedAIContentGenerator: React.FC<EnhancedAIContentGeneratorProps> = ({
               {/* Real-time progress panel during generation */}
               {isGenerating && (
                 <div className="space-y-3 p-4 bg-gradient-to-br from-purple-50/80 to-indigo-50/50 dark:from-purple-900/15 dark:to-indigo-900/10 rounded-xl border border-purple-200/60 dark:border-purple-800/40">
+                  {/* Batch phase indicator */}
+                  {getBatchPhaseLabel() && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-indigo-50/80 dark:bg-indigo-900/20 rounded-lg border border-indigo-200/60 dark:border-indigo-700/40">
+                      <Zap className="w-4 h-4 text-indigo-500 dark:text-indigo-400 shrink-0" />
+                      <span className="text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                        {getBatchPhaseLabel()}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Current step description */}
                   <div className="flex items-center gap-2.5 text-sm text-purple-700 dark:text-purple-300">
                     <div className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-800/40 flex items-center justify-center shrink-0">

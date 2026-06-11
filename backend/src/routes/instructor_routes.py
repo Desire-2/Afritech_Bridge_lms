@@ -83,6 +83,22 @@ def _send_announcement_emails(announcement, course, cohort_id=None):
         except Exception:
             db.session.rollback()
 
+        # Build cohort_context with community_link from ApplicationWindow
+        cohort_context = None
+        if cohort_id:
+            try:
+                window = ApplicationWindow.query.get(cohort_id)
+                if window:
+                    cohort_context = {
+                        'cohort_label': window.cohort_label,
+                    }
+                    if window.community_link:
+                        cohort_context['community_link'] = window.community_link
+                    if window.community_link_label:
+                        cohort_context['community_link_label'] = window.community_link_label
+            except Exception as e:
+                logger.warning(f"Could not load ApplicationWindow for cohort_context: {e}")
+
         # Capture the Flask app instance before threading
         app_instance = current_app._get_current_object()
         
@@ -98,6 +114,7 @@ def _send_announcement_emails(announcement, course, cohort_id=None):
                             announcement_title=announcement_title,
                             announcement_content=announcement_content,
                             instructor_name=instructor_name,
+                            cohort_context=cohort_context,
                             unsubscribe_token=student_info.get('unsub_token')
                         )
                         

@@ -68,6 +68,10 @@ class TaskInfo:
     current_step: int = 0
     total_steps: int = 1
     current_step_description: str = "Waiting to start..."
+    # Batch generation phase tracking
+    batch_phase: Optional[str] = None  # 'outlines' or 'content'
+    batch_total_items: Optional[int] = None
+    batch_current_item: Optional[int] = None
     steps: List[StepInfo] = field(default_factory=list)
     result: Optional[Any] = None
     error: Optional[str] = None
@@ -85,6 +89,9 @@ class TaskInfo:
             "current_step": self.current_step,
             "total_steps": self.total_steps,
             "current_step_description": self.current_step_description,
+            "batch_phase": self.batch_phase,
+            "batch_total_items": self.batch_total_items,
+            "batch_current_item": self.batch_current_item,
             "steps": [
                 {
                     "step_number": s.step_number,
@@ -132,7 +139,7 @@ class BackgroundTaskManager:
         self.cancel_flags: Dict[str, threading.Event] = {}
         self._task_ttl = 7200       # 2 hours
         self._cleanup_interval = 1800  # 30 min
-        self._step_delay = int(os.environ.get('AI_STEP_DELAY_SECONDS', '10'))
+        self._step_delay = int(os.environ.get('AI_STEP_DELAY_SECONDS', '15'))
 
         # Start background cleanup thread
         cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
@@ -285,6 +292,24 @@ class BackgroundTaskManager:
             task.steps[step - 1] = step_info
         else:
             task.steps.append(step_info)
+
+    def update_batch_phase(self, task_id: str, phase: Optional[str],
+                           total_items: int = None, current_item: int = None):
+        """Update batch generation phase tracking for the frontend progress display.
+        
+        Args:
+            phase: 'outlines' for planning phase, 'content' for content generation phase
+            total_items: total number of items (modules/lessons) being generated
+            current_item: index of current item being processed (1-based)
+        """
+        task = self.tasks.get(task_id)
+        if not task:
+            return
+        task.batch_phase = phase
+        if total_items is not None:
+            task.batch_total_items = total_items
+        if current_item is not None:
+            task.batch_current_item = current_item
 
     def complete_step(self, task_id: str, step: int, total: int, description: str):
         """Mark a step as completed"""

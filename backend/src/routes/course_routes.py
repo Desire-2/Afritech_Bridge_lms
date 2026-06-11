@@ -140,6 +140,10 @@ def _sync_application_windows(course, windows_data):
             max_students = _int_or_none(win.get("max_students"))
             description = win.get("description") or None
 
+            # Community / communication settings
+            community_link = (win.get("community_link") or None)
+            community_link_label = (win.get("community_link_label") or None)
+
             # Module release override fields
             mod_release_count = _int_or_none(win.get("module_release_count"))
             mod_release_interval = win.get("module_release_interval") or None
@@ -172,6 +176,8 @@ def _sync_application_windows(course, windows_data):
                 existing.module_release_count = mod_release_count
                 existing.module_release_interval = mod_release_interval
                 existing.module_release_interval_days = mod_release_interval_days
+                existing.community_link = community_link
+                existing.community_link_label = community_link_label
             else:
                 # CREATE new window
                 new_win = ApplicationWindow(
@@ -201,6 +207,8 @@ def _sync_application_windows(course, windows_data):
                     module_release_count=mod_release_count,
                     module_release_interval=mod_release_interval,
                     module_release_interval_days=mod_release_interval_days,
+                    community_link=community_link,
+                    community_link_label=community_link_label,
                 )
                 db.session.add(new_win)
         except ValueError as exc:
@@ -356,6 +364,12 @@ def update_cohort(course_id, cohort_id):
         if "module_release_interval_days" in data:
             val = data.get("module_release_interval_days")
             window.module_release_interval_days = int(val) if val is not None else None
+
+        # Community / communication settings
+        if "community_link" in data:
+            window.community_link = data.get("community_link") or None
+        if "community_link_label" in data:
+            window.community_link_label = data.get("community_link_label") or None
 
         db.session.commit()
         return jsonify(window.to_dict()), 200

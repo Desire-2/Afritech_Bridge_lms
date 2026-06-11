@@ -120,6 +120,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
     id: string;
     label: string;
     description: string;
+    communityLink: string;
+    communityLinkLabel: string;
     opensAt: string;
     closesAt: string;
     startDate: string;
@@ -412,6 +414,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
             id: (w.id ?? `${course.id}-cohort-${idx}`).toString(),
             label: w.cohort_label || `Cohort ${idx + 1}`,
             description: w.description || '',
+            communityLink: w.community_link || '',
+            communityLinkLabel: w.community_link_label || '',
             opensAt: (w.opens_at || '').split('T')[0] || '',
             closesAt: (w.closes_at || '').split('T')[0] || '',
             startDate: (w.cohort_start || '').split('T')[0] || '',
@@ -477,6 +481,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
           max_students: c.maxStudents,
           description: c.description || null,
           // Module release overrides
+          community_link: c.communityLink || null,
+          community_link_label: c.communityLinkLabel || null,
           module_release_count: c.moduleReleaseOverride ? c.moduleReleaseCount : null,
           module_release_interval: c.moduleReleaseOverride ? c.moduleReleaseInterval : null,
           module_release_interval_days: c.moduleReleaseOverride ? c.moduleReleaseIntervalDays : null,
@@ -838,6 +844,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                   id: `new-${Date.now()}`,
                   label: `Cohort ${additionalCohorts.length + 1}`,
                   description: '',
+                  communityLink: '',
+                  communityLinkLabel: '',
                   opensAt: '',
                   closesAt: '',
                   startDate: '',
@@ -864,6 +872,8 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                   moduleReleaseCount: null,
                   moduleReleaseInterval: null,
                   moduleReleaseIntervalDays: null,
+                  communityLink: '',
+                  communityLinkLabel: '',
                   expanded: true,
                   paymentExpanded: false,
                 }])}
@@ -1006,6 +1016,32 @@ const CourseSettings: React.FC<CourseSettingsProps> = ({ course, onCourseUpdate 
                             placeholder="Brief description of this cohort..."
                             className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
                           />
+                        </div>
+
+                        {/* Community Link */}
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Community & Communication</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">Set a community link (WhatsApp, Discord, etc.) for this cohort. Used in email notifications.</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs text-slate-500">Community Link URL</Label>
+                              <Input
+                                value={cohort.communityLink}
+                                onChange={(e) => updateCohort({ communityLink: e.target.value })}
+                                placeholder="https://chat.whatsapp.com/..."
+                                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-slate-500">Link Label</Label>
+                              <Input
+                                value={cohort.communityLinkLabel}
+                                onChange={(e) => updateCohort({ communityLinkLabel: e.target.value })}
+                                placeholder="e.g., WhatsApp Community"
+                                className="bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600"
+                              />
+                            </div>
+                          </div>
                         </div>
 
                         {/* Dates */}

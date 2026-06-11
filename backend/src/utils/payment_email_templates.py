@@ -257,6 +257,15 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
     # Build the enrollment journey timeline
     enrollment_journey = _format_cohort_enrollment_timeline(cohort_info, application_end_date)
     
+    # Extract community link from cohort_info for the 'While You Wait' section
+    _community_link = 'https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f'
+    _community_label = 'WhatsApp community'
+    if cohort_info:
+        if cohort_info.get('community_link'):
+            _community_link = cohort_info['community_link']
+        if cohort_info.get('community_link_label'):
+            _community_label = cohort_info['community_link_label']
+
     return f"""
     {get_email_header()}
             
@@ -379,13 +388,32 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                                     <li>Ensure your email address is accessible — login credentials will be sent there</li>
                                     <li>Add <strong>afritech.bridge@yahoo.com</strong> to your contacts to avoid missing emails</li>
                                     <li>Prepare a quiet study space with a reliable internet connection</li>
-                                    <li>Join our <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="color: #34d399; text-decoration: underline;">WhatsApp community</a> to connect with fellow learners</li>
+                                    <li>Join our <a href="{_community_link}" style="color: #34d399; text-decoration: underline;">{_community_label}</a> to connect with fellow learners</li>
                                 </ul>
                             </td>
                         </tr>
                     </table>
                 </div>
                 
+                <!-- Payment slip attached note -->
+                <div style="background-color: #064e3b; border-left: 4px solid #22c55e; border-radius: 8px; padding: 16px; margin: 20px 0; text-align: center;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 10px;">
+                                <span style="font-size: 24px;">📎</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <p style="color: #a7f3d0; margin: 0; font-size: 14px; font-weight: 600;">
+                                    Payment Slip Attached 📄
+                                </p>
+                                <p style="color: #d1fae5; margin: 4px 0 0 0; font-size: 13px;">
+                                    Your official payment slip is attached as a PDF to this email.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+
                 <!-- Support Section -->
                 <div style="background-color: #2c3e50; border-radius: 12px; padding: 25px; margin: 30px 0; text-align: center;">
                     <p style="color: #ffffff; font-size: 16px; font-weight: 600; margin: 0 0 10px 0;">
@@ -999,6 +1027,15 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
     # Build the enrollment journey timeline
     enrollment_journey = _format_cohort_enrollment_timeline(cohort_info, application_end_date)
 
+    # Extract community link from cohort_info for the 'While You Wait' section
+    _community_link = 'https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f'
+    _community_label = 'WhatsApp community'
+    if cohort_info:
+        if cohort_info.get('community_link'):
+            _community_link = cohort_info['community_link']
+        if cohort_info.get('community_link_label'):
+            _community_label = cohort_info['community_link_label']
+
     return f"""
     {get_email_header()}
 
@@ -1093,7 +1130,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                                     <li>Add <strong>afritech.bridge@yahoo.com</strong> to your contacts to avoid missing emails</li>
                                     <li>Prepare a quiet study space with a reliable internet connection</li>
                                     <li>Review any pre-course materials shared by the instructor</li>
-                                    <li>Join our <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="color: #34d399; text-decoration: underline;">WhatsApp community</a> to connect with fellow learners</li>
+                                    <li>Join our <a href="{_community_link}" style="color: #34d399; text-decoration: underline;">{_community_label}</a> to connect with fellow learners</li>
                                 </ul>
                             </td>
                         </tr>

@@ -407,6 +407,22 @@ def send_announcement_notification(announcement, course, students):
     try:
         instructor_name = f"{course.instructor.first_name} {course.instructor.last_name}" if hasattr(course, 'instructor') else "Your Instructor"
         
+        # Build cohort_context with community_link from ApplicationWindow
+        cohort_context = None
+        try:
+            from ..models.course_models import ApplicationWindow
+            window = getattr(announcement, 'application_window', None)
+            if not window and getattr(announcement, 'cohort_id', None):
+                window = ApplicationWindow.query.get(announcement.cohort_id)
+            if window:
+                cohort_context = {'cohort_label': window.cohort_label}
+                if getattr(window, 'community_link', None):
+                    cohort_context['community_link'] = window.community_link
+                if getattr(window, 'community_link_label', None):
+                    cohort_context['community_link_label'] = window.community_link_label
+        except Exception as e:
+            logger.warning(f"Could not load cohort community_link for announcement: {e}")
+        
         email_sent_count = 0
         email_failed_count = 0
         
@@ -425,6 +441,7 @@ def send_announcement_notification(announcement, course, students):
                     announcement_title=announcement.title,
                     announcement_content=announcement.content,
                     instructor_name=instructor_name,
+                    cohort_context=cohort_context,
                     unsubscribe_token=unsub_token
                 )
                 
