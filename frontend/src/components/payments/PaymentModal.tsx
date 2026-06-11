@@ -39,6 +39,7 @@ import {
   CheckSquare,
   AlertTriangle as TriangleAlert,
 } from 'lucide-react';
+import PaymentSlip from '@/components/payments/PaymentSlip';
 
 interface PaymentModalProps {
   open: boolean;
@@ -1090,22 +1091,26 @@ export default function PaymentModal({
 
           {/* ── SUCCESS STATE ── */}
           {paymentStatus === 'success' && (
-            <div className="text-center py-8">
-              <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-4" />
-              <p className="text-lg font-semibold text-gray-900">
-                {paymentConfirmed ? 'Payment Submitted!' : 'Payment Successful!'}
-              </p>
-              <p className="text-sm text-gray-600 mt-2">
-                {paymentConfirmed
-                  ? 'Your payment information has been submitted. Our team will verify your payment and activate your course access. This usually takes 1-2 business days.'
-                  : 'Your payment has been processed. You now have access to the course.'}
-              </p>
+            <div className="py-4">
+              <PaymentSlip data={{
+                studentName: formData.payer_name || localStorage.getItem('user_name') || 'Student',
+                courseTitle: courseName,
+                amount,
+                currency,
+                paymentMethod: selectedMethod || 'unknown',
+                reference: paymentReference || undefined,
+                paymentDate: new Date(),
+                status: paymentConfirmed ? 'submitted' : 'completed',
+                enrollmentId,
+                isPartial: isPartialScholarship,
+                scholarshipPercentage: isPartialScholarship ? scholarshipPercentage : undefined,
+              }} />
               <Button
                 onClick={() => {
                   onOpenChange(false);
                   onPaymentSuccess?.();
                 }}
-                className="mt-4 bg-green-600 hover:bg-green-700 text-white"
+                className="mt-6 w-full bg-[#0a1628] hover:bg-[#132d54] text-white font-bold py-3 rounded-xl"
               >
                 Continue to Learning
               </Button>
