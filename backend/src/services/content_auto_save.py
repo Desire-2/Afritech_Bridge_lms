@@ -293,15 +293,27 @@ def _create_success_notification(db, Notification, user_id: int, task_id: str,
     content_type = saved_info.get('type', task_type)
 
     if saved and count > 0:
-        title = f"AI Content Ready — {count} {content_type} saved"
-        titles_preview = ", ".join(titles[:3])
-        if len(titles) > 3:
-            titles_preview += f" (+{len(titles) - 3} more)"
-        message = (
-            f"Successfully generated and saved {count} {content_type} "
-            f"for {course_name}. Items: {titles_preview}. "
-            f"Review them in your course editor."
-        )
+        # For lesson outlines, use different messaging since no content was generated
+        if content_type == 'lessons':
+            title = f"AI Lesson Outlines Planned — {count} lessons created"
+            titles_preview = ", ".join(titles[:3])
+            if len(titles) > 3:
+                titles_preview += f" (+{len(titles) - 3} more)"
+            message = (
+                f"Successfully planned {count} lesson outlines "
+                f"for {course_name}. Lessons: {titles_preview}. "
+                f"Use AI Content Generation to generate content for each lesson."
+            )
+        else:
+            title = f"AI Content Ready — {count} {content_type} saved"
+            titles_preview = ", ".join(titles[:3])
+            if len(titles) > 3:
+                titles_preview += f" (+{len(titles) - 3} more)"
+            message = (
+                f"Successfully generated and saved {count} {content_type} "
+                f"for {course_name}. Items: {titles_preview}. "
+                f"Review them in your course editor."
+            )
     else:
         title = "AI Content Generated"
         reason = saved_info.get('reason', 'Content generated but not auto-saved')

@@ -109,10 +109,10 @@ export const AIContentGenerator: React.FC<AIContentGeneratorProps> = ({
         };
       case 'lesson':
         return {
-          title: batchMode ? 'AI Batch Lesson Generator' : 'AI Lesson Generator',
-          description: batchMode ? 'Generate lessons one by one in background (avoids timeouts)' : 'Generate detailed lesson content in background',
-          placeholder: batchMode ? 'Number of lessons to generate (default: 5)' : 'Optional: Enter lesson title or focus area',
-          buttonText: batchMode ? 'Generate Multiple Lessons' : 'Generate Lesson Content'
+          title: batchMode ? 'AI Batch Lesson Planner' : 'AI Lesson Generator',
+          description: batchMode ? 'Plan all lesson outlines for this module at once — then generate content separately' : 'Plan a lesson outline — then generate content separately',
+          placeholder: batchMode ? 'Number of lessons to plan (default: 5)' : 'Optional: Enter lesson title or focus area',
+          buttonText: batchMode ? 'Plan All Lesson Outlines' : 'Plan Lesson Outline'
         };
       case 'quiz':
         return {

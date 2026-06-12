@@ -944,7 +944,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
   const handleLessonAIGenerate = async (data: any) => {
     // Check if we got multiple lessons (batch mode)
     if (data.lessons && Array.isArray(data.lessons)) {
-      // Batch mode: create all lessons
+      // Batch mode: create all lesson outlines
       const currentModule = modules.find(m => m.id === showLessonAI.moduleId);
       
       if (!currentModule) {
@@ -957,13 +957,14 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       try {
         let successCount = 0;
         for (const lessonData of data.lessons) {
+          // Outlines only — content_data is empty, will be generated separately
           const lessonPayload = {
             title: lessonData.title,
             description: lessonData.description || '',
             content_type: lessonData.content_type || 'text',
-            content_data: lessonData.content_data || `# ${lessonData.title}\n\nContent to be developed...`,
+            content_data: lessonData.content_data || '',
             learning_objectives: lessonData.learning_objectives || '',
-            duration_minutes: lessonData.duration_minutes || 30,
+            duration_minutes: lessonData.duration_minutes || 60,
             order: lessonData.order || 1
           };
 
@@ -982,7 +983,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
           }));
         }
 
-        toast.success(`Successfully created ${successCount} lessons!`);
+        toast.success(`Planned ${successCount} lesson outlines! Use AI Content to generate content for each lesson.`);
         setShowLessonAI({ moduleId: null, batchMode: false });
       } catch (error) {
         console.error('Error creating lessons:', error);
@@ -991,7 +992,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
         setIsCreatingLessons(false);
       }
     } else {
-      // Single lesson mode: update form
+      // Single lesson mode: update form with outline only
       setLessonForm(prev => ({
         ...prev,
         title: data.title || prev.title,

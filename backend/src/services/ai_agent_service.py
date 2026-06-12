@@ -507,13 +507,18 @@ class AIAgentService:
                                   num_lessons: int = 5,
                                   existing_lessons: Optional[List[Dict[str, Any]]] = None,
                                   course_context: Optional[List[Dict[str, Any]]] = None) -> AIResponse:
-        """Generate multiple lesson outlines with enhanced handling.
-        Quality threshold is skipped for lesson outlines."""
+        """Generate multiple lesson outlines (structure only, no content).
+        
+        Generates titles, descriptions, objectives, and duration for each lesson
+        in ONE API call. Content is generated separately via content generation
+        or enhancement tools.
+        
+        Quality threshold is skipped for outlines."""
         cache_key = f"lessons_{course_title}_{module_title}_{num_lessons}_{len(existing_lessons or [])}"
         
         return self._execute_with_retry_and_cache(
             cache_key,
-            self.lesson_gen.generate_multiple_lessons,
+            self.lesson_gen.generate_all_lesson_outlines,
             course_title, module_title, module_description, module_objectives,
             num_lessons, existing_lessons, course_context,
             skip_quality_check=True
@@ -1062,97 +1067,6 @@ class AIAgentService:
         if isinstance(result, AIResponse):
             return result.to_dict()
         return result
-    
-    def generate_multiple_lessons_stepwise(self, task_id: str = None,
-                                            course_title: str = '',
-                                            module_title: str = '',
-                                            module_description: str = '',
-                                            module_objectives: str = '',
-                                            num_lessons: int = 5,
-                                            existing_lessons: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
-        """
-        Step-by-step lesson generation for background execution.
-        
-        Generates each lesson individually with delays between them to avoid rate limits.
-        Each lesson prompt includes context from previously generated lessons for coherence.
-        """
-        from .ai.task_manager import task_manager
-        
-        all_lessons = []
-        accumulated_context = list(existing_lessons or [])
-        start_time = time.time()
-        
-        for i in range(num_lessons):
-            if task_id and task_manager.is_cancelled(task_id):
-                logger.info(f"Task {task_id[:8]}... cancelled at step {i + 1}")
-                break
-            
-            lesson_num = len(accumulated_context) + 1
-            
-            if task_id:
-                task_manager.update_progress(
-                    task_id, i + 1, num_lessons,
-                    f"Generating lesson {i + 1} of {num_lessons}..."
-                )
-            
-            try:
-                result = self.lesson_gen.generate_lesson_content(
-                    course_title=course_title,
-                    module_title=module_title,
-                    module_description=module_description,
-                    module_objectives=module_objectives,
-                    lesson_title="",
-                    lesson_description="",
-                    existing_lessons=accumulated_context
-                )
-            except Exception as e:
-                logger.error(f"Lesson step {i + 1} failed: {e}")
-                result = None
-            
-            if result and isinstance(result, dict):
-                result['order'] = lesson_num
-                all_lessons.append(result)
-                accumulated_context.append({
-                    'title': result.get('title', f'Lesson {lesson_num}'),
-                    'description': result.get('description', ''),
-                    'order': lesson_num,
-                    'duration_minutes': result.get('duration_minutes', 45)
-                })
-                if task_id:
-                    task_manager.complete_step(
-                        task_id, i + 1, num_lessons,
-                        f"✓ Lesson {i + 1}: {result.get('title', f'Lesson {lesson_num}')}"
-                    )
-                logger.info(f"Step {i + 1}/{num_lessons}: Generated '{result.get('title', 'unknown')}'")
-            else:
-                if task_id:
-                    task_manager.complete_step(
-                        task_id, i + 1, num_lessons,
-                        f"✗ Lesson {i + 1}: generation failed (continuing)"
-                    )
-                logger.warning(f"Step {i + 1}/{num_lessons}: Failed to generate lesson")
-            
-            # Delay between steps — sleep in 1s increments to allow quick cancellation
-            if i < num_lessons - 1:
-                if task_id and task_manager.is_cancelled(task_id):
-                    break
-                delay = task_manager.step_delay
-                logger.info(f"Waiting {delay}s before next lesson (rate limit prevention)")
-                for _ in range(delay):
-                    if task_id and task_manager.is_cancelled(task_id):
-                        break
-                    time.sleep(1)
-        
-        status = ResponseStatus.SUCCESS if len(all_lessons) == num_lessons else (
-            ResponseStatus.PARTIAL_SUCCESS if all_lessons else ResponseStatus.ERROR
-        )
-        return AIResponse(
-            status=status,
-            data={"lessons": all_lessons},
-            message=f"Generated {len(all_lessons)} of {num_lessons} lessons step by step",
-            provider_used=getattr(self.provider, 'current_provider', 'unknown'),
-            generation_time=time.time() - start_time,
-        ).to_dict()
     
     def generate_multiple_modules_stepwise(self, task_id: str = None,
                                             course_title: str = '',
@@ -1725,27 +1639,28 @@ Keep each callout under 50 words. Return ONLY the callout boxes, not the full co
                                                  existing_lessons: Optional[List[Dict[str, Any]]] = None,
                                                  course_context: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
-        BATCH-first lesson generation for background execution.
+        Generate ALL lesson outlines in ONE API call for background execution.
         
-        Phase 1: Generate ALL lesson outlines in ONE API call (titles, descriptions, objectives)
-        Phase 2: Generate content in batches of 3 lessons per API call
+        Outlines only — no content is generated. Content is generated separately
+        via the content generation and content enhancement pipeline.
         
-        Falls back to one-at-a-time stepwise if batch fails.
-        Reduces rate limit hits by ~75%%.
+        This approach:
+        - Plans the entire module's lesson structure in 1 API call
+        - Saves all outlines to the database immediately
+        - Allows content to be generated per-lesson as needed
+        - Reduces rate limit hits by ~80%%
         """
         from .ai.task_manager import task_manager
         import re
         
         start_time = time.time()
-        all_lessons = []
         accumulated_context = list(existing_lessons or [])
-        total_phases = 2
         
-        # === PHASE 1: Generate ALL lesson outlines in ONE API call ===
+        # === Generate ALL lesson outlines in ONE API call ===
         if task_id:
             task_manager.update_batch_phase(task_id, "outlines", num_lessons, 0)
-            task_manager.update_progress(task_id, 1, total_phases,
-                f"Phase 1: Planning {num_lessons} lesson outlines...")
+            task_manager.update_progress(task_id, 1, 1,
+                f"Planning {num_lessons} lesson outlines for {module_title}...")
         
         outlines_result = self.lesson_gen.generate_all_lesson_outlines(
             course_title=course_title, module_title=module_title,
@@ -1763,103 +1678,23 @@ Keep each callout under 50 words. Return ONLY the callout boxes, not the full co
                 module_objectives, num_lessons, existing_lessons, course_context, start_time
             )
         
-        if task_id:
-            task_manager.complete_step(task_id, 1, total_phases,
-                f"Planned {len(lesson_outlines)} lessons")
-        
-        # Add outlines to accumulated context
+        # Ensure content_type is set on all outlines for DB save
         for outline in lesson_outlines:
-            accumulated_context.append({
-                'title': outline.get('title', 'Untitled'),
-                'description': outline.get('description', ''),
-                'order': outline.get('order', len(accumulated_context) + 1),
-                'duration_minutes': outline.get('duration_minutes', 60),
-            })
-        
-        # === PHASE 2: Generate content in batches of 3 ===
-        if task_id:
-            task_manager.update_batch_phase(task_id, "content", len(lesson_outlines), 0)
-            task_manager.update_progress(task_id, 2, total_phases,
-                f"Phase 2: Generating content for {len(lesson_outlines)} lessons...")
-        
-        # Gemini caps at 8192 output tokens — use smaller batches to avoid truncation
-        CONTENT_BATCH_SIZE = 2 if getattr(self.provider, 'current_provider', '') == 'gemini' else 3
-        content_generated = []
-        
-        for batch_start in range(0, len(lesson_outlines), CONTENT_BATCH_SIZE):
-            if task_id and task_manager.is_cancelled(task_id):
-                break
-            
-            batch_end = min(batch_start + CONTENT_BATCH_SIZE, len(lesson_outlines))
-            batch = lesson_outlines[batch_start:batch_end]
-            batch_num = (batch_start // CONTENT_BATCH_SIZE) + 1
-            total_batches = (len(lesson_outlines) + CONTENT_BATCH_SIZE - 1) // CONTENT_BATCH_SIZE
-            
-            if task_id:
-                task_manager.update_batch_phase(task_id, "content", len(lesson_outlines), batch_start + 1)
-                task_manager.update_progress(task_id, 2, total_phases,
-                    f"Content batch {batch_num}/{total_batches} ({len(batch)} lessons)...")
-            
-            try:
-                batch_result = self.lesson_gen.generate_content_for_lesson_batch(
-                    course_title=course_title, module_title=module_title,
-                    module_description=module_description, module_objectives=module_objectives,
-                    lessons_to_generate=batch, existing_content=content_generated,
-                    course_context=course_context, task_id=task_id,
-                )
-                
-                if batch_result and batch_result.get('lessons'):
-                    for lesson in batch_result['lessons']:
-                        lesson_num = lesson.get('order', len(content_generated) + 1)
-                        if self.lesson_gen._is_generic_title(lesson.get('title', '')):
-                            lesson['title'] = self.lesson_gen._generate_meaningful_title(
-                                module_title, course_title, accumulated_context, lesson_num
-                            )
-                        content_data = lesson.get('content_data', '')
-                        headers = re.findall(r'^##\s+(.+)$', content_data, re.MULTILINE)
-                        content_summary = "; ".join(headers[:6]) if headers else content_data[:200]
-                        lesson['order'] = lesson_num
-                        content_generated.append({
-                            'title': lesson.get('title', f'Lesson {lesson_num}'),
-                            'description': lesson.get('description', ''),
-                            'order': lesson_num,
-                            'duration_minutes': lesson.get('duration_minutes', 45),
-                            'content_summary': content_summary,
-                        })
-                        all_lessons.append(lesson)
-                    if task_id:
-                        task_manager.complete_step(task_id, 2, total_phases,
-                            f"Content batch {batch_num}/{total_batches}: {len(batch_result['lessons'])} lessons done")
-            except Exception as e:
-                logger.error(f"Content batch {batch_num} failed: {e}")
-            
-            if batch_end < len(lesson_outlines):
-                if task_id and task_manager.is_cancelled(task_id):
-                    break
-                delay = task_manager.step_delay
-                for _ in range(delay):
-                    if task_id and task_manager.is_cancelled(task_id):
-                        break
-                    time.sleep(1)
-        
-        # Merge content with outlines for any lessons that didn't get content
-        final_lessons = []
-        for outline in lesson_outlines:
-            lesson_num = outline.get('order', 1)
-            content_lesson = next((l for l in all_lessons if l.get('order') == lesson_num), None)
-            if content_lesson:
-                final_lessons.append(content_lesson)
-            else:
-                outline['content_data'] = ''
+            if 'content_type' not in outline:
                 outline['content_type'] = 'text'
-                final_lessons.append(outline)
+            if 'content_data' not in outline:
+                outline['content_data'] = ''
         
-        status = ResponseStatus.SUCCESS if len(final_lessons) == num_lessons else (
-            ResponseStatus.PARTIAL_SUCCESS if final_lessons else ResponseStatus.ERROR
+        if task_id:
+            task_manager.complete_step(task_id, 1, 1,
+                f"Planned {len(lesson_outlines)} lesson outlines — ready for content generation")
+        
+        status = ResponseStatus.SUCCESS if len(lesson_outlines) == num_lessons else (
+            ResponseStatus.PARTIAL_SUCCESS if lesson_outlines else ResponseStatus.ERROR
         )
         return AIResponse(
-            status=status, data={"lessons": final_lessons},
-            message=f"Generated {len(final_lessons)} of {num_lessons} lessons (batch: outlines + content)",
+            status=status, data={"lessons": lesson_outlines},
+            message=f"Planned {len(lesson_outlines)} of {num_lessons} lesson outlines. Use content generation to fill in content.",
             provider_used=getattr(self.provider, 'current_provider', 'unknown'),
             generation_time=time.time() - start_time,
         ).to_dict()
@@ -1867,68 +1702,44 @@ Keep each callout under 50 words. Return ONLY the callout boxes, not the full co
     def _generate_lessons_stepwise_fallback(self, task_id, course_title, module_title,
                                              module_description, module_objectives, num_lessons,
                                              existing_lessons, course_context, start_time):
-        """Fallback: one-at-a-time lesson generation when batch fails."""
+        """Fallback: generate all lesson outlines in one call when primary batch fails.
+        No content is generated — just outlines."""
         from .ai.task_manager import task_manager
-        import re
-        all_lessons = []
-        accumulated_context = list(existing_lessons or [])
+
         if task_id:
             task_manager.update_batch_phase(task_id, None)
-        for i in range(num_lessons):
-            if task_id and task_manager.is_cancelled(task_id):
-                break
-            lesson_num = len(accumulated_context) + 1
-            if task_id:
-                task_manager.update_progress(task_id, i + 1, num_lessons,
-                    f"Generating lesson {i + 1} of {num_lessons}...")
-            try:
-                result = self.lesson_gen.generate_lesson_content(
-                    course_title=course_title, module_title=module_title,
-                    module_description=module_description, module_objectives=module_objectives,
-                    lesson_title="", lesson_description="",
-                    existing_lessons=accumulated_context, course_context=course_context,
-                )
-            except Exception as e:
-                logger.error(f"Lesson step {i + 1} failed: {e}")
-                result = None
-            if result and isinstance(result, dict):
-                result['order'] = lesson_num
-                if self.lesson_gen._is_generic_title(result.get('title', '')):
-                    result['title'] = self.lesson_gen._generate_meaningful_title(
-                        module_title, course_title, accumulated_context, lesson_num
-                    )
-                all_lessons.append(result)
-                content_data = result.get('content_data', '')
-                headers = re.findall(r'^##\s+(.+)$', content_data, re.MULTILINE)
-                content_summary = "; ".join(headers[:6]) if headers else content_data[:200]
-                accumulated_context.append({
-                    'title': result.get('title', f'Lesson {lesson_num}'),
-                    'description': result.get('description', ''),
-                    'order': lesson_num,
-                    'duration_minutes': result.get('duration_minutes', 45),
-                    'content_summary': content_summary,
-                })
-                if task_id:
-                    task_manager.complete_step(task_id, i + 1, num_lessons,
-                        f"Lesson {i + 1}: {result.get('title', f'Lesson {lesson_num}')}")
-            else:
-                if task_id:
-                    task_manager.complete_step(task_id, i + 1, num_lessons,
-                        f"Lesson {i + 1}: failed")
-            if i < num_lessons - 1:
-                if task_id and task_manager.is_cancelled(task_id):
-                    break
-                delay = task_manager.step_delay
-                for _ in range(delay):
-                    if task_id and task_manager.is_cancelled(task_id):
-                        break
-                    time.sleep(1)
-        status = ResponseStatus.SUCCESS if len(all_lessons) == num_lessons else (
-            ResponseStatus.PARTIAL_SUCCESS if all_lessons else ResponseStatus.ERROR
+            task_manager.update_progress(task_id, 1, 1,
+                f"Fallback: planning {num_lessons} lesson outlines...")
+
+        try:
+            outlines_result = self.lesson_gen.generate_all_lesson_outlines(
+                course_title=course_title, module_title=module_title,
+                module_description=module_description, module_objectives=module_objectives,
+                num_lessons=num_lessons, existing_lessons=existing_lessons,
+                course_context=course_context,
+            )
+            lesson_outlines = outlines_result.get('lessons', []) if outlines_result else []
+        except Exception as e:
+                logger.error(f"Fallback outline generation failed: {e}")
+                lesson_outlines = []
+
+        # Ensure content_type is set for DB save
+        for outline in lesson_outlines:
+            if 'content_type' not in outline:
+                outline['content_type'] = 'text'
+            if 'content_data' not in outline:
+                outline['content_data'] = ''
+
+        if task_id:
+            task_manager.complete_step(task_id, 1, 1,
+                f"Planned {len(lesson_outlines)} lesson outlines (fallback)")
+
+        status = ResponseStatus.SUCCESS if len(lesson_outlines) == num_lessons else (
+            ResponseStatus.PARTIAL_SUCCESS if lesson_outlines else ResponseStatus.ERROR
         )
         return AIResponse(
-            status=status, data={"lessons": all_lessons},
-            message=f"Generated {len(all_lessons)} of {num_lessons} lessons (stepwise fallback)",
+            status=status, data={"lessons": lesson_outlines},
+            message=f"Planned {len(lesson_outlines)} of {num_lessons} lesson outlines (fallback)",
             provider_used=getattr(self.provider, 'current_provider', 'unknown'),
             generation_time=time.time() - start_time,
         ).to_dict()
