@@ -133,6 +133,8 @@ const LearningPage = () => {
   const [interactionHistory, setInteractionHistory] = useState<InteractionEvent[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [lessonNotes, setLessonNotes] = useState<string>('');
+  const [currentNoteId, setCurrentNoteId] = useState<number | null>(null);
+  const [notesSaveStatus, setNotesSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   
   // Auto-close sidebar on small screens when interface loads
   useEffect(() => {
@@ -316,6 +318,7 @@ const LearningPage = () => {
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
   const unlockingRef = useRef<boolean>(false);
+  const notesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Authentication check effect - must be called after all hooks
   useEffect(() => {
@@ -1406,6 +1409,87 @@ const LearningPage = () => {
     }
   }, [currentLesson?.id]);
 
+  // ── Fetch notes from backend when lesson changes ────────────────────────
+  useEffect(() => {
+    if (!currentLesson?.id) return;
+    
+    const fetchNotes = async () => {
+      try {
+        setNotesSaveStatus('saving');
+        const notes = await StudentApiService.getNotes(currentLesson.id);
+        if (notes && notes.length > 0) {
+          // Use the most recent note for this lesson
+          const latest = notes[0];
+          setLessonNotes(latest.content || '');
+          setCurrentNoteId(latest.id);
+          console.log(`📝 Loaded note ${latest.id} for lesson ${currentLesson.id}`);
+        } else {
+          setLessonNotes('');
+          setCurrentNoteId(null);
+        }
+        setNotesSaveStatus('idle');
+      } catch (error) {
+        console.warn('⚠️ Failed to fetch lesson notes:', error);
+        setNotesSaveStatus('idle');
+      }
+    };
+    
+    fetchNotes();
+  }, [currentLesson?.id]);
+
+  // ── Debounced auto-save notes ────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentLesson?.id) return;
+    
+    // Skip on initial load before notes are fetched
+    if (notesSaveStatus === 'saving' && !currentNoteId && !lessonNotes) return;
+    
+    // Clear any pending save
+    if (notesDebounceRef.current) {
+      clearTimeout(notesDebounceRef.current);
+    }
+    
+    // Don't auto-save empty notes that have never been saved
+    if (!lessonNotes.trim() && !currentNoteId) return;
+    
+    // Debounce by 1.5s
+    notesDebounceRef.current = setTimeout(async () => {
+      try {
+        setNotesSaveStatus('saving');
+        
+        if (currentNoteId) {
+          // Update existing note
+          const updated = await StudentApiService.updateNote(currentNoteId, lessonNotes);
+          if (updated?.id) {
+            setCurrentNoteId(updated.id);
+          }
+          console.log('📝 Note updated:', currentNoteId);
+        } else {
+          // Create new note
+          const created = await StudentApiService.createNote(currentLesson.id, lessonNotes);
+          if (created?.id) {
+            setCurrentNoteId(created.id);
+          }
+          console.log('📝 Note created');
+        }
+        
+        setNotesSaveStatus('saved');
+        setTimeout(() => {
+          setNotesSaveStatus(prev => prev === 'saved' ? 'idle' : prev);
+        }, 3000);
+      } catch (error) {
+        console.error('❌ Failed to save note:', error);
+        setNotesSaveStatus('error');
+      }
+    }, 1500);
+    
+    return () => {
+      if (notesDebounceRef.current) {
+        clearTimeout(notesDebounceRef.current);
+      }
+    };
+  }, [lessonNotes, currentLesson?.id, currentNoteId]);
+
   // Load course data
   useEffect(() => {
     if (authLoading || !isAuthenticated || !courseId) return;
@@ -1606,9 +1690,30 @@ const LearningPage = () => {
           }
         }
         
+        // Save current notes before switching
+        if (notesDebounceRef.current) {
+          clearTimeout(notesDebounceRef.current);
+        }
+        if (lessonNotes) {
+          try {
+            if (currentNoteId) {
+              await StudentApiService.updateNote(currentNoteId, lessonNotes);
+            } else {
+              const created = await StudentApiService.createNote(currentLesson.id, lessonNotes);
+              if (created?.id) {
+                setCurrentNoteId(created.id);
+              }
+            }
+            console.log('📝 Notes saved before navigation');
+          } catch (saveError) {
+            console.warn('⚠️ Failed to save notes before navigation:', saveError);
+          }
+        }
+        
         // Update lesson and module state
         setCurrentLesson(lesson);
         setCurrentModuleId(moduleId);
+        setCurrentNoteId(null);
         setLessonNotes('');
         setCurrentViewMode('content'); // Reset to content tab when navigating to a new lesson
         
@@ -2705,6 +2810,7 @@ const LearningPage = () => {
             setCurrentViewMode={setCurrentViewMode}
             lessonNotes={lessonNotes}
             setLessonNotes={setLessonNotes}
+            notesSaveStatus={notesSaveStatus}
             contentRef={contentRef}
             onVideoProgress={handleVideoProgress}
             onVideoComplete={handleVideoComplete}

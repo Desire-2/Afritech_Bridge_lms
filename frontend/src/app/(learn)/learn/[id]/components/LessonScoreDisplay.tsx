@@ -1,7 +1,131 @@
 import React, { useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
-import { BookOpen, Brain, ClipboardCheck, FileText } from 'lucide-react';
+import { motion } from 'framer-motion';
+import {
+  Star,
+  Zap,
+  TrendingUp,
+  BookOpen,
+  Brain,
+  ClipboardCheck,
+  FileText,
+  Target,
+  Shield,
+  Flame,
+  Sparkles,
+  Trophy,
+  Medal,
+  Gem,
+} from 'lucide-react';
+
+/* ──────────────────────────────────────────────
+   Tailwind Safelist
+   These strings exist solely so the Tailwind JIT
+   compiler generates the classes used dynamically
+   below. They are never invoked at runtime.
+   ────────────────────────────────────────────── */
+// @codebuff-safelist-start
+// text-stone-400 stroke-stone-400 from-stone-600/20 to-stone-800/20
+// text-blue-400  stroke-blue-400  from-blue-600/20 to-blue-800/20
+// text-cyan-400  stroke-cyan-400  from-cyan-600/20 to-cyan-800/20
+// text-emerald-400 stroke-emerald-400 from-emerald-600/20 to-emerald-800/20
+// text-purple-400 stroke-purple-400 from-purple-600/20 to-purple-800/20
+// text-amber-400  stroke-amber-400  from-amber-500/20 to-amber-700/20
+// @codebuff-safelist-end
+
+/* ─── Gamified Level System ─────────────────────────────────────────── */
+
+interface LevelDef {
+  label: string;
+  icon: React.ElementType;
+  /** CSS color value for inline styles */
+  cssColor: string;
+  /** Tailwind gradient classes (listed in safelist above) */
+  twGradient: string;
+  minScore: number;
+}
+
+const LEVELS: LevelDef[] = [
+  { label: 'Novice',     icon: Shield,       cssColor: '#a8a29e', twGradient: 'from-stone-600/20 to-stone-800/20', minScore: 0   },
+  { label: 'Apprentice', icon: Medal,        cssColor: '#60a5fa', twGradient: 'from-blue-600/20 to-blue-800/20',   minScore: 20  },
+  { label: 'Journeyman', icon: Zap,          cssColor: '#22d3ee', twGradient: 'from-cyan-600/20 to-cyan-800/20',   minScore: 40  },
+  { label: 'Adept',      icon: TrendingUp,   cssColor: '#34d399', twGradient: 'from-emerald-600/20 to-emerald-800/20', minScore: 60 },
+  { label: 'Expert',     icon: Gem,          cssColor: '#a78bfa', twGradient: 'from-purple-600/20 to-purple-800/20', minScore: 80 },
+  { label: 'Master',     icon: Trophy,       cssColor: '#fbbf24', twGradient: 'from-amber-500/20 to-amber-700/20',   minScore: 90 },
+];
+
+function getLevel(score: number): LevelDef {
+  return [...LEVELS].reverse().find((l) => score >= l.minScore) ?? LEVELS[0];
+}
+
+/* ─── Helpers ────────────────────────────────────────────────────────── */
+
+function starRating(score: number): number {
+  return Math.min(5, Math.floor(score / 20) + (score % 20 >= 10 ? 1 : 0));
+}
+
+/* ─── Circular Progress Ring (SVG) ──────────────────────────────────── */
+
+function CircularProgress({
+  score,
+  size = 72,
+  strokeWidth = 5,
+}: {
+  score: number;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (score / 100) * circumference;
+
+  const level = getLevel(score);
+
+  return (
+    <div className="relative inline-flex items-center justify-center">
+      <svg width={size} height={size} className="-rotate-90">
+        {/* Background track */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          className="text-gray-800"
+        />
+        {/* Animated progress arc — uses inline stroke for dynamic color */}
+        <motion.circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          initial={{ strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: offset }}
+          transition={{ duration: 1.2, ease: 'easeOut' }}
+          stroke={level.cssColor}
+        />
+      </svg>
+      {/* Score text in center */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <motion.span
+          className="text-lg font-black tracking-tight text-white"
+          key={Math.round(score)}
+          initial={{ scale: 1.4, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 200, damping: 12 }}
+        >
+          {Math.round(score)}
+        </motion.span>
+        <span className="text-[9px] font-semibold text-gray-500 -mt-0.5">SCORE</span>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Props ──────────────────────────────────────────────────────────── */
 
 interface LessonScoreDisplayProps {
   readingProgress: number;
@@ -11,7 +135,18 @@ interface LessonScoreDisplayProps {
   lessonScore: number;
   hasQuiz?: boolean;
   hasAssignment?: boolean;
+  /** When 'inline', renders without the outer card wrapper for embedding inside another container */
+  variant?: 'full' | 'inline';
 }
+
+/* ─── Gamified Main Component ───────────────────────────────────────── */
+
+/* ─── Shared Level Utilities (exported for reuse) ──────────────────── */
+
+export { getLevel, LEVELS };
+export type { LevelDef };
+
+/* ─── Gamified Main Component ───────────────────────────────────────── */
 
 export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
   readingProgress,
@@ -20,250 +155,194 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
   assignmentScore,
   lessonScore,
   hasQuiz = false,
-  hasAssignment = false
+  hasAssignment = false,
+  variant = 'full',
 }) => {
-  // Calculate dynamic weights and components based on available assessments
-  const { components, formulaText, dynamicLessonScore } = useMemo(() => {
-    let readingWeight: number;
-    let engagementWeight: number;
-    let quizWeight: number;
-    let assignmentWeight: number;
-    let formula: string;
-    
-    if (hasQuiz && hasAssignment) {
-      // Full assessment: 25% each
-      readingWeight = 25;
-      engagementWeight = 25;
-      quizWeight = 25;
-      assignmentWeight = 25;
-      formula = '(Reading + Engagement + Quiz + Assignment) × 25%';
-    } else if (hasQuiz) {
-      // Quiz only: Reading 35%, Engagement 35%, Quiz 30%
-      readingWeight = 35;
-      engagementWeight = 35;
-      quizWeight = 30;
-      assignmentWeight = 0;
-      formula = '(Reading × 35%) + (Engagement × 35%) + (Quiz × 30%)';
-    } else if (hasAssignment) {
-      // Assignment only: Reading 35%, Engagement 35%, Assignment 30%
-      readingWeight = 35;
-      engagementWeight = 35;
-      quizWeight = 0;
-      assignmentWeight = 30;
-      formula = '(Reading × 35%) + (Engagement × 35%) + (Assignment × 30%)';
-    } else {
-      // No assessments: Reading 50%, Engagement 50%
-      readingWeight = 50;
-      engagementWeight = 50;
-      quizWeight = 0;
-      assignmentWeight = 0;
-      formula = '(Reading × 50%) + (Engagement × 50%)';
-    }
-    
-    // Calculate the dynamic lesson score
-    const calculatedScore = (
-      (readingProgress * readingWeight / 100) +
-      (engagementScore * engagementWeight / 100) +
-      ((quizScore || 0) * quizWeight / 100) +
-      ((assignmentScore || 0) * assignmentWeight / 100)
-    );
-    
-    // Build components array (only include active components)
-    const activeComponents = [];
-    
-    activeComponents.push({
-      label: 'Reading',
-      score: readingProgress,
-      weight: readingWeight,
-      icon: BookOpen,
-      color: 'text-blue-400',
-      bgColor: 'bg-blue-900/30',
-      borderColor: 'border-blue-700'
-    });
-    
-    activeComponents.push({
-      label: 'Engagement',
-      score: engagementScore,
-      weight: engagementWeight,
-      icon: Brain,
-      color: 'text-green-400',
-      bgColor: 'bg-green-900/30',
-      borderColor: 'border-green-700'
-    });
-    
-    if (hasQuiz) {
-      activeComponents.push({
-        label: 'Quiz',
-        score: quizScore || 0,
-        weight: quizWeight,
-        icon: ClipboardCheck,
-        color: 'text-purple-400',
-        bgColor: 'bg-purple-900/30',
-        borderColor: 'border-purple-700'
-      });
-    }
-    
-    if (hasAssignment) {
-      activeComponents.push({
-        label: 'Assignment',
-        score: assignmentScore || 0,
-        weight: assignmentWeight,
-        icon: FileText,
-        color: 'text-orange-400',
-        bgColor: 'bg-orange-900/30',
-        borderColor: 'border-orange-700'
-      });
-    }
-    
-    return {
-      components: activeComponents,
-      formulaText: formula,
-      dynamicLessonScore: Math.round(calculatedScore)
-    };
+  const displayScore = Math.round(lessonScore);
+  const level = getLevel(displayScore);
+  const stars = starRating(displayScore);
+  const isCompleted = displayScore >= 80;
+  const missing = Math.max(0, 80 - displayScore);
+
+  // Build component list (same data as before, displayed compactly)
+  const components = useMemo(() => {
+    const items: { label: string; score: number; icon: React.ElementType; color: string }[] = [
+      { label: 'Reading',     score: Math.round(readingProgress),  icon: BookOpen,       color: '#60a5fa' },
+      { label: 'Engagement',  score: Math.round(engagementScore),  icon: Brain,          color: '#34d399' },
+    ];
+    if (hasQuiz)       items.push({ label: 'Quiz',       score: Math.round(quizScore ?? 0),       icon: ClipboardCheck, color: '#a78bfa' });
+    if (hasAssignment) items.push({ label: 'Assignment', score: Math.round(assignmentScore ?? 0), icon: FileText,       color: '#fb923c' });
+    return items;
   }, [readingProgress, engagementScore, quizScore, assignmentScore, hasQuiz, hasAssignment]);
 
-  // Use the passed lessonScore (from parent) as the primary source
-  // This ensures consistency with the badge in the header
-  const displayScore = lessonScore || dynamicLessonScore;
-  const completionThreshold = 80;
-  const isCompleted = displayScore >= completionThreshold;
-  const pointsToCompletion = Math.max(0, completionThreshold - displayScore);
+  const LevelIcon = level.icon;
 
-  return (
-    <Card className="bg-gray-900/50 border-gray-800">
-      <CardHeader className="p-4 sm:p-6">
-        <CardTitle className="text-base sm:text-lg text-white flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="flex flex-col">
-            <span>Lesson Score</span>
-            {!hasQuiz && !hasAssignment && (
-              <span className="text-xs text-gray-400 font-normal mt-1">
-                Based on Reading & Engagement only
+  // ── Shared inner content used by both full and inline variants ──
+  const innerContent = (
+    <>
+      {/* ── Top row: ring + level badge + stars ── */}
+      <div className="flex items-start justify-between gap-4">
+        {/* Left: Circular ring */}
+        <div className="flex items-center gap-4">
+          <CircularProgress score={displayScore} size={80} strokeWidth={6} />
+
+          {/* Level + Stats */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <LevelIcon className="h-4 w-4" style={{ color: level.cssColor }} />
+              <span className="text-sm font-bold tracking-wide" style={{ color: level.cssColor }}>
+                {level.label}
               </span>
-            )}
-          </div>
-          <div className="flex flex-col items-end">
-            <span className={`text-2xl font-bold ${isCompleted ? 'text-green-400' : displayScore >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {Math.round(displayScore)}%
-            </span>
-            {isCompleted ? (
-              <span className="text-xs text-green-400 font-normal">✓ Lesson Complete</span>
-            ) : (
-              <span className="text-xs text-yellow-400 font-normal">
-                {pointsToCompletion.toFixed(0)}% more to complete
-              </span>
-            )}
-          </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Completion Progress Bar */}
-        <div className="mb-4 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-gray-400">Completion Progress</span>
-            <span className={isCompleted ? 'text-green-400' : 'text-yellow-400'}>
-              {Math.round(displayScore)}% / {completionThreshold}%
-            </span>
-          </div>
-          <div className="relative">
-            <Progress 
-              value={Math.min(displayScore, 100)} 
-              className="h-3"
-            />
-            {/* Threshold marker */}
-            <div 
-              className="absolute top-0 h-3 w-0.5 bg-white/50"
-              style={{ left: `${completionThreshold}%` }}
-            />
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            {isCompleted 
-              ? '🎉 Great job! This lesson is complete and the next lesson is unlocked.'
-              : `📚 Reach ${completionThreshold}% to complete this lesson and unlock the next one.`}
-          </p>
-        </div>
-        
-        <div className={`grid gap-2 sm:gap-3 ${
-          components.length === 2 ? 'grid-cols-1 sm:grid-cols-2' : 
-          components.length === 3 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' : 
-          'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'
-        }`}>
-          {components.map((component) => {
-            const Icon = component.icon;
-            const weightedScore = (component.score * component.weight) / 100;
-            
-            return (
-              <div 
-                key={component.label}
-                className={`p-3 rounded-lg border ${component.bgColor} ${component.borderColor}`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center space-x-2">
-                    <Icon className={`h-4 w-4 ${component.color}`} />
-                    <span className="text-sm font-medium text-gray-300">
-                      {component.label}
-                    </span>
-                  </div>
-                  <span className={`text-sm font-bold ${component.color}`}>
-                    {Math.round(component.score)}%
-                  </span>
-                </div>
-                <Progress 
-                  value={component.score} 
-                  className="h-2 mb-1"
-                />
-                <div className="flex justify-between text-xs text-gray-400">
-                  <span>Weight: {component.weight}%</span>
-                  <span>Contributes: {weightedScore.toFixed(1)}%</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        
-        <div className="pt-3 border-t border-gray-800">
-          <div className="flex justify-between items-center text-sm text-gray-400 mb-2">
-            <span>Formula: {formulaText}</span>
-          </div>
-          <Progress 
-            value={displayScore} 
-            className="h-3"
-          />
-          <p className="text-xs text-gray-500 mt-2">
-            {hasQuiz || hasAssignment 
-              ? 'Complete reading (90%+), stay engaged (60%+), and pass all assessments to complete this lesson.'
-              : 'Complete reading (90%+) and stay engaged (60%+) to complete this lesson.'}
-          </p>
-          {!isCompleted && (
-            <div className="mt-2 space-y-1">
-              {displayScore < completionThreshold && (
-                <p className="text-xs text-yellow-400">
-                  Need {pointsToCompletion}% more to reach 80% completion threshold
-                </p>
-              )}
-              {hasQuiz && (!quizScore || quizScore < 70) && (
-                <p className="text-xs text-orange-400">
-                  Quiz required: Pass with 70%+ (current: {Math.round(quizScore || 0)}%)
-                </p>
-              )}
-              {hasAssignment && (!assignmentScore || assignmentScore < 70) && (
-                <p className="text-xs text-orange-400">
-                  Assignment required: Pass with 70%+ (current: {Math.round(assignmentScore || 0)}%)
-                </p>
-              )}
-              {readingProgress < 90 && (
-                <p className="text-xs text-blue-400">
-                  Reading progress: {Math.round(readingProgress)}% (need 90%+)
-                </p>
-              )}
-              {engagementScore < 60 && (
-                <p className="text-xs text-green-400">
-                  Engagement: {Math.round(engagementScore)}% (need 60%+)
-                </p>
-              )}
             </div>
+
+            {/* Star rating */}
+            <div className="flex items-center gap-0.5">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ scale: 0, rotate: -90 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  transition={{ delay: 0.4 + i * 0.08, type: 'spring', stiffness: 300 }}
+                >
+                  <Star
+                    className={`h-3.5 w-3.5 ${
+                      i < stars
+                        ? 'fill-amber-400 text-amber-400'
+                        : 'fill-gray-700 text-gray-700'
+                    }`}
+                  />
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Status badge */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          {isCompleted ? (
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ type: 'spring', stiffness: 300, delay: 0.3 }}
+              className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30"
+            >
+              <Sparkles className="h-3 w-3" />
+              COMPLETE
+            </motion.div>
+          ) : (
+            <span className="text-[11px] font-semibold text-yellow-400/80">
+              {missing}% to go
+            </span>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+
+      {/* ── Component scores — compact row ── */}
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {components.map((comp) => (
+          <div key={comp.label} className="flex items-center gap-1.5">
+            <comp.icon className="h-3 w-3" style={{ color: comp.color }} />
+            <span className="text-[11px] font-medium text-gray-400">{comp.label}</span>
+            <span className="text-[11px] font-bold tabular-nums" style={{ color: comp.color }}>
+              {comp.score}%
+            </span>
+            {/* Score color dot */}
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                comp.score >= 80
+                  ? 'bg-green-500'
+                  : comp.score >= 60
+                  ? 'bg-yellow-500'
+                  : 'bg-red-500'
+              }`}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* ── XP progress bar ── */}
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+          <div className="flex items-center gap-1">
+            <Flame className="h-3 w-3 text-orange-400" />
+            <span>XP</span>
+          </div>
+          <span className="font-mono tabular-nums">
+            {displayScore * 10} / 1,000
+          </span>
+        </div>
+        <div className="relative h-2 overflow-hidden rounded-full bg-gray-800/70">
+          <motion.div
+            className={`h-full rounded-full bg-gradient-to-r ${level.twGradient} shadow-sm`}
+            initial={{ width: '0%' }}
+            animate={{ width: `${Math.min(displayScore, 100)}%` }}
+            transition={{ duration: 1, ease: 'easeOut', delay: 0.3 }}
+          />
+          {/* Shimmer pulse */}
+          <div className="absolute inset-0 animate-pulse rounded-full bg-white/[0.03]" />
+        </div>
+      </div>
+
+      {/* ── Completion call-to-action ── */}
+      {!isCompleted && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="mt-2 flex items-center gap-2 text-[11px] text-gray-500"
+        >
+          <Target className="h-3 w-3 text-yellow-500" />
+          <span>
+            Next level at <strong className="text-yellow-400">80%</strong>
+            {components.some((c) => c.score < 70) && (
+              <>
+                {' · '}
+                <span className="text-blue-400">
+                  Focus on{' '}
+                  {components
+                    .filter((c) => c.score < 70)
+                    .map((c) => c.label)
+                    .join(', ')}
+                </span>
+              </>
+            )}
+          </span>
+        </motion.div>
+      )}
+
+      {/* ── Completed celebration flourish ── */}
+      {isCompleted && (
+        <motion.div
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="mt-2 flex items-center gap-2 text-[11px] text-emerald-400"
+        >
+          <Sparkles className="h-3 w-3" />
+          <span>Lesson mastered! All requirements met.</span>
+        </motion.div>
+      )}
+    </>
+  );
+
+  if (variant === 'inline') {
+    return innerContent;
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: 'easeOut' }}
+      className={`relative overflow-hidden rounded-2xl border border-gray-800/80 bg-gradient-to-br ${level.twGradient} bg-gray-900/70 backdrop-blur-sm p-4 sm:p-5`}
+    >
+      {/* Subtle ambient glow — uses bg-{color}/10 for the glow */}
+      <div className="pointer-events-none absolute -inset-1 opacity-20 blur-2xl">
+        <div
+          className="h-full w-full rounded-full"
+          style={{ backgroundColor: `${level.cssColor}1a` }}
+        />
+      </div>
+      {innerContent}
+    </motion.div>
   );
 };

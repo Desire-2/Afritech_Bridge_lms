@@ -346,8 +346,43 @@ app.register_blueprint(instructor_settings_bp) # Register instructor settings bl
 maintenance_mode = MaintenanceMode(app)
 logger.info("Maintenance mode middleware initialized and active")
 
+def _auto_migrate_missing_columns():
+    """
+    Auto-add columns from models that are missing in the SQLite schema.
+    db.create_all() doesn't alter existing tables, so model changes after
+    the first create are never applied. This fills that gap for dev.
+    """
+    try:
+        import sqlalchemy as sa
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+
+        # ── course_applications ────────────────────────────────────────
+        existing = {c['name'] for c in inspector.get_columns('course_applications')}
+        additions = {
+            'skill_profile_key': sa.Column('skill_profile_key', sa.String(50), nullable=True),
+            'has_used_tool': sa.Column('has_used_tool', sa.Boolean, nullable=True),
+            'tool_skill_level': sa.Column('tool_skill_level', sa.String(100), nullable=True),
+            'tool_tasks_done': sa.Column('tool_tasks_done', sa.Text, nullable=True),
+            'skill_open_answer': sa.Column('skill_open_answer', sa.Text, nullable=True),
+        }
+        missing = {k: v for k, v in additions.items() if k not in existing}
+        if missing:
+            logger.info(f"🔧 Auto-migrating missing columns in course_applications: {list(missing.keys())}")
+            with db.engine.connect() as conn:
+                for col_name, col in missing.items():
+                    conn.execute(sa.text(
+                        f"ALTER TABLE course_applications ADD COLUMN {col_name} {col.type.compile(db.engine.dialect)}"
+                    ))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"⚠️ Auto-migration skipped (non-fatal): {e}")
+
+    # (Add more table checks here as needed in the future)
+
 with app.app_context():
     db.create_all()
+    _auto_migrate_missing_columns()
     if not Role.query.filter_by(name='student').first():
         db.session.add(Role(name='student'))
     if not Role.query.filter_by(name='instructor').first():

@@ -714,6 +714,31 @@ export class StudentApiService {
     const response = await api.get('/student/certificate/transcript');
     return response.data;
   }
+
+  // ── Notes APIs ─────────────────────────────────────────────────────────
+  static async getNotes(lessonId?: number): Promise<any[]> {
+    const params = lessonId ? { lesson_id: lessonId } : {};
+    const response = await api.get('/student/notes', { params });
+    return response.data; // array of note objects
+  }
+
+  static async createNote(lessonId: number, content: string): Promise<any> {
+    const response = await api.post('/student/notes', {
+      lesson_id: lessonId,
+      content
+    });
+    return response.data; // single note object
+  }
+
+  static async updateNote(noteId: number, content: string): Promise<any> {
+    const response = await api.put(`/student/notes/${noteId}`, { content });
+    return response.data; // single note object
+  }
+
+  static async deleteNote(noteId: number): Promise<any> {
+    const response = await api.delete(`/student/notes/${noteId}`);
+    return response.data;
+  }
 }
 
 export default api;

@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { 
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';import { motion } from 'framer-motion';
+import {
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
-  PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles, GraduationCap
+  PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles, GraduationCap,
+  Star, Flame, BookOpen
 } from 'lucide-react';
 import Link from 'next/link';
 import { StudentApiService } from '@/services/studentApi';
@@ -18,7 +19,7 @@ import type { ContentQuiz, ContentAssignment } from '@/services/contentAssignmen
 import { ContentRichPreview } from './ContentRichPreview';
 import { QuizAttemptTracker } from './QuizAttemptTracker';
 import { AssignmentPanel } from './AssignmentPanel';
-import { LessonScoreDisplay } from './LessonScoreDisplay';
+import { LessonScoreDisplay, getLevel } from './LessonScoreDisplay';
 
 // Helper function to format time in MM:SS format
 const formatTime = (seconds: number): string => {
@@ -43,6 +44,7 @@ interface LessonContentProps {
   setCurrentViewMode: (mode: ViewMode) => void;
   lessonNotes: string;
   setLessonNotes: (notes: string) => void;
+  notesSaveStatus?: 'idle' | 'saving' | 'saved' | 'error';
   contentRef?: any;
   onVideoComplete?: () => void;
   onVideoProgress?: (progress: number, currentTime?: number, duration?: number) => void;
@@ -96,6 +98,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   setCurrentViewMode,
   lessonNotes,
   setLessonNotes,
+  notesSaveStatus = 'idle',
   contentRef,
   onVideoComplete,
   onVideoProgress,
@@ -180,6 +183,21 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   const isModuleScoringLoaded = moduleScoring !== null && moduleScoring !== undefined && !moduleScoring.loading;
   const canUnlockNextModule = isLastLessonInModule && isLessonCompleted && isModulePassing && nextModuleInfo && isModuleScoringLoaded;
   
+  // Gamified level based on lesson score
+  const lessonLevel = getLevel(Math.round(lessonScore));
+
+  // Which tabs are available for this lesson
+  const hasQuiz = !!lessonQuiz;
+  const hasAssignments = lessonAssignments && lessonAssignments.length > 0;
+
+  // Reading completion detection for quiz/assignment prompt
+  const readingComplete = readingProgress >= 80;
+  const quizNotAttempted = hasQuiz && (!lessonQuiz?.best_score || lessonQuiz.best_score === 0);
+  const assignmentsNotSubmitted = hasAssignments && lessonAssignments.some(
+    (a: any) => !a.submission_status?.score
+  );
+  const showQuizAssignPrompt = readingComplete && !isLessonCompleted && (quizNotAttempted || assignmentsNotSubmitted);
+
   // Check if this is the last lesson of the last module (course completion)
   const isCourseComplete = isLastLessonInModule && isLastModule;
   
@@ -311,51 +329,84 @@ export const LessonContent: React.FC<LessonContentProps> = ({
             </Alert>
           )}
 
-          {/* Lesson Header */}
-          <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-3 sm:p-4 md:p-6">
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          {/* Gamified Lesson Header */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+            className={`relative overflow-hidden rounded-2xl border border-gray-800/80 bg-gradient-to-br ${lessonLevel.twGradient} bg-gray-900/70 backdrop-blur-sm p-4 sm:p-5`}
+          >
+            {/* Subtle ambient glow */}
+            <div className="pointer-events-none absolute -inset-1 opacity-20 blur-2xl">
+              <div
+                className="h-full w-full rounded-full"
+                style={{ backgroundColor: `${lessonLevel.cssColor}1a` }}
+              />
+            </div>
+
+            <div className="relative z-10 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-2">
                   <h2 className="text-xl sm:text-2xl font-bold text-white break-words">
                     {currentLesson.title}
                   </h2>
                   {isLessonCompleted && (
-                    <Badge className="bg-green-600 hover:bg-green-700">
-                      <CheckCircle className="h-3 w-3 mr-1" />
-                      Completed
-                    </Badge>
+                    <motion.span
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 300, delay: 0.2 }}
+                      className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      COMPLETE
+                    </motion.span>
                   )}
                 </div>
                 {currentLesson.description && (
-                  <p className="text-gray-300 mb-4">{currentLesson.description}</p>
+                  <p className="text-gray-300/80 mb-4 text-sm sm:text-base">{currentLesson.description}</p>
                 )}
-                <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                  <Badge variant="secondary" className="text-xs sm:text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Lesson X of Y pill */}
+                  <span className="inline-flex items-center gap-1 rounded-full bg-gray-800/70 px-2.5 py-1 text-[11px] font-semibold text-gray-300 ring-1 ring-gray-700">
+                    <BookOpen className="h-3 w-3 text-blue-400" />
                     Lesson {currentLessonIndex + 1} of {totalLessons}
-                  </Badge>
-                  <Badge variant={lessonScore >= 80 ? "default" : lessonScore >= 60 ? "secondary" : "destructive"}>
-                    Lesson Score: {lessonScore}%
-                  </Badge>
+                  </span>
+
+                  {/* Score pill — uses level color */}
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1"
+                    style={{
+                      backgroundColor: `${lessonLevel.cssColor}1a`,
+                      color: lessonLevel.cssColor,
+                      borderColor: `${lessonLevel.cssColor}40`,
+                    }}
+                  >
+                    <Star className="h-3 w-3" />
+                    Score: {lessonScore}%
+                  </span>
+
+                  {/* Module score pill */}
                   {moduleScoring && currentModuleId && currentModuleId > 0 && (
-                    <Badge variant="outline" className="text-gray-400">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-gray-800/70 px-2.5 py-1 text-[11px] font-semibold text-gray-300 ring-1 ring-gray-700">
+                      <Flame className="h-3 w-3 text-orange-400" />
                       Module: {moduleScoring.cumulativeScore.toFixed(1)}%
-                    </Badge>
+                    </span>
                   )}
                 </div>
               </div>
-              
-              <div className="flex items-center gap-2 sm:space-x-2">
+
+              {/* Navigation buttons — styled to match */}
+              <div className="flex items-center gap-2 shrink-0 self-start">
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
+                      <button
                         onClick={() => onNavigate('prev')}
                         disabled={!hasPrevLesson}
+                        className="flex items-center justify-center h-8 w-8 rounded-lg border border-gray-700 bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 transition-all"
                       >
                         <ArrowLeft className="h-4 w-4" />
-                      </Button>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent>
                       {(() => {
@@ -374,18 +425,17 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
-                
+
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
+                      <button
                         onClick={() => onNavigate('next')}
                         disabled={!hasNextLesson || !isLessonCompleted}
+                        className="flex items-center justify-center h-8 w-8 rounded-lg border border-gray-700 bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 transition-all"
                       >
                         <ArrowRight className="h-4 w-4" />
-                      </Button>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
                       {(() => {
@@ -420,43 +470,124 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 </TooltipProvider>
               </div>
             </div>
-            
-            {/* Lesson Progress */}
-            <div className="mt-4">
-              <div className="flex justify-between text-sm text-gray-300 mb-2">
-                <span>Reading Progress</span>
-                <span>{Math.round(readingProgress)}%</span>
+
+            {/* XP-style Reading Progress */}
+            <div className="relative z-10 mt-4">
+              <div className="flex items-center justify-between text-[11px] text-gray-500 mb-1">
+                <div className="flex items-center gap-1">
+                  <BookOpen className="h-3 w-3" style={{ color: lessonLevel.cssColor }} />
+                  <span>Reading Progress</span>
+                </div>
+                <span className="font-mono tabular-nums" style={{ color: lessonLevel.cssColor }}>
+                  {Math.round(readingProgress)}%
+                </span>
               </div>
-              <Progress value={readingProgress} className="h-2" />
+              <div className="relative h-2 overflow-hidden rounded-full bg-gray-800/70">
+                <motion.div
+                  className={`h-full rounded-full bg-gradient-to-r ${lessonLevel.twGradient} shadow-sm`}
+                  initial={{ width: '0%' }}
+                  animate={{ width: `${Math.min(readingProgress, 100)}%` }}
+                  transition={{ duration: 1, ease: 'easeOut' }}
+                />
+                <div className="absolute inset-0 animate-pulse rounded-full bg-white/[0.03]" />
+              </div>
             </div>
-          </div>
 
-          {/* Comprehensive Lesson Score Display */}
-          <LessonScoreDisplay
-            readingProgress={readingProgress}
-            engagementScore={engagementScore}
-            quizScore={currentLessonQuizScore}
-            assignmentScore={currentLessonAssignmentScore}
-            lessonScore={lessonScore}
-            hasQuiz={!!lessonQuiz}
-            hasAssignment={lessonAssignments && lessonAssignments.length > 0}
-          />
+            {/* Divider */}
+            <div className="relative z-10 mt-4 border-t border-gray-800/60" />
 
-          {/* Learning Interface Tabs */}
-          <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700">
+            {/* Score Display (inline — no outer wrapper) */}
+            <div className="relative z-10 mt-3">
+              <LessonScoreDisplay
+                readingProgress={readingProgress}
+                engagementScore={engagementScore}
+                quizScore={currentLessonQuizScore}
+                assignmentScore={currentLessonAssignmentScore}
+                lessonScore={lessonScore}
+                hasQuiz={!!lessonQuiz}
+                hasAssignment={lessonAssignments && lessonAssignments.length > 0}
+                variant="inline"
+              />
+            </div>
+          </motion.div>
+
+          {/* Gamified Learning Interface Tabs */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: 'easeOut', delay: 0.15 }}
+            className="rounded-2xl border border-gray-800/80 bg-gray-900/70 backdrop-blur-sm overflow-hidden"
+          >
             <Tabs value={currentViewMode} onValueChange={(value: any) => setCurrentViewMode(value)}>
-              <div className="border-b px-3 sm:px-6 py-2 sm:py-3 overflow-x-auto">
-                <TabsList className="grid w-full grid-cols-4 min-w-[320px] sm:min-w-0 sm:max-w-2xl">
-                  <TabsTrigger value="content">Content</TabsTrigger>
-                  <TabsTrigger value="quiz" className="flex items-center space-x-2">
-                    <FileText className="h-4 w-4" />
-                    <span>Quiz</span>
+              <div className="px-3 sm:px-4 pt-3 pb-0 overflow-x-auto">
+                <TabsList className="flex w-full gap-1.5 bg-transparent p-0">
+                  {/* Content — always visible */}
+                  <TabsTrigger
+                    value="content"
+                    className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                      data-[state=active]:shadow-sm
+                      text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
+                      ${currentViewMode === 'content' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
+                    style={currentViewMode === 'content' ? {
+                      backgroundColor: `${lessonLevel.cssColor}18`,
+                      color: lessonLevel.cssColor,
+                    } : undefined}
+                  >
+                    <BookOpen className="h-3.5 w-3.5" />
+                    <span>Content</span>
                   </TabsTrigger>
-                  <TabsTrigger value="assignments" className="flex items-center space-x-2">
-                    <Clipboard className="h-4 w-4" />
-                    <span>Assignments</span>
+
+                  {/* Quiz — only if this lesson has a quiz */}
+                  {hasQuiz && (
+                    <TabsTrigger
+                      value="quiz"
+                      className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                        data-[state=active]:shadow-sm
+                        text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
+                        ${currentViewMode === 'quiz' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
+                      style={currentViewMode === 'quiz' ? {
+                        backgroundColor: `${lessonLevel.cssColor}18`,
+                        color: lessonLevel.cssColor,
+                      } : undefined}
+                    >
+                      <FileText className="h-3.5 w-3.5" />
+                      <span>Quiz</span>
+                    </TabsTrigger>
+                  )}
+
+                  {/* Assignments — only if this lesson has assignments */}
+                  {hasAssignments && (
+                    <TabsTrigger
+                      value="assignments"
+                      className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                        data-[state=active]:shadow-sm
+                        text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
+                        ${currentViewMode === 'assignments' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
+                      style={currentViewMode === 'assignments' ? {
+                        backgroundColor: `${lessonLevel.cssColor}18`,
+                        color: lessonLevel.cssColor,
+                      } : undefined}
+                    >
+                      <Clipboard className="h-3.5 w-3.5" />
+                      <span>Assignments</span>
+                    </TabsTrigger>
+                  )}
+
+                  {/* Notes — always visible */}
+                  <TabsTrigger
+                    value="notes"
+                    className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                      data-[state=active]:shadow-sm
+                      text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
+                      ${currentViewMode === 'notes' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
+                    style={currentViewMode === 'notes' ? {
+                      backgroundColor: `${lessonLevel.cssColor}18`,
+                      color: lessonLevel.cssColor,
+                    } : undefined}
+                  >
+                    <PenTool className="h-3.5 w-3.5" />
+                    <span>Notes</span>
                   </TabsTrigger>
-                  <TabsTrigger value="notes">Notes</TabsTrigger>
                 </TabsList>
               </div>
 
@@ -506,32 +637,81 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
                 {/* Progress Status */}
                 {isLessonCompleted ? (
-                    <div className="bg-green-900/30 border border-green-700 rounded-xl p-6">
-                      <div className="flex items-center space-x-3">
-                        <div className="h-12 w-12 bg-green-600 rounded-full flex items-center justify-center">
-                          <Trophy className="h-6 w-6 text-white" />
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-green-200 text-lg">Lesson Completed!</h4>
-                          <p className="text-green-300">
-                            Excellent work! You completed this lesson with {Math.round(engagementScore)}% engagement.
-                          </p>
-                        </div>
+                    <motion.div
+                      initial={{ opacity: 0, y: 16, scale: 0.98 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ duration: 0.5, ease: 'easeOut' }}
+                      className="relative overflow-hidden rounded-2xl border border-emerald-800/60 bg-gradient-to-br from-emerald-900/40 via-emerald-800/20 to-teal-900/30 bg-gray-900/70 backdrop-blur-sm p-4 sm:p-5"
+                    >
+                      {/* Ambient glow */}
+                      <div className="pointer-events-none absolute -inset-1 opacity-20 blur-3xl">
+                        <div className="h-full w-full rounded-full bg-emerald-500/20" />
                       </div>
-                      <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 text-center">
-                        <div className="bg-gray-800/50 rounded-lg p-3">
-                          <div className="text-lg font-bold text-white">{Math.floor(timeSpent / 60)}m {timeSpent % 60}s</div>
-                          <div className="text-xs text-gray-400">Time Spent</div>
+
+                      <div className="relative z-10">
+                        {/* Header with Trophy */}
+                        <div className="flex items-center gap-3 mb-4">
+                          <motion.div
+                            initial={{ scale: 0, rotate: -180 }}
+                            animate={{ scale: 1, rotate: 0 }}
+                            transition={{ type: 'spring', stiffness: 200, damping: 12 }}
+                            className="h-12 w-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-600/30"
+                          >
+                            <Trophy className="h-6 w-6 text-white" />
+                          </motion.div>
+                          <div>
+                            <h4 className="font-semibold text-emerald-300 text-lg">Lesson Completed!</h4>
+                            <p className="text-emerald-200/70 text-sm">
+                              Excellent work! You scored {lessonScore}% on this lesson.
+                            </p>
+                          </div>
                         </div>
-                        <div className="bg-gray-800/50 rounded-lg p-3">
-                          <div className="text-lg font-bold text-white">{Math.round(engagementScore)}%</div>
-                          <div className="text-xs text-gray-400">Engagement</div>
+
+                        {/* XP-style stat cards */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
+                          <motion.div
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.15 }}
+                            className="rounded-xl border border-emerald-700/40 bg-emerald-900/20 p-3 text-center"
+                          >
+                            <div className="text-lg font-bold text-emerald-300">
+                              {Math.floor(timeSpent / 60)}m {timeSpent % 60}s
+                            </div>
+                            <div className="flex items-center justify-center gap-1 text-[10px] text-emerald-400/70 mt-0.5">
+                              <Clock className="h-3 w-3" />
+                              Time Spent
+                            </div>
+                          </motion.div>
+                          <motion.div
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.2 }}
+                            className="rounded-xl border border-emerald-700/40 bg-emerald-900/20 p-3 text-center"
+                          >
+                            <div className="text-lg font-bold text-emerald-300">
+                              {Math.round(engagementScore)}%
+                            </div>
+                            <div className="flex items-center justify-center gap-1 text-[10px] text-emerald-400/70 mt-0.5">
+                              <Zap className="h-3 w-3" />
+                              Engagement
+                            </div>
+                          </motion.div>
+                          <motion.div
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.25 }}
+                            className="rounded-xl border border-emerald-700/40 bg-emerald-900/20 p-3 text-center"
+                          >
+                            <div className="text-lg font-bold text-emerald-300">
+                              {Math.round(readingProgress)}%
+                            </div>
+                            <div className="flex items-center justify-center gap-1 text-[10px] text-emerald-400/70 mt-0.5">
+                              <BookOpen className="h-3 w-3" />
+                              Reading
+                            </div>
+                          </motion.div>
                         </div>
-                        <div className="bg-gray-800/50 rounded-lg p-3">
-                          <div className="text-lg font-bold text-white">{Math.round(readingProgress)}%</div>
-                          <div className="text-xs text-gray-400">Completion</div>
-                        </div>
-                      </div>
                       
                       {/* Last Lesson in Module - Show Unlock Next Module Button */}
                       {isLastLessonInModule && nextModuleInfo && (
@@ -682,34 +862,350 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                         </div>
                       )}
                     </div>
+                    </motion.div>
                   ) : (
-                    <div className="bg-blue-900/30 border border-blue-700 rounded-xl p-6">
-                      <div className="flex items-center space-x-3">
-                        <Brain className="h-8 w-8 text-blue-400" />
-                        <div>
-                          <h4 className="font-semibold text-blue-200">Keep Learning!</h4>
-                          <p className="text-blue-300 text-sm">
-                            Continue reading to automatically track your progress. 
-                            Lesson will complete when you reach 80% reading progress.
-                          </p>
+                    <motion.div
+                      initial={{ opacity: 0, y: 16 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, ease: 'easeOut', delay: 0.2 }}
+                      className={`relative overflow-hidden rounded-2xl border border-gray-800/80 bg-gradient-to-br ${lessonLevel.twGradient} bg-gray-900/70 backdrop-blur-sm p-4 sm:p-5`}
+                    >
+                      {/* Ambient glow */}
+                      <div className="pointer-events-none absolute -inset-1 opacity-15 blur-2xl">
+                        <div
+                          className="h-full w-full rounded-full"
+                          style={{ backgroundColor: `${lessonLevel.cssColor}1a` }}
+                        />
+                      </div>
+
+                      <div className="relative z-10">
+                        {/* ── Gamified Header with Level Badge ── */}
+                        <div className="flex items-start gap-4 mb-5">
+                          {/* Level badge ring */}
+                          <motion.div
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+                            className="relative shrink-0"
+                          >
+                            <div
+                              className="h-14 w-14 rounded-2xl flex items-center justify-center shadow-lg"
+                              style={{
+                                background: `linear-gradient(135deg, ${lessonLevel.cssColor}30, ${lessonLevel.cssColor}10)`,
+                                borderColor: `${lessonLevel.cssColor}40`,
+                                borderWidth: '1px',
+                              }}
+                            >
+                              <motion.div
+                                animate={{ rotate: [0, -5, 5, -5, 0] }}
+                                transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
+                              >
+                                <Brain className="h-7 w-7" style={{ color: lessonLevel.cssColor }} />
+                              </motion.div>
+                              {/* Level initial badge */}
+                              <div
+                                className="absolute -top-1 -right-1 h-5 w-5 rounded-full flex items-center justify-center text-[8px] font-bold shadow"
+                                style={{ backgroundColor: lessonLevel.cssColor, color: '#fff' }}
+                              >
+                                {lessonLevel.label[0]}
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          {/* Title and level info */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <h4 className="text-base font-bold" style={{ color: lessonLevel.cssColor }}>
+                                Keep Learning!
+                              </h4>
+                              <motion.span
+                                initial={{ opacity: 0, x: -8 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: 0.3 }}
+                                className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                                style={{
+                                  backgroundColor: `${lessonLevel.cssColor}18`,
+                                  color: lessonLevel.cssColor,
+                                  border: `1px solid ${lessonLevel.cssColor}30`,
+                                }}
+                              >
+                                <lessonLevel.icon className="h-3 w-3" />
+                                {lessonLevel.label}
+                              </motion.span>
+                            </div>
+                            <p className="text-gray-400 text-xs mt-1 leading-relaxed">
+                              Continue reading and engaging with content to complete this lesson.
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* ── RPG-style Stat Cards with Animated Counters ── */}
+                        <div className="grid grid-cols-3 gap-2 sm:gap-3 mb-4">
+                          {/* Reading */}
+                          <motion.div
+                            whileHover={{ scale: 1.05, y: -3 }}
+                            className="group relative overflow-hidden rounded-xl border border-gray-700/50 bg-gray-900/50 p-3 text-center transition-all duration-200"
+                            style={{
+                              boxShadow: readingProgress >= 80 ? `0 0 12px ${lessonLevel.cssColor}20` : 'none',
+                            }}
+                          >
+                            {/* Hover radial glow */}
+                            <div
+                              className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                              style={{
+                                background: `radial-gradient(ellipse at center, ${lessonLevel.cssColor}15 0%, transparent 70%)`,
+                              }}
+                            />
+                            <div className="relative z-10">
+                              <motion.div
+                                className="text-xl font-black tabular-nums"
+                                style={{ color: lessonLevel.cssColor }}
+                                initial={{ opacity: 0, y: 8, scale: 0.8 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                transition={{ delay: 0.3, type: 'spring', stiffness: 150, damping: 12 }}
+                                key={Math.round(readingProgress)}
+                              >
+                                {Math.round(readingProgress)}%
+                              </motion.div>
+                              <div className="flex items-center justify-center gap-1 text-[10px] mt-0.5">
+                                <BookOpen className="h-3 w-3" style={{ color: lessonLevel.cssColor }} />
+                                <span className="font-medium text-gray-400">Reading</span>
+                              </div>
+                              {/* Mini progress bar */}
+                              <div className="mt-1.5 h-1 rounded-full bg-gray-800/80 overflow-hidden">
+                                <motion.div
+                                  className="h-full rounded-full"
+                                  style={{ backgroundColor: lessonLevel.cssColor }}
+                                  initial={{ width: '0%' }}
+                                  animate={{ width: `${Math.min(readingProgress, 100)}%` }}
+                                  transition={{ duration: 1, ease: 'easeOut', delay: 0.5 }}
+                                />
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          {/* Engagement */}
+                          <motion.div
+                            whileHover={{ scale: 1.05, y: -3 }}
+                            className="group relative overflow-hidden rounded-xl border border-gray-700/50 bg-gray-900/50 p-3 text-center transition-all duration-200"
+                          >
+                            <div
+                              className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl"
+                              style={{
+                                background: `radial-gradient(ellipse at center, rgba(52,211,153,0.15) 0%, transparent 70%)`,
+                              }}
+                            />
+                            <div className="relative z-10">
+                              <motion.div
+                                className="text-xl font-black tabular-nums"
+                                style={{ color: '#34d399' }}
+                                initial={{ opacity: 0, y: 8, scale: 0.8 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                transition={{ delay: 0.35, type: 'spring', stiffness: 150, damping: 12 }}
+                                key={Math.round(engagementScore)}
+                              >
+                                {Math.round(engagementScore)}%
+                              </motion.div>
+                              <div className="flex items-center justify-center gap-1 text-[10px] mt-0.5">
+                                <Zap className="h-3 w-3 text-green-400" />
+                                <span className="font-medium text-gray-400">Engagement</span>
+                              </div>
+                              <div className="mt-1.5 h-1 rounded-full bg-gray-800/80 overflow-hidden">
+                                <motion.div
+                                  className="h-full rounded-full bg-green-400"
+                                  initial={{ width: '0%' }}
+                                  animate={{ width: `${Math.min(engagementScore, 100)}%` }}
+                                  transition={{ duration: 1, ease: 'easeOut', delay: 0.55 }}
+                                />
+                              </div>
+                            </div>
+                          </motion.div>
+
+                          {/* Time */}
+                          <motion.div
+                            whileHover={{ scale: 1.05, y: -3 }}
+                            className="group relative overflow-hidden rounded-xl border border-gray-700/50 bg-gray-900/50 p-3 text-center transition-all duration-200"
+                          >
+                            <div
+                              className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-xl"
+                              style={{
+                                background: `radial-gradient(ellipse at center, rgba(251,146,60,0.15) 0%, transparent 70%)`,
+                              }}
+                            />
+                            <div className="relative z-10">
+                              <motion.div
+                                className="text-xl font-black tabular-nums"
+                                style={{ color: '#fb923c' }}
+                                initial={{ opacity: 0, y: 8, scale: 0.8 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                transition={{ delay: 0.4, type: 'spring', stiffness: 150, damping: 12 }}
+                                key={Math.floor(timeSpent / 60)}
+                              >
+                                {Math.floor(timeSpent / 60)}m
+                              </motion.div>
+                              <div className="flex items-center justify-center gap-1 text-[10px] mt-0.5">
+                                <Clock className="h-3 w-3 text-orange-400" />
+                                <span className="font-medium text-gray-400">Time</span>
+                              </div>
+                              <div className="mt-1.5 h-1 rounded-full bg-gray-800/80 overflow-hidden">
+                                <motion.div
+                                  className="h-full rounded-full bg-orange-400"
+                                  initial={{ width: '0%' }}
+                                  animate={{ width: `${Math.min((timeSpent / 300) * 100, 100)}%` }}
+                                  transition={{ duration: 1, ease: 'easeOut', delay: 0.6 }}
+                                />
+                              </div>
+                            </div>
+                          </motion.div>
+                        </div>
+
+                        {/* ── RPG-style XP Progress Bar with Thresholds ── */}
+                        <div className="relative rounded-xl border border-gray-700/50 bg-gray-900/50 p-3.5">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-1.5">
+                              <Target className="h-3.5 w-3.5" style={{ color: lessonLevel.cssColor }} />
+                              <span className="text-xs font-medium text-gray-400">Lesson Score</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <motion.span
+                                className="text-sm font-bold tabular-nums"
+                                style={{ color: lessonLevel.cssColor }}
+                                initial={{ opacity: 0, scale: 0.5 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                transition={{ delay: 0.5, type: 'spring', stiffness: 200 }}
+                                key={Math.round(lessonScore)}
+                              >
+                                {Math.round(lessonScore)}%
+                              </motion.span>
+                              {lessonScore < 80 && (
+                                <span className="text-[10px] text-gray-500 font-mono">
+                                  ({80 - Math.round(lessonScore)}% left)
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Progress bar track with checkpoints */}
+                          <div className="relative h-3 overflow-hidden rounded-full bg-gray-800/70">
+                            <motion.div
+                              className="h-full rounded-full shadow-sm relative"
+                              style={{
+                                background: `linear-gradient(90deg, ${lessonLevel.cssColor}60, ${lessonLevel.cssColor})`,
+                              }}
+                              initial={{ width: '0%' }}
+                              animate={{ width: `${Math.min(lessonScore, 100)}%` }}
+                              transition={{ duration: 1.2, ease: 'easeOut', delay: 0.5 }}
+                            >
+                              {/* Shimmer sweep */}
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent animate-pulse rounded-full" />
+                            </motion.div>
+
+                            {/* Checkpoint markers */}
+                            <div className="absolute top-0.5 bottom-0.5 w-0.5 bg-white/15 rounded-full" style={{ left: '40%' }} />
+                            <div className="absolute top-0.5 bottom-0.5 w-0.5 bg-white/20 rounded-full" style={{ left: '60%' }} />
+                            <div className="absolute top-0.5 bottom-0.5 w-1 bg-emerald-400/40 rounded-full shadow-sm shadow-emerald-500/30" style={{ left: '79.5%' }} />
+                          </div>
+
+                          {/* Checkpoint labels */}
+                          <div className="flex justify-between mt-1 text-[9px] text-gray-600 font-mono px-0.5">
+                            <span>0%</span>
+                            <span>40%</span>
+                            <span>60%</span>
+                            <span className="font-semibold text-emerald-600/70">80% ✓</span>
+                            <span>100%</span>
+                          </div>
+
+                          {/* Next level hint */}
+                          {lessonScore < 80 && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 4 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: 0.7 }}
+                              className="mt-2 flex items-center gap-1.5 text-[10px] text-gray-500"
+                            >
+                              <Star className="h-3 w-3 text-yellow-500/70" />
+                              <span>
+                                Next:{' '}
+                                {(80 - Math.round(lessonScore)) <= 20
+                                  ? 'Almost there! Just ' + (80 - Math.round(lessonScore)) + '% more to complete!'
+                                  : 'Reach 80% score to complete this lesson'}
+                              </span>
+                            </motion.div>
+                          )}
                         </div>
                       </div>
-                      <div className="mt-4 grid grid-cols-3 gap-4">
-                        <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                          <div className="text-lg font-bold text-blue-400">{Math.round(readingProgress)}%</div>
-                          <div className="text-xs text-gray-400">Reading</div>
+
+                  {/* 🎯 Animated Quiz/Assignment Prompt when reading is complete */}
+                  {showQuizAssignPrompt && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 12, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      transition={{ type: 'spring', stiffness: 200, damping: 18 }}
+                      className="mt-5 pt-4 border-t border-blue-700/40"
+                    >
+                      <motion.div
+                        animate={{ boxShadow: ['0 0 0 0 rgba(59,130,246,0)', '0 0 20px 4px rgba(59,130,246,0.15)', '0 0 0 0 rgba(59,130,246,0)'] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                        className="rounded-xl bg-gradient-to-br from-blue-600/20 to-indigo-600/10 border border-blue-500/30 p-4"
+                      >
+                        <div className="flex items-start gap-3">
+                          <motion.div
+                            animate={{ rotate: [0, -10, 10, -10, 0] }}
+                            transition={{ duration: 1.5, repeat: Infinity, repeatDelay: 2 }}
+                            className="mt-0.5 shrink-0"
+                          >
+                            {quizNotAttempted && assignmentsNotSubmitted ? (
+                              <Zap className="h-5 w-5 text-yellow-400" />
+                            ) : quizNotAttempted ? (
+                              <FileText className="h-5 w-5 text-blue-400" />
+                            ) : (
+                              <Clipboard className="h-5 w-5 text-purple-400" />
+                            )}
+                          </motion.div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-semibold text-blue-200">
+                              🎯 Reading Complete! Ready for the next step?
+                            </p>
+                            <p className="text-xs text-blue-300/70 mt-0.5">
+                              {quizNotAttempted && assignmentsNotSubmitted
+                                ? 'Complete the quiz and assignments to finish this lesson.'
+                                : quizNotAttempted
+                                ? 'Test your knowledge with the lesson quiz.'
+                                : 'Submit your assignments to complete the lesson.'}
+                            </p>
+                            <div className="flex flex-wrap gap-2 mt-3">
+                              {quizNotAttempted && (
+                                <motion.button
+                                  whileHover={{ scale: 1.03 }}
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={() => setCurrentViewMode('quiz')}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-blue-600/30 hover:shadow-blue-500/40 transition-all"
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  Take Quiz
+                                  <ArrowRight className="h-3 w-3" />
+                                </motion.button>
+                              )}
+                              {assignmentsNotSubmitted && (
+                                <motion.button
+                                  whileHover={{ scale: 1.03 }}
+                                  whileTap={{ scale: 0.97 }}
+                                  onClick={() => setCurrentViewMode('assignments')}
+                                  className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-purple-500 px-3.5 py-2 text-xs font-bold text-white shadow-lg shadow-purple-600/30 hover:shadow-purple-500/40 transition-all"
+                                >
+                                  <Clipboard className="h-3.5 w-3.5" />
+                                  View Assignments
+                                  <ArrowRight className="h-3 w-3" />
+                                </motion.button>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                          <div className="text-lg font-bold text-green-400">{Math.round(engagementScore)}%</div>
-                          <div className="text-xs text-gray-400">Engagement</div>
-                        </div>
-                        <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                          <div className="text-lg font-bold text-purple-400">{Math.floor(timeSpent / 60)}m</div>
-                          <div className="text-xs text-gray-400">Time</div>
-                        </div>
-                      </div>
-                      
-                      {/* Manual Completion Button */}
+                      </motion.div>
+                    </motion.div>
+                  )}
+                  
+                  {/* Manual Completion Button */}
                       {canManuallyComplete && onManualComplete && (
                         <div className="mt-6 pt-4 border-t border-blue-700/50">
                           <div className="space-y-3">
@@ -744,7 +1240,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           </div>
                         </div>
                       )}
-                    </div>
+                    </motion.div>
                   )}
               </TabsContent>
 
@@ -880,16 +1376,44 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       value={lessonNotes}
                       onChange={(e) => setLessonNotes(e.target.value)}
                       placeholder="Write your notes here..."
-                      className="w-full h-64 p-4 bg-gray-800/50 border border-gray-700 text-white rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-500"
+                      className={`w-full h-64 p-4 bg-gray-800/50 border text-white rounded-lg resize-none focus:ring-2 focus:border-transparent placeholder-gray-500 ${
+                        notesSaveStatus === 'error'
+                          ? 'border-red-700 focus:ring-red-500'
+                          : notesSaveStatus === 'saved'
+                          ? 'border-green-700 focus:ring-green-500'
+                          : 'border-gray-700 focus:ring-blue-500'
+                      }`}
                     />
-                    <div className="text-sm text-gray-400">
-                      Notes are saved automatically as you type.
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-gray-400">
+                        Notes are saved automatically as you type.
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        {notesSaveStatus === 'saving' && (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
+                            <span className="text-blue-400">Saving...</span>
+                          </>
+                        )}
+                        {notesSaveStatus === 'saved' && (
+                          <>
+                            <CheckCircle className="h-3 w-3 text-green-400" />
+                            <span className="text-green-400">Saved</span>
+                          </>
+                        )}
+                        {notesSaveStatus === 'error' && (
+                          <>
+                            <AlertCircle className="h-3 w-3 text-red-400" />
+                            <span className="text-red-400">Save failed</span>
+                          </>
+                        )}
+                      </span>
                     </div>
                   </div>
                 </div>
               </TabsContent>
             </Tabs>
-          </div>
+          </motion.div>
 
           {/* Completion Requirements Alert */}
           {!isLessonCompleted && hasNextLesson && (
