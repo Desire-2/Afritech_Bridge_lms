@@ -1291,7 +1291,30 @@ Return ONLY valid JSON:
             parsed = json_parser.parse_json_response(result, "lesson outlines")
             if parsed and 'lessons' in parsed:
                 lessons = parsed['lessons']
+                # Collect existing lesson titles (case-insensitive) for deduplication
+                # This includes:
+                # 1) Lessons already in the current module (existing_lessons)
+                # 2) Lessons from OTHER modules in the same course (course_context)
+                existing_title_set = set()
+                if existing_lessons:
+                    existing_title_set = {les.get('title', '').strip().lower() for les in existing_lessons}
+
+                # Also deduplicate against lessons in other modules (cross-module dedup)
+                cross_module_count = 0
+                if course_context:
+                    for mod in course_context:
+                        mod_title = mod.get('title', '')
+                        for les in mod.get('lessons', []):
+                            title_key = les.get('title', '').strip().lower()
+                            if title_key:
+                                existing_title_set.add(title_key)
+                                cross_module_count += 1
+                    if cross_module_count:
+                        logger.info(f"Cross-module dedup: loaded {cross_module_count} lesson titles from {len(course_context)} modules in course {course_title}")
+
                 # Validate and fix generic titles
+                deduplicated = []
+                seen_titles = set(existing_title_set)  # also track intra-batch duplicates
                 for idx, lesson in enumerate(lessons):
                     lesson_num = lesson.get('order', idx + start_num)
                     if self._is_generic_title(lesson.get('title', '')):
@@ -1299,14 +1322,21 @@ Return ONLY valid JSON:
                             module_title, course_title, existing_lessons, lesson_num
                         )
                     lesson['order'] = lesson_num
+
+                    # Deduplication: skip lessons whose titles already exist
+                    title_key = lesson.get('title', '').strip().lower()
+                    if title_key and title_key in seen_titles:
+                        logger.info(f"Skipping duplicate lesson outline: '{lesson.get('title')}'")
+                        continue
+                    seen_titles.add(title_key)
+                    deduplicated.append(lesson)
+
                 # Validate and normalize order numbers
-                for idx, lesson in enumerate(lessons):
+                for idx, lesson in enumerate(deduplicated):
                     lesson['order'] = idx + start_num
-                # Validate and normalize order numbers
-                for idx, lesson in enumerate(lessons):
-                    lesson['order'] = idx + start_num
-                logger.info(f"Batch generated {len(lessons)} lesson outlines using {provider}")
-                return {"lessons": lessons}
+
+                logger.info(f"Batch generated {len(deduplicated)} lesson outlines using {provider} (removed {len(lessons) - len(deduplicated)} duplicates, cross-module dedup active)")
+                return {"lessons": deduplicated}
         
         logger.warning("Failed to generate lesson outlines, returning empty")
         return {"lessons": []}

@@ -955,8 +955,30 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
       setIsCreatingLessons(true);
       
       try {
+        // Build a set of existing lesson titles across ALL modules (case-insensitive) for deduplication
+        const existingTitleSet = new Set<string>();
+        for (const mod of modules) {
+          for (const lesson of (mod.lessons || [])) {
+            if (lesson.title) {
+              existingTitleSet.add(lesson.title.trim().toLowerCase());
+            }
+          }
+        }
+
         let successCount = 0;
+        let skippedCount = 0;
+        const skippedTitles: string[] = [];
+
         for (const lessonData of data.lessons) {
+          const titleKey = (lessonData.title || '').trim().toLowerCase();
+
+          // Skip if a lesson with this title already exists in the module
+          if (titleKey && existingTitleSet.has(titleKey)) {
+            skippedCount++;
+            skippedTitles.push(lessonData.title);
+            continue;
+          }
+
           // Outlines only — content_data is empty, will be generated separately
           const lessonPayload = {
             title: lessonData.title,
@@ -970,6 +992,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
 
           const createdLesson = await CourseCreationService.createLesson(course.id, currentModule.id, lessonPayload);
           successCount++;
+          existingTitleSet.add(titleKey); // Track to prevent intra-batch duplicates
           
           // Update local state
           setModules(prevModules => prevModules.map(mod => {
@@ -983,7 +1006,15 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
           }));
         }
 
-        toast.success(`Planned ${successCount} lesson outlines! Use AI Content to generate content for each lesson.`);
+        if (skippedCount > 0) {
+          toast.info(`Skipped ${skippedCount} duplicate lesson(s): ${skippedTitles.slice(0, 3).join(', ')}${skippedTitles.length > 3 ? '...' : ''}`);
+        }
+        if (successCount > 0) {
+          toast.success(`Planned ${successCount} lesson outline(s)! Use AI Content to generate content for each lesson.`);
+        }
+        if (successCount === 0 && skippedCount === 0) {
+          toast.warning('No lesson outlines were returned by the AI. Please try again.');
+        }
         setShowLessonAI({ moduleId: null, batchMode: false });
       } catch (error) {
         console.error('Error creating lessons:', error);
@@ -1397,11 +1428,12 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                           
                           <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 ml-8 sm:ml-0">
                             <button
-                              onClick={() => setShowLessonAI({ moduleId: module.id })}
+                              onClick={() => setShowLessonAI({ moduleId: module.id, batchMode: true })}
                               className="flex items-center gap-1 text-xs sm:text-sm px-2 sm:px-3 py-1 bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-700 hover:from-purple-200 hover:to-indigo-200 dark:from-purple-900/20 dark:to-indigo-900/20 dark:text-purple-400 rounded transition-colors"
+                              title="Generate all lesson titles for this module at once"
                             >
                               <Sparkles className="w-3 h-3" />
-                              <span className="hidden sm:inline">AI Lesson</span>
+                              <span className="hidden sm:inline">AI Lessons</span>
                               <span className="sm:hidden">AI</span>
                             </button>
                             <button
@@ -1461,7 +1493,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                         <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20">
                           <div className="flex justify-between items-center mb-4">
                             <div className="flex items-center gap-3">
-                              <h5 className="font-semibold text-purple-900 dark:text-purple-300">AI Lesson Assistant</h5>
+                              <h5 className="font-semibold text-purple-900 dark:text-purple-300">AI Lesson Planner</h5>
                               <button
                                 onClick={() => setShowLessonAI({ moduleId: module.id, batchMode: !showLessonAI.batchMode })}
                                 className={`text-xs px-3 py-1 rounded-full transition-colors ${
@@ -1470,7 +1502,7 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                                     : 'bg-white dark:bg-slate-700 text-purple-600 dark:text-purple-300 border border-purple-300 dark:border-purple-700'
                                 }`}
                               >
-                                {showLessonAI.batchMode ? '🎯 Batch Mode' : '📝 Single Mode'}
+                                {showLessonAI.batchMode ? '🎯 All Lessons' : '📝 Single Lesson'}
                               </button>
                             </div>
                             <button
@@ -1480,6 +1512,12 @@ const ModuleManagement: React.FC<ModuleManagementProps> = ({ course, onCourseUpd
                               ✕
                             </button>
                           </div>
+                          <p className="text-xs text-purple-600 dark:text-purple-400 mb-3">
+                            {showLessonAI.batchMode
+                              ? `Generates all lesson titles for this module at once (${(module.lessons || []).length} existing lessons will be excluded from duplication). Use AI Content to generate content separately.`
+                              : 'Generate a single lesson outline. Toggle to "All Lessons" to plan the entire module at once.'
+                            }
+                          </p>
                           <AIContentGenerator
                             type="lesson"
                             courseId={course.id}

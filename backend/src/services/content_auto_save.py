@@ -101,10 +101,10 @@ def _auto_save_content(db, Course, Module, Lesson,
         raise ValueError(result.get('message', 'Task returned unsuccessful result'))
 
     if task_type in ('generate-multiple-lessons',):
-        return _save_multiple_lessons(db, Lesson, module_id, data)
+        return _save_multiple_lessons(db, Lesson, Module, module_id, course_id, data)
     
     elif task_type in ('generate-lesson-content', 'generate-comprehensive-lesson'):
-        return _save_single_lesson(db, Lesson, module_id, data)
+        return _save_single_lesson(db, Lesson, Module, module_id, course_id, data)
     
     elif task_type in ('generate-multiple-modules',):
         return _save_multiple_modules(db, Module, course_id, data)
@@ -122,9 +122,13 @@ def _auto_save_content(db, Course, Module, Lesson,
         return {'saved': False, 'reason': f'unhandled task_type: {task_type}'}
 
 
-def _save_multiple_lessons(db, Lesson, module_id: int,
+def _save_multiple_lessons(db, Lesson, Module, module_id: int, course_id: int,
                            data: Dict[str, Any]) -> Dict[str, Any]:
-    """Save multiple AI-generated lessons to the DB"""
+    """Save multiple AI-generated lessons to the DB.
+    
+    Deduplication: lessons whose titles already exist in any module
+    of the same course are skipped.
+    """
     lessons_data = data.get('lessons', [])
     if not lessons_data:
         return {'saved': False, 'reason': 'no lessons in result'}
@@ -132,43 +136,72 @@ def _save_multiple_lessons(db, Lesson, module_id: int,
     if not module_id:
         return {'saved': False, 'reason': 'no module_id provided'}
 
+    if not course_id:
+        return {'saved': False, 'reason': 'no course_id provided'}
+
+    # Fetch existing lesson titles across ALL modules in this course (case-insensitive)
+    # for cross-module deduplication
+    all_course_lessons = db.session.query(Lesson).join(
+        Module, Lesson.module_id == Module.id
+    ).filter(Module.course_id == course_id).all()
+    existing_titles = {les.title.strip().lower() for les in all_course_lessons}
+
     # Get current max order in this module
     last_lesson = Lesson.query.filter_by(module_id=module_id)\
         .order_by(Lesson.order.desc()).first()
     next_order = (last_lesson.order + 1) if last_lesson else 1
 
     created = []
+    skipped = []
     for i, lesson_data in enumerate(lessons_data):
+        new_title = lesson_data.get('title', '').strip()
+        title_key = new_title.lower() if new_title else ''
+
+        # Skip if a lesson with the same title already exists in the module
+        if title_key and title_key in existing_titles:
+            skipped.append(new_title)
+            logger.info(f"Skipping duplicate lesson '{new_title}' in module {module_id}")
+            continue
+
         lesson = Lesson(
-            title=lesson_data.get('title', f'Lesson {next_order + i}'),
+            title=new_title or f'Lesson {next_order + i}',
             content_type=lesson_data.get('content_type', 'text'),
             content_data=lesson_data.get('content_data', ''),
             description=lesson_data.get('description', ''),
             learning_objectives=lesson_data.get('learning_objectives', ''),
             module_id=module_id,
-            order=lesson_data.get('order', next_order + i),
+            order=lesson_data.get('order', next_order + len(created)),
             duration_minutes=lesson_data.get('duration_minutes'),
             is_published=False,  # Draft by default
         )
         db.session.add(lesson)
-        created.append(lesson_data.get('title', f'Lesson {next_order + i}'))
+        created.append(new_title or f'Lesson {next_order + i}')
+        existing_titles.add(title_key)  # Track to prevent intra-batch duplicates
 
     db.session.commit()
-    logger.info(f"Auto-saved {len(created)} lessons to module {module_id}")
+    logger.info(f"Auto-saved {len(created)} lessons to module {module_id} (skipped {len(skipped)} duplicates)")
     return {
         'saved': True,
         'type': 'lessons',
         'count': len(created),
         'titles': created,
+        'skipped_duplicates': skipped,
         'module_id': module_id,
     }
 
 
-def _save_single_lesson(db, Lesson, module_id: int,
+def _save_single_lesson(db, Lesson, Module, module_id: int, course_id: int,
                          data: Dict[str, Any]) -> Dict[str, Any]:
-    """Save a single AI-generated lesson to the DB"""
+    """Save a single AI-generated lesson to the DB.
+    
+    Deduplication: if a lesson with the same title already exists in any module
+    of the same course, the new one is skipped (unless it has new content_data).
+    """
     if not module_id:
         return {'saved': False, 'reason': 'no module_id provided'}
+
+    if not course_id:
+        return {'saved': False, 'reason': 'no course_id provided'}
 
     # The data might be the lesson directly, or wrapped in a lessons list
     lesson_data = data
@@ -178,6 +211,41 @@ def _save_single_lesson(db, Lesson, module_id: int,
     title = lesson_data.get('title', 'AI Generated Lesson')
     if not lesson_data.get('content_data') and not lesson_data.get('description'):
         return {'saved': False, 'reason': 'lesson has no content or description'}
+
+    # Check for duplicate title across ALL modules in this course (cross-module dedup)
+    title_key = title.strip().lower()
+    existing = db.session.query(Lesson).join(
+        Module, Lesson.module_id == Module.id
+    ).filter(
+        Module.course_id == course_id,
+        db.func.lower(Lesson.title) == title_key
+    ).first()
+    if existing:
+        # Only skip if the existing lesson already has content
+        if existing.content_data and len(existing.content_data.strip()) > 0:
+            logger.info(f"Skipping duplicate lesson '{title}' in module {module_id} (already exists with content)")
+            return {
+                'saved': False,
+                'reason': f'lesson "{title}" already exists in this module',
+                'existing_lesson_id': existing.id,
+            }
+        # Existing lesson has no content — update it with the new content
+        existing.content_data = lesson_data.get('content_data', '')
+        existing.description = lesson_data.get('description', '') or existing.description
+        existing.learning_objectives = lesson_data.get('learning_objectives', '') or existing.learning_objectives
+        existing.content_type = lesson_data.get('content_type', 'text')
+        existing.duration_minutes = lesson_data.get('duration_minutes') or existing.duration_minutes
+        db.session.commit()
+        logger.info(f"Updated existing lesson '{title}' in module {module_id} with new content")
+        return {
+            'saved': True,
+            'type': 'lesson',
+            'count': 1,
+            'titles': [title],
+            'module_id': module_id,
+            'lesson_id': existing.id,
+            'action': 'updated',
+        }
 
     last_lesson = Lesson.query.filter_by(module_id=module_id)\
         .order_by(Lesson.order.desc()).first()
