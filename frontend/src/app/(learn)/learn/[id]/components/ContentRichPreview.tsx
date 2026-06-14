@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -8,7 +8,7 @@ import './markdown-styles.css';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
+
 import { 
   Play, 
   Pause, 
@@ -40,6 +40,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { InteractiveStepThroughViewer } from './InteractiveStepThroughViewer';
+import type { StepSection } from './InteractiveStepThroughViewer';
 
 // Separate CodeBlock component to properly handle state
 const CodeBlock: React.FC<{
@@ -154,6 +156,120 @@ const CodeBlock: React.FC<{
   );
 };
 
+// ── Reusable Seekable Video Progress Bar ────────────────────────────
+
+const formatDuration = (seconds: number): string => {
+  if (!seconds || !isFinite(seconds)) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+const VideoProgressBar: React.FC<{
+  progress: number;
+  currentTime: number;
+  duration: number;
+  isWatched: boolean;
+  onSeek?: (fraction: number) => void;
+}> = ({ progress, currentTime, duration, isWatched, onSeek }) => {
+  const [hoverFraction, setHoverFraction] = useState<number | null>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (!barRef.current || !onSeek) return;
+    const rect = barRef.current.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    onSeek(fraction);
+  };
+
+  const handleHover = (e: React.MouseEvent) => {
+    if (!barRef.current) return;
+    const rect = barRef.current.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    setHoverFraction(fraction);
+  };
+
+  const hoverTime = hoverFraction !== null ? hoverFraction * duration : 0;
+  const isComplete = progress >= 100;
+
+  return (
+    <div className="relative">
+      {/* Progress bar track */}
+      <div
+        ref={barRef}
+        className={`relative h-2.5 rounded-full cursor-pointer group ${
+          isWatched ? 'bg-green-900/40' : 'bg-gray-700/50'
+        }`}
+        onClick={handleClick}
+        onMouseMove={handleHover}
+        onMouseLeave={() => setHoverFraction(null)}
+        role="slider"
+        aria-label="Video progress"
+        aria-valuenow={Math.round(progress)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            onSeek?.(Math.min(1, (progress + 5) / 100));
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            onSeek?.(Math.max(0, (progress - 5) / 100));
+          }
+        }}
+      >
+        {/* Animated gradient indicator */}
+        <div
+          className={`h-full rounded-full transition-all duration-300 ease-out relative overflow-hidden ${
+            isComplete
+              ? 'bg-gradient-to-r from-emerald-400 to-green-500'
+              : isWatched
+                ? 'bg-gradient-to-r from-emerald-400 to-teal-500'
+                : 'bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500'
+          }`}
+          style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+        >
+          {/* Shine/shimmer animation on hover */}
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-in-out" />
+        </div>
+
+        {/* Hover scrubber thumb */}
+        {hoverFraction !== null && (
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg shadow-black/40 border-2 border-blue-500 z-10 transition-transform duration-75 hover:scale-110"
+            style={{ left: `calc(${hoverFraction * 100}% - 8px)` }}
+          />
+        )}
+      </div>
+
+      {/* Hover tooltip */}
+      {hoverFraction !== null && (
+        <div
+          className="absolute -top-9 transform -translate-x-1/2 bg-gray-900 border border-gray-700 text-white text-xs font-mono px-2.5 py-1.5 rounded-lg shadow-xl z-20 whitespace-nowrap pointer-events-none"
+          style={{ left: `${hoverFraction * 100}%` }}
+        >
+          <span className="text-blue-300">{formatDuration(hoverTime)}</span>
+          <span className="text-gray-500 mx-1">/</span>
+          <span className="text-gray-400">{formatDuration(duration)}</span>
+          <span className="text-gray-600 mx-1">•</span>
+          <span className="text-purple-300">{Math.round(hoverFraction * 100)}%</span>
+        </div>
+      )}
+
+      {/* Below-bar time labels */}
+      <div className="flex items-center justify-between mt-1.5">
+        <span className="text-[11px] text-gray-500 font-mono">
+          {formatDuration(currentTime)}
+        </span>
+        <span className="text-[11px] text-gray-500 font-mono">
+          {formatDuration(duration)}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 interface ContentRichPreviewProps {
   lesson: {
     title: string;
@@ -167,6 +283,7 @@ interface ContentRichPreviewProps {
   onVideoProgress?: (progress: number, currentTime?: number, duration?: number) => void;
   onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
   onMixedContentVideoComplete?: (videoIndex: number) => void;
+  onSectionProgress?: (viewedSections: number, totalSections: number) => void;
 }
 
 interface MixedContentSection {
@@ -183,7 +300,8 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   onVideoComplete,
   onVideoProgress,
   onMixedContentVideoProgress,
-  onMixedContentVideoComplete
+  onMixedContentVideoComplete,
+  onSectionProgress
 }) => {
   // Debug: Log the entire lesson object when component mounts or lesson changes
   useEffect(() => {
@@ -217,8 +335,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const [pdfZoom, setPdfZoom] = useState(100);
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfTotalPages, setPdfTotalPages] = useState(0);
-  const [activeContentSection, setActiveContentSection] = useState(0);
-  const [mixedContentError, setMixedContentError] = useState<string | null>(null);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
   // Per-video progress tracking for mixed content (videoIndex -> progress 0-100)
@@ -231,7 +347,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const vimeoPlayerRef = useRef<any>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
-  const contentSectionRefs = useRef<(HTMLDivElement | null)[]>([]);
   
   // Refs for tracking mixed content videos
   const mixedVideoRefs = useRef<{[key: string]: {
@@ -918,12 +1033,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     };
   }, []);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
   // Sanitize and improve markdown content
   const sanitizeMarkdown = (content: string): string => {
     if (!content) return '';
@@ -1180,6 +1289,12 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             const isWatched = mixedContentIndex !== undefined 
               ? (mixedVideoWatchedMap[mixedContentIndex] || false)
               : videoWatched;
+            // Per-video time: use estimate from progress * main video duration
+            // when per-video tracking isn't available.
+            const displayDuration = videoDuration;
+            const displayCurrentTime = mixedContentIndex !== undefined
+              ? (displayProgress / 100) * displayDuration
+              : currentTime;
             return (
             <Card 
               className={`border-2 ${isWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}
@@ -1206,19 +1321,22 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                   )}
                 </div>
                 
-                <Progress 
-                  value={displayProgress} 
-                  className="h-2" 
-                  aria-label="Video progress"
-                  aria-valuenow={Math.round(displayProgress)}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
+                <VideoProgressBar
+                  progress={displayProgress}
+                  currentTime={displayCurrentTime}
+                  duration={displayDuration}
+                  isWatched={isWatched}
+                  onSeek={mixedContentIndex !== undefined
+                    ? (f) => {
+                        const player = mixedVideoRefs.current[`mixed-youtube-${mixedContentIndex}`]?.player;
+                        if (player?.seekTo) {
+                          const dur = player.getDuration();
+                          if (dur > 0) player.seekTo(f * dur, true);
+                        }
+                      }
+                    : (f) => youtubePlayerRef.current?.seekTo(f * videoDuration, true)
+                  }
                 />
-                
-                <div className="flex items-center justify-between text-xs text-gray-400">
-                  <span aria-label={`Current time: ${formatTime(currentTime)}`}>{formatTime(currentTime)}</span>
-                  <span aria-label={`Total duration: ${formatTime(videoDuration)}`}>{formatTime(videoDuration)}</span>
-                </div>
                 
                 {!isWatched && displayProgress > 0 && (
                   <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded" role="alert">
@@ -1305,6 +1423,12 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             const isWatched = mixedContentIndex !== undefined 
               ? (mixedVideoWatchedMap[mixedContentIndex] || false)
               : videoWatched;
+            // Per-video time: use estimate from progress * main video duration
+            // when per-video tracking isn't available.
+            const displayDuration = videoDuration;
+            const displayCurrentTime = mixedContentIndex !== undefined
+              ? (displayProgress / 100) * displayDuration
+              : currentTime;
             return (
             <Card className={`border-2 ${isWatched ? 'bg-green-900/30 border-green-700' : 'bg-blue-900/30 border-blue-700'}`}>
               <div className="p-3 sm:p-4 space-y-3">
@@ -1327,12 +1451,24 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                   )}
                 </div>
                 
-                <Progress value={displayProgress} className="h-2" />
-                
-                <div className="flex items-center justify-between text-xs text-gray-400">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>{formatTime(videoDuration)}</span>
-                </div>
+                <VideoProgressBar
+                  progress={displayProgress}
+                  currentTime={displayCurrentTime}
+                  duration={displayDuration}
+                  isWatched={isWatched}
+                  onSeek={mixedContentIndex !== undefined
+                    ? async (f) => {
+                        const player = mixedVideoRefs.current[`mixed-vimeo-${mixedContentIndex}`]?.player;
+                        if (player?.setCurrentTime) {
+                          try {
+                            const dur = await player.getDuration();
+                            if (dur > 0) await player.setCurrentTime(f * dur);
+                          } catch (e) { /* ignore seek errors */ }
+                        }
+                      }
+                    : (f) => vimeoPlayerRef.current?.setCurrentTime(f * videoDuration)
+                  }
+                />
                 
                 {!isWatched && displayProgress > 0 && (
                   <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded">
@@ -1515,12 +1651,16 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 )}
               </div>
               
-              <Progress value={videoProgress} className="h-2" />
-              
-              <div className="flex items-center justify-between text-xs text-gray-400">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(videoDuration)}</span>
-              </div>
+              <VideoProgressBar
+                progress={videoProgress}
+                currentTime={currentTime}
+                duration={videoDuration}
+                isWatched={videoWatched}
+                onSeek={(f) => {
+                  const v = videoRef.current;
+                  if (v) v.currentTime = f * v.duration;
+                }}
+              />
               
               {!videoWatched && videoProgress > 0 && (
                 <div className="flex items-center space-x-2 text-xs text-blue-300 bg-blue-950/50 p-2 rounded">
@@ -1808,392 +1948,124 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     return parseMixedContent(lesson.content_data);
   }, [lesson.content_type, lesson.content_data, parseMixedContent]);
 
-  // Update error state when parsed result changes
-  useEffect(() => {
-    if (mixedContentResult?.error !== mixedContentError) {
-      setMixedContentError(mixedContentResult?.error || null);
-    }
-  }, [mixedContentResult]);
 
-  const renderMixedContent = (contentData: string) => {
-    // Use pre-parsed result
-    const sections = mixedContentResult?.sections || [{ type: 'text' as const, content: contentData }];
-    const error = mixedContentResult?.error;
-    
-    // Enhanced debug logging
-    console.log('🔍 renderMixedContent - DETAILED ANALYSIS:');
-    console.log('  Total sections:', sections.length);
-    console.log('  Raw contentData:', contentData.substring(0, 200));
-    console.log('  Sections array:', sections);
-    console.log('  Video sections found:', sections.filter(s => s.type === 'video').length);
-    
-    // Log each section with details
-    sections.forEach((section, idx) => {
-      console.log(`  Section ${idx + 1}:`, {
-        type: section.type,
-        hasUrl: 'url' in section,
-        urlValue: (section as any).url,
-        hasContent: 'content' in section,
-        contentValue: typeof (section as any).content === 'string' ? (section as any).content?.substring(0, 50) : (section as any).content,
-        allKeys: Object.keys(section)
+  // -----------------------------------------------------------------------
+  // Parse plain text (markdown) into sections by **heading** boundaries
+  // -----------------------------------------------------------------------
+  const parseTextIntoSections = useCallback((content: string): StepSection[] => {
+    if (!content || !content.trim()) {
+      return [{ id: 'section-0', type: 'text' as const, heading: '', content: '' }];
+    }
+
+    const lines = content.split('\n');
+    const sections: StepSection[] = [];
+    let currentHeading = '';
+    let currentContent: string[] = [];
+    let hasAnyHeaders = false;
+
+    const flush = () => {
+      const body = currentContent.join('\n').trim();
+      if (currentHeading || body) {
+        sections.push({
+          id: `section-${sections.length}`,
+          type: 'text' as const,
+          heading: currentHeading || '',
+          content: body,
+        });
+      }
+      currentHeading = '';
+      currentContent = [];
+    };
+
+    for (const line of lines) {
+      // Match **bold** on its own line (user-created headers)
+      const boldMatch = line.match(/^\s*\*\*(.+?)\*\*\s*$/);
+      if (boldMatch) {
+        hasAnyHeaders = true;
+        flush();
+        currentHeading = boldMatch[1].trim();
+        continue;
+      }
+
+      // Match markdown ATX headings: # Heading, ## Heading
+      const atxMatch = line.match(/^\s*#{1,6}\s+(.+)$/);
+      if (atxMatch) {
+        hasAnyHeaders = true;
+        flush();
+        currentHeading = atxMatch[1].trim();
+        continue;
+      }
+
+      currentContent.push(line);
+    }
+    flush();
+
+    // If no headers were found, wrap everything in a single section
+    if (!hasAnyHeaders && sections.length <= 1) {
+      const body = content.trim();
+      return [{ id: 'section-0', type: 'text' as const, heading: '', content: body }];
+    }
+
+    // Give the first section a friendly heading if it has none
+    if (sections.length > 0 && !sections[0].heading) {
+      sections[0] = { ...sections[0], heading: 'Introduction' };
+    }
+
+    return sections;
+  }, []);
+
+  // Memoised text sections
+  const textSections = useMemo<StepSection[]>(() => {
+    if (lesson.content_type !== 'text') return [];
+    return parseTextIntoSections(lesson.content_data);
+  }, [lesson.content_type, lesson.content_data, parseTextIntoSections]);
+
+  // Memoised mixed-content sections mapped to StepSection format,
+  // parsing text sections through parseTextIntoSections for proper heading extraction.
+  const mixedStepSections = useMemo<StepSection[]>(() => {
+    if (lesson.content_type !== 'mixed' || !mixedContentResult) return [];
+    const result: StepSection[] = [];
+    mixedContentResult.sections.forEach((s, idx) => {
+      if (s.type === 'text' && s.content) {
+        const parsed = parseTextIntoSections(s.content);
+        if (parsed.length > 1 || (parsed.length === 1 && parsed[0].heading)) {
+          parsed.forEach((sub, subIdx) => {
+            result.push({
+              ...sub,
+              id: `mixed-section-${idx}-${subIdx}`,
+              metadata: { ...sub.metadata, originalIndex: idx },
+            });
+          });
+          return;
+        }
+      }
+      let heading = '';
+      if (s.type === 'heading' && s.title) {
+        heading = s.title;
+      }
+      if (!heading) {
+        const labels: Record<string, string> = {
+          text: `Section ${idx + 1}`,
+          video: `Video ${idx + 1}`,
+          pdf: `Document ${idx + 1}`,
+          image: `Image ${idx + 1}`,
+        };
+        heading = labels[s.type] || `Step ${idx + 1}`;
+      }
+      result.push({
+        id: `mixed-section-${idx}`,
+        type: s.type === 'heading' ? 'text' as const : (s.type as StepSection['type']),
+        heading,
+        content: s.content,
+        url: s.url,
+        alt: s.alt,
+        level: s.level,
+        metadata: { ...s.metadata, originalIndex: idx },
       });
     });
-    
-    return (
-      <div className="space-y-6">
-        {/* Error Alert */}
-        {error && (
-          <Alert className="bg-yellow-900/20 border-yellow-700">
-            <AlertCircle className="h-4 w-4 text-yellow-400" />
-            <AlertDescription className="text-yellow-200">
-              {error}
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        {/* Content Navigation (if multiple sections) */}
-        {sections.length > 3 && (
-          <Card className="bg-gray-800/50 border-gray-700">
-            <div className="p-4">
-              <h4 className="text-sm font-semibold text-gray-300 mb-3 flex items-center">
-                <BookOpen className="h-4 w-4 mr-2" />
-                Content Sections ({sections.length})
-              </h4>
-              <div className="flex flex-wrap gap-2">
-                {sections.map((section, index) => (
-                  <Button
-                    key={index}
-                    variant={activeContentSection === index ? "default" : "outline"}
-                    size="sm"
-                    className="text-xs"
-                    onClick={() => {
-                      setActiveContentSection(index);
-                      contentSectionRefs.current[index]?.scrollIntoView({ 
-                        behavior: 'smooth', 
-                        block: 'start' 
-                      });
-                    }}
-                  >
-                    {section.type === 'heading' ? section.title?.substring(0, 20) : 
-                     section.type === 'text' ? `Text ${index + 1}` :
-                     section.type === 'video' ? `Video ${index + 1}` :
-                     section.type === 'pdf' ? `PDF ${index + 1}` :
-                     section.type === 'image' ? `Image ${index + 1}` :
-                     `Section ${index + 1}`}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </Card>
-        )}
-        
-        {/* Render Content Sections */}
-        {sections.map((section, index) => (
-          <div 
-            key={index} 
-            ref={(el) => contentSectionRefs.current[index] = el}
-            className="scroll-mt-6"
-          >
-            {section.type === 'heading' && (
-              <div className={`
-                ${section.level === 1 ? 'text-3xl sm:text-4xl font-bold text-white mb-6 pb-3 border-b border-gray-700' : ''}
-                ${section.level === 2 ? 'text-2xl sm:text-3xl font-bold text-white mb-5 pb-2 border-b border-gray-700/50' : ''}
-                ${section.level === 3 ? 'text-xl sm:text-2xl font-semibold text-white mb-4' : ''}
-                ${section.level === 4 ? 'text-lg sm:text-xl font-semibold text-gray-200 mb-3' : ''}
-                ${section.level === 5 ? 'text-base sm:text-lg font-semibold text-gray-300 mb-2' : ''}
-                ${section.level === 6 ? 'text-sm sm:text-base font-semibold text-gray-400 mb-2' : ''}
-              `}>
-                {section.title}
-              </div>
-            )}
-            
-            {section.type === 'text' && section.content && (
-              <Card className="bg-gray-800/30 border-gray-700 p-6">
-                {renderTextContent(section.content)}
-              </Card>
-            )}
-            
-            {section.type === 'video' && (
-              <Card className="bg-gray-800/30 border-gray-700 p-4 sm:p-6">
-                <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <Video className="h-5 w-5 text-blue-400" />
-                    <h4 className="font-semibold text-white">Video Content</h4>
-                  </div>
-                  <Badge variant="outline" className="w-fit sm:ml-auto">Section {index + 1}</Badge>
-                </div>
-                {section.metadata?.title && (
-                  <h5 className="text-lg font-medium text-gray-200 mb-3">{section.metadata.title}</h5>
-                )}
-                {(() => {
-                  // Get video URL from multiple possible locations with priority order
-                  // Priority: root url > metadata.url > content field (for backward compatibility)
-                  const videoUrl = (
-                    section.url || 
-                    (section as any).metadata?.url ||
-                    section.content || 
-                    ''
-                  ).trim();
-                  
-                  // Enhanced debug logging
-                  console.log('🎥 Video section rendering (DETAILED):', {
-                    index,
-                    sectionId: (section as any).id,
-                    sectionType: section.type,
-                    hasUrl: !!section.url,
-                    urlValue: section.url,
-                    hasContent: !!section.content,
-                    contentValue: section.content,
-                    hasMetadata: !!(section as any).metadata,
-                    hasMetadataUrl: !!(section as any).metadata?.url,
-                    metadataUrlValue: (section as any).metadata?.url,
-                    finalVideoUrl: videoUrl,
-                    videoUrlLength: videoUrl.length,
-                    isPlaceholder: videoUrl.includes('[INSERT_VIDEO_URL_HERE]') || 
-                                  videoUrl.includes('INSERT_') ||
-                                  videoUrl.includes('YOUR_VIDEO_URL'),
-                    fullSection: JSON.stringify(section, null, 2)
-                  });
-                  
-                  // Enhanced placeholder detection
-                  const isPlaceholder = !videoUrl || 
-                                      videoUrl.includes('[INSERT_VIDEO_URL_HERE]') || 
-                                      videoUrl.includes('INSERT_') ||
-                                      videoUrl.includes('YOUR_VIDEO_URL') ||
-                                      videoUrl.includes('ADD_VIDEO_URL') ||
-                                      videoUrl.includes('PLACEHOLDER') ||
-                                      videoUrl === 'null' ||
-                                      videoUrl === 'undefined';
-                  
-                  if (isPlaceholder) {
-                    return (
-                      <Alert className="bg-amber-900/20 border-amber-700">
-                        <AlertCircle className="h-5 w-5 text-amber-400" />
-                        <AlertDescription className="text-amber-200">
-                          <p className="font-semibold text-base mb-2">📹 No video URL provided</p>
-                          <p className="text-sm text-amber-300/90">
-                            The instructor needs to add a video link to this section. 
-                            This could be a YouTube, Vimeo, or direct video file URL.
-                          </p>
-                          <p className="text-xs text-amber-400/70 mt-2 italic">
-                            Please check back later or contact your instructor for updates.
-                          </p>
-                        </AlertDescription>
-                      </Alert>
-                    );
-                  }
-                  
-                  // Validate URL format
-                  const isValidUrl = /^https?:\/\/.+/.test(videoUrl);
-                  if (!isValidUrl) {
-                    return (
-                      <Alert className="bg-red-900/20 border-red-700">
-                        <AlertCircle className="h-5 w-5 text-red-400" />
-                        <AlertDescription className="text-red-200">
-                          <p className="font-semibold text-base mb-2">❌ Invalid video URL</p>
-                          <p className="text-sm text-red-300/90">
-                            The video URL appears to be invalid or improperly formatted.
-                          </p>
-                          <p className="text-xs text-red-400/70 mt-2 font-mono bg-black/30 p-2 rounded">
-                            Provided: {videoUrl.substring(0, 100)}{videoUrl.length > 100 ? '...' : ''}
-                          </p>
-                        </AlertDescription>
-                      </Alert>
-                    );
-                  }
-                  
-                  return renderVideoContent(videoUrl, index);
-                })()}
-              </Card>
-            )}
-            
-            {section.type === 'pdf' && (
-              <Card className="bg-gray-800/30 border-gray-700 p-4 sm:p-6">
-                <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-2 mb-4">
-                  <div className="flex items-center space-x-2">
-                    <FileText className="h-5 w-5 text-red-400" />
-                    <h4 className="font-semibold text-white">PDF Document</h4>
-                  </div>
-                  <Badge variant="outline" className="w-fit sm:ml-auto">Section {index + 1}</Badge>
-                </div>
-                {section.metadata?.title && (
-                  <h5 className="text-lg font-medium text-gray-200 mb-3">{section.metadata.title}</h5>
-                )}
-                {(() => {
-                  // Get PDF URL from multiple possible locations with priority order
-                  // Priority: root url > metadata.url > content field (for backward compatibility)
-                  const pdfUrl = (
-                    section.url || 
-                    (section as any).metadata?.url ||
-                    section.content || 
-                    ''
-                  ).trim();
-                  
-                  console.log('📄 PDF section:', {
-                    hasUrl: !!section.url,
-                    urlValue: section.url,
-                    hasMetadataUrl: !!(section as any).metadata?.url,
-                    metadataUrlValue: (section as any).metadata?.url,
-                    hasContent: !!section.content,
-                    contentValue: section.content,
-                    finalPdfUrl: pdfUrl
-                  });
-                  
-                  // Enhanced placeholder detection
-                  const isPlaceholder = !pdfUrl || 
-                                      pdfUrl.includes('[INSERT_PDF_URL_HERE]') || 
-                                      pdfUrl.includes('INSERT_') ||
-                                      pdfUrl.includes('YOUR_PDF_URL') ||
-                                      pdfUrl.includes('ADD_PDF_URL') ||
-                                      pdfUrl.includes('PLACEHOLDER') ||
-                                      pdfUrl === 'null' ||
-                                      pdfUrl === 'undefined';
-                  
-                  if (isPlaceholder) {
-                    return (
-                      <Alert className="bg-amber-900/20 border-amber-700">
-                        <AlertCircle className="h-5 w-5 text-amber-400" />
-                        <AlertDescription className="text-amber-200">
-                          <p className="font-semibold text-base mb-2">📄 No PDF URL provided</p>
-                          <p className="text-sm text-amber-300/90">
-                            The instructor needs to add a PDF document link to this section. 
-                            This should be a direct PDF URL or Google Drive link.
-                          </p>
-                          <p className="text-xs text-amber-400/70 mt-2 italic">
-                            Please check back later or contact your instructor for updates.
-                          </p>
-                        </AlertDescription>
-                      </Alert>
-                    );
-                  }
-                  
-                  // Validate URL format
-                  const isValidUrl = /^https?:\/\/.+/.test(pdfUrl);
-                  if (!isValidUrl) {
-                    return (
-                      <Alert className="bg-red-900/20 border-red-700">
-                        <AlertCircle className="h-5 w-5 text-red-400" />
-                        <AlertDescription className="text-red-200">
-                          <p className="font-semibold text-base mb-2">❌ Invalid PDF URL</p>
-                          <p className="text-sm text-red-300/90">
-                            The PDF URL appears to be invalid or improperly formatted.
-                          </p>
-                          <p className="text-xs text-red-400/70 mt-2 font-mono bg-black/30 p-2 rounded">
-                            Provided: {pdfUrl.substring(0, 100)}{pdfUrl.length > 100 ? '...' : ''}
-                          </p>
-                        </AlertDescription>
-                      </Alert>
-                    );
-                  }
-                  
-                  return renderPdfContent(pdfUrl);
-                })()}
-              </Card>
-            )}
-            
-            {section.type === 'image' && (
-              <Card className="bg-gray-800/30 border-gray-700 p-4 sm:p-6">
-                {(() => {
-                  // Get image URL from multiple possible locations with priority order
-                  // Priority: root url > metadata.url > content field (for backward compatibility)
-                  const imageUrl = (
-                    section.url || 
-                    (section as any).metadata?.url ||
-                    section.content || 
-                    ''
-                  ).trim();
-                  
-                  console.log('🖼️ Image section:', {
-                    hasUrl: !!section.url,
-                    urlValue: section.url,
-                    hasMetadataUrl: !!(section as any).metadata?.url,
-                    metadataUrlValue: (section as any).metadata?.url,
-                    hasContent: !!section.content,
-                    contentValue: section.content,
-                    finalImageUrl: imageUrl
-                  });
-                  
-                  // Enhanced placeholder detection
-                  const isPlaceholder = !imageUrl || 
-                                      imageUrl.includes('[INSERT_IMAGE_URL_HERE]') || 
-                                      imageUrl.includes('INSERT_') ||
-                                      imageUrl.includes('YOUR_IMAGE_URL') ||
-                                      imageUrl.includes('ADD_IMAGE_URL') ||
-                                      imageUrl.includes('PLACEHOLDER') ||
-                                      imageUrl === 'null' ||
-                                      imageUrl === 'undefined';
-                  
-                  if (isPlaceholder) {
-                    return (
-                      <Alert className="bg-amber-900/20 border-amber-700">
-                        <AlertCircle className="h-5 w-5 text-amber-400" />
-                        <AlertDescription className="text-amber-200">
-                          <p className="font-semibold text-base mb-2">🖼️ No image URL provided</p>
-                          <p className="text-sm text-amber-300/90">
-                            The instructor needs to add an image link to this section.
-                          </p>
-                          <p className="text-xs text-amber-400/70 mt-2 italic">
-                            Please check back later or contact your instructor for updates.
-                          </p>
-                        </AlertDescription>
-                      </Alert>
-                    );
-                  }
-                  
-                  // Validate URL format
-                  const isValidUrl = /^https?:\/\/.+/.test(imageUrl);
-                  if (!isValidUrl) {
-                    return (
-                      <Alert className="bg-red-900/20 border-red-700">
-                        <AlertCircle className="h-5 w-5 text-red-400" />
-                        <AlertDescription className="text-red-200">
-                          <p className="font-semibold text-base mb-2">❌ Invalid image URL</p>
-                          <p className="text-sm text-red-300/90">
-                            The image URL appears to be invalid or improperly formatted.
-                          </p>
-                          <p className="text-xs text-red-400/70 mt-2 font-mono bg-black/30 p-2 rounded break-all">
-                            Provided: {imageUrl.substring(0, 100)}{imageUrl.length > 100 ? '...' : ''}
-                          </p>
-                        </AlertDescription>
-                      </Alert>
-                    );
-                  }
-                  
-                  return (
-                    <div className="space-y-3">
-                      <img 
-                        src={imageUrl} 
-                        alt={section.alt || (section as any).metadata?.caption || (section as any).metadata?.title || 'Lesson image'} 
-                        className="w-full rounded-lg shadow-lg hover:shadow-2xl transition-shadow duration-300"
-                        loading="lazy"
-                        onError={(e) => {
-                          // Handle image load errors gracefully
-                          const target = e.target as HTMLImageElement;
-                          target.style.display = 'none';
-                          const errorDiv = document.createElement('div');
-                          errorDiv.className = 'bg-red-900/20 border border-red-700 rounded-lg p-4 text-red-200';
-                          errorDiv.innerHTML = `
-                            <p class="font-semibold mb-1">⚠️ Image failed to load</p>
-                            <p class="text-sm text-red-300/90">The image could not be displayed. The URL might be incorrect or the image file may be unavailable.</p>
-                          `;
-                          target.parentNode?.appendChild(errorDiv);
-                        }}
-                      />
-                      {(section.alt || (section as any).metadata?.caption || (section as any).metadata?.title) && (
-                        <p className="text-sm text-gray-400 text-center italic px-4">
-                          {section.alt || (section as any).metadata?.caption || (section as any).metadata?.title}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
-              </Card>
-            )}
-          </div>
-        ))}
-      </div>
-    );
-  };
+    return result;
+  }, [lesson.content_type, mixedContentResult, parseTextIntoSections]);
+
 
   return (
     <div className="space-y-6 w-full">
@@ -2278,10 +2150,71 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
 
       {/* Content Display based on type */}
       <div className="bg-gray-800/30 rounded-lg p-4 sm:p-6 border border-gray-700 w-full">
-        {lesson.content_type === 'text' && renderTextContent(lesson.content_data)}
+        {lesson.content_type === 'text' && textSections.length > 0 && (
+          <InteractiveStepThroughViewer
+            sections={textSections}
+            totalSteps={textSections.length}
+            renderSection={(section) => (
+              <div>
+                {renderTextContent(section.content)}
+              </div>
+            )}
+            onViewedSectionsUpdate={onSectionProgress}
+          />
+        )}
         {lesson.content_type === 'video' && renderVideoContent(lesson.content_data)}
         {lesson.content_type === 'pdf' && renderPdfContent(lesson.content_data)}
-        {lesson.content_type === 'mixed' && renderMixedContent(lesson.content_data)}
+        {lesson.content_type === 'mixed' && mixedStepSections.length > 0 && (
+          <InteractiveStepThroughViewer
+            sections={mixedStepSections}
+            totalSteps={mixedStepSections.length}
+            renderSection={(section) => {
+              if (section.type === 'text') {
+                return (
+                  <div>
+                    {renderTextContent(section.content)}
+                  </div>
+                );
+              }
+              if (section.type === 'video') {
+                return (
+                  <div>
+                    {renderVideoContent(section.url || '', section.metadata?.originalIndex as number | undefined)}
+                  </div>
+                );
+              }
+              if (section.type === 'pdf') {
+                return (
+                  <div>
+                    {renderPdfContent(section.url || '')}
+                  </div>
+                );
+              }
+              if (section.type === 'image') {
+                return (
+                  <div>
+                    {section.url && (
+                      <div className="bg-gray-900/50 rounded-lg overflow-hidden">
+                        <img
+                          src={section.url}
+                          alt={section.alt || 'Content image'}
+                          className="max-w-full h-auto mx-auto shadow-lg"
+                          loading="lazy"
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+              return (
+                <div>
+                  {section.content && renderTextContent(section.content)}
+                </div>
+              );
+            }}
+            onViewedSectionsUpdate={onSectionProgress}
+          />
+        )}
       </div>
     </div>
   );

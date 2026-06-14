@@ -14,6 +14,9 @@ interface UseProgressTrackingProps {
   videoCurrentTime?: number; // Current playback position in seconds
   videoDuration?: number; // Total video duration in seconds
   videoCompleted?: boolean; // Whether video reached 90% threshold
+  // Section-based tracking (from InteractiveStepThroughViewer)
+  viewedSections?: number; // Number of sections viewed so far
+  totalSections?: number; // Total number of sections in the lesson
 }
 
 export const useProgressTracking = ({
@@ -27,7 +30,9 @@ export const useProgressTracking = ({
   videoProgress = 0,
   videoCurrentTime = 0,
   videoDuration = 0,
-  videoCompleted = false
+  videoCompleted = false,
+  viewedSections = 0,
+  totalSections = 0
 }: UseProgressTrackingProps) => {
   const [readingProgress, setReadingProgress] = useState<number>(0);
   const [timeSpent, setTimeSpent] = useState<number>(0);
@@ -124,7 +129,19 @@ export const useProgressTracking = ({
     setScrollProgress(Math.min(100, Math.max(0, newMaxScrollProgress)));
     
     const timeProgress = Math.min(100, (timeSinceStart / 300) * 100);
-    const combinedProgress = Math.max(newMaxScrollProgress, timeProgress);
+    
+    // Calculate section-based progress if sections are available
+    let combinedProgress: number;
+    if (totalSections > 0) {
+      // Section progress: percentage of sections viewed
+      const sectionsProgress = (viewedSections / totalSections) * 100;
+      // Time-based minimum: ~30 seconds per section as safety net
+      const sectionTimeBuffer = Math.min(100, (timeSinceStart / (totalSections * 20)) * 100);
+      // Use max of section progress and time buffer
+      combinedProgress = Math.max(sectionsProgress, sectionTimeBuffer);
+    } else {
+      combinedProgress = Math.max(newMaxScrollProgress, timeProgress);
+    }
     
     // Only update reading progress if it's higher than the maximum reached
     // This ensures reading progress never decreases
@@ -141,25 +158,37 @@ export const useProgressTracking = ({
       readingTimeRef.current += 2;
     }
     
+    const sectionProgress = totalSections > 0 ? viewedSections / totalSections : 0;
     const engagementFactors = {
       scrollProgress: newMaxScrollProgress / 100,
       timeSpent: Math.min(timeSinceStart / 600, 1),
       interactions: Math.min(interactionHistory.length / 10, 1),
       consistency: Math.min(readingTimeRef.current / 100, 1),
-      videoWatchProgress: videoProgress / 100  // Add video progress to engagement
+      videoWatchProgress: videoProgress / 100,  // Add video progress to engagement
+      sectionCompletion: sectionProgress,        // Add section navigation progress
     };
     
     // Dynamic engagement scoring based on content type
     let newEngagementScore: number;
     
     if (videoProgress > 0) {
-      // For video content: video progress is major factor (40%), scroll (20%), time (20%), interactions (10%), consistency (10%)
+      // For video content: video progress is major factor (40%), scroll (10%), time (15%), interactions (10%), consistency (5%), section (20%)
       newEngagementScore = (
         engagementFactors.videoWatchProgress * 0.4 +
-        engagementFactors.scrollProgress * 0.2 +
-        engagementFactors.timeSpent * 0.2 +
+        engagementFactors.scrollProgress * 0.1 +
+        engagementFactors.timeSpent * 0.15 +
         engagementFactors.interactions * 0.1 +
-        engagementFactors.consistency * 0.1
+        engagementFactors.consistency * 0.05 +
+        engagementFactors.sectionCompletion * 0.2
+      ) * 100;
+    } else if (totalSections > 0) {
+      // For section-based content: section completion (40%), time (25%), interactions (15%), consistency (10%), scroll (10%)
+      newEngagementScore = (
+        engagementFactors.sectionCompletion * 0.4 +
+        engagementFactors.timeSpent * 0.25 +
+        engagementFactors.interactions * 0.15 +
+        engagementFactors.consistency * 0.1 +
+        engagementFactors.scrollProgress * 0.1
       ) * 100;
     } else {
       // For text/mixed content without video: original formula
@@ -193,7 +222,7 @@ export const useProgressTracking = ({
     }
     // Lesson score should also never decrease locally
     setLessonScore(prev => Math.max(prev, estimatedScore));
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress, videoCurrentTime, videoDuration]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress, videoCurrentTime, videoDuration, viewedSections, totalSections]);
 
   // Check if lesson should auto-complete based on 80% lesson score
   const checkAutoCompletion = useCallback(() => {

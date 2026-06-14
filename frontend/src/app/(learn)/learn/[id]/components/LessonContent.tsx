@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,7 +9,7 @@ import {
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
   PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles, GraduationCap,
-  Star, Flame, BookOpen
+  Star, Flame, BookOpen, Maximize2, Minimize2
 } from 'lucide-react';
 import Link from 'next/link';
 import { StudentApiService } from '@/services/studentApi';
@@ -20,6 +20,7 @@ import { ContentRichPreview } from './ContentRichPreview';
 import { QuizAttemptTracker } from './QuizAttemptTracker';
 import { AssignmentPanel } from './AssignmentPanel';
 import { LessonScoreDisplay, getLevel } from './LessonScoreDisplay';
+import { CollapsibleCard } from './CollapsibleCard';
 
 // Helper function to format time in MM:SS format
 const formatTime = (seconds: number): string => {
@@ -81,6 +82,8 @@ interface LessonContentProps {
   // Manual completion props
   onManualComplete?: () => Promise<void>;
   canManuallyComplete?: boolean;
+  // Section-based progress tracking
+  onSectionProgress?: (viewedSections: number, totalSections: number) => void;
 }
 
 export const LessonContent: React.FC<LessonContentProps> = ({
@@ -133,9 +136,29 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   courseId,
   // Manual completion props
   onManualComplete,
-  canManuallyComplete = false
+  canManuallyComplete = false,
+  // Section-based progress tracking
+  onSectionProgress
 }) => {
   const [isGeneratingCertificate, setIsGeneratingCertificate] = useState(false);
+  // Collapsible card states - all start collapsed except main content
+  const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({
+    content: true,    // main lesson content - expanded by default
+    header: false,    // lesson header (title, stats, progress) - collapsed by default
+    progress: false,  // progress/completed card - collapsed, auto-expands on completion
+    requirements: false, // completion requirements
+    nav: true,        // navigation footer - expanded by default
+  });
+
+  // Fullscreen state for content card
+  const [contentFullscreen, setContentFullscreen] = useState(false);
+
+  // Auto-expand progress card on lesson completion
+  useEffect(() => {
+    if (isLessonCompleted) {
+      setExpandedCards(prev => ({ ...prev, progress: true }));
+    }
+  }, [isLessonCompleted]);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
   const [certificateError, setCertificateError] = useState<string | null>(null);
 
@@ -201,6 +224,17 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   // Check if this is the last lesson of the last module (course completion)
   const isCourseComplete = isLastLessonInModule && isLastModule;
   
+  // Exit fullscreen on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && contentFullscreen) {
+        setContentFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [contentFullscreen]);
+
   // Debug logging for module unlock card
   if (isLastLessonInModule) {
     console.log('🎯 Last lesson in module - Unlock card check:', {
@@ -330,6 +364,13 @@ export const LessonContent: React.FC<LessonContentProps> = ({
           )}
 
           {/* Gamified Lesson Header */}
+          <CollapsibleCard
+            title="Lesson Overview"
+            icon={<BookOpen className="h-4 w-4 text-blue-400" />}
+            expanded={expandedCards.header}
+            onToggle={(open) => setExpandedCards(prev => ({ ...prev, header: open }))}
+            badge={<span className="text-[10px] text-gray-400 font-mono">{Math.round(readingProgress)}%</span>}
+          >
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
@@ -510,6 +551,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               />
             </div>
           </motion.div>
+          </CollapsibleCard>
 
           {/* Gamified Learning Interface Tabs */}
           <motion.div
@@ -593,6 +635,26 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
               <TabsContent value="content" className="p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6">
                 {/* Enhanced Content Viewer with Rich Media Support */}
+                <CollapsibleCard
+                  title="Lesson Content"
+                  icon={<BookOpen className="h-4 w-4" />}
+                  expanded={expandedCards.content}
+                  onToggle={(open) => setExpandedCards(prev => ({ ...prev, content: open }))}
+                  actions={
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setContentFullscreen(true);
+                      }}
+                      className="flex items-center justify-center h-7 w-7 rounded-lg border border-gray-700 bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 transition-all"
+                      title="Fullscreen"
+                      aria-label="View content in fullscreen"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                  }
+                >
+                {!contentFullscreen && (
                 <ContentRichPreview
                   key={currentLesson.id ?? currentLessonIndex}
                   lesson={{
@@ -607,10 +669,19 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onVideoComplete={onVideoComplete}
                   onMixedContentVideoProgress={onMixedContentVideoProgress}
                   onMixedContentVideoComplete={onMixedContentVideoComplete}
+                  onSectionProgress={onSectionProgress}
                 />
+                )}
+                </CollapsibleCard>
 
                 {/* Video Progress Card - Only show for video content */}
                 {currentLesson.content_type === 'video' && videoDuration > 0 && (
+                  <CollapsibleCard
+                    title="Video Progress"
+                    icon={<Play className="h-4 w-4 text-blue-400" />}
+                    defaultExpanded={false}
+                    badge={<span className="text-[10px] text-gray-400 font-mono">{Math.round(videoProgress)}%</span>}
+                  >
                   <Card className="bg-gray-800/50 border-gray-700">
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between mb-3">
@@ -633,9 +704,21 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       </div>
                     </CardContent>
                   </Card>
+                  </CollapsibleCard>
                 )}
 
                 {/* Progress Status */}
+                <CollapsibleCard
+                  title={isLessonCompleted ? "Lesson Complete! 🎉" : "Progress & Stats"}
+                  icon={isLessonCompleted ? <Trophy className="h-4 w-4 text-emerald-400" /> : <Target className="h-4 w-4 text-blue-400" />}
+                  expanded={expandedCards.progress}
+                  onToggle={(open) => setExpandedCards(prev => ({ ...prev, progress: open }))}
+                  badge={
+                    isLessonCompleted
+                      ? <span className="text-[10px] font-bold text-emerald-400">{Math.round(lessonScore)}%</span>
+                      : <span className="text-[10px] text-blue-400 font-mono">{Math.round(lessonScore)}%</span>
+                  }
+                >
                 {isLessonCompleted ? (
                     <motion.div
                       initial={{ opacity: 0, y: 16, scale: 0.98 }}
@@ -1242,6 +1325,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       )}
                     </motion.div>
                   )}
+                </CollapsibleCard>
               </TabsContent>
 
               <TabsContent value="quiz" className="p-3 sm:p-4 md:p-6">
@@ -1416,6 +1500,17 @@ export const LessonContent: React.FC<LessonContentProps> = ({
           </motion.div>
 
           {/* Completion Requirements Alert */}
+          <CollapsibleCard
+            title="Requirements to Continue"
+            icon={<Target className="h-4 w-4 text-yellow-400" />}
+            expanded={expandedCards.requirements}
+            onToggle={(open) => setExpandedCards(prev => ({ ...prev, requirements: open }))}
+            badge={
+              !isLessonCompleted && hasNextLesson
+                ? <span className="text-[10px] text-yellow-400 font-mono">{Math.round(readingProgress)}% read</span>
+                : undefined
+            }
+          >
           {!isLessonCompleted && hasNextLesson && (
             <Alert className="border-yellow-700 bg-yellow-900/30">
               <AlertCircle className="h-4 w-4 text-yellow-400" />
@@ -1467,8 +1562,16 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               </AlertDescription>
             </Alert>
           )}
+          </CollapsibleCard>
 
           {/* Navigation Footer */}
+          <CollapsibleCard
+            title="Navigate Between Lessons"
+            icon={<ArrowRight className="h-4 w-4 text-blue-400" />}
+            expanded={expandedCards.nav}
+            onToggle={(open) => setExpandedCards(prev => ({ ...prev, nav: open }))}
+            badge={<span className="text-[10px] text-gray-400 font-mono">{currentLessonIndex + 1}/{totalLessons}</span>}
+          >
           <div className="bg-gray-800/50 rounded-lg shadow-sm border border-gray-700 p-4">
             <div className="flex justify-between items-center">
               <Button
@@ -1513,8 +1616,68 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               </TooltipProvider>
             </div>
           </div>
+          </CollapsibleCard>
         </div>
       </div>
+
+      {/* ── Fullscreen Content Overlay ── */}
+      {contentFullscreen && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.25 }}
+          className="fixed inset-0 z-50 bg-[#0a0e1a]"
+        >
+          {/* Fullscreen header bar */}
+          <div className="sticky top-0 z-10 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-gray-800 bg-gray-900/90 backdrop-blur-sm">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500/20 to-indigo-500/20 border border-blue-500/30 flex items-center justify-center">
+                <BookOpen className="h-4 w-4 text-blue-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white leading-tight">
+                  {currentLesson?.title}
+                </p>
+                <p className="text-[10px] text-gray-500 leading-tight">
+                  Fullscreen Content
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setContentFullscreen(false)}
+              className="flex items-center justify-center h-8 w-8 rounded-lg border border-gray-700 bg-gray-800/50 text-gray-400 hover:bg-gray-700 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 transition-all"
+              title="Exit fullscreen"
+              aria-label="Exit fullscreen mode"
+            >
+              <Minimize2 className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Fullscreen scrollable content area */}
+          <div className="overflow-y-auto h-[calc(100vh-57px)]">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-6 sm:py-8">
+              <ContentRichPreview
+                key={`fullscreen-${currentLesson.id ?? currentLessonIndex}`}
+                lesson={{
+                  title: currentLesson.title,
+                  content_type: currentLesson.content_type || 'text',
+                  content_data: currentLesson.content_data || currentLesson.content || '',
+                  description: currentLesson.description,
+                  learning_objectives: currentLesson.learning_objectives,
+                  duration_minutes: currentLesson.duration_minutes
+                }}
+                onVideoProgress={onVideoProgress}
+                onVideoComplete={onVideoComplete}
+                onMixedContentVideoProgress={onMixedContentVideoProgress}
+                                  onMixedContentVideoComplete={onMixedContentVideoComplete}
+                  onSectionProgress={onSectionProgress}
+              />
+            </div>
+          </div>
+        </motion.div>
+      )}
     </div>
   );
 };

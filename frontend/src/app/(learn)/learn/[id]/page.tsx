@@ -236,6 +236,9 @@ const LearningPage = () => {
   // Mixed content video progress tracking (map of videoIndex -> progress)
   const [mixedContentVideoProgress, setMixedContentVideoProgress] = useState<Record<number, number>>({});
   const [mixedContentVideosCompleted, setMixedContentVideosCompleted] = useState<Set<number>>(new Set());
+  // Section-based progress tracking
+  const [viewedSections, setViewedSections] = useState(0);
+  const [totalSections, setTotalSections] = useState(0);
 
   // Reset video progress when lesson changes
   useEffect(() => {
@@ -361,6 +364,12 @@ const LearningPage = () => {
     return allLessonsCompleted;
   }, [courseData?.course?.modules, currentModuleId, lessonCompletionStatus]);
 
+  // Section progress handler
+  const handleSectionProgress = useCallback((viewed: number, total: number) => {
+    setViewedSections(viewed);
+    setTotalSections(total);
+  }, []);
+
   // Progress tracking hook (must be called before using readingProgress/engagementScore)
   const {
     readingProgress,
@@ -388,7 +397,9 @@ const LearningPage = () => {
     videoProgress,  // Pass video progress to tracking hook
     videoCurrentTime,  // Pass current playback time
     videoDuration,  // Pass total video duration
-    videoCompleted  // Pass completion status
+    videoCompleted,  // Pass completion status
+    viewedSections,  // Section-based tracking
+    totalSections
   });
 
   // Handle auto-completion event (lesson reached 80% score)
@@ -2843,6 +2854,7 @@ const LearningPage = () => {
             courseId={courseId}
             onManualComplete={handleManualCompletion}
             canManuallyComplete={canManuallyComplete()}
+            onSectionProgress={handleSectionProgress}
           />
         ) : (
           <div className="flex-1 min-w-0">
