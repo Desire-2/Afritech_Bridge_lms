@@ -670,6 +670,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onMixedContentVideoProgress={onMixedContentVideoProgress}
                   onMixedContentVideoComplete={onMixedContentVideoComplete}
                   onSectionProgress={onSectionProgress}
+                  hasQuiz={hasQuiz}
+                  hasAssignments={hasAssignments}
+                  isLessonCompleted={isLessonCompleted}
+                  onSwitchToQuiz={() => setCurrentViewMode('quiz')}
+                  onSwitchToAssignment={() => setCurrentViewMode('assignments')}
+                  onGoToNextLesson={() => onNavigate('next')}
                 />
                 )}
                 </CollapsibleCard>
@@ -1673,6 +1679,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 onMixedContentVideoProgress={onMixedContentVideoProgress}
                                   onMixedContentVideoComplete={onMixedContentVideoComplete}
                   onSectionProgress={onSectionProgress}
+                  hasQuiz={hasQuiz}
+                  hasAssignments={hasAssignments}
+                  isLessonCompleted={isLessonCompleted}
+                  onSwitchToQuiz={() => setCurrentViewMode('quiz')}
+                  onSwitchToAssignment={() => setCurrentViewMode('assignments')}
+                  onGoToNextLesson={() => onNavigate('next')}
               />
             </div>
           </div>

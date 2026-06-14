@@ -54,6 +54,8 @@ interface InteractiveStepThroughViewerProps {
   ) => React.ReactNode;
   /** Optional class name */
   className?: string;
+  /** Optional custom button to show instead of "Review Again" on the last step */
+  lastStepButton?: React.ReactNode;
 }
 
 // ── Component ─────────────────────────────────────────────────────────
@@ -66,6 +68,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   onViewedSectionsUpdate,
   renderSection,
   className = '',
+  lastStepButton,
 }) => {
   // Current active step
   const [activeStep, setActiveStep] = useState(0);
@@ -354,6 +357,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-3"
             >
               <Button
                 onClick={() => setCelebrationDismissed(true)}
@@ -362,6 +366,24 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                 <CheckCircle className="h-4 w-4 mr-1.5" />
                 Continue
               </Button>
+              {lastStepButton && (
+                <motion.div
+                  onClick={() => {
+                    // Dismiss the celebration first so the parent can render normally
+                    setCelebrationDismissed(true);
+                  }}
+                  animate={{ scale: [1, 1.04, 1] }}
+                  transition={{
+                    duration: 2,
+                    ease: 'easeInOut',
+                    repeat: Infinity,
+                    repeatDelay: 0.5,
+                  }}
+                  whileHover={{ scale: 1.08 }}
+                >
+                  {lastStepButton}
+                </motion.div>
+              )}
             </motion.div>
           </div>
         </motion.div>
@@ -403,6 +425,8 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                 <span>Next Step</span>
                 <ChevronRight className="h-4 w-4" />
               </Button>
+            ) : lastStepButton ? (
+              lastStepButton
             ) : (
               <Button
                 size="sm"

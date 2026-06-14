@@ -30,7 +30,9 @@ import {
   Volume2,
   Settings,
   AlertCircle,
-  Loader2
+  Loader2,
+  ArrowRight,
+  Clipboard
 } from 'lucide-react';
 import { 
   Select,
@@ -284,6 +286,13 @@ interface ContentRichPreviewProps {
   onMixedContentVideoProgress?: (videoIndex: number, progress: number) => void;
   onMixedContentVideoComplete?: (videoIndex: number) => void;
   onSectionProgress?: (viewedSections: number, totalSections: number) => void;
+  // Assessment awareness for last-step actions
+  hasQuiz?: boolean;
+  hasAssignments?: boolean;
+  isLessonCompleted?: boolean;
+  onSwitchToQuiz?: () => void;
+  onSwitchToAssignment?: () => void;
+  onGoToNextLesson?: () => void;
 }
 
 interface MixedContentSection {
@@ -301,7 +310,13 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   onVideoProgress,
   onMixedContentVideoProgress,
   onMixedContentVideoComplete,
-  onSectionProgress
+  onSectionProgress,
+  hasQuiz,
+  hasAssignments,
+  isLessonCompleted,
+  onSwitchToQuiz,
+  onSwitchToAssignment,
+  onGoToNextLesson
 }) => {
   // Debug: Log the entire lesson object when component mounts or lesson changes
   useEffect(() => {
@@ -1897,6 +1912,64 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     return result;
   }, [lesson.content_type, mixedContentResult, parseTextIntoSections]);
 
+  // ── Last-step action button ─────────────────────────────────────────
+  // Show a context-aware button when the user reaches the final section:
+  // - Lesson has a quiz → "Complete Quiz" button that switches to quiz tab
+  // - Lesson has assignments → "Complete Assignment" button (if no quiz)
+  // - No assessments → "Next Lesson" button (disabled until lesson completed)
+  const lastStepButton = useMemo(() => {
+    if (hasQuiz) {
+      return (
+        <Button
+          size="sm"
+          onClick={onSwitchToQuiz}
+          className="flex items-center gap-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/20 hover:shadow-blue-500/30 transition-all"
+        >
+          <FileText className="h-4 w-4" />
+          Complete Quiz
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      );
+    }
+    if (hasAssignments) {
+      return (
+        <Button
+          size="sm"
+          onClick={onSwitchToAssignment}
+          className="flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-lg shadow-purple-600/20 hover:shadow-purple-500/30 transition-all"
+        >
+          <Clipboard className="h-4 w-4" />
+          Complete Assignment
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      );
+    }
+    // No quiz or assignment — go to next lesson (disabled until lesson completed)
+    const canGoNext = !!isLessonCompleted;
+    return (
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          onClick={onGoToNextLesson}
+          disabled={!canGoNext}
+          className={`flex items-center gap-1.5 transition-all ${
+            canGoNext
+              ? 'bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-600/20 hover:shadow-emerald-500/30'
+              : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          <ArrowRight className="h-4 w-4" />
+          Next Lesson
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+        {!canGoNext && (
+          <span className="text-[10px] text-gray-500 italic hidden sm:inline">
+            Complete lesson to unlock
+          </span>
+        )}
+      </div>
+    );
+  }, [hasQuiz, hasAssignments, isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson]);
 
   return (
     <div className="space-y-6 w-full">
@@ -1991,6 +2064,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               </div>
             )}
             onViewedSectionsUpdate={onSectionProgress}
+            lastStepButton={lastStepButton}
           />
         )}
         {lesson.content_type === 'video' && renderVideoContent(lesson.content_data)}
@@ -2044,6 +2118,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               );
             }}
             onViewedSectionsUpdate={onSectionProgress}
+            lastStepButton={lastStepButton}
           />
         )}
       </div>
