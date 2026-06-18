@@ -7,6 +7,18 @@ Can be rendered in browser or printed as PDF for student records.
 
 from datetime import datetime
 from weasyprint import HTML
+import base64
+import os
+
+
+# ── Embedded logo (base64) ──────────────────────────────────────────────────
+_logo_path = os.path.join(os.path.dirname(__file__), "..", "..", "static", "images", "logo.jpg")
+LOGO_BASE64 = ""
+try:
+    with open(_logo_path, "rb") as f:
+        LOGO_BASE64 = base64.b64encode(f.read()).decode("utf-8")
+except FileNotFoundError:
+    pass  # fall back to text-only header if logo file is missing
 
 
 def _format_currency(amount, currency="USD"):
@@ -108,6 +120,13 @@ def generate_payment_slip_html(
     cohort_start_fmt = _format_date(cohort_start_date)
     cohort_end_fmt = _format_date(cohort_end_date)
 
+    # Build the logo image tag
+    logo_img = ""
+    if LOGO_BASE64:
+        logo_img = f'<img src="data:image/jpeg;base64,{LOGO_BASE64}" alt="{institution_name}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,0.25);box-shadow:0 2px 12px rgba(0,0,0,0.15);" />'
+    else:
+        logo_img = '<span style="font-size:32px;line-height:52px;">✦</span>'
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -126,45 +145,76 @@ def generate_payment_slip_html(
         }}
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f1f5f9;
-            padding: 20px;
+            background: #f0f2f5;
+            padding: 24px;
             color: #1e293b;
         }}
+
+        /* ── Main Container ── */
         .slip-container {{
-            max-width: 800px;
+            max-width: 820px;
             margin: 0 auto;
             background: #ffffff;
-            border-radius: 16px;
+            border-radius: 20px;
             overflow: hidden;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.12);
+            box-shadow: 0 25px 80px rgba(0,0,0,0.10);
         }}
+
+        /* ── Top Accent Ribbon ── */
+        .top-ribbon {{
+            height: 8px;
+            background: linear-gradient(90deg, #1e3a8a 0%, #0f766e 40%, #14b8a6 70%, #10b981 100%);
+        }}
+
         /* ── Header ── */
         .slip-header {{
             background: linear-gradient(135deg, #1e3a8a 0%, #0f766e 50%, #14b8a6 100%);
-            padding: 30px 40px;
+            padding: 28px 40px;
             color: #ffffff;
             position: relative;
             overflow: hidden;
         }}
+        /* Decorative circles */
         .slip-header::before {{
             content: '';
             position: absolute;
-            top: -50%;
-            right: -20%;
-            width: 300px;
-            height: 300px;
-            background: rgba(255,255,255,0.05);
+            top: -40%;
+            right: -10%;
+            width: 320px;
+            height: 320px;
+            background: radial-gradient(circle, rgba(255,255,255,0.06) 0%, transparent 70%);
             border-radius: 50%;
         }}
         .slip-header::after {{
             content: '';
             position: absolute;
-            bottom: -30%;
-            left: -10%;
-            width: 200px;
+            bottom: -50%;
+            left: -5%;
+            width: 240px;
+            height: 240px;
+            background: radial-gradient(circle, rgba(255,255,255,0.04) 0%, transparent 70%);
+            border-radius: 50%;
+        }}
+        /* Angled decorative stripe */
+        .header-stripe {{
+            position: absolute;
+            top: -30px;
+            right: 120px;
+            width: 80px;
             height: 200px;
             background: rgba(255,255,255,0.03);
-            border-radius: 50%;
+            transform: rotate(-15deg);
+            z-index: 0;
+        }}
+        .header-stripe-2 {{
+            position: absolute;
+            top: 20px;
+            right: 180px;
+            width: 50px;
+            height: 160px;
+            background: rgba(255,255,255,0.02);
+            transform: rotate(-25deg);
+            z-index: 0;
         }}
         .slip-header-content {{
             display: flex;
@@ -173,49 +223,57 @@ def generate_payment_slip_html(
             position: relative;
             z-index: 1;
         }}
-        .slip-brand h1 {{
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            margin-bottom: 4px;
+        .slip-brand {{
+            display: flex;
+            align-items: center;
+            gap: 16px;
         }}
-        .slip-brand p {{
-            color: rgba(255,255,255,0.85);
-            font-size: 13px;
+        .slip-brand-text h1 {{
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: -0.3px;
+            margin-bottom: 2px;
+        }}
+        .slip-brand-text p {{
+            color: rgba(255,255,255,0.80);
+            font-size: 12px;
             font-weight: 500;
         }}
         .slip-badge {{
             text-align: right;
         }}
         .slip-badge .receipt-label {{
-            font-size: 11px;
+            font-size: 10px;
             text-transform: uppercase;
-            letter-spacing: 2px;
-            color: rgba(255,255,255,0.7);
-            margin-bottom: 4px;
+            letter-spacing: 2.5px;
+            color: rgba(255,255,255,0.65);
+            margin-bottom: 6px;
         }}
         .slip-badge .receipt-number {{
-            font-size: 18px;
+            font-size: 17px;
             font-weight: 700;
             font-family: 'Courier New', monospace;
-            background: rgba(255,255,255,0.15);
-            padding: 6px 16px;
-            border-radius: 8px;
+            background: rgba(255,255,255,0.12);
+            padding: 6px 18px;
+            border-radius: 10px;
             display: inline-block;
+            letter-spacing: 0.5px;
         }}
+
         /* ── Body ── */
         .slip-body {{
-            padding: 40px;
+            padding: 40px 44px;
         }}
         .slip-title {{
             text-align: center;
-            margin-bottom: 32px;
+            margin-bottom: 30px;
         }}
         .slip-title h2 {{
-            font-size: 22px;
+            font-size: 24px;
             color: #0f172a;
-            font-weight: 700;
-            margin-bottom: 6px;
+            font-weight: 800;
+            margin-bottom: 4px;
+            letter-spacing: -0.3px;
         }}
         .slip-title p {{
             color: #64748b;
@@ -224,56 +282,127 @@ def generate_payment_slip_html(
         .status-badge {{
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            padding: 6px 18px;
-            border-radius: 20px;
-            font-size: 13px;
+            gap: 8px;
+            padding: 8px 22px;
+            border-radius: 24px;
+            font-size: 14px;
             font-weight: 600;
-            background: {status_color}15;
+            background: {status_color}12;
             color: {status_color};
-            border: 1px solid {status_color}30;
+            border: 1.5px solid {status_color}30;
+            margin-top: 14px;
         }}
+
+        /* ── Payment Summary Hero ── */
+        .payment-hero {{
+            background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #d1fae5 100%);
+            border: 2px solid #10b981;
+            border-radius: 16px;
+            padding: 28px 30px;
+            margin-bottom: 32px;
+            position: relative;
+            overflow: hidden;
+        }}
+        .payment-hero::before {{
+            content: '';
+            position: absolute;
+            top: -40px;
+            right: -40px;
+            width: 120px;
+            height: 120px;
+            background: rgba(16,185,129,0.06);
+            border-radius: 50%;
+        }}
+        .payment-hero-header {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 18px;
+        }}
+        .payment-hero-header h3 {{
+            font-size: 14px;
+            color: #047857;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        .payment-hero-total {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .payment-hero-total .label {{
+            font-size: 15px;
+            color: #065f46;
+            font-weight: 600;
+        }}
+        .payment-hero-total .amount {{
+            font-size: 36px;
+            font-weight: 800;
+            color: #059669;
+            letter-spacing: -1px;
+        }}
+        .payment-hero-meta {{
+            display: flex;
+            gap: 32px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1.5px dashed #a7f3d0;
+        }}
+        .payment-hero-meta .meta-item {{
+            flex: 1;
+        }}
+        .payment-hero-meta .meta-item .meta-label {{
+            font-size: 10px;
+            color: #6ee7b7;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            font-weight: 600;
+        }}
+        .payment-hero-meta .meta-item .meta-value {{
+            font-size: 13px;
+            color: #065f46;
+            font-weight: 600;
+            margin-top: 2px;
+        }}
+
         /* ── Grid Sections ── */
         .slip-grid {{
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            margin-bottom: 32px;
+            gap: 20px;
+            margin-bottom: 28px;
         }}
         .slip-section {{
-            background: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            transition: border-color 0.2s;
-        }}
-        .slip-section:hover {{
-            border-color: #94a3b8;
+            background: #fafbfc;
+            border: 1px solid #e8ecf1;
+            border-radius: 14px;
+            padding: 20px 22px;
         }}
         .slip-section.full-width {{
             grid-column: 1 / -1;
         }}
         .slip-section h3 {{
-            font-size: 13px;
+            font-size: 12px;
             text-transform: uppercase;
-            letter-spacing: 0.8px;
+            letter-spacing: 1px;
             color: #64748b;
-            font-weight: 600;
-            margin-bottom: 16px;
+            font-weight: 700;
+            margin-bottom: 14px;
             padding-bottom: 10px;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 2px solid #e8ecf1;
             display: flex;
             align-items: center;
             gap: 8px;
         }}
         .slip-section h3 .icon {{
-            font-size: 16px;
+            font-size: 15px;
         }}
         .info-row {{
             display: flex;
             justify-content: space-between;
-            padding: 6px 0;
-            font-size: 14px;
+            padding: 7px 0;
+            font-size: 13.5px;
             border-bottom: 1px solid #f1f5f9;
         }}
         .info-row:last-child {{
@@ -288,94 +417,72 @@ def generate_payment_slip_html(
             font-weight: 600;
             text-align: right;
         }}
-        .info-row .value.highlight {{
-            color: #059669;
-            font-size: 16px;
+
+        /* ── Decorative divider ── */
+        .section-divider {{
+            text-align: center;
+            margin: 6px 0 22px 0;
+            color: #cbd5e1;
+            font-size: 18px;
+            letter-spacing: 6px;
         }}
-        /* ── Amount Summary ── */
-        .payment-summary {{
-            background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
-            border: 2px solid #10b981;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 32px;
-        }}
-        .payment-summary h3 {{
-            font-size: 14px;
-            color: #047857;
-            font-weight: 600;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }}
-        .payment-total {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }}
-        .payment-total .label {{
-            font-size: 16px;
-            color: #065f46;
-            font-weight: 600;
-        }}
-        .payment-total .amount {{
-            font-size: 32px;
-            font-weight: 800;
-            color: #059669;
-        }}
-        .payment-details {{
-            display: flex;
-            gap: 24px;
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px dashed #a7f3d0;
-        }}
-        .payment-details .detail {{
-            flex: 1;
-        }}
-        .payment-details .detail .label {{
-            font-size: 11px;
-            color: #6ee7b7;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }}
-        .payment-details .detail .value {{
+
+        /* ── Terms ── */
+        .terms-content {{
             font-size: 13px;
-            color: #065f46;
-            font-weight: 600;
+            color: #475569;
+            line-height: 1.8;
         }}
+        .terms-content p {{
+            margin-bottom: 8px;
+            padding-left: 16px;
+            position: relative;
+        }}
+        .terms-content p::before {{
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 8px;
+            width: 6px;
+            height: 6px;
+            background: #14b8a6;
+            border-radius: 50%;
+        }}
+
         /* ── Footer ── */
         .slip-footer {{
             background: #f8fafc;
             border-top: 1px solid #e2e8f0;
-            padding: 24px 40px;
+            padding: 24px 44px;
             text-align: center;
         }}
         .slip-footer p {{
             color: #94a3b8;
             font-size: 12px;
-            line-height: 1.7;
+            line-height: 1.8;
         }}
         .slip-footer .brand {{
             color: #14b8a6;
             font-weight: 700;
             font-size: 14px;
             margin-bottom: 6px;
+            letter-spacing: 0.5px;
         }}
         .slip-footer .actions {{
-            margin-top: 16px;
+            margin-top: 18px;
             display: flex;
             justify-content: center;
             gap: 12px;
         }}
         .btn-print {{
-            display: inline-block;
-            padding: 10px 24px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 26px;
             background: #1e293b;
             color: #ffffff;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 13px;
             font-weight: 600;
             cursor: pointer;
@@ -386,12 +493,14 @@ def generate_payment_slip_html(
             background: #334155;
         }}
         .btn-download {{
-            display: inline-block;
-            padding: 10px 24px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 10px 26px;
             background: #0f766e;
             color: #ffffff;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 13px;
             font-weight: 600;
             cursor: pointer;
@@ -401,6 +510,23 @@ def generate_payment_slip_html(
         .btn-download:hover {{
             background: #0d9488;
         }}
+
+        /* ── Watermark ── */
+        .watermark {{
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 120px;
+            font-weight: 900;
+            color: rgba(20,184,166,0.025);
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 0;
+            letter-spacing: 20px;
+            text-transform: uppercase;
+        }}
+
         /* ── Print Styles ── */
         @media print {{
             body {{
@@ -414,14 +540,16 @@ def generate_payment_slip_html(
             .btn-print, .btn-download {{
                 display: none;
             }}
-            .slip-section:hover {{
-                border-color: #e2e8f0;
-            }}
         }}
+
+        /* ── Responsive ── */
         @media (max-width: 600px) {{
+            body {{
+                padding: 12px;
+            }}
             .slip-header-content {{
                 flex-direction: column;
-                gap: 12px;
+                gap: 16px;
             }}
             .slip-badge {{
                 text-align: left;
@@ -429,30 +557,45 @@ def generate_payment_slip_html(
             .slip-grid {{
                 grid-template-columns: 1fr;
             }}
-            .payment-total {{
+            .slip-body {{
+                padding: 24px 20px;
+            }}
+            .payment-hero-total {{
                 flex-direction: column;
                 align-items: flex-start;
                 gap: 4px;
             }}
-            .payment-details {{
+            .payment-hero-meta {{
                 flex-direction: column;
-                gap: 8px;
+                gap: 12px;
             }}
-            .slip-body {{
+            .slip-footer {{
                 padding: 20px;
+            }}
+            .slip-header {{
+                padding: 20px 24px;
             }}
         }}
     </style>
 </head>
 <body>
     <div class="slip-container" id="payment-slip">
+        <!-- TOP RIBBON -->
+        <div class="top-ribbon"></div>
+
         <!-- HEADER -->
         <div class="slip-header">
+            <div class="header-stripe"></div>
+            <div class="header-stripe-2"></div>
+            <div class="watermark">PAID</div>
             <div class="slip-header-content">
                 <div class="slip-brand">
-                    <h1>✦ {institution_name}</h1>
-                    <p>{institution_address} · {institution_phone}</p>
-                    <p>{institution_email}</p>
+                    {logo_img}
+                    <div class="slip-brand-text">
+                        <h1>{institution_name}</h1>
+                        <p>{institution_address} &nbsp;·&nbsp; {institution_phone}</p>
+                        <p>{institution_email}</p>
+                    </div>
                 </div>
                 <div class="slip-badge">
                     <div class="receipt-label">Receipt No.</div>
@@ -466,30 +609,33 @@ def generate_payment_slip_html(
             <div class="slip-title">
                 <h2>🎓 Payment Confirmation Slip</h2>
                 <p>Official Receipt of Payment</p>
-                <div class="status-badge" style="margin-top:12px;">
+                <div class="status-badge">
                     {status_icon} {status_display}
                 </div>
             </div>
 
-            <!-- PAYMENT SUMMARY -->
-            <div class="payment-summary">
-                <h3>💰 Payment Summary</h3>
-                <div class="payment-total">
+            <!-- PAYMENT HERO -->
+            <div class="payment-hero">
+                <div class="payment-hero-header">
+                    <span style="font-size:20px;">💰</span>
+                    <h3>Payment Summary</h3>
+                </div>
+                <div class="payment-hero-total">
                     <span class="label">Total Amount Paid</span>
                     <span class="amount">{amount_formatted}</span>
                 </div>
-                <div class="payment-details">
-                    <div class="detail">
-                        <div class="label">Payment Method</div>
-                        <div class="value">{method_label}</div>
+                <div class="payment-hero-meta">
+                    <div class="meta-item">
+                        <div class="meta-label">Payment Method</div>
+                        <div class="meta-value">{method_label}</div>
                     </div>
-                    <div class="detail">
-                        <div class="label">Transaction Ref</div>
-                        <div class="value" style="font-family:'Courier New',monospace;">{payment_reference or '—'}</div>
+                    <div class="meta-item">
+                        <div class="meta-label">Transaction Ref</div>
+                        <div class="meta-value" style="font-family:'Courier New',monospace;">{payment_reference or '—'}</div>
                     </div>
-                    <div class="detail">
-                        <div class="label">Payment Date</div>
-                        <div class="value">{date_formatted}</div>
+                    <div class="meta-item">
+                        <div class="meta-label">Payment Date</div>
+                        <div class="meta-value">{date_formatted}</div>
                     </div>
                 </div>
             </div>
@@ -581,27 +727,17 @@ def generate_payment_slip_html(
                 </div>
             </div>
 
+            <div class="section-divider">• • • • • •</div>
+
             <!-- Terms & Notes -->
             <div class="slip-section full-width">
                 <h3><span class="icon">📋</span> Terms &amp; Notes</h3>
-                <div style="font-size:13px;color:#475569;line-height:1.7;">
-                    <p style="margin-bottom:8px;">
-                        1. This payment slip serves as an official receipt for the transaction described above.
-                    </p>
-                    <p style="margin-bottom:8px;">
-                        2. The amount paid covers the course enrollment for the specified cohort period.
-                    </p>
-                    <p style="margin-bottom:8px;">
-                        3. Your enrollment will be activated once the application period closes and before the cohort start date.
-                        You will receive separate login credentials via email.
-                    </p>
-                    <p style="margin-bottom:8px;">
-                        4. For any inquiries regarding this payment, please contact <strong>{institution_email}</strong>
-                        or call <strong>{institution_phone}</strong>.
-                    </p>
-                    <p>
-                        5. This is a computer-generated receipt and does not require a physical signature.
-                    </p>
+                <div class="terms-content">
+                    <p>This payment slip serves as an official receipt for the transaction described above.</p>
+                    <p>The amount paid covers the course enrollment for the specified cohort period.</p>
+                    <p>Your enrollment will be activated once the application period closes and before the cohort start date. You will receive separate login credentials via email.</p>
+                    <p>For any inquiries regarding this payment, please contact <strong>{institution_email}</strong> or call <strong>{institution_phone}</strong>.</p>
+                    <p>This is a computer-generated receipt and does not require a physical signature.</p>
                 </div>
             </div>
         </div>
@@ -609,7 +745,7 @@ def generate_payment_slip_html(
         <!-- FOOTER -->
         <div class="slip-footer">
             <p class="brand">✦ {institution_name} ✦</p>
-            <p>{institution_address} · {institution_email} · {institution_phone}</p>
+            <p>{institution_address} &nbsp;·&nbsp; {institution_email} &nbsp;·&nbsp; {institution_phone}</p>
             <p style="margin-top:4px;">© {datetime.utcnow().year} {institution_name}. All rights reserved.</p>
             <p style="margin-top:2px;font-size:11px;">Building Africa's Digital Future Through Education</p>
             <div class="actions">

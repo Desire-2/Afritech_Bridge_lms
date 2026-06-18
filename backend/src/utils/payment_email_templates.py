@@ -395,20 +395,37 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                     </table>
                 </div>
                 
-                <!-- Payment slip attached note -->
-                <div style="background-color: #064e3b; border-left: 4px solid #22c55e; border-radius: 8px; padding: 16px; margin: 20px 0; text-align: center;">
-                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                <!-- Payment slip attached note - enhanced -->
+                <div style="background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); border-radius: 16px; padding: 24px; margin: 25px 0; border: 1px solid #10b981; box-shadow: 0 4px 15px rgba(16,185,129,0.15);">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; width: 100%;">
                         <tr>
-                            <td style="vertical-align: middle; padding-right: 10px;">
-                                <span style="font-size: 24px;">📎</span>
+                            <td style="text-align: center; padding-bottom: 15px;">
+                                <span style="font-size: 48px;">📄</span>
                             </td>
-                            <td style="vertical-align: middle;">
-                                <p style="color: #a7f3d0; margin: 0; font-size: 14px; font-weight: 600;">
-                                    Payment Slip Attached 📄
+                        </tr>
+                        <tr>
+                            <td style="text-align: center;">
+                                <p style="color: #6ee7b7; margin: 0 0 4px 0; font-size: 18px; font-weight: 700; letter-spacing: 0.5px;">
+                                    ✅ Payment Slip Ready
                                 </p>
-                                <p style="color: #d1fae5; margin: 4px 0 0 0; font-size: 13px;">
-                                    Your official payment slip is attached as a PDF to this email.
+                                <p style="color: #a7f3d0; margin: 0; font-size: 14px; font-weight: 500;">
+                                    Your official payment receipt is attached to this email
                                 </p>
+                                <div style="display: inline-block; background: rgba(16,185,129,0.15); border: 1px solid #10b981; border-radius: 10px; padding: 10px 24px; margin-top: 14px;">
+                                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                                        <tr>
+                                            <td style="vertical-align: middle; padding-right: 10px;">
+                                                <span style="font-size: 20px;">📎</span>
+                                            </td>
+                                            <td style="vertical-align: middle;">
+                                                <p style="color: #d1fae5; margin: 0; font-size: 13px;">
+                                                    <strong style="color: #6ee7b7;">Payment_Slip</strong> — PDF attachment<br>
+                                                    <span style="color: #6ee7b7; font-size: 11px;">Keep this for your records</span>
+                                                </p>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                </div>
                             </td>
                         </tr>
                     </table>
@@ -1137,20 +1154,37 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                     </table>
                 </div>
 
-                <!-- Payment slip attached note -->
-                <div style="background-color: #064e3b; border-left: 4px solid #22c55e; border-radius: 8px; padding: 16px; margin: 20px 0; text-align: center;">
-                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                <!-- Payment slip attached note - enhanced -->
+                <div style="background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); border-radius: 16px; padding: 24px; margin: 25px 0; border: 1px solid #10b981; box-shadow: 0 4px 15px rgba(16,185,129,0.15);">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto; width: 100%;">
                         <tr>
-                            <td style="vertical-align: middle; padding-right: 10px;">
-                                <span style="font-size: 24px;">📎</span>
+                            <td style="text-align: center; padding-bottom: 15px;">
+                                <span style="font-size: 48px;">📄</span>
                             </td>
-                            <td style="vertical-align: middle;">
-                                <p style="color: #a7f3d0; margin: 0; font-size: 14px; font-weight: 600;">
-                                    Payment Slip Attached 📄
+                        </tr>
+                        <tr>
+                            <td style="text-align: center;">
+                                <p style="color: #6ee7b7; margin: 0 0 4px 0; font-size: 18px; font-weight: 700; letter-spacing: 0.5px;">
+                                    ✅ Payment Slip Ready
                                 </p>
-                                <p style="color: #d1fae5; margin: 4px 0 0 0; font-size: 13px;">
-                                    Your official payment slip is attached as a PDF to this email.
+                                <p style="color: #a7f3d0; margin: 0; font-size: 14px; font-weight: 500;">
+                                    Your official payment receipt is attached to this email
                                 </p>
+                                <div style="display: inline-block; background: rgba(16,185,129,0.15); border: 1px solid #10b981; border-radius: 10px; padding: 10px 24px; margin-top: 14px;">
+                                    <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;">
+                                        <tr>
+                                            <td style="vertical-align: middle; padding-right: 10px;">
+                                                <span style="font-size: 20px;">📎</span>
+                                            </td>
+                                            <td style="vertical-align: middle;">
+                                                <p style="color: #d1fae5; margin: 0; font-size: 13px;">
+                                                    <strong style="color: #6ee7b7;">Payment_Slip</strong> — PDF attachment<br>
+                                                    <span style="color: #6ee7b7; font-size: 11px;">Keep this for your records</span>
+                                                </p>
+                                            </td>
+                        </tr>
+                    </table>
+                                </div>
                             </td>
                         </tr>
                     </table>
