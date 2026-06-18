@@ -3,7 +3,25 @@
 Beautiful, responsive, and engaging email designs
 """
 import os
+import base64
 from datetime import datetime
+
+
+# ── Embedded logo (base64) ──────────────────────────────────────────────────
+_LOGO_BASE64 = ""
+_logo_path = os.path.join(os.path.dirname(__file__), "..", "..", "static", "images", "logo.jpg")
+try:
+    with open(_logo_path, "rb") as f:
+        _LOGO_BASE64 = base64.b64encode(f.read()).decode("utf-8")
+except FileNotFoundError:
+    pass  # gracefully fall back to text-only branding
+
+
+def _logo_img_tag(size=48):
+    """Return an <img> tag for the Afritech Bridge logo, or empty string if not available."""
+    if _LOGO_BASE64:
+        return f'''<img src="data:image/jpeg;base64,{_LOGO_BASE64}" alt="Afritech Bridge" style="display:block;width:{size}px;height:{size}px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.3);box-shadow:0 2px 12px rgba(0,0,0,0.15);" />'''
+    return ""
 
 
 def _frontend_url(path=""):
@@ -14,7 +32,7 @@ def _frontend_url(path=""):
     return base
 
 def get_email_header():
-    """Modern email header with gradient and branding"""
+    """Modern email header with gradient and branding (includes logo when available)"""
     return """
     <!DOCTYPE html>
     <html lang="en">
@@ -121,14 +139,10 @@ def get_email_header():
                 <td align="center" style="padding: 20px 10px;">
                     <!-- Main email container -->
                     <div class="email-container" style="max-width: 600px; width: 100%; margin: 0 auto; background-color: #34495e; border-radius: 20px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
-                        <!-- Header -->
+                                                <!-- Header -->
                         <div class="email-header" style="background-color: #2c3e50; padding: 40px 30px; text-align: center; position: relative;">
-                            <div style="background: rgba(255,255,255,0.1); border-radius: 50%; width: 80px; height: 80px; margin: 0 auto 20px; border: 3px solid rgba(255,255,255,0.3);">
-                                <table width="80" height="80" cellpadding="0" cellspacing="0" border="0">
-                                    <tr>
-                                        <td style="text-align: center; vertical-align: middle; font-size: 40px;">🎓</td>
-                                    </tr>
-                                </table>
+                            <div style="background: rgba(255,255,255,0.1); border-radius: 50%; width: 80px; height: 80px; margin: 0 auto 20px; border: 3px solid rgba(255,255,255,0.3); display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                LOGO_PLACEHOLDER
                             </div>
                             <h1 style="color: white; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px; text-shadow: 0 2px 10px rgba(0,0,0,0.2);">
                                 Afritech Bridge
@@ -137,7 +151,7 @@ def get_email_header():
                                 Learning Management System
                             </p>
                         </div>
-    """
+    """.replace("LOGO_PLACEHOLDER", _logo_img_tag(72))
 
 def get_email_footer(unsubscribe_token=None, email_category=None):
     """Modern email footer with unsubscribe, manage preferences, and support links.
