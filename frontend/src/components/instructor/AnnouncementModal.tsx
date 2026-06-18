@@ -229,7 +229,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                     </div>
                   ) : (
                     courses.map((course) => (
-                      <SelectItem key={course.id} value={(course.id ?? '').toString()}>
+                      <SelectItem key={course.id} value={String(course.id ?? course.title ?? 'course')}>
                         <div className="flex flex-col">
                           <span className="font-medium">{course.title}</span>
                           <span className="text-xs text-gray-500">
@@ -276,7 +276,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                       <span className="font-medium">All Cohorts</span>
                     </SelectItem>
                     {cohorts.map((cohort) => (
-                      <SelectItem key={cohort.id} value={(cohort.id ?? '').toString()}>
+                      <SelectItem key={cohort.id} value={String(cohort.id ?? cohort.cohort_label ?? 'cohort')}>
                         <div className="flex flex-col">
                           <span className="font-medium">{cohort.cohort_label || `Cohort #${cohort.id}`}</span>
                           <span className="text-xs text-gray-500">
