@@ -524,6 +524,108 @@ def send_enrollment_payment_notification(
         return False
 
 
+def send_application_submission_admin_alert(
+    application,
+    course,
+    amount: float,
+    currency: str,
+    payment_method: str,
+) -> bool:
+    """
+    🏪 Send email alert to admins and course instructor when a student
+    submits a paid application.
+
+    Args:
+        application: CourseApplication object
+        course: Course object
+        amount: float - Payment amount
+        currency: str - Currency code
+        payment_method: str - Payment method used
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send application submission admin alert")
+            return False
+
+        student_name = application.full_name or "Student"
+        student_email = application.email or ""
+        course_title = course.title if course else "Course"
+
+        # Build the admin panel URL
+        frontend_base = os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')
+        admin_panel_url = f"{frontend_base}/admin/applications"
+
+        # Generate email HTML using the admin alert template
+        from .payment_email_templates import enrollment_payment_admin_alert_email
+        email_html = enrollment_payment_admin_alert_email(
+            student_name=student_name,
+            student_email=student_email,
+            course_title=course_title,
+            enrollment_id=application.id,
+            amount=amount,
+            currency=currency,
+            payment_method=payment_method,
+            payment_status='submitted',
+            admin_panel_url=admin_panel_url,
+            screenshot_available=False,
+        )
+
+        # Collect recipients: course instructor + all platform admins
+        recipients = []
+
+        # Course instructor
+        if course and course.instructor and course.instructor.email:
+            recipients.append(course.instructor.email)
+
+        # All platform admins
+        try:
+            from ..models.user_models import User, Role
+            admin_role = Role.query.filter_by(name='admin').first()
+            if admin_role:
+                admins = User.query.filter_by(role_id=admin_role.id, is_active=True).all()
+                for admin in admins:
+                    if admin.email and admin.email not in recipients:
+                        recipients.append(admin.email)
+        except Exception as role_err:
+            logger.warning(f"Could not fetch admin users: {role_err}")
+
+        if not recipients:
+            logger.warning(f"No admin/instructor recipients found for application submission alert #{application.id}")
+            return False
+
+        method_labels = {
+            'bank_transfer': 'Bank Transfer',
+            'momo_pay_code': 'MoMo Pay Code',
+            'mobile_money': 'Mobile Money',
+            'paypal': 'PayPal',
+            'kpay': 'K-Pay',
+            'flutterwave': 'Flutterwave',
+            'stripe': 'Stripe',
+        }
+        method_label = method_labels.get(payment_method, payment_method.replace('_', ' ').title())
+        subject = f"📝 New Application: {student_name} - {course_title} ({method_label})"
+
+        success = brevo_service.send_email(
+            to_emails=recipients,
+            subject=subject,
+            html_content=email_html,
+        )
+
+        if success:
+            logger.info(f"📧 Application submission admin alert sent to {len(recipients)} recipients for application #{application.id}")
+        else:
+            logger.error(f"❌ Failed to send application submission admin alert for application #{application.id}")
+
+        return success
+
+    except Exception as e:
+        logger.error(f"❌ Error sending application submission admin alert: {str(e)}")
+        return False
+
+
 def send_enrollment_payment_admin_alert(
     enrollment,
     amount: float,

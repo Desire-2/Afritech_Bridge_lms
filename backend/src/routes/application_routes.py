@@ -486,7 +486,30 @@ def apply_for_course():
         except Exception as email_error:
             logger.error(f"❌ Error sending confirmation email: {str(email_error)}")
             # Continue - don't fail application submission due to email error
-        
+
+        # ── Notify admins about new paid application ─────────────────────
+        try:
+            course_obj = Course.query.get(application.course_id)
+            if course_obj and course_obj.enrollment_type in ('paid', 'scholarship'):
+                amount_paid = getattr(application, 'amount_paid', 0) or 0
+                if amount_paid > 0:
+                    from ..utils.payment_notifications import send_application_submission_admin_alert
+                    admin_notified = send_application_submission_admin_alert(
+                        application=application,
+                        course=course_obj,
+                        amount=float(amount_paid),
+                        currency=getattr(application, 'payment_currency', course_obj.currency) or 'USD',
+                        payment_method=getattr(application, 'payment_method', 'unknown') or 'unknown',
+                    )
+                    if admin_notified:
+                        logger.info(f"✅ Admin alert sent for application #{application.id}")
+                    else:
+                        logger.info(f"ℹ️ Admin alert skipped for application #{application.id} (no recipients or service unavailable)")
+        except Exception as admin_alert_error:
+            logger.error(f"❌ Error sending admin alert for application #{application.id}: {str(admin_alert_error)}")
+            # Continue - don't fail application submission due to admin alert error
+        # ─────────────────────────────────────────────────────────────────
+
         return jsonify({
             "message": "Application submitted successfully",
             "application_id": application.id,
