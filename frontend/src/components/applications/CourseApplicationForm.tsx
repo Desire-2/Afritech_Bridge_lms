@@ -20,6 +20,7 @@ import { CurrencySelector, ConvertedBadge } from '@/components/ui/CurrencyDispla
 import FlutterwaveCheckoutModal from '@/components/payments/FlutterwaveCheckoutModal';
 import MoMoPayCodeInstructions from '@/components/payments/MoMoPayCodeInstructions';
 import ScreenshotUpload from '@/components/payments/ScreenshotUpload';
+import PaymentSlip from '@/components/payments/PaymentSlip';
 import type { AutoSaveStatus } from '@/hooks/useAutoSave';
 import type { SkillAssessmentConfig } from '@/types/api';
 
@@ -1071,6 +1072,31 @@ export default function CourseApplicationForm({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Payment Receipt — shown for paid courses */}
+            {requiresPaymentStep && (
+              <div className="pt-4">
+                <h3 className="text-2xl font-bold text-gray-900 text-center mb-6 flex items-center justify-center gap-2">
+                  <CreditCard className="w-6 h-6 text-gray-700" />
+                  Payment Receipt
+                </h3>
+                <PaymentSlip data={{
+                  studentName: formData.full_name,
+                  courseTitle: courseTitle || 'Course',
+                  cohortLabel: selectedWindow?.label,
+                  amount: effectiveAmountDue,
+                  currency: effectiveCurrency,
+                  paymentMethod: formData.payment_method as string || 'unknown',
+                  reference: paymentReference || undefined,
+                  paymentDate: new Date(),
+                  status: 'submitted',
+                  enrollmentId: applicationId || undefined,
+                  isPartial: (effectiveEnrollmentType === 'scholarship' && (effectiveScholarshipPct ?? 0) > 0),
+                  originalPrice: (effectiveEnrollmentType === 'scholarship' && (effectiveScholarshipPct ?? 0) > 0) ? effectiveOriginalPrice : undefined,
+                  scholarshipPercentage: effectiveEnrollmentType === 'scholarship' ? (effectiveScholarshipPct ?? undefined) : undefined,
+                }} />
               </div>
             )}
 
