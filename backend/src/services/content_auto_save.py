@@ -40,8 +40,12 @@ def handle_task_completion(task_id: str, task_type: str, result: Any,
         try:
             app = current_app._get_current_object()
         except RuntimeError:
-            logger.error(f"Task {task_id[:8]}... auto-save skipped: no Flask app context")
-            return
+            import sys
+            import os
+            backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            if backend_dir not in sys.path:
+                sys.path.insert(0, backend_dir)
+            from main import app
 
     with app.app_context():
         if error:

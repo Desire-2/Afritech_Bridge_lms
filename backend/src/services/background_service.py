@@ -97,27 +97,31 @@ class BackgroundTaskService:
             logger.error(f"Failed to get task status: {str(e)}")
             return None
     
+    def _get_app(self):
+        """
+        Get the Flask application instance.
+        Tries current_app first; falls back to importing main.app directly
+        when running outside an application context (e.g. background threads).
+        """
+        try:
+            from flask import current_app
+            return current_app._get_current_object()
+        except RuntimeError:
+            import sys
+            import os
+            backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            if backend_dir not in sys.path:
+                sys.path.insert(0, backend_dir)
+            from main import app
+            return app
+
     def _execute_task(self, task_id: str, task_func: Callable, args: tuple, kwargs: dict):
         """Execute a task in the background"""
-        from flask import current_app
         from ..models.task_models import BackgroundTask, TaskStatus
         from ..models.user_models import db
         
         try:
-            # Get app context
-            try:
-                app = current_app._get_current_object()
-            except RuntimeError:
-                # If no app context, import the app directly
-                import sys
-                import os
-                
-                # Add the backend directory to the path
-                backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-                if backend_dir not in sys.path:
-                    sys.path.insert(0, backend_dir)
-                
-                from main import app
+            app = self._get_app()
             
             with app.app_context():
                 # Mark as running
@@ -172,11 +176,12 @@ class BackgroundTaskService:
     
     def _cleanup_old_tasks(self):
         """Remove tasks older than 6 hours"""
-        from flask import current_app
         from ..models.task_models import BackgroundTask, TaskStatus
         
         try:
-            with current_app.app_context():
+            app = self._get_app()
+            
+            with app.app_context():
                 from ..models.user_models import db
                 
                 cutoff_time = datetime.utcnow() - timedelta(hours=6)
