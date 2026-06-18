@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import threading
 import uuid
 import logging
+import json
 from sqlalchemy import or_, func, and_, case
 from ..models.course_application import CourseApplication
 from ..models.user_models import db, User, Role
@@ -199,6 +200,7 @@ def check_duplicate_application():
 
 def parse_json_field(value):
     """Helper to parse JSON fields that might be strings or lists"""
+    import json  # Local import ensures availability regardless of module-level issues
     if value is None:
         return None
     if isinstance(value, list):
