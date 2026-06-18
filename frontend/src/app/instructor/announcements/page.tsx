@@ -62,23 +62,6 @@ const AnnouncementsPage = () => {
     }
   };
 
-  const handleModalSuccess = (announcement: Announcement) => {
-    if (editingAnnouncement) {
-      // Update existing announcement
-      setAnnouncements(prev => 
-        prev.map(ann => ann.id === announcement.id ? announcement : ann)
-      );
-    } else {
-      // Add new announcement
-      setAnnouncements(prev => [announcement, ...prev]);
-    }
-  };
-
-  const handleModalClose = () => {
-    setIsModalOpen(false);
-    setEditingAnnouncement(null);
-  };
-
   const handleAnnouncementSuccess = (announcement: Announcement) => {
     if (editAnnouncement) {
       // Update existing announcement
@@ -229,15 +212,15 @@ const AnnouncementsPage = () => {
                     </div>
 
                     <div className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
-                      {announcement.content.length > 300 ? (
+                      {(announcement.content || '').length > 300 ? (
                         <>
-                          {announcement.content.substring(0, 300)}...
+                          {(announcement.content || '').substring(0, 300)}...
                           <button className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 ml-1 hover:underline">
                             Read more
                           </button>
                         </>
                       ) : (
-                        <div className="whitespace-pre-wrap">{announcement.content}</div>
+                        <div className="whitespace-pre-wrap">{announcement.content || ''}</div>
                       )}
                     </div>
                   </div>

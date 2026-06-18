@@ -189,9 +189,9 @@ const StudentAnnouncements: React.FC<StudentAnnouncementsProps> = ({
                         </div>
                         
                         <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-2">
-                          {announcement.content.length > 100 
+                          {announcement.content && announcement.content.length > 100 
                             ? `${announcement.content.substring(0, 100)}...`
-                            : announcement.content
+                            : (announcement.content || '')
                           }
                         </p>
                       </div>

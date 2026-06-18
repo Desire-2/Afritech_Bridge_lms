@@ -54,7 +54,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
   useEffect(() => {
     if (editAnnouncement) {
       setFormData({
-        course_id: editAnnouncement.course_id.toString(),
+        course_id: (editAnnouncement.course_id ?? '').toString(),
         cohort_id: editAnnouncement.cohort_id?.toString() || '',
         title: editAnnouncement.title,
         content: editAnnouncement.content
@@ -168,7 +168,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
     }
   };
 
-  const selectedCourse = courses.find(course => course.id.toString() === formData.course_id);
+  const selectedCourse = courses.find(course => (course.id ?? '').toString() === formData.course_id);
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -229,7 +229,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                     </div>
                   ) : (
                     courses.map((course) => (
-                      <SelectItem key={course.id} value={course.id.toString()}>
+                      <SelectItem key={course.id} value={(course.id ?? '').toString()}>
                         <div className="flex flex-col">
                           <span className="font-medium">{course.title}</span>
                           <span className="text-xs text-gray-500">
@@ -276,7 +276,7 @@ const AnnouncementModal: React.FC<AnnouncementModalProps> = ({
                       <span className="font-medium">All Cohorts</span>
                     </SelectItem>
                     {cohorts.map((cohort) => (
-                      <SelectItem key={cohort.id} value={cohort.id.toString()}>
+                      <SelectItem key={cohort.id} value={(cohort.id ?? '').toString()}>
                         <div className="flex flex-col">
                           <span className="font-medium">{cohort.cohort_label || `Cohort #${cohort.id}`}</span>
                           <span className="text-xs text-gray-500">
