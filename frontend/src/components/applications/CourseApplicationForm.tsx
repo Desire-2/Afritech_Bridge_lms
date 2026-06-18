@@ -560,6 +560,12 @@ export default function CourseApplicationForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentStatus, formData.payment_method, paymentReference]);
 
+  // Resolve skill assessment config — prefer the API-provided one, fall back to client-side matching
+  const skillConfig: SkillAssessmentConfig = React.useMemo(() => {
+    const config = skillAssessmentConfigProp || getDefaultSkillConfig(courseTitle || courseData?.title, courseData?.category);
+    return config;
+  }, [skillAssessmentConfigProp, courseTitle, courseData]);
+
   // Handle payment initiation
   const handlePayNow = async () => {
     // Validate payment fields first (section 7 covers MoMo phone number etc.)
@@ -1533,12 +1539,6 @@ export default function CourseApplicationForm({
       </div>
     </div>
   );
-
-  // Resolve skill assessment config — prefer the API-provided one, fall back to client-side matching
-  const skillConfig: SkillAssessmentConfig = React.useMemo(() => {
-    const config = skillAssessmentConfigProp || getDefaultSkillConfig(courseTitle || courseData?.title, courseData?.category);
-    return config;
-  }, [skillAssessmentConfigProp, courseTitle, courseData]);
 
   const renderSkillAssessment = () => (
     <div className="space-y-6">
