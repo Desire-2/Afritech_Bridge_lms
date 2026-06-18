@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, send_file
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 import uuid
 import logging
@@ -17,7 +17,6 @@ from ..utils.application_scoring import (
     evaluate_application,
 )
 from ..utils.user_utils import generate_username, generate_temp_password
-from ..utils.brevo_email_service import brevo_service
 from ..utils.brevo_email_service import brevo_service
 from ..utils.email_templates import (
     application_received_email,
@@ -39,10 +38,6 @@ from ..utils.payment_notifications import (
 )
 import pandas as pd
 import io
-import json
-import logging
-import threading
-import uuid
 import os
 from flask import current_app
 
@@ -726,6 +721,448 @@ def save_application_draft():
         db.session.rollback()
         logger.error(f"save-draft error: {e}")
         return jsonify({"error": "Failed to save application draft", "details": str(e)}), 500
+
+
+# ── List saved (draft) applications ─────────────────────────────────────────
+@application_bp.route("/drafts", methods=["GET"])
+@jwt_required()
+def list_draft_applications():
+    """
+    List draft (saved-but-not-submitted) applications with payment status.
+    These are applications where is_draft=True — the student saved the form
+    but has not yet completed payment / final submission.
+
+    Query params:
+      course_id, application_window_id, search, sort_by, order,
+      payment_status, page, per_page, instructor_id
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    if not current_user or current_user.role.name not in ['admin', 'instructor']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    # Re-declare local variables that were part of the old docstring/function body below
+    course_id = request.args.get("course_id", type=int)
+    application_window_id_raw = request.args.get("application_window_id")
+    search_term = request.args.get("search", "").strip()
+    sort_by = request.args.get("sort_by", "updated_at")
+    order = request.args.get("order", "desc")
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 50, type=int)
+    payment_status_filter = request.args.get("payment_status")
+    instructor_id_filter = request.args.get("instructor_id", type=int)
+
+    query = CourseApplication.query.filter_by(is_draft=True)
+
+    # Basic filters
+    if course_id:
+        query = query.filter_by(course_id=course_id)
+
+    if instructor_id_filter:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id_filter).all()
+        ]
+        if instructor_course_ids:
+            query = query.filter(CourseApplication.course_id.in_(instructor_course_ids))
+        else:
+            query = query.filter(CourseApplication.id == -1)
+
+    # Cohort filter
+    if application_window_id_raw and application_window_id_raw.lower() == 'none':
+        query = query.filter(CourseApplication.application_window_id.is_(None))
+    elif application_window_id_raw:
+        try:
+            query = query.filter_by(application_window_id=int(application_window_id_raw))
+        except (ValueError, TypeError):
+            pass
+
+    # Payment status filter
+    if payment_status_filter:
+        query = query.filter_by(payment_status=payment_status_filter)
+
+    # Text search
+    if search_term:
+        text = f"%{search_term}%"
+        query = query.filter(or_(
+            CourseApplication.full_name.ilike(text),
+            CourseApplication.email.ilike(text),
+            CourseApplication.phone.ilike(text),
+        ))
+
+    # Sorting
+    sort_field_map = {'updated_at': 'updated_at', 'created_at': 'created_at'}
+    sort_by = sort_field_map.get(sort_by, 'updated_at')
+    sort_column = getattr(CourseApplication, sort_by, CourseApplication.updated_at)
+    query = query.order_by(sort_column.desc() if order == 'desc' else sort_column.asc())
+
+    # Pagination
+    pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+
+    drafts_data = []
+    for app in pagination.items:
+        try:
+            record = app.to_dict(include_sensitive=True)
+            # Enrich with course info
+            course = app.course
+            if course:
+                record['course_title'] = course.title
+                record['course_price'] = course.price
+                record['course_currency'] = course.currency or 'USD'
+            drafts_data.append(record)
+        except Exception as e:
+            logger.warning(f"Error converting draft {app.id} to dict: {e}")
+            drafts_data.append({
+                'id': app.id,
+                'full_name': getattr(app, 'full_name', 'N/A'),
+                'email': getattr(app, 'email', 'N/A'),
+                'is_draft': True,
+            })
+
+    return jsonify({
+        'applications': drafts_data,
+        'total': pagination.total,
+        'pages': pagination.pages,
+        'current_page': page,
+        'per_page': per_page,
+    }), 200
+
+
+# ── Draft statistics ────────────────────────────────────────────────────────
+@application_bp.route("/drafts/statistics", methods=["GET"])
+@jwt_required()
+def get_draft_statistics():
+    """
+    Return statistics about draft (saved-but-not-submitted) applications.
+    Useful for admins to see how many incomplete applications exist,
+    broken down by course, payment status, and age.
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    if not current_user or current_user.role.name not in ['admin', 'instructor']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    course_id = request.args.get("course_id", type=int)
+    instructor_id = request.args.get("instructor_id", type=int)
+
+    base_query = CourseApplication.query.filter_by(is_draft=True)
+
+    if course_id:
+        base_query = base_query.filter_by(course_id=course_id)
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        if instructor_course_ids:
+            base_query = base_query.filter(CourseApplication.course_id.in_(instructor_course_ids))
+        else:
+            base_query = base_query.filter(CourseApplication.id == -1)
+
+    total_drafts = base_query.count()
+
+    # Payment status breakdown
+    payment_breakdown = (
+        db.session.query(
+            CourseApplication.payment_status,
+            func.count(CourseApplication.id)
+        )
+        .filter(CourseApplication.is_draft == True)
+    )
+    if course_id:
+        payment_breakdown = payment_breakdown.filter_by(course_id=course_id)
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        if instructor_course_ids:
+            payment_breakdown = payment_breakdown.filter(CourseApplication.course_id.in_(instructor_course_ids))
+    payment_counts = dict(payment_breakdown.group_by(CourseApplication.payment_status).all())
+
+    # Age breakdown (how long ago the draft was saved)
+    now = datetime.utcnow()
+    age_1d = base_query.filter(CourseApplication.updated_at >= now - timedelta(days=1)).count()
+    age_7d = base_query.filter(
+        CourseApplication.updated_at >= now - timedelta(days=7),
+        CourseApplication.updated_at < now - timedelta(days=1),
+    ).count()
+    age_30d = base_query.filter(
+        CourseApplication.updated_at >= now - timedelta(days=30),
+        CourseApplication.updated_at < now - timedelta(days=7),
+    ).count()
+    age_stale = base_query.filter(
+        CourseApplication.updated_at < now - timedelta(days=30),
+    ).count()
+
+    # Per-course breakdown
+    course_breakdown_q = (
+        db.session.query(
+            CourseApplication.course_id,
+            func.count(CourseApplication.id)
+        )
+        .filter(CourseApplication.is_draft == True)
+    )
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        if instructor_course_ids:
+            course_breakdown_q = course_breakdown_q.filter(CourseApplication.course_id.in_(instructor_course_ids))
+    course_rows = course_breakdown_q.group_by(CourseApplication.course_id).all()
+    course_breakdown = []
+    for cid, count in course_rows:
+        course = Course.query.get(cid)
+        course_breakdown.append({
+            'course_id': cid,
+            'course_title': course.title if course else 'Unknown',
+            'draft_count': count,
+        })
+
+    return jsonify({
+        'total_drafts': total_drafts,
+        'payment_breakdown': payment_counts,
+        'age_breakdown': {
+            'last_24h': age_1d,
+            'last_7d': age_7d,
+            'last_30d': age_30d,
+            'stale_30d_plus': age_stale,
+        },
+        'course_breakdown': course_breakdown,
+    }), 200
+
+
+# ── Send payment reminder to a draft applicant ──────────────────────────────
+@application_bp.route("/drafts/<int:app_id>/remind", methods=["POST"])
+@jwt_required()
+def remind_draft_applicant(app_id):
+    """
+    Send a payment reminder email to an applicant whose application is saved
+    as a draft (waiting for payment).
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    if not current_user or current_user.role.name not in ['admin', 'instructor']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    application = CourseApplication.query.get_or_404(app_id)
+    if not application.is_draft:
+        return jsonify({'error': 'Application is not a draft — it has already been submitted'}), 400
+
+    data = request.get_json() or {}
+    custom_message = data.get('message', '')
+
+    course = Course.query.get(application.course_id)
+    course_title = course.title if course else 'our course'
+
+    # Resolve payment info
+    payment_info = {}
+    if application.application_window_id:
+        window = ApplicationWindow.query.get(application.application_window_id)
+        if window:
+            payment_info = get_payment_info_from_application_window(window)
+    if not payment_info:
+        payment_info = get_payment_info_from_course(course) if course else {}
+
+    email_sent = False
+    try:
+        email_sent = send_payment_pending_notification(
+            application=application,
+            course_title=course_title,
+            payment_info=payment_info,
+        )
+
+        # If admin provided a custom message, send it as a follow-up email
+        if custom_message and email_sent:
+            try:
+                custom_html = f"""
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                  <p style="font-size: 15px; color: #333;">Dear {application.full_name},</p>
+                  <div style="font-size: 15px; color: #333; line-height: 1.6;">
+                    {custom_message.replace(chr(10), '<br>')}
+                  </div>
+                  <hr style="border: 1px solid #e5e7eb; margin: 24px 0;">
+                  <p style="font-size: 13px; color: #6b7280;">
+                    This is regarding your saved application for <strong>{course_title}</strong>.
+                  </p>
+                </div>
+                """
+                brevo_service.send_email(
+                    to_emails=[application.email],
+                    subject=f"Follow-up: {course_title} Application",
+                    html_content=custom_html,
+                )
+            except Exception as custom_err:
+                logger.warning(f'Failed to send custom follow-up to draft {app_id}: {custom_err}')
+
+        # Update reminder tracking
+        application.last_payment_reminder_sent = datetime.utcnow()
+        application.payment_reminder_count = (application.payment_reminder_count or 0) + 1
+        db.session.commit()
+    except Exception as e:
+        logger.error(f'Error sending reminder to draft {app_id}: {e}')
+
+    return jsonify({
+        'message': 'Payment reminder sent' if email_sent else 'Failed to send reminder',
+        'email_sent': email_sent,
+        'reminder_count': application.payment_reminder_count,
+    }), 200
+
+
+# ── Bulk remind stale draft applicants ──────────────────────────────────────
+@application_bp.route("/drafts/bulk-remind", methods=["POST"])
+@jwt_required()
+def bulk_remind_draft_applicants():
+    """
+    Send payment reminder emails to all stale draft applicants at once.
+    "Stale" means the draft hasn't been updated in more than `stale_days` (default 3).
+
+    Request body:
+      stale_days: int (default 3) – drafts older than this are considered stale
+      course_id: int (optional) – restrict to a specific course
+      instructor_id: int (optional) – restrict to instructor's courses
+      max_recipients: int (optional, default 100) – safety cap
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    if not current_user or current_user.role.name not in ['admin', 'instructor']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    data = request.get_json() or {}
+    stale_days = data.get('stale_days', 3)
+    course_id = data.get('course_id')
+    instructor_id = data.get('instructor_id')
+    max_recipients = data.get('max_recipients', 100)
+
+    cutoff = datetime.utcnow() - timedelta(days=stale_days)
+    query = CourseApplication.query.filter(
+        CourseApplication.is_draft == True,
+        CourseApplication.updated_at < cutoff,
+    )
+
+    if course_id:
+        query = query.filter_by(course_id=course_id)
+    if instructor_id:
+        from ..models.course_models import Course as CourseModel
+        instructor_course_ids = [
+            c.id for c in CourseModel.query.filter_by(instructor_id=instructor_id).all()
+        ]
+        if instructor_course_ids:
+            query = query.filter(CourseApplication.course_id.in_(instructor_course_ids))
+        else:
+            query = query.filter(CourseApplication.id == -1)
+
+    stale_drafts = query.all()
+
+    # Cap to avoid accidental mass-emailing
+    if len(stale_drafts) > max_recipients:
+        stale_drafts = stale_drafts[:max_recipients]
+
+    sent_count = 0
+    failed_count = 0
+    for draft in stale_drafts:
+        try:
+            course = Course.query.get(draft.course_id)
+            course_title = course.title if course else 'our course'
+
+            payment_info = {}
+            if draft.application_window_id:
+                window = ApplicationWindow.query.get(draft.application_window_id)
+                if window:
+                    payment_info = get_payment_info_from_application_window(window)
+            if not payment_info:
+                payment_info = get_payment_info_from_course(course) if course else {}
+
+            email_sent = send_payment_pending_notification(
+                application=draft,
+                course_title=course_title,
+                payment_info=payment_info,
+            )
+            if email_sent:
+                sent_count += 1
+                draft.last_payment_reminder_sent = datetime.utcnow()
+                draft.payment_reminder_count = (draft.payment_reminder_count or 0) + 1
+            else:
+                failed_count += 1
+        except Exception as e:
+            logger.warning(f'Bulk remind: failed for draft {draft.id}: {e}')
+            failed_count += 1
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'Bulk remind: commit failed: {e}')
+
+    logger.info(f'Bulk remind complete: {sent_count} sent, {failed_count} failed out of {len(stale_drafts)} stale drafts')
+
+    return jsonify({
+        'message': f'Reminders sent to {sent_count} applicant(s)',
+        'sent': sent_count,
+        'failed': failed_count,
+        'total_stale': len(stale_drafts),
+        'stale_days': stale_days,
+    }), 200
+
+
+# ── Contact a draft applicant directly ──────────────────────────────────────
+@application_bp.route("/drafts/<int:app_id>/contact", methods=["POST"])
+@jwt_required()
+def contact_draft_applicant(app_id):
+    """
+    Send a custom email to an applicant whose application is saved as a draft.
+    Admin/instructors can send personalised messages to follow up.
+    """
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    if not current_user or current_user.role.name not in ['admin', 'instructor']:
+        return jsonify({'error': 'Unauthorized'}), 403
+
+    application = CourseApplication.query.get_or_404(app_id)
+    if not application.is_draft:
+        return jsonify({'error': 'Application is not a draft'}), 400
+
+    data = request.get_json() or {}
+    subject = data.get('subject', '').strip()
+    message = data.get('message', '').strip()
+
+    if not subject or not message:
+        return jsonify({'error': 'Subject and message are required'}), 400
+
+    course = Course.query.get(application.course_id)
+    course_title = course.title if course else 'our course'
+
+    # Build a clean HTML email
+    email_html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #1e40af;">{subject}</h2>
+      <p style="font-size: 15px; color: #333;">Dear {application.full_name},</p>
+      <div style="font-size: 15px; color: #333; line-height: 1.6;">
+        {message.replace(chr(10), '<br>')}
+      </div>
+      <hr style="border: 1px solid #e5e7eb; margin: 24px 0;">
+      <p style="font-size: 13px; color: #6b7280;">
+        This is regarding your saved application for <strong>{course_title}</strong>.<br>
+        If you have any questions, reply to this email.
+      </p>
+    </div>
+    """
+
+    email_sent = False
+    try:
+        email_sent = brevo_service.send_email(
+            to_emails=[application.email],
+            subject=f"{subject} — {course_title}",
+            html_content=email_html,
+        )
+    except Exception as e:
+        logger.error(f'Error contacting draft applicant {app_id}: {e}')
+
+    return jsonify({
+        'message': 'Email sent' if email_sent else 'Failed to send email',
+        'email_sent': email_sent,
+    }), 200
 
 
 # ── Advanced Application Search with Analytics ───────────────────────────────

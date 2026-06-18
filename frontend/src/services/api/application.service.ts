@@ -610,6 +610,106 @@ class CourseApplicationService extends BaseApiService {
   }> {
     return this.post(`${this.BASE_PATH}/retry-failed-emails`, data);
   }
+
+  // ── Draft (Saved Application) Management ──────────────────────────────────
+
+  /**
+   * List draft (saved-but-not-submitted) applications with payment status.
+   * Admin/Instructor only.
+   */
+  async listDrafts(params: {
+    course_id?: number;
+    application_window_id?: number | string;
+    search?: string;
+    sort_by?: string;
+    order?: 'asc' | 'desc';
+    payment_status?: string;
+    page?: number;
+    per_page?: number;
+  } = {}): Promise<{
+    applications: CourseApplication[];
+    total: number;
+    pages: number;
+    current_page: number;
+    per_page: number;
+  }> {
+    const cleanParams = Object.fromEntries(
+      Object.entries(params).filter(([_, v]) => v !== undefined && v !== '')
+    );
+    return this.get(`${this.BASE_PATH}/drafts`, { params: cleanParams });
+  }
+
+  /**
+   * Get statistics about draft (saved-but-not-submitted) applications.
+   * Admin/Instructor only.
+   */
+  async getDraftStatistics(params?: {
+    course_id?: number;
+    instructor_id?: number;
+  }): Promise<{
+    total_drafts: number;
+    payment_breakdown: Record<string, number>;
+    age_breakdown: {
+      last_24h: number;
+      last_7d: number;
+      last_30d: number;
+      stale_30d_plus: number;
+    };
+    course_breakdown: Array<{
+      course_id: number;
+      course_title: string;
+      draft_count: number;
+    }>;
+  }> {
+    const cleanParams = params
+      ? Object.fromEntries(Object.entries(params).filter(([_, v]) => v !== undefined))
+      : {};
+    return this.get(`${this.BASE_PATH}/drafts/statistics`, { params: cleanParams });
+  }
+
+  /**
+   * Send a payment reminder email to a draft applicant (Admin/Instructor only).
+   */
+  async remindDraftApplicant(id: number, data?: {
+    message?: string;
+  }): Promise<{
+    message: string;
+    email_sent: boolean;
+    reminder_count: number;
+  }> {
+    return this.post(`${this.BASE_PATH}/drafts/${id}/remind`, data || {});
+  }
+
+  /**
+   * Send a custom email to a draft applicant (Admin/Instructor only).
+   */
+  async contactDraftApplicant(id: number, data: {
+    subject: string;
+    message: string;
+  }): Promise<{
+    message: string;
+    email_sent: boolean;
+  }> {
+    return this.post(`${this.BASE_PATH}/drafts/${id}/contact`, data);
+  }
+
+  /**
+   * Send payment reminders to all stale draft applicants at once (Admin/Instructor only).
+   */
+  async bulkRemindDrafts(data?: {
+    stale_days?: number;
+    course_id?: number;
+    instructor_id?: number;
+    max_recipients?: number;
+  }): Promise<{
+    message: string;
+    sent: number;
+    failed: number;
+    total_stale: number;
+    stale_days: number;
+  }> {
+    return this.post(`${this.BASE_PATH}/drafts/bulk-remind`, data || {});
+  }
 }
 
 // Export singleton instance
