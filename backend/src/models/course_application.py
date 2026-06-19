@@ -115,6 +115,7 @@ class CourseApplication(db.Model):
     payment_currency = db.Column(db.String(10), nullable=True)  # e.g. 'USD', 'XAF', 'GHS'
     payment_slip_url = db.Column(db.Text, nullable=True)              # URL to uploaded payment slip/screenshot (Google Drive or base64 fallback)
     payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of slip
+    payment_verification_hash = db.Column(db.String(64), nullable=True, index=True)  # Unique hash for public payment verification QR code
     
     # ========== Payment Reminder Tracking ==========
     last_payment_reminder_sent = db.Column(db.DateTime, nullable=True)  # When last reminder was sent

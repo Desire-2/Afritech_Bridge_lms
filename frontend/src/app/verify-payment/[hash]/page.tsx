@@ -25,6 +25,14 @@ import Link from 'next/link';
 import Image from 'next/image';
 import axios from 'axios';
 
+interface ScholarshipInfo {
+  scholarship_type: string;
+  scholarship_percentage: number | null;
+  original_price: number | null;
+  effective_amount: number;
+  currency: string;
+}
+
 interface PaymentVerificationData {
   verified: boolean;
   verification_hash: string;
@@ -36,8 +44,11 @@ interface PaymentVerificationData {
   payment_status: string;
   payment_verified: boolean;
   payment_verified_at: string | null;
-  enrollment_id: number;
+  enrollment_id: number | null;
+  application_id: number | null;
   receipt_number: string;
+  source: string;
+  scholarship_info: ScholarshipInfo | null;
 }
 
 export default function VerifyPaymentPage() {
@@ -290,15 +301,57 @@ export default function VerifyPaymentPage() {
                       </p>
                     </div>
                   </div>
-                </div>
+                </div>                  {/* Scholarship Info */}
+                  {paymentData.scholarship_info && (
+                    <div className={
+                      paymentData.scholarship_info.scholarship_type === 'full'
+                        ? 'bg-gradient-to-r from-emerald-900/40 to-teal-900/40 rounded-xl p-5 border border-emerald-700/30'
+                        : 'bg-gradient-to-r from-blue-900/40 to-indigo-900/40 rounded-xl p-5 border border-blue-700/30'
+                    }>
+                      <div className="flex items-start gap-3">
+                        <span className="text-3xl">🎓</span>
+                        <div className="flex-1">
+                          {paymentData.scholarship_info.scholarship_type === 'full' ? (
+                            <>
+                              <p className="text-emerald-400 font-bold text-base">Full Scholarship</p>
+                              <p className="text-emerald-300/70 text-sm mt-1">100% tuition covered — no payment required</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-blue-300 font-bold text-base">
+                                Partial Scholarship — {paymentData.scholarship_info.scholarship_percentage?.toFixed(0)}% Covered
+                              </p>
+                              <p className="text-blue-200/70 text-sm mt-1">
+                                Original price: <span className="line-through text-blue-300/50">
+                                  {formatCurrency(paymentData.scholarship_info.original_price || 0, paymentData.scholarship_info.currency)}
+                                </span>
+                                &nbsp;&nbsp;You pay: <strong className="text-amber-400">
+                                  {formatCurrency(paymentData.scholarship_info.effective_amount, paymentData.scholarship_info.currency)}
+                                </strong>
+                                <span className="text-blue-200/50 text-xs ml-2">
+                                  (Saved {formatCurrency(
+                                    (paymentData.scholarship_info.original_price || 0) - paymentData.scholarship_info.effective_amount,
+                                    paymentData.scholarship_info.currency
+                                  )})
+                                </span>
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
-                {/* Verification Details */}
+                  {/* Verification Details */}
                 <div className="bg-gray-900/50 rounded-lg p-4 border border-gray-700">
                   <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">Verification Details</p>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-gray-400">Enrollment ID</span>
-                      <span className="text-white font-mono">#{paymentData.enrollment_id}</span>
+                      <span className="text-gray-400">Record ID</span>
+                      <span className="text-white font-mono">
+                        #{paymentData.enrollment_id || paymentData.application_id || '—'}
+                        {paymentData.source === 'enrollment' ? ' (Enrollment)' : ' (Application)'}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-400">Payment Status</span>

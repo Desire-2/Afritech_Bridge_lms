@@ -179,7 +179,9 @@ def generate_payment_slip_html(
         # Fall back to computing a deterministic hash if none is stored yet.
         verif_hash = verification_hash
         if not verif_hash:
-            hash_raw = f"{enrollment_id}-{student_name}-{receipt_number}"
+            # Use enrollment_id if available, otherwise application_id
+            record_id = enrollment_id or application_id or '0000'
+            hash_raw = f"{record_id}-{student_name}-{receipt_number}"
             verif_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
         
         # Use FRONTEND_URL for the public verification page (the QR code links here)

@@ -167,11 +167,18 @@ def send_payment_confirmation_notification(application, course_title: str, payme
                 app_cohort_label = (cohort_info or {}).get('cohort_label') or getattr(application, 'cohort_label', None)
                 app_cohort_start = (cohort_info or {}).get('cohort_start_date') or getattr(application, 'cohort_start_date', None)
                 app_cohort_end = (cohort_info or {}).get('cohort_end_date') or getattr(application, 'cohort_end_date', None)
-                # For application-level payments, there's no pre-stored verification hash
-                # (the enrollment hash is generated at enrollment-level verification time)
-                app_verif_hash = None
-                if hasattr(application, 'enrollment') and application.enrollment:
-                    app_verif_hash = getattr(application.enrollment, 'payment_verification_hash', None)
+                # ── Compute and persist verification hash for application-level payment ──
+                # This ensures the QR code on the PDF slip can be verified via the public endpoint.
+                app_verif_hash = getattr(application, 'payment_verification_hash', None)
+                if not app_verif_hash:
+                    import hashlib
+                    hash_raw = f"{application.id}-{student_name}-{payment_details.get('payment_reference', '')}"
+                    app_verif_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
+                    application.payment_verification_hash = app_verif_hash
+                    from ..models.user_models import db
+                    db.session.add(application)
+                    db.session.commit()
+                    logger.info(f"🔐 Generated and stored payment_verification_hash for application #{application.id}")
                 pdf_bytes, pdf_filename = generate_payment_slip_pdf(
                     student_name=student_name,
                     student_email=application.email,
