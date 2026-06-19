@@ -111,6 +111,24 @@ def send_payment_confirmation_notification(application, course_title: str, payme
         if not BREVO_AVAILABLE or brevo_service is None:
             logger.warning("📧 Email service not available - cannot send payment confirmation")
             return False
+
+        # ── Resolve effective price and scholarship info from ApplicationWindow ──
+        # The callers pass application.amount_paid which may be the full course price.
+        # We override it with the cohort's effective price so the email and PDF slip
+        # always show the scholarship-adjusted amount.
+        window = getattr(application, 'application_window', None)
+        if not window and application.application_window_id:
+            from ..models.course_models import ApplicationWindow as AppWin
+            window = AppWin.query.get(application.application_window_id)
+
+        if window:
+            effective_price = window.get_effective_price() or 0
+            payment_details['amount_paid'] = float(effective_price)
+            scholarship_type = getattr(window, 'scholarship_type', None)
+            if scholarship_type:
+                payment_details['scholarship_type'] = scholarship_type
+                payment_details['scholarship_percentage'] = float(getattr(window, 'scholarship_percentage', 0) or 0)
+                payment_details['original_price'] = float(getattr(window, 'price', 0) or (window.course.price if window.course else 0))
         
         # Resolve cohort info from application if not provided
         if not cohort_info:
@@ -126,7 +144,8 @@ def send_payment_confirmation_notification(application, course_title: str, payme
                 }
         # Ensure community_link is included in cohort_info if available from the application window
         if cohort_info and not cohort_info.get('community_link'):
-            window = getattr(application, 'application_window', None)
+            if window is None:
+                window = getattr(application, 'application_window', None)
             if window:
                 cohort_info['community_link'] = getattr(window, 'community_link', None)
                 cohort_info['community_link_label'] = getattr(window, 'community_link_label', None)
@@ -170,7 +189,7 @@ def send_payment_confirmation_notification(application, course_title: str, payme
                     application_id=application.id,
                     verification_hash=app_verif_hash,
                     admin_name='Payment System',
-                    # ── Pass scholarship info for slip display ──
+                    # ── Pass scholarship info for slip display (now populated above) ──
                     scholarship_type=payment_details.get('scholarship_type'),
                     scholarship_percentage=payment_details.get('scholarship_percentage'),
                     original_price=payment_details.get('original_price'),
