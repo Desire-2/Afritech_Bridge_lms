@@ -12,6 +12,56 @@ from .email_template_helpers import (
 )
 
 
+def _build_scholarship_badge_html(scholarship_type, scholarship_percentage, original_price, amount, currency):
+    """
+    🎓 Build a scholarship badge HTML snippet for use in email templates.
+    Returns empty string if no scholarship info is available.
+
+    Args:
+        scholarship_type: str or None - 'full' or 'partial'
+        scholarship_percentage: float or None - e.g. 95.0 for 95%
+        original_price: float or None - pre-scholarship price
+        amount: float - the effective (scholarship-adjusted) amount
+        currency: str - currency code
+
+    Returns:
+        str - HTML badge or empty string
+    """
+    if scholarship_type == 'full':
+        return '''
+        <div style="background: linear-gradient(135deg, #059669, #047857); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #10b981;">
+            <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                <tr>
+                    <td style="width: 40px; vertical-align: middle;"><span style="font-size: 28px;">🎓</span></td>
+                    <td style="vertical-align: middle;">
+                        <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Full Scholarship</p>
+                        <p style="margin: 2px 0 0 0; color: #a7f3d0; font-size: 13px;">100% tuition covered — no payment required</p>
+                    </td>
+                </tr>
+            </table>
+        </div>'''
+    elif scholarship_type == 'partial' and scholarship_percentage and original_price and original_price > 0:
+        discount_pct = float(scholarship_percentage)
+        discount_amount = original_price * (discount_pct / 100.0)
+        return f'''
+        <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #3b82f6;">
+            <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                <tr>
+                    <td style="width: 40px; vertical-align: middle;"><span style="font-size: 28px;">🎓</span></td>
+                    <td style="vertical-align: middle;">
+                        <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
+                        <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
+                            Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{currency} {int(original_price):,}</span>
+                            &nbsp;&nbsp;You pay: <strong style="color: #fbbf24;">{currency} {int(amount):,}</strong>
+                            <span style="color: #93c5fd; font-size: 11px; margin-left: 8px;">(Saved {currency} {int(discount_amount):,})</span>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </div>'''
+    return ""
+
+
 def application_saved_payment_pending_email(application, course_title, payment_info, cohort_info=None, unsubscribe_token=None):
     """
     📧 Email sent when applicant saves application for a course requiring payment
@@ -35,6 +85,21 @@ def application_saved_payment_pending_email(application, course_title, payment_i
     currency = payment_info.get('currency', 'USD')
     deadline = payment_info.get('payment_deadline')
     payment_methods = payment_info.get('payment_methods', ['Mobile Money', 'Bank Transfer', 'PayPal'])
+
+    # ── Resolve scholarship info from application's cohort window ──
+    scholarship_type = None
+    scholarship_percentage = None
+    original_price = None
+    try:
+        if application.application_window_id:
+            window = __import__('src.models.course_models', fromlist=['ApplicationWindow']).ApplicationWindow.query.get(application.application_window_id)
+            if window:
+                scholarship_type = getattr(window, 'scholarship_type', None)
+                scholarship_percentage = getattr(window, 'scholarship_percentage', None)
+                original_price = float(getattr(window, 'price', 0) or (getattr(window.course, 'price', 0) if getattr(window, 'course', None) else 0))
+    except Exception:
+        pass
+    scholarship_badge = _build_scholarship_badge_html(scholarship_type, scholarship_percentage, original_price, amount, currency)
     
     # Extract cohort info if provided
     cohort_label = ""
@@ -148,6 +213,8 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                             </tr>
                         </table>
                     </div>
+                    <!-- Scholarship info badge -->
+                    {scholarship_badge}
                 </div>
                 
                 {deadline_warning}
@@ -238,7 +305,22 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
     method = payment_details.get('payment_method', 'Payment Gateway')
     reference = payment_details.get('payment_reference', 'N/A')
     payment_date = payment_details.get('payment_date', datetime.utcnow())
-    
+
+    # ── Resolve scholarship info from application's cohort window ──
+    scholarship_type = None
+    scholarship_percentage = None
+    original_price = None
+    try:
+        if application.application_window_id:
+            window = __import__('src.models.course_models', fromlist=['ApplicationWindow']).ApplicationWindow.query.get(application.application_window_id)
+            if window:
+                scholarship_type = getattr(window, 'scholarship_type', None)
+                scholarship_percentage = getattr(window, 'scholarship_percentage', None)
+                original_price = float(getattr(window, 'price', 0) or (getattr(window.course, 'price', 0) if getattr(window, 'course', None) else 0))
+    except Exception:
+        pass
+    scholarship_badge = _build_scholarship_badge_html(scholarship_type, scholarship_percentage, original_price, amount, currency)
+
     if isinstance(payment_date, str):
         date_str = payment_date
     else:
@@ -317,6 +399,9 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                             </td>
                         </tr>
                     </table>
+                    
+                    <!-- Scholarship info badge -->
+                    {scholarship_badge}
                     
                     <div style="background-color: #1a252f; border-radius: 12px; padding: 25px;">
                         <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
@@ -637,6 +722,21 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
     currency = payment_info.get('currency', 'USD')
     days_remaining = payment_info.get('days_remaining', None)
     deadline = payment_info.get('payment_deadline')
+
+    # ── Resolve scholarship info from application's cohort window ──
+    scholarship_type = None
+    scholarship_percentage = None
+    original_price = None
+    try:
+        if application.application_window_id:
+            window = __import__('src.models.course_models', fromlist=['ApplicationWindow']).ApplicationWindow.query.get(application.application_window_id)
+            if window:
+                scholarship_type = getattr(window, 'scholarship_type', None)
+                scholarship_percentage = getattr(window, 'scholarship_percentage', None)
+                original_price = float(getattr(window, 'price', 0) or (getattr(window.course, 'price', 0) if getattr(window, 'course', None) else 0))
+    except Exception:
+        pass
+    scholarship_badge = _build_scholarship_badge_html(scholarship_type, scholarship_percentage, original_price, amount, currency)
     
     # Generate cohort card
     cohort_card = ""
@@ -756,6 +856,8 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
                             </tr>
                         </table>
                     </div>
+                    <!-- Scholarship info badge -->
+                    {scholarship_badge}
                 </div>
                 
                 <!-- Benefits Reminder -->

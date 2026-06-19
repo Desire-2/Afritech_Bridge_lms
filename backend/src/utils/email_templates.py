@@ -272,6 +272,55 @@ def application_received_email(application, course_title, cohort_info=None, paym
             timezone=cohort_info.get('timezone', 'UTC')
         )
     
+    # ── Resolve scholarship info from application's cohort window ──
+    scholarship_badge_html = ""
+    if payment_info and payment_info.get('amount'):
+        try:
+            if hasattr(application, 'application_window_id') and application.application_window_id:
+                from ..models.course_models import ApplicationWindow
+                window = ApplicationWindow.query.get(application.application_window_id)
+                if window:
+                    scholarship_type = getattr(window, 'scholarship_type', None)
+                    scholarship_percentage = getattr(window, 'scholarship_percentage', None)
+                    amount = payment_info.get('amount', 0)
+                    currency = payment_info.get('currency', 'USD')
+                    if scholarship_type == 'full':
+                        scholarship_badge_html = '''
+                        <div style="background: linear-gradient(135deg, #059669, #047857); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #10b981;">
+                            <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                                <tr>
+                                    <td style="width: 40px; vertical-align: middle;"><span style="font-size: 28px;">🎓</span></td>
+                                    <td style="vertical-align: middle;">
+                                        <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Full Scholarship</p>
+                                        <p style="margin: 2px 0 0 0; color: #a7f3d0; font-size: 13px;">100% tuition covered — no payment required</p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>'''
+                    elif scholarship_type == 'partial' and scholarship_percentage:
+                        original_price = float(getattr(window, 'price', 0) or 0)
+                        if original_price > 0:
+                            discount_pct = float(scholarship_percentage)
+                            discount_amount = original_price * (discount_pct / 100.0)
+                            scholarship_badge_html = f'''
+                            <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #3b82f6;">
+                                <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                                    <tr>
+                                        <td style="width: 40px; vertical-align: middle;"><span style="font-size: 28px;">🎓</span></td>
+                                        <td style="vertical-align: middle;">
+                                            <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
+                                            <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
+                                                Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{currency} {int(original_price):,}</span>
+                                                &nbsp;&nbsp;You pay: <strong style="color: #fbbf24;">{currency} {int(amount):,}</strong>
+                                                <span style="color: #93c5fd; font-size: 11px; margin-left: 8px;">(Saved {currency} {int(discount_amount):,})</span>
+                                            </p>
+                                        </td>
+                                    </tr>
+                                </table>
+                            </div>'''
+        except Exception:
+            pass
+
     # Generate payment card if required
     payment_card = ""
     if payment_info and payment_info.get('amount'):
@@ -283,6 +332,9 @@ def application_received_email(application, course_title, cohort_info=None, paym
             payment_deadline=payment_info.get('payment_deadline'),
             include_title=True
         )
+        # Prepend scholarship badge before the payment card
+        if scholarship_badge_html:
+            payment_card = scholarship_badge_html + payment_card
     return f"""
     {get_email_header()}
             

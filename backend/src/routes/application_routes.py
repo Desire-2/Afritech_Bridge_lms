@@ -1634,25 +1634,41 @@ def list_applications():
         for app in pagination.items:
             try:
                 record = app.to_dict(include_sensitive=True)
-                # Enrich with course payment details
+                # Enrich with course & cohort payment details
                 course = app.course
                 if course:
-                    currency = course.currency or 'USD'
-                    if course.payment_mode == 'partial':
-                        if course.partial_payment_amount:
-                            amount_paid = course.partial_payment_amount
-                        elif course.partial_payment_percentage and course.price:
-                            amount_paid = round(course.price * course.partial_payment_percentage / 100, 2)
-                        else:
-                            amount_paid = course.price or 0.0
-                    else:
-                        amount_paid = course.price or 0.0
                     record['course_title'] = course.title
                     record['course_price'] = course.price
-                    record['course_currency'] = currency
-                    record['amount_paid'] = amount_paid
+                    record['course_currency'] = course.currency or 'USD'
                     record['course_payment_mode'] = course.payment_mode or 'full'
                     record['course_enabled_methods'] = course._get_payment_methods()
+
+                    # Resolve effective amount from cohort (handles scholarships)
+                    window = None
+                    if app.application_window_id:
+                        window = ApplicationWindow.query.get(app.application_window_id)
+
+                    if window:
+                        record['amount_paid'] = window.get_effective_price() or 0.0
+                        record['cohort_label'] = window.cohort_label
+                        record['cohort_effective_price'] = window.get_effective_price()
+                        record['cohort_scholarship_type'] = window.scholarship_type
+                        record['cohort_scholarship_percentage'] = window.scholarship_percentage
+                        record['cohort_enrollment_type'] = window.get_effective_enrollment_type()
+                        record['cohort_original_price'] = window.price if window.price is not None else course.price
+                    else:
+                        # Fallback to course price when not linked to a cohort
+                        if course.payment_mode == 'partial':
+                            if course.partial_payment_amount:
+                                amount_paid = course.partial_payment_amount
+                            elif course.partial_payment_percentage and course.price:
+                                amount_paid = round(course.price * course.partial_payment_percentage / 100, 2)
+                            else:
+                                amount_paid = course.price or 0.0
+                        else:
+                            amount_paid = course.price or 0.0
+                        record['amount_paid'] = amount_paid
+
                 applications_data.append(record)
             except (LookupError, AttributeError, ValueError) as e:
                 # Log the error and create a safe representation
