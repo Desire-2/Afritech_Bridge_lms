@@ -409,6 +409,10 @@ def get_enrollment_payment_slip(enrollment_id):
         application_id=None,
         verification_hash=stored_hash,
         admin_name=admin_name,
+        # ── Scholarship info ──
+        scholarship_type=payment_info.get('scholarship_type'),
+        scholarship_percentage=payment_info.get('scholarship_percentage'),
+        original_price=payment_info.get('original_price'),
     )
 
     return html, 200, {"Content-Type": "text/html"}

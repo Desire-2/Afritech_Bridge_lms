@@ -72,6 +72,10 @@ def generate_payment_slip_html(
     institution_address="Kigali, Rwanda",
     institution_email="afritech.bridge@yahoo.com",
     institution_phone="+250 780 784 924",
+    # ── Scholarship info ──
+    scholarship_type=None,
+    scholarship_percentage=None,
+    original_price=None,
 ):
     """
     🧾 Generate a beautifully styled, print-ready payment slip as HTML.
@@ -128,6 +132,34 @@ def generate_payment_slip_html(
     date_formatted = _format_date(payment_date)
     cohort_start_fmt = _format_date(cohort_start_date)
     cohort_end_fmt = _format_date(cohort_end_date)
+
+    # ── Scholarship display logic ──
+    scholarship_html = ""
+    if scholarship_type == 'full':
+        scholarship_html = '''
+            <div style="background: linear-gradient(135deg, #059669, #047857); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 28px;">🎓</span>
+                <div>
+                    <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Full Scholarship</p>
+                    <p style="margin: 2px 0 0 0; color: #a7f3d0; font-size: 13px;">100% tuition covered — no payment required</p>
+                </div>
+            </div>'''
+    elif scholarship_type == 'partial' and scholarship_percentage and original_price:
+        discount_pct = float(scholarship_percentage)
+        discount_amount = original_price * (discount_pct / 100.0)
+        discount_formatted = _format_currency(discount_amount, currency)
+        scholarship_html = f'''
+            <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px;">
+                <span style="font-size: 28px;">🎓</span>
+                <div style="flex:1;">
+                    <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
+                    <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
+                        Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{_format_currency(original_price, currency)}</span>
+                        &nbsp; You pay: <strong style="color: #fbbf24;">{amount_formatted}</strong>
+                        <span style="color: #93c5fd; font-size: 12px; margin-left: 8px;">(Saved {discount_formatted})</span>
+                    </p>
+                </div>
+            </div>'''
 
     # Build the logo image tag (prefer URL over base64 for better cross-client compatibility)
     logo_img = ""
@@ -675,6 +707,9 @@ def generate_payment_slip_html(
                 </div>
             </div>
 
+            <!-- SCHOLARSHIP INFO -->
+            {scholarship_html}
+
             <!-- PAYMENT HERO -->
             <div class="payment-hero">
                 <div class="payment-hero-header">
@@ -851,6 +886,10 @@ def generate_payment_slip_pdf(
     institution_address="Kigali, Rwanda",
     institution_email="afritech.bridge@yahoo.com",
     institution_phone="+250 780 784 924",
+    # ── Scholarship info ──
+    scholarship_type=None,
+    scholarship_percentage=None,
+    original_price=None,
 ):
     """
     📄 Generate a payment slip as a PDF file (bytes) using WeasyPrint.
@@ -883,6 +922,9 @@ def generate_payment_slip_pdf(
         institution_address=institution_address,
         institution_email=institution_email,
         institution_phone=institution_phone,
+        scholarship_type=scholarship_type,
+        scholarship_percentage=scholarship_percentage,
+        original_price=original_price,
     )
 
     # Convert HTML to PDF

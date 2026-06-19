@@ -1025,6 +1025,46 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
     reference = payment_details.get('payment_reference', 'N/A')
     payment_date = payment_details.get('payment_date', datetime.utcnow())
 
+    # ── Extract scholarship info from payment_details (now includes it from _get_payment_info_from_enrollment) ──
+    scholarship_type = payment_details.get('scholarship_type')
+    scholarship_percentage = payment_details.get('scholarship_percentage')
+    original_price = payment_details.get('original_price')
+
+    # Build scholarship badge HTML for the email
+    scholarship_email_html = ""
+    if scholarship_type == 'full':
+        scholarship_email_html = '''
+        <div style="background: linear-gradient(135deg, #059669, #047857); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #10b981;">
+            <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                <tr>
+                    <td style="width: 40px; vertical-align: middle;"><span style="font-size: 28px;">🎓</span></td>
+                    <td style="vertical-align: middle;">
+                        <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Full Scholarship</p>
+                        <p style="margin: 2px 0 0 0; color: #a7f3d0; font-size: 13px;">100% tuition covered — no payment required</p>
+                    </td>
+                </tr>
+            </table>
+        </div>'''
+    elif scholarship_type == 'partial' and scholarship_percentage and original_price and original_price > 0:
+        discount_pct = float(scholarship_percentage)
+        discount_amount = original_price * (discount_pct / 100.0)
+        scholarship_email_html = f'''
+        <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #3b82f6;">
+            <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
+                <tr>
+                    <td style="width: 40px; vertical-align: middle;"><span style="font-size: 28px;">🎓</span></td>
+                    <td style="vertical-align: middle;">
+                        <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
+                        <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
+                            Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{currency} {int(original_price):,}</span>
+                            &nbsp;&nbsp;You pay: <strong style="color: #fbbf24;">{currency} {int(amount):,}</strong>
+                            <span style="color: #93c5fd; font-size: 11px; margin-left: 8px;">(Saved {currency} {int(discount_amount):,})</span>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </div>'''
+
     if isinstance(payment_date, str):
         date_str = payment_date
     else:
@@ -1104,6 +1144,8 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                             </td>
                         </tr>
                     </table>
+                    <!-- Scholarship info badge -->
+                    {scholarship_email_html}
                     <div style="background-color: #1a252f; border-radius: 12px; padding: 25px;">
                         <table class="responsive-table" style="width: 100%; border-collapse: separate; border-spacing: 0 8px;">
                             <tr>

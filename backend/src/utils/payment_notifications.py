@@ -170,6 +170,10 @@ def send_payment_confirmation_notification(application, course_title: str, payme
                     application_id=application.id,
                     verification_hash=app_verif_hash,
                     admin_name='Payment System',
+                    # ── Pass scholarship info for slip display ──
+                    scholarship_type=payment_details.get('scholarship_type'),
+                    scholarship_percentage=payment_details.get('scholarship_percentage'),
+                    original_price=payment_details.get('original_price'),
                 )
                 # Base64 encode the PDF for Brevo attachment
                 pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
@@ -354,6 +358,9 @@ def _get_payment_info_from_enrollment(enrollment):
       2. window.get_effective_price() (cohort-level price, accounting for scholarships)
       3. course.price (fallback when no window is linked)
 
+    Also extracts scholarship info (type, percentage, original price) for display
+    on payment slips, emails, and the verification page.
+
     Args:
         enrollment: Enrollment object
 
@@ -380,6 +387,28 @@ def _get_payment_info_from_enrollment(enrollment):
         amount = 0
         currency = 'USD'
 
+    # ── Extract scholarship info from application window ──
+    scholarship_type = None
+    scholarship_percentage = None
+    original_price = None
+    enrollment_type = None
+    if window:
+        scholarship_type = getattr(window, 'scholarship_type', None)
+        scholarship_percentage = getattr(window, 'scholarship_percentage', None)
+        enrollment_type = window.get_effective_enrollment_type() if hasattr(window, 'get_effective_enrollment_type') else getattr(window, 'enrollment_type', 'free')
+        original_price = float(getattr(window, 'price', 0) or (getattr(window.course, 'price', 0) if getattr(window, 'course', None) else 0))
+    elif course:
+        scholarship_type = getattr(course, 'scholarship_type', None)
+        scholarship_percentage = getattr(course, 'scholarship_percentage', None)
+        enrollment_type = getattr(course, 'enrollment_type', 'free')
+        original_price = float(getattr(course, 'price', 0) or 0)
+
+    # If no stored amount_paid, the effective price already accounts for scholarship.
+    # The 'amount' above is the scholarship-adjusted price.
+    # original_price is the pre-scholarship price.
+    # If they're the same, there's no active discount.
+    has_scholarship = bool(scholarship_type) and (original_price is not None and amount < original_price)
+
     # Resolve payment method from enrollment
     payment_method = getattr(enrollment, 'payment_method', None) or 'Manual Payment'
     payment_reference = getattr(enrollment, 'payment_reference', None) or ''
@@ -394,6 +423,12 @@ def _get_payment_info_from_enrollment(enrollment):
         'payment_reference': payment_reference or f'ENR-{enrollment.id}',
         'payment_date': payment_date,
         'payment_status': payment_status,
+        # Scholarship info for display
+        'scholarship_type': scholarship_type,
+        'scholarship_percentage': float(scholarship_percentage) if scholarship_percentage else None,
+        'original_price': original_price,
+        'enrollment_type': enrollment_type,
+        'has_scholarship': has_scholarship,
     }
 
 
@@ -495,6 +530,10 @@ def send_enrollment_payment_notification(
                         enrollment_id=enrollment.id,
                         verification_hash=stored_verif_hash,
                         admin_name=admin_name,
+                        # ── Pass scholarship info for slip display ──
+                        scholarship_type=payment_details.get('scholarship_type'),
+                        scholarship_percentage=payment_details.get('scholarship_percentage'),
+                        original_price=payment_details.get('original_price'),
                     )
                     # Base64 encode the PDF for Brevo attachment
                     pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
