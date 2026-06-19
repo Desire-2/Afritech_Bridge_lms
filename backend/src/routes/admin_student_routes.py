@@ -590,6 +590,26 @@ def update_enrollment(student_id, enrollment_id):
         elif action == "update_payment":
             enrollment.payment_status = data.get("payment_status", enrollment.payment_status)
             enrollment.payment_verified = data.get("payment_verified", enrollment.payment_verified)
+            
+            # Store the actual amount paid if provided (for accurate payment slips/notifications)
+            payment_amount = data.get("amount_paid")
+            if payment_amount is not None:
+                enrollment.amount_paid = float(payment_amount)
+            payment_curr = data.get("payment_currency")
+            if payment_curr:
+                enrollment.payment_currency = payment_curr
+            
+            # If amount_paid was not explicitly provided but payment is 'completed',
+            # auto-populate from the cohort's effective price for record-keeping
+            if payment_amount is None and enrollment.payment_status == 'completed' and enrollment.amount_paid is None:
+                window = enrollment.application_window
+                if window:
+                    enrollment.amount_paid = window.get_effective_price()
+                    enrollment.payment_currency = window.get_effective_currency()
+                elif enrollment.course:
+                    enrollment.amount_paid = enrollment.course.price or 0
+                    enrollment.payment_currency = enrollment.course.currency or 'USD'
+            
             if enrollment.payment_verified and not enrollment.payment_verified_at:
                 enrollment.payment_verified_at = datetime.utcnow()
                 enrollment.payment_verified_by = current_user_id

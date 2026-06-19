@@ -910,6 +910,9 @@ class Enrollment(db.Model):
     payment_verified_at = db.Column(db.DateTime, nullable=True)
     payment_verified_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     payment_method = db.Column(db.String(30), nullable=True)  # e.g. 'bank_transfer', 'momo_pay_code', 'mobile_money'
+    # ── Actual amount the student paid (not the cohort's listed price) ──
+    amount_paid = db.Column(db.Float, nullable=True)  # Actual amount paid by the student
+    payment_currency = db.Column(db.String(10), nullable=True)  # Currency of the actual payment
     payment_slip_url = db.Column(db.Text, nullable=True)  # Base64 data URL or path to uploaded payment slip/screenshot
     payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of payment slip
 

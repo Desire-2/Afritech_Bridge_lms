@@ -268,6 +268,9 @@ def verify_enrollment_payment(enrollment_id):
     Body JSON:
       - payment_status (required): 'completed', 'waived', 'pending', 'failed'
       - notes (optional): Admin notes
+      - amount_paid (optional): Actual amount the student paid (for accurate payment slips).
+                                If omitted, the cohort's effective price is used.
+      - payment_currency (optional): Currency of the actual payment.
     """
     user, user_id = _require_admin_or_instructor()
     if not user:
@@ -279,12 +282,16 @@ def verify_enrollment_payment(enrollment_id):
         return jsonify({"error": "payment_status must be one of: completed, waived, pending, failed"}), 400
 
     notes = data.get("notes")
+    amount_paid = data.get("amount_paid")
+    payment_currency = data.get("payment_currency")
 
     success, message, result = WaitlistService.verify_enrollment_payment(
         enrollment_id=enrollment_id,
         admin_id=user_id,
         payment_status=payment_status,
-        notes=notes
+        notes=notes,
+        amount_paid=float(amount_paid) if amount_paid is not None else None,
+        payment_currency=payment_currency,
     )
 
     if not success:

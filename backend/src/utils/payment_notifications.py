@@ -343,6 +343,11 @@ def _get_payment_info_from_enrollment(enrollment):
     Extract payment information from an enrollment object for email templates
     and payment slips.
 
+    PRIORITY for amount_paid:
+      1. enrollment.amount_paid (the actual amount recorded when admin verified payment)
+      2. window.get_effective_price() (cohort-level price, accounting for scholarships)
+      3. course.price (fallback when no window is linked)
+
     Args:
         enrollment: Enrollment object
 
@@ -352,15 +357,22 @@ def _get_payment_info_from_enrollment(enrollment):
     course = enrollment.course
     window = enrollment.application_window
 
-    amount = 0
-    currency = 'USD'
+    # Priority 1: Use stored amount_paid on the enrollment (set by admin at verification time)
+    stored_amount = getattr(enrollment, 'amount_paid', None)
+    stored_currency = getattr(enrollment, 'payment_currency', None)
 
-    if window:
+    if stored_amount is not None:
+        amount = float(stored_amount)
+        currency = stored_currency or 'USD'
+    elif window:
         amount = window.get_effective_price() or 0
         currency = window.get_effective_currency() or 'USD'
     elif course:
         amount = course.price or 0
         currency = course.currency or 'USD'
+    else:
+        amount = 0
+        currency = 'USD'
 
     # Resolve payment method from enrollment
     payment_method = getattr(enrollment, 'payment_method', None) or 'Manual Payment'

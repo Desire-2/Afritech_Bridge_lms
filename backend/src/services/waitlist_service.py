@@ -344,12 +344,16 @@ class WaitlistService:
         enrollment_id: int,
         admin_id: int,
         payment_status: str = 'completed',
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
+        amount_paid: Optional[float] = None,
+        payment_currency: Optional[str] = None,
     ) -> Tuple[bool, str, Dict]:
         """
         Admin action to verify/update payment status for an enrollment.
         
         payment_status: 'completed', 'waived', 'pending', 'failed'
+        amount_paid: Optional actual amount the student paid (overrides cohort's effective price)
+        payment_currency: Optional currency for the actual payment
         """
         enrollment = Enrollment.query.get(enrollment_id)
         if not enrollment:
@@ -358,6 +362,12 @@ class WaitlistService:
         try:
             enrollment.payment_status = payment_status
             enrollment.payment_verified = payment_status in ('completed', 'waived')
+            
+            # Store the actual amount paid if provided (for accurate payment slips/notifications)
+            if amount_paid is not None:
+                enrollment.amount_paid = float(amount_paid)
+            if payment_currency:
+                enrollment.payment_currency = payment_currency
             
             if enrollment.payment_verified:
                 enrollment.payment_verified_at = datetime.utcnow()

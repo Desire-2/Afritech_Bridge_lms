@@ -2277,6 +2277,12 @@ def approve_application(app_id):
                 enrollment.payment_status = 'completed'
                 enrollment.payment_verified = True
                 enrollment.payment_verified_at = datetime.utcnow()
+                # Copy actual amount_paid from the application to the enrollment
+                # (the CourseApplication stores what the student actually paid)
+                app_amount = getattr(application, 'amount_paid', None)
+                if app_amount is not None:
+                    enrollment.amount_paid = float(app_amount)
+                    enrollment.payment_currency = getattr(application, 'payment_currency', None)
             else:
                 enrollment.status = 'pending_payment'
                 enrollment.payment_status = 'pending'
