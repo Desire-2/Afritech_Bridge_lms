@@ -2,6 +2,7 @@
 💰 Payment Email Notification Service for Afritech Bridge LMS
 Centralizes payment-related email notifications
 """
+import hashlib
 import logging
 import os
 import base64
@@ -467,7 +468,16 @@ def send_enrollment_payment_notification(
                     admin_name = "Administrator"
 
                     # Use the stored verification hash from enrollment for QR code consistency
+                    # If no hash is stored yet, compute and persist one so the QR code can be verified
                     stored_verif_hash = getattr(enrollment, 'payment_verification_hash', None)
+                    if not stored_verif_hash:
+                        # Use same formula as waitlist_routes.py for consistency
+                        hash_raw = f"{enrollment.id}-{student_name}"
+                        stored_verif_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
+                        enrollment.payment_verification_hash = stored_verif_hash
+                        from ..models.user_models import db
+                        db.session.commit()
+                        logger.info(f"🔐 Generated and stored payment_verification_hash={stored_verif_hash} for enrollment #{enrollment.id}")
                     pdf_bytes, pdf_filename = generate_payment_slip_pdf(
                         student_name=student_name,
                         student_email=student.email,

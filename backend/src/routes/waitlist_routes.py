@@ -8,6 +8,7 @@ Admin endpoints for:
  - Checking student access status
 """
 
+import hashlib
 import logging
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -380,6 +381,16 @@ def get_enrollment_payment_slip(enrollment_id):
     student_phone = getattr(student, 'phone_number', None) or ""
     admin_name = f"{current_user.first_name} {current_user.last_name}".strip() or current_user.username if current_user else "Administrator"
 
+    # ── Ensure payment verification hash is stored (so QR code on slip can be verified) ──
+    stored_hash = getattr(enrollment, 'payment_verification_hash', None)
+    if not stored_hash:
+        # Compute deterministic hash from enrollment data & persist to database
+        hash_raw = f"{enrollment.id}-{student_name}"
+        stored_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
+        enrollment.payment_verification_hash = stored_hash
+        db.session.commit()
+        logger.info(f"🔐 Generated and stored payment_verification_hash={stored_hash} for enrollment #{enrollment.id}")
+
     html = generate_payment_slip_html(
         student_name=student_name,
         student_email=student_email,
@@ -396,6 +407,7 @@ def get_enrollment_payment_slip(enrollment_id):
         payment_status=payment_status,
         enrollment_id=enrollment.id,
         application_id=None,
+        verification_hash=stored_hash,
         admin_name=admin_name,
     )
 
