@@ -1,10 +1,10 @@
-\"\"\"Add payment_verification_hash to course_applications
+"""Add payment_verification_hash to course_applications
 
 Revision ID: f1d3c2b5a4e7
 Revises: e2d44041ddf2
 Create Date: 2026-06-19 12:00:00.000000
 
-\"\"\"
+"""
 from alembic import op
 import sqlalchemy as sa
 
