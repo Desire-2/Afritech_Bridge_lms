@@ -147,7 +147,11 @@ def send_payment_confirmation_notification(application, course_title: str, payme
                 app_cohort_label = (cohort_info or {}).get('cohort_label') or getattr(application, 'cohort_label', None)
                 app_cohort_start = (cohort_info or {}).get('cohort_start_date') or getattr(application, 'cohort_start_date', None)
                 app_cohort_end = (cohort_info or {}).get('cohort_end_date') or getattr(application, 'cohort_end_date', None)
-
+                # For application-level payments, there's no pre-stored verification hash
+                # (the enrollment hash is generated at enrollment-level verification time)
+                app_verif_hash = None
+                if hasattr(application, 'enrollment') and application.enrollment:
+                    app_verif_hash = getattr(application.enrollment, 'payment_verification_hash', None)
                 pdf_bytes, pdf_filename = generate_payment_slip_pdf(
                     student_name=student_name,
                     student_email=application.email,
@@ -163,6 +167,7 @@ def send_payment_confirmation_notification(application, course_title: str, payme
                     payment_date=payment_details.get('payment_date'),
                     payment_status='completed',
                     application_id=application.id,
+                    verification_hash=app_verif_hash,
                     admin_name='Payment System',
                 )
                 # Base64 encode the PDF for Brevo attachment
@@ -461,6 +466,8 @@ def send_enrollment_payment_notification(
                     cohort_end = window.cohort_end if window else None
                     admin_name = "Administrator"
 
+                    # Use the stored verification hash from enrollment for QR code consistency
+                    stored_verif_hash = getattr(enrollment, 'payment_verification_hash', None)
                     pdf_bytes, pdf_filename = generate_payment_slip_pdf(
                         student_name=student_name,
                         student_email=student.email,
@@ -476,6 +483,7 @@ def send_enrollment_payment_notification(
                         payment_date=payment_details.get('payment_date'),
                         payment_status='completed',
                         enrollment_id=enrollment.id,
+                        verification_hash=stored_verif_hash,
                         admin_name=admin_name,
                     )
                     # Base64 encode the PDF for Brevo attachment

@@ -8,6 +8,7 @@ Handles:
  - Bulk and individual waitlist operations
 """
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple, Optional
@@ -372,6 +373,13 @@ class WaitlistService:
             if enrollment.payment_verified:
                 enrollment.payment_verified_at = datetime.utcnow()
                 enrollment.payment_verified_by = admin_id
+                # Generate a unique verification hash for public QR code verification
+                if not enrollment.payment_verification_hash:
+                    student = User.query.get(enrollment.student_id)
+                    student_name = student.full_name or f"student_{enrollment.student_id}" if student else f"student_{enrollment.student_id}"
+                    receipt = f"RCP-{datetime.utcnow().strftime('%Y%m%d')}-{enrollment.id}"
+                    hash_raw = f"{enrollment.id}-{student_name}-{receipt}"
+                    enrollment.payment_verification_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
                 # Activate enrollment if it was pending payment
                 if enrollment.status == 'pending_payment':
                     enrollment.status = 'active'

@@ -18,9 +18,14 @@ except FileNotFoundError:
 
 
 def _logo_img_tag(size=48):
-    """Return an <img> tag for the Afritech Bridge logo, or empty string if not available."""
-    if _LOGO_BASE64:
-        return f'''<img src="data:image/jpeg;base64,{_LOGO_BASE64}" alt="Afritech Bridge" style="display:block;width:{size}px;height:{size}px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.3);box-shadow:0 2px 12px rgba(0,0,0,0.15);" />'''
+    """Return an <img> tag for the Afritech Bridge logo, or empty string if not available.
+    
+    Prefers URL-based image (hosted on backend) over base64 data URI because
+    most email clients block base64-encoded images for security reasons.
+    """
+    logo_url = get_email_logo_url()
+    if logo_url:
+        return f'''<img src="{logo_url}" alt="Afritech Bridge" style="display:block;width:{size}px;height:{size}px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,0.3);box-shadow:0 2px 12px rgba(0,0,0,0.15);" />'''
     return ""
 
 
@@ -30,6 +35,21 @@ def _frontend_url(path=""):
     if path:
         return f"{base}/{path.lstrip('/')}"
     return base
+
+
+def get_email_logo_url():
+    """Return the public URL for the institution logo image.
+    Uses BACKEND_URL to construct a URL that email clients can fetch.
+    Falls back to base64 data URI if BACKEND_URL is not configured.
+    """
+    backend_base = os.environ.get('BACKEND_URL', '').rstrip('/')
+    if backend_base:
+        return f"{backend_base}/api/v1/logo"
+    # Fall back to data URI
+    if _LOGO_BASE64:
+        return f"data:image/jpeg;base64,{_LOGO_BASE64}"
+    return None
+
 
 def get_email_header():
     """Modern email header with gradient and branding (includes logo when available)"""

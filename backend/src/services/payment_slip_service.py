@@ -8,15 +8,23 @@ Can be rendered in browser or printed as PDF for student records.
 from datetime import datetime
 from weasyprint import HTML
 import base64
+import hashlib
+import io
 import os
+import qrcode
 
 
-# ── Embedded logo (base64) ──────────────────────────────────────────────────
+# ── Embedded logo (base64 + URL) ─────────────────────────────────────────────
 _logo_path = os.path.join(os.path.dirname(__file__), "..", "..", "static", "images", "logo.jpg")
 LOGO_BASE64 = ""
+LOGO_URL = ""
 try:
     with open(_logo_path, "rb") as f:
         LOGO_BASE64 = base64.b64encode(f.read()).decode("utf-8")
+    # Try to get backend URL for the logo (preferred over base64 for reliability)
+    _backend_url = os.environ.get('BACKEND_URL', '').rstrip('/')
+    if _backend_url:
+        LOGO_URL = f"{_backend_url}/api/v1/logo"
 except FileNotFoundError:
     pass  # fall back to text-only header if logo file is missing
 
@@ -58,6 +66,7 @@ def generate_payment_slip_html(
     enrollment_id=None,
     application_id=None,
     receipt_number=None,
+    verification_hash=None,
     admin_name=None,
     institution_name="Afritech Bridge LMS",
     institution_address="Kigali, Rwanda",
@@ -120,12 +129,64 @@ def generate_payment_slip_html(
     cohort_start_fmt = _format_date(cohort_start_date)
     cohort_end_fmt = _format_date(cohort_end_date)
 
-    # Build the logo image tag
+    # Build the logo image tag (prefer URL over base64 for better cross-client compatibility)
     logo_img = ""
-    if LOGO_BASE64:
+    if LOGO_URL:
+        logo_img = f'<img src="{LOGO_URL}" alt="{institution_name}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,0.25);box-shadow:0 2px 12px rgba(0,0,0,0.15);" />'
+    elif LOGO_BASE64:
         logo_img = f'<img src="data:image/jpeg;base64,{LOGO_BASE64}" alt="{institution_name}" style="width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid rgba(255,255,255,0.25);box-shadow:0 2px 12px rgba(0,0,0,0.15);" />'
     else:
         logo_img = '<span style="font-size:32px;line-height:52px;">✦</span>'
+
+    # ── Generate QR Code for payment verification ──────────────────────────
+    qr_code_html = ""
+    qr_verification_url = ""
+    try:
+        # Use the stored verification hash if provided (from Enrollment.payment_verification_hash)
+        # This ensures the QR code hash matches what's stored in the database.
+        # Fall back to computing a deterministic hash if none is stored yet.
+        verif_hash = verification_hash
+        if not verif_hash:
+            hash_raw = f"{enrollment_id}-{student_name}-{receipt_number}"
+            verif_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
+        
+        # Use FRONTEND_URL for the public verification page (the QR code links here)
+        frontend_base = os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')
+        if frontend_base and verif_hash:
+            qr_verification_url = f"{frontend_base}/verify-payment/{verif_hash}"
+        
+        if qr_verification_url:
+            # Generate QR code image
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,
+                box_size=10,
+                border=2,
+            )
+            qr.add_data(qr_verification_url)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="#1e293b", back_color="white")
+            
+            # Convert to base64 PNG
+            qr_buffer = io.BytesIO()
+            qr_img.save(qr_buffer, format="PNG")
+            qr_buffer.seek(0)
+            qr_b64 = base64.b64encode(qr_buffer.read()).decode("utf-8")
+            
+            qr_code_html = f'''
+            <div style="text-align: center; margin: 20px 0 10px 0;">
+                <div style="display: inline-block; background: #ffffff; border: 2px solid #e2e8f0; border-radius: 16px; padding: 20px 24px; box-shadow: 0 4px 15px rgba(0,0,0,0.06);">
+                    <div style="margin-bottom: 10px;">
+                        <img src="data:image/png;base64,{qr_b64}" alt="Payment Verification QR Code" style="width:140px;height:140px;" />
+                    </div>
+                    <p style="margin: 6px 0 0 0; font-size: 12px; color: #64748b; font-weight: 600; letter-spacing: 0.3px;">📱 Scan to Verify Payment</p>
+                    <p style="margin: 2px 0 0 0; font-size: 10px; color: #94a3b8;">or visit: <span style="color: #14b8a6; word-break: break-all; font-family: monospace; font-size: 9px;">{qr_verification_url[:60]}...</span></p>
+                </div>
+            </div>'''
+    except Exception as qr_err:
+        logger = __import__('logging').getLogger(__name__)
+        logger.warning(f"Could not generate QR code for payment slip: {qr_err}")
+        qr_code_html = ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -740,6 +801,9 @@ def generate_payment_slip_html(
                     <p>This is a computer-generated receipt and does not require a physical signature.</p>
                 </div>
             </div>
+
+            <!-- QR Code for Payment Verification -->
+            {qr_code_html}
         </div>
 
         <!-- FOOTER -->
@@ -781,6 +845,7 @@ def generate_payment_slip_pdf(
     enrollment_id=None,
     application_id=None,
     receipt_number=None,
+    verification_hash=None,
     admin_name=None,
     institution_name="Afritech Bridge LMS",
     institution_address="Kigali, Rwanda",
@@ -812,6 +877,7 @@ def generate_payment_slip_pdf(
         enrollment_id=enrollment_id,
         application_id=application_id,
         receipt_number=receipt_number,
+        verification_hash=verification_hash,
         admin_name=admin_name,
         institution_name=institution_name,
         institution_address=institution_address,

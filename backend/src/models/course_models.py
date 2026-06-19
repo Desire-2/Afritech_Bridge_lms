@@ -915,6 +915,7 @@ class Enrollment(db.Model):
     payment_currency = db.Column(db.String(10), nullable=True)  # Currency of the actual payment
     payment_slip_url = db.Column(db.Text, nullable=True)  # Base64 data URL or path to uploaded payment slip/screenshot
     payment_slip_filename = db.Column(db.String(255), nullable=True)  # Original filename of payment slip
+    payment_verification_hash = db.Column(db.String(64), nullable=True, index=True)  # Unique hash for public payment verification QR code
 
     # ── Notification tracking ──
     cohort_start_notified = db.Column(db.Boolean, default=False, nullable=False)  # True after cohort-start email is sent
@@ -1011,6 +1012,7 @@ class Enrollment(db.Model):
             'payment_status': self.payment_status,
             'payment_verified': self.payment_verified,
             'payment_verified_at': self.payment_verified_at.isoformat() if self.payment_verified_at else None,
+            'payment_verification_hash': self.payment_verification_hash,
             'migrated_from_window_id': self.migrated_from_window_id,
         }
 

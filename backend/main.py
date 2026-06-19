@@ -70,6 +70,7 @@ from src.routes.notification_routes import notification_bp # Import notification
 from src.routes.waitlist_routes import waitlist_bp # Import waitlist management routes
 from src.routes.excel_grading_routes import excel_grading_bp # Import Excel AI grading routes
 from src.routes.email_routes import email_bp # Import email preference/unsubscribe routes
+from src.routes.payment_verification_routes import payment_verify_bp # Import payment verification routes
 from src.blueprints.internships.routes import internships_bp # Import internship application blueprint
 from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance middleware
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
@@ -256,6 +257,22 @@ app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER', 'noreply@af
 # Frontend URL for email links
 app.config['FRONTEND_URL'] = os.getenv('FRONTEND_URL', 'http://localhost:3000')
 
+# Backend URL for email images (used for logo in emails)
+app.config['BACKEND_URL'] = os.getenv('BACKEND_URL', os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:5000'))
+
+# =====================
+# LOGO SERVING ENDPOINT
+# =====================
+
+@app.route('/api/v1/logo')
+def serve_logo():
+    """Serve the institution logo image for use in email headers."""
+    logo_path = os.path.join(app.static_folder or '', 'images', 'logo.jpg')
+    if os.path.exists(logo_path):
+        return send_from_directory(os.path.dirname(logo_path), 'logo.jpg')
+    return jsonify({"error": "Logo not found"}), 404
+
+
 # Admin email for notifications
 app.config['ADMIN_EMAIL'] = os.getenv('ADMIN_EMAIL')
 app.config['ENABLE_SCHEDULERS'] = os.getenv(
@@ -339,6 +356,7 @@ app.register_blueprint(notification_bp) # Register notification routes
 app.register_blueprint(waitlist_bp) # Register waitlist management routes
 app.register_blueprint(excel_grading_bp) # Register Excel AI grading routes
 app.register_blueprint(email_bp) # Register email preference/unsubscribe routes
+app.register_blueprint(payment_verify_bp) # Register payment verification routes
 app.register_blueprint(internships_bp) # Register internship application blueprint
 app.register_blueprint(instructor_settings_bp) # Register instructor settings blueprint
 

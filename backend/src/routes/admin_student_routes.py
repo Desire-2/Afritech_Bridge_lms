@@ -18,6 +18,7 @@ from ..models.student_models import (
 )
 from ..services.certificate_service import CertificateService
 from ..utils.payment_notifications import send_enrollment_payment_notification
+import hashlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -613,6 +614,13 @@ def update_enrollment(student_id, enrollment_id):
             if enrollment.payment_verified and not enrollment.payment_verified_at:
                 enrollment.payment_verified_at = datetime.utcnow()
                 enrollment.payment_verified_by = current_user_id
+                # Generate a unique verification hash for public QR code verification
+                if not enrollment.payment_verification_hash:
+                    student = enrollment.student
+                    student_name = student.full_name or f"student_{enrollment.student_id}" if student else f"student_{enrollment.student_id}"
+                    receipt = f"RCP-{datetime.utcnow().strftime('%Y%m%d')}-{enrollment.id}"
+                    hash_raw = f"{enrollment.id}-{student_name}-{receipt}"
+                    enrollment.payment_verification_hash = hashlib.sha256(hash_raw.encode()).hexdigest()[:16]
         else:
             return jsonify({
                 "error": "Invalid action",
