@@ -1060,7 +1060,7 @@ export default function AdminApplicationsManager() {
       <div className="space-y-6">
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <GraduationCap className="w-6 h-6 text-blue-600" />
+            <GraduationCap className="w-6 h-6 text-brand-accent" />
             Select a Course
           </h2>
           <p className="text-gray-500 mt-1">Choose a course to view and manage its applications by cohort.</p>
@@ -1073,11 +1073,11 @@ export default function AdminApplicationsManager() {
               <button
                 key={course.id}
                 onClick={() => handleCourseSelect(course.id.toString())}
-                className="text-left p-5 rounded-xl border-2 border-gray-200 bg-white hover:border-blue-400 hover:shadow-lg transition-all group"
+                className="text-left p-5 rounded-xl border-2 border-gray-200 bg-white hover:border-brand-accent hover:shadow-lg transition-all group"
               >
                 <div className="flex items-start justify-between mb-3">
-                  <GraduationCap className="w-8 h-8 text-blue-500 group-hover:text-blue-600" />
-                  <span className="text-2xl font-bold text-blue-600">{course.applications_count}</span>
+                  <GraduationCap className="w-8 h-8 text-brand-accent group-hover:text-brand-accent/80" />
+                  <span className="text-2xl font-bold text-brand-accent">{course.applications_count}</span>
                 </div>
                 <h3 className="font-semibold text-gray-900 text-base mb-1 line-clamp-2">{course.title}</h3>
                 <div className="flex items-center gap-2 mt-3 text-xs text-gray-500">
@@ -1114,43 +1114,43 @@ export default function AdminApplicationsManager() {
             ← Back to courses
           </Button>
           <div className="h-5 w-px bg-gray-300" />
-          <GraduationCap className="w-5 h-5 text-blue-600" />
+          <GraduationCap className="w-5 h-5 text-brand-accent" />
           <span className="font-semibold text-gray-900">{selectedCourse?.title}</span>
-          <Badge variant="outline" className="text-blue-700 border-blue-200">{selectedCourse?.applications_count} apps</Badge>
+          <Badge variant="outline" className="text-brand-accent border-brand/20">{selectedCourse?.applications_count} apps</Badge>
         </div>
       )}
 
       {/* Background Task Progress Indicator */}
       {taskInProgress && (
-        <Card className="border-blue-500 bg-blue-50">
+        <Card className="border-brand-accent/30 bg-brand/5">
           <CardContent className="pt-6">
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <RefreshCw className="w-5 h-5 text-blue-600 animate-spin" />
+                  <RefreshCw className="w-5 h-5 text-brand-accent animate-spin" />
                   <div>
-                    <h3 className="font-semibold text-blue-900">
+                    <h3 className="font-semibold text-brand">
                       Processing Bulk {bulkAction?.toUpperCase()}...
                     </h3>
-                    <p className="text-sm text-blue-700">
+                    <p className="text-sm text-brand-accent">
                       {taskProgress.processed} of {taskProgress.total} applications processed
                     </p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-2xl font-bold text-blue-900">
+                  <p className="text-2xl font-bold text-brand">
                     {taskProgress.total > 0 
                       ? Math.round((taskProgress.processed / taskProgress.total) * 100)
                       : 0}%
                   </p>
-                  <p className="text-xs text-blue-600">Complete</p>
+                  <p className="text-xs text-brand-accent">Complete</p>
                 </div>
               </div>
               
               {/* Progress Bar */}
-              <div className="w-full bg-blue-200 rounded-full h-3 overflow-hidden">
+              <div className="w-full bg-brand/10 rounded-full h-3 overflow-hidden">
                 <div 
-                  className="bg-blue-600 h-full rounded-full transition-all duration-500 ease-out"
+                  className="bg-brand-accent h-full rounded-full transition-all duration-500 ease-out"
                   style={{ 
                     width: `${taskProgress.total > 0 
                       ? (taskProgress.processed / taskProgress.total) * 100 
@@ -1159,9 +1159,9 @@ export default function AdminApplicationsManager() {
                 />
               </div>
               
-              <Alert className="border-blue-300 bg-white">
-                <AlertCircle className="h-4 w-4 text-blue-600" />
-                <AlertDescription className="text-blue-800">
+              <Alert className="border-brand/20 bg-white">
+                <AlertCircle className="h-4 w-4 text-brand-accent" />
+                <AlertDescription className="text-brand">
                   Please wait while we process your bulk action. This may take a few moments.
                   You can continue working on other tasks, and we'll notify you when it's complete.
                 </AlertDescription>
@@ -1181,7 +1181,7 @@ export default function AdminApplicationsManager() {
                   <p className="text-sm text-gray-600">Total Applications</p>
                   <p className="text-3xl font-bold">{statistics.total_applications}</p>
                 </div>
-                <Users className="w-10 h-10 text-blue-500" />
+                <Users className="w-10 h-10 text-brand-accent" />
               </div>
             </CardContent>
           </Card>
@@ -1221,7 +1221,7 @@ export default function AdminApplicationsManager() {
                       : 'N/A'}
                   </p>
                 </div>
-                <TrendingUp className="w-10 h-10 text-blue-500" />
+                <TrendingUp className="w-10 h-10 text-brand-accent" />
               </div>
             </CardContent>
           </Card>
@@ -1307,16 +1307,15 @@ export default function AdminApplicationsManager() {
           )}
         </CardHeader>
         <CardContent>
-          {/* Cohort Switcher */}
-          <div className="mb-6 rounded-lg border border-blue-100 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
+          {/* Cohort Switcher */}            <div className="mb-6 rounded-lg border border-brand/10 bg-gradient-to-r from-brand/5 to-brand-accent/5 p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Layers className="w-5 h-5 text-blue-600" />
-                <span className="text-base font-semibold text-blue-900">
+                <Layers className="w-5 h-5 text-brand-accent" />
+                <span className="text-base font-semibold text-brand">
                   Cohorts{selectedCourse ? ` — ${selectedCourse.title}` : ''}
                 </span>
                 {selectedCohort && (
-                  <Badge variant="outline" className="ml-2 text-blue-700 border-blue-300">
+                  <Badge variant="outline" className="ml-2 text-brand-accent border-brand/20">
                     {selectedCohort.label}
                   </Badge>
                 )}
@@ -1325,7 +1324,7 @@ export default function AdminApplicationsManager() {
                 variant="ghost"
                 size="sm"
                 onClick={() => handleCohortSelect('all')}
-                className={selectedCohortId === 'all' ? 'bg-blue-100' : ''}
+                className={selectedCohortId === 'all' ? 'bg-brand/10' : ''}
               >
                 All ({displayedCohorts.reduce((s, c) => s + (c.applicationsCount || 0), 0)})
               </Button>
@@ -1341,8 +1340,8 @@ export default function AdminApplicationsManager() {
                     onClick={() => handleCohortSelect(cohort.id)}
                     className={`text-left p-3 rounded-lg border transition-all ${
                       selectedCohortId === cohort.id
-                        ? 'border-blue-500 bg-blue-600 text-white shadow-md'
-                        : 'border-gray-200 bg-white hover:border-blue-300 hover:shadow-sm'
+                        ? 'border-brand-accent bg-brand text-white shadow-md'
+                        : 'border-gray-200 bg-white hover:border-brand-accent/50 hover:shadow-sm'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
@@ -1362,15 +1361,13 @@ export default function AdminApplicationsManager() {
                       </Badge>
                     </div>
                     {cohort.courseTitle && courses.length > 1 && (
-                      <p className={`text-xs truncate mb-1 ${
-                        selectedCohortId === cohort.id ? 'text-blue-100' : 'text-gray-500'
+                      <p className={`text-xs truncate mb-1 ${                          selectedCohortId === cohort.id ? 'text-white/70' : 'text-gray-500'
                       }`}>
                         {cohort.courseTitle}
                       </p>
                     )}
                     <div className="flex items-center justify-between">
-                      <span className={`text-xs ${
-                        selectedCohortId === cohort.id ? 'text-blue-100' : 'text-gray-500'
+                      <span className={`text-xs ${                          selectedCohortId === cohort.id ? 'text-white/70' : 'text-gray-500'
                       }`}>
                         {cohort.opensAt && (
                           <>
@@ -1380,7 +1377,7 @@ export default function AdminApplicationsManager() {
                         )}
                       </span>
                       <span className={`text-sm font-bold ${
-                        selectedCohortId === cohort.id ? 'text-white' : 'text-blue-600'
+                        selectedCohortId === cohort.id ? 'text-white' : 'text-brand-accent'
                       }`}>
                         {cohort.applicationsCount ?? 0} <span className="text-xs font-normal">apps</span>
                       </span>
@@ -1471,11 +1468,11 @@ export default function AdminApplicationsManager() {
 
           {/* Bulk Actions Bar */}
           {selectedApplicationIds.length > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+            <div className="bg-brand/5 border border-brand/20 rounded-lg p-4 mb-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-blue-600" />
-                  <span className="font-medium text-blue-900">
+                  <CheckCircle className="w-5 h-5 text-brand-accent" />
+                  <span className="font-medium text-brand">
                     {selectedApplicationIds.length} application(s) selected
                   </span>
                 </div>
@@ -1504,7 +1501,7 @@ export default function AdminApplicationsManager() {
                       variant="outline"
                       onClick={() => handleBulkMigrateWaitlist(parseInt(selectedCourseId))}
                       disabled={actionLoading}
-                      className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                      className="border-brand/20 text-brand-accent hover:bg-brand/5"
                     >
                       <ArrowRightLeft className="w-4 h-4 mr-1" />
                       Migrate Waitlist
@@ -1578,7 +1575,7 @@ export default function AdminApplicationsManager() {
                         <h3 className="font-semibold text-lg">{application.full_name}</h3>
                         {getStatusBadge(application.status)}
                         {application.cohort_label && (
-                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs">
+                          <Badge variant="outline" className="bg-brand-accent/10 text-brand-accent border-brand-accent/20 text-xs">
                             {application.cohort_label}
                           </Badge>
                         )}
@@ -1731,7 +1728,7 @@ export default function AdminApplicationsManager() {
                 <DialogTitle className="flex items-center gap-2">
                   Application Details
                   {selectedApplication.cohort_label && (
-                    <Badge variant="outline" className="text-sm bg-indigo-50 text-indigo-700 border-indigo-200">
+                    <Badge variant="outline" className="text-sm bg-brand-accent/10 text-brand-accent border-brand-accent/20">
                       {selectedApplication.cohort_label}
                     </Badge>
                   )}
@@ -1956,11 +1953,11 @@ export default function AdminApplicationsManager() {
                       <Button
                         onClick={() => handleOpenMigrateModal(selectedApplication)}
                         disabled={actionLoading}
-                        className="w-full bg-blue-600 hover:bg-blue-700"
-                      >
-                        <ArrowRightLeft className="w-4 h-4 mr-2" />
-                        Migrate to Next Cohort
-                      </Button>
+                className="w-full bg-brand-accent hover:bg-brand-accent/90"
+              >
+                <ArrowRightLeft className="w-4 h-4 mr-2" />
+                Migrate to Next Cohort
+              </Button>
                       
                       <Button
                         onClick={() => handlePromoteFromWaitlist(selectedApplication.id)}
@@ -2214,7 +2211,7 @@ export default function AdminApplicationsManager() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <ArrowRightLeft className="w-5 h-5 text-blue-600" />
+              <ArrowRightLeft className="w-5 h-5 text-brand-accent" />
               Migrate to Next Cohort
             </DialogTitle>
             <DialogDescription>
@@ -2236,11 +2233,11 @@ export default function AdminApplicationsManager() {
                 <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Detecting next cohort...
               </div>
             ) : nextCohortInfo ? (
-              <div className="p-4 rounded-lg border bg-blue-50 border-blue-200 space-y-2">
-                <p className="text-sm font-semibold text-blue-800">
+              <div className="p-4 rounded-lg border bg-brand/5 border-brand/20 space-y-2">
+                <p className="text-sm font-semibold text-brand">
                   Target: {nextCohortInfo.cohort_label || `Window #${nextCohortInfo.window_id}`}
                 </p>
-                <div className="grid grid-cols-2 gap-2 text-xs text-blue-700">
+                <div className="grid grid-cols-2 gap-2 text-xs text-brand-accent">
                   <span>Status: <strong>{nextCohortInfo.status}</strong></span>
                   <span>Enrolled: <strong>{nextCohortInfo.enrollment_count}{nextCohortInfo.max_students ? `/${nextCohortInfo.max_students}` : ''}</strong></span>
                   {nextCohortInfo.cohort_start && (
@@ -2419,9 +2416,9 @@ export default function AdminApplicationsManager() {
             )}
             
             {/* Current filters info */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 sm:p-3">
-              <h4 className="font-medium text-blue-900 mb-2 text-sm sm:text-base">Email Recipients & Strategy:</h4>
-              <div className="text-xs sm:text-sm text-blue-700 space-y-1">
+            <div className="bg-brand/5 border border-brand/20 rounded-lg p-2 sm:p-3">
+              <h4 className="font-medium text-brand mb-2 text-sm sm:text-base">Email Recipients & Strategy:</h4>
+              <div className="text-xs sm:text-sm text-brand-accent space-y-1">
                 <div>• Course Filter: {filters.course_id 
                   ? courses.find(c => c.id.toString() === filters.course_id)?.title || `Course ID: ${filters.course_id}`
                   : 'All Courses'}</div>
@@ -2430,10 +2427,10 @@ export default function AdminApplicationsManager() {
               </div>
               {applications.length > 0 && (
                 <div className="mt-2">
-                  <div className="text-xs sm:text-sm font-medium text-blue-900">
+                  <div className="text-xs sm:text-sm font-medium text-brand">
                     Total Recipients: {applications.length} applicant(s)
                   </div>
-                  <div className="text-xs text-blue-600 mt-1">
+                  <div className="text-xs text-brand-accent mt-1">
                     {applications.length <= 10 
                       ? `All ${applications.length} recipients will receive individual personalized emails`
                       : `First 10 will receive individual personalized emails, remaining ${applications.length - 10} will receive a single BCC email`

@@ -266,7 +266,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                   <p className="text-xs text-gray-500 uppercase tracking-wide">Total Saved</p>
                   <p className="text-2xl font-bold mt-1">{statistics.total_drafts}</p>
                 </div>
-                <FileText className="w-8 h-8 text-amber-500 opacity-80" />
+                <FileText className="w-8 h-8 text-brand-accent opacity-80" />
               </div>
             </CardContent>
           </Card>
@@ -314,7 +314,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-amber-500" />
+                <FileText className="w-5 h-5 text-brand-accent" />
                 Saved Applications (Drafts)
               </CardTitle>
               <CardDescription>
@@ -324,7 +324,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
             {statistics && statistics.age_breakdown.stale_30d_plus > 0 && (
               <Button
                 variant="outline"
-                className="bg-red-50 hover:bg-red-100 border-red-200 text-red-700"
+                className="bg-brand/5 hover:bg-brand/10 border-brand/20 text-brand-accent"
                 onClick={() => setBulkRemindConfirmOpen(true)}
                 disabled={bulkRemindLoading}
               >
@@ -400,19 +400,19 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
               {drafts.map((draft) => (
                 <div
                   key={draft.id}
-                  className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-amber-50/30 border-amber-200"
+                  className="border rounded-lg p-4 hover:shadow-md transition-shadow bg-brand/5 border-brand/20 hover:border-brand/30"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <h3 className="font-semibold text-base">{draft.full_name}</h3>
-                        <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                        <Badge variant="outline" className="bg-brand/10 text-brand border-brand/20">
                           Draft
                         </Badge>
                         {getPaymentBadge(draft.payment_status)}
                         {getAgeBadge(draft.updated_at)}
                         {draft.cohort_label && (
-                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs">
+                          <Badge variant="outline" className="bg-brand-accent/10 text-brand-accent border-brand-accent/20 text-xs">
                             {draft.cohort_label}
                           </Badge>
                         )}
@@ -443,7 +443,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                       )}
 
                       {draft.payment_reminder_count != null && draft.payment_reminder_count > 0 && (
-                        <p className="text-xs text-amber-600 mt-1">
+                        <p className="text-xs text-brand-accent mt-1">
                           📧 {draft.payment_reminder_count} reminder(s) sent
                         </p>
                       )}
@@ -464,7 +464,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700"
+                        className="bg-brand/5 hover:bg-brand/10 border-brand/20 text-brand-accent"
                         onClick={() => {
                           setSelectedDraft(draft);
                           setRemindModalOpen(true);
@@ -523,7 +523,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   Draft Application Details
-                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">Draft</Badge>
+                  <Badge variant="outline" className="bg-brand/10 text-brand border-brand/20">Draft</Badge>
                 </DialogTitle>
                 <DialogDescription>
                   {selectedDraft.full_name} — {selectedDraft.email}
@@ -609,7 +609,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Send className="w-5 h-5 text-amber-500" />
+              <Send className="w-5 h-5 text-brand-accent" />
               Send Payment Reminder
             </DialogTitle>
             <DialogDescription>
@@ -625,9 +625,9 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
               </Alert>
             )}
 
-            <Alert className="bg-amber-50 border-amber-200">
-              <AlertCircle className="h-4 w-4 text-amber-600" />
-              <AlertDescription className="text-amber-800">
+            <Alert className="bg-brand/5 border-brand/20">
+              <AlertCircle className="h-4 w-4 text-brand-accent" />
+              <AlertDescription className="text-brand">
                 This will send a payment reminder email to the applicant. They saved their application but haven&apos;t completed payment yet.
               </AlertDescription>
             </Alert>
@@ -647,7 +647,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
               <Button variant="outline" onClick={() => { setRemindModalOpen(false); setRemindMessage(''); setActionError(null); }} disabled={remindLoading}>
                 Cancel
               </Button>
-              <Button onClick={handleRemind} disabled={remindLoading} className="bg-amber-500 hover:bg-amber-600 text-white">
+              <Button onClick={handleRemind} disabled={remindLoading} className="bg-brand-accent hover:bg-brand-accent/90 text-white">
                 {remindLoading ? 'Sending...' : 'Send Reminder'}
               </Button>
             </div>
@@ -722,9 +722,9 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
           </DialogHeader>
 
           <div className="space-y-4">
-            <Alert className="bg-amber-50 border-amber-200">
-              <AlertCircle className="h-4 w-4 text-amber-600" />
-              <AlertDescription className="text-amber-800">
+            <Alert className="bg-brand/5 border-brand/20">
+              <AlertCircle className="h-4 w-4 text-brand-accent" />
+              <AlertDescription className="text-brand">
                 <strong>{statistics?.age_breakdown.stale_30d_plus || 0}</strong> draft applicant(s) haven&apos;t updated their application in 3+ days.
                 Each will receive a payment reminder email.
               </AlertDescription>
