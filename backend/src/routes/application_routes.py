@@ -802,9 +802,23 @@ def list_draft_applications():
         except (ValueError, TypeError):
             pass
 
-    # Payment status filter
+    # Payment status filter — when not explicitly set, exclude paid drafts
+    # (completed/confirmed payment means the student has already paid, so
+    #  they should not appear in the "awaiting payment" draft list.)
     if payment_status_filter:
         query = query.filter_by(payment_status=payment_status_filter)
+    else:
+        # By default, hide drafts that have already been paid for,
+        # but INCLUDE drafts with NULL payment_status (free courses,
+        # or drafts saved before any payment method was selected).
+        # In SQL: NULL NOT IN ('completed','confirmed') → NULL (falsy),
+        # so we must explicitly include NULL rows.
+        query = query.filter(
+            or_(
+                CourseApplication.payment_status.is_(None),
+                ~CourseApplication.payment_status.in_(['completed', 'confirmed'])
+            )
+        )
 
     # Text search
     if search_term:
@@ -828,12 +842,31 @@ def list_draft_applications():
     for app in pagination.items:
         try:
             record = app.to_dict(include_sensitive=True)
-            # Enrich with course info
+            # Enrich with course & cohort payment details
             course = app.course
             if course:
                 record['course_title'] = course.title
                 record['course_price'] = course.price
                 record['course_currency'] = course.currency or 'USD'
+
+                # Use cohort-level effective price when available
+                window = None
+                if app.application_window_id:
+                    window = ApplicationWindow.query.get(app.application_window_id)
+
+                if window:
+                    record['cohort_effective_price'] = window.get_effective_price()
+                    record['cohort_label'] = window.cohort_label
+                    record['cohort_scholarship_type'] = window.scholarship_type
+                    record['cohort_scholarship_percentage'] = window.scholarship_percentage
+                    record['cohort_enrollment_type'] = window.get_effective_enrollment_type()
+                    # Override course_price with the effective (scholarship-aware) price
+                    effective = window.get_effective_price()
+                    if effective is not None:
+                        record['course_price'] = effective
+                        record['course_currency'] = window.get_effective_currency() or course.currency or 'USD'
+                else:
+                    record['cohort_effective_price'] = None
             drafts_data.append(record)
         except Exception as e:
             logger.warning(f"Error converting draft {app.id} to dict: {e}")
