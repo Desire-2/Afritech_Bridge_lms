@@ -489,6 +489,10 @@ export interface CourseApplication {
   payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe';
   payment_status?: 'pending' | 'pending_bank_transfer' | 'completed' | 'confirmed' | 'failed';
   payment_reference?: string;
+  // Payment amount & currency
+  amount_paid?: number;
+  payment_currency?: string;
+  payment_reminder_count?: number;
   admin_notes?: string;
   rejection_reason?: string;
   application_score?: number;
@@ -499,11 +503,22 @@ export interface CourseApplication {
   submission_date: string;
   reviewed_date?: string;
   reviewed_by?: number;
+  // Cohort-level payment details (effective/scholarship-adjusted)
+  cohort_label?: string;
+  cohort_effective_price?: number;
+  cohort_scholarship_type?: 'full' | 'partial' | null;
+  cohort_scholarship_percentage?: number;
+  cohort_enrollment_type?: 'free' | 'paid' | 'scholarship';
+  cohort_original_price?: number;
+  course_title?: string;
+  course_price?: number;
+  course_currency?: string;
   // Migration tracking
   original_window_id?: number;
   migrated_to_window_id?: number;
   migrated_at?: string;
   migration_notes?: string;
+  application_window_id?: number;
 }
 
 export interface ApplicationSubmitData {

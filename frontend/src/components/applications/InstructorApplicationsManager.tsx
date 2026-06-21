@@ -769,6 +769,59 @@ export default function InstructorApplicationsManager() {
                         </div>
                       </div>
 
+                      {/* Payment Info Row */}
+                      {(app.amount_paid != null || app.cohort_effective_price != null || app.payment_status) && (
+                        <div className="flex flex-wrap items-center gap-2 mb-2 text-xs">
+                          {/* Payment amount */}
+                          {app.cohort_effective_price != null && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 font-medium">
+                              💳 {app.course_currency || 'USD'} {app.cohort_effective_price.toLocaleString()}
+                            </span>
+                          )}
+                          {/* Scholarship badge */}
+                          {app.cohort_scholarship_type === 'full' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-50 border border-green-200 text-green-700 font-medium">
+                              🎓 Full Scholarship
+                            </span>
+                          )}
+                          {app.cohort_scholarship_type === 'partial' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">
+                              🎓 {app.cohort_scholarship_percentage || 0}% Scholarship
+                            </span>
+                          )}
+                          {/* Payment status */}
+                          {app.payment_status && (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${
+                              app.payment_status === 'completed' || app.payment_status === 'confirmed'
+                                ? 'bg-green-50 text-green-700 border border-green-200'
+                                : app.payment_status === 'pending_bank_transfer'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : app.payment_status === 'failed'
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+                            }`}>
+                              {app.payment_status === 'pending_bank_transfer' ? '🏦 Awaiting Transfer' :
+                               app.payment_status === 'completed' ? '✅ Paid' :
+                               app.payment_status === 'confirmed' ? '✅ Confirmed' :
+                               app.payment_status === 'failed' ? '❌ Failed' :
+                               '⏳ ' + app.payment_status}
+                            </span>
+                          )}
+                          {/* Payment method */}
+                          {app.payment_method && (
+                            <span className="text-gray-500">
+                              via {app.payment_method.replace('_', ' ')}
+                            </span>
+                          )}
+                          {/* Original price strikethrough for partial scholarship */}
+                          {app.cohort_scholarship_type === 'partial' && app.cohort_original_price && app.cohort_effective_price && (
+                            <span className="text-gray-400 line-through">
+                              {app.course_currency || 'USD'} {app.cohort_original_price.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       <div className="flex flex-wrap gap-1.5 mb-2">
                         {getScoreBadge(app.final_rank_score ?? app.final_rank, 'Rank')}
                         {getScoreBadge(app.application_score, 'App')}
@@ -880,6 +933,92 @@ export default function InstructorApplicationsManager() {
                       </div>
                     ))}
                   </div>
+
+                  {/* Payment Details Section */}
+                  {(selectedApplication.amount_paid != null || selectedApplication.cohort_effective_price != null || selectedApplication.payment_status) && (
+                    <div className="pt-4 border-t mt-4">
+                      <Label className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-3 block">
+                        💳 Payment Information
+                      </Label>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {/* Effective Price */}
+                        {(selectedApplication.amount_paid != null || selectedApplication.cohort_effective_price != null) && (
+                          <div className="bg-indigo-50 rounded-lg p-3 border border-indigo-200">
+                            <p className="text-xs text-indigo-500 font-semibold uppercase tracking-wide">Amount</p>
+                            <p className="text-lg font-bold text-indigo-700">
+                              {selectedApplication.course_currency || 'USD'}{' '}
+                              {(selectedApplication.cohort_effective_price ?? selectedApplication.amount_paid ?? 0).toLocaleString()}
+                            </p>
+                          </div>
+                        )}
+                        {/* Payment Status */}
+                        {selectedApplication.payment_status && (
+                          <div className="bg-gray-50 rounded-lg p-3 border">
+                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Status</p>
+                            <p className={`text-sm font-bold mt-0.5 ${
+                              selectedApplication.payment_status === 'completed' || selectedApplication.payment_status === 'confirmed'
+                                ? 'text-green-700'
+                                : selectedApplication.payment_status === 'failed'
+                                ? 'text-red-700'
+                                : 'text-yellow-700'
+                            }`}>
+                              {selectedApplication.payment_status.replace('_', ' ')}
+                            </p>
+                          </div>
+                        )}
+                        {/* Payment Method */}
+                        {selectedApplication.payment_method && (
+                          <div className="bg-gray-50 rounded-lg p-3 border">
+                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Method</p>
+                            <p className="text-sm font-bold mt-0.5 capitalize">{selectedApplication.payment_method.replace('_', ' ')}</p>
+                          </div>
+                        )}
+                        {/* Scholarship badge */}
+                        {selectedApplication.cohort_scholarship_type && (
+                          <div className={`rounded-lg p-3 border ${
+                            selectedApplication.cohort_scholarship_type === 'full'
+                              ? 'bg-green-50 border-green-200'
+                              : 'bg-amber-50 border-amber-200'
+                          }`}>
+                            <p className="text-xs font-semibold uppercase tracking-wide ${
+                              selectedApplication.cohort_scholarship_type === 'full'
+                                ? 'text-green-600'
+                                : 'text-amber-600'
+                            }">Scholarship</p>
+                            <p className="text-sm font-bold mt-0.5 ${
+                              selectedApplication.cohort_scholarship_type === 'full'
+                                ? 'text-green-700'
+                                : 'text-amber-700'
+                            }">
+                              {selectedApplication.cohort_scholarship_type === 'full'
+                                ? '🎓 Full Scholarship'
+                                : `🎓 ${selectedApplication.cohort_scholarship_percentage || 0}% Covered`}
+                            </p>
+                          </div>
+                        )}
+                        {/* Cohort info */}
+                        {(selectedApplication.cohort_enrollment_type || selectedApplication.cohort_label) && (
+                          <div className="bg-gray-50 rounded-lg p-3 border">
+                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Cohort</p>
+                            <p className="text-sm font-bold mt-0.5">
+                              {selectedApplication.cohort_label || '—'}
+                              {selectedApplication.cohort_enrollment_type && (
+                                <span className="text-gray-500 font-normal ml-1">
+                                  ({selectedApplication.cohort_enrollment_type})
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        )}
+                        {selectedApplication.payment_reference && (
+                          <div className="bg-gray-50 rounded-lg p-3 border">
+                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wide">Reference</p>
+                            <p className="text-xs font-mono font-bold mt-0.5 truncate">{selectedApplication.payment_reference}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex flex-wrap gap-2 pt-4 border-t">
                     {getScoreBadge(selectedApplication.final_rank_score ?? selectedApplication.final_rank, 'Final Rank')}
