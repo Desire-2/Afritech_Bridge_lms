@@ -322,6 +322,8 @@ const LearningPage = () => {
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
   const unlockingRef = useRef<boolean>(false);
   const notesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const assignmentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastAssignmentStatusRef = useRef<string>('');
 
   // Authentication check effect - must be called after all hooks
   useEffect(() => {
@@ -394,6 +396,8 @@ const LearningPage = () => {
     interactionHistory,
     hasQuiz: !!lessonQuiz,
     hasAssignment: lessonAssignments.length > 0,
+    quizScore: currentLessonQuizScore,  // Pass quiz score for auto-completion
+    assignmentScore: currentLessonAssignmentScore,  // Pass assignment score for auto-completion
     videoProgress,  // Pass video progress to tracking hook
     videoCurrentTime,  // Pass current playback time
     videoDuration,  // Pass total video duration
@@ -575,6 +579,76 @@ const LearningPage = () => {
       setCurrentLessonAssignmentScore(0);
     }
   }, [currentLesson?.id, lessonQuiz, lessonAssignments]);
+
+  // ── Poll for assignment grade updates from backend ──────────────────────
+  // When an instructor grades an assignment, this polling detects the new score
+  // and updates lessonAssignments, which triggers the score recalculation and
+  // auto-completion cascade. Polls every 30s while assignments are ungraded.
+  useEffect(() => {
+    if (!currentLesson?.id || !lessonAssignments.length || isLessonCompleted) return;
+
+    // Build a status key from assignments to detect grade changes across closures
+    const buildStatusKey = (assignments: any[]) =>
+      assignments
+        .map((a: any) => `${a.id}:${a.submission_status?.score ?? 'null'}:${a.submission_status?.status ?? 'null'}`)
+        .join('|');
+
+    // Initialize the ref with current status
+    lastAssignmentStatusRef.current = buildStatusKey(lessonAssignments);
+
+    // Only poll if at least one assignment has been submitted and is awaiting grading
+    const hasUngradedAssignments = lessonAssignments.some(
+      (a: any) =>
+        a.submission_status?.submitted === true &&
+        a.submission_status?.status !== 'graded' &&
+        (a.submission_status?.score === undefined || a.submission_status?.score === null)
+    );
+
+    if (!hasUngradedAssignments) {
+      console.log('📋 All assignments graded, stopping grade poll');
+      return;
+    }
+
+    console.log('📋 Starting assignment grade polling (30s interval)');
+
+    // Clear any existing poll interval before starting a new one
+    if (assignmentPollRef.current) {
+      clearInterval(assignmentPollRef.current);
+    }
+
+    assignmentPollRef.current = setInterval(async () => {
+      try {
+        const response = await ContentAssignmentService.getLessonAssignments(currentLesson.id);
+        const freshAssignments = response.assignments || [];
+
+        // Use ref-based comparison to avoid stale closure issues
+        const newStatusKey = buildStatusKey(freshAssignments);
+        const hasChanged = newStatusKey !== lastAssignmentStatusRef.current;
+
+        if (hasChanged) {
+          lastAssignmentStatusRef.current = newStatusKey;
+          console.log('📋 Assignment grades updated from backend!',
+            freshAssignments.map((a: any) => ({
+              id: a.id,
+              title: a.title,
+              status: a.submission_status?.status,
+              score: a.submission_status?.score
+            }))
+          );
+          setLessonAssignments(freshAssignments);
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to poll assignment grades:', error);
+      }
+    }, 30000);
+
+    return () => {
+      if (assignmentPollRef.current) {
+        clearInterval(assignmentPollRef.current);
+        assignmentPollRef.current = null;
+      }
+    };
+  }, [currentLesson?.id, lessonAssignments.length, isLessonCompleted]);
 
   // Auto-complete lessons without quiz/assignment when criteria are met
   useEffect(() => {

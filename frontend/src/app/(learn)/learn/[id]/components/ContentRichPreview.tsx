@@ -339,6 +339,63 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     console.log('======================================');
   }, [lesson]);
   
+  // ── Font size controls ────────────────────────────────────────────────
+  const [fontSizeLevel, setFontSizeLevel] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('lesson_font_size');
+        if (saved !== null) {
+          const parsed = parseInt(saved, 10);
+          if (parsed >= -1 && parsed <= 1) return parsed;
+        }
+      } catch {}
+    }
+    return 0; // 0 = normal, -1 = small, 1 = large
+  });
+  
+  // Persist font size preference
+  useEffect(() => {
+    try {
+      localStorage.setItem('lesson_font_size', fontSizeLevel.toString());
+    } catch {}
+  }, [fontSizeLevel]);
+
+  // Font size class maps for each level
+  const fontSizeClasses = useMemo(() => ({
+    '-1': {
+      p: 'text-gray-200 leading-relaxed mb-4 text-base sm:text-lg',
+      li: 'text-gray-200 leading-relaxed text-base sm:text-lg marker:text-blue-400',
+      h1: 'text-3xl sm:text-4xl font-bold text-white mb-6 mt-8 border-b border-gray-700 pb-3',
+      h2: 'text-2xl sm:text-3xl font-bold text-white mb-5 mt-7 border-b border-gray-700/50 pb-2',
+      h3: 'text-xl sm:text-2xl font-semibold text-white mb-4 mt-6',
+      h4: 'text-lg sm:text-xl font-semibold text-gray-200 mb-3 mt-5',
+      h5: 'text-base sm:text-lg font-semibold text-gray-300 mb-2 mt-4',
+      h6: 'text-sm sm:text-base font-semibold text-gray-400 mb-2 mt-3',
+    },
+    '0': {
+      p: 'text-gray-200 leading-relaxed mb-5 text-lg sm:text-xl',
+      li: 'text-gray-200 leading-relaxed text-lg sm:text-xl marker:text-blue-400',
+      h1: 'text-4xl sm:text-5xl font-bold text-white mb-6 mt-8 border-b border-gray-700 pb-3',
+      h2: 'text-3xl sm:text-4xl font-bold text-white mb-5 mt-7 border-b border-gray-700/50 pb-2',
+      h3: 'text-2xl sm:text-3xl font-semibold text-white mb-4 mt-6',
+      h4: 'text-xl sm:text-2xl font-semibold text-gray-200 mb-3 mt-5',
+      h5: 'text-lg sm:text-xl font-semibold text-gray-300 mb-2 mt-4',
+      h6: 'text-base sm:text-lg font-semibold text-gray-400 mb-2 mt-3',
+    },
+    '1': {
+      p: 'text-gray-200 leading-relaxed mb-6 text-xl sm:text-2xl',
+      li: 'text-gray-200 leading-relaxed text-xl sm:text-2xl marker:text-blue-400',
+      h1: 'text-5xl sm:text-6xl font-bold text-white mb-6 mt-8 border-b border-gray-700 pb-3',
+      h2: 'text-4xl sm:text-5xl font-bold text-white mb-5 mt-7 border-b border-gray-700/50 pb-2',
+      h3: 'text-3xl sm:text-4xl font-semibold text-white mb-4 mt-6',
+      h4: 'text-2xl sm:text-3xl font-semibold text-gray-200 mb-3 mt-5',
+      h5: 'text-xl sm:text-2xl font-semibold text-gray-300 mb-2 mt-4',
+      h6: 'text-lg sm:text-xl font-semibold text-gray-400 mb-2 mt-3',
+    },
+  } as Record<string, Record<string, string>>), []);
+  
+  const currentFontSizes = fontSizeClasses[String(fontSizeLevel)] || fontSizeClasses['0'];
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [videoProgress, setVideoProgress] = useState(0);
@@ -830,31 +887,32 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   const renderTextContent = (content: string) => {
     // Sanitize content before rendering
     const cleanContent = sanitizeMarkdown(content);
+    const fs = currentFontSizes;
     
     return (
-      <div className="prose prose-invert prose-lg max-w-none">
+      <div className="prose prose-invert max-w-none">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           rehypePlugins={[rehypeRaw, rehypeHighlight]}
           components={{
             // Custom heading styles
             h1: ({ node, ...props }) => (
-              <h1 className="text-3xl sm:text-4xl font-bold text-white mb-6 mt-8 border-b border-gray-700 pb-3" {...props} />
+              <h1 className={fs.h1} {...props} />
             ),
             h2: ({ node, ...props }) => (
-              <h2 className="text-2xl sm:text-3xl font-bold text-white mb-5 mt-7 border-b border-gray-700/50 pb-2" {...props} />
+              <h2 className={fs.h2} {...props} />
             ),
             h3: ({ node, ...props }) => (
-              <h3 className="text-xl sm:text-2xl font-semibold text-white mb-4 mt-6" {...props} />
+              <h3 className={fs.h3} {...props} />
             ),
             h4: ({ node, ...props }) => (
-              <h4 className="text-lg sm:text-xl font-semibold text-gray-200 mb-3 mt-5" {...props} />
+              <h4 className={fs.h4} {...props} />
             ),
             h5: ({ node, ...props }) => (
-              <h5 className="text-base sm:text-lg font-semibold text-gray-300 mb-2 mt-4" {...props} />
+              <h5 className={fs.h5} {...props} />
             ),
             h6: ({ node, ...props }) => (
-              <h6 className="text-sm sm:text-base font-semibold text-gray-400 mb-2 mt-3" {...props} />
+              <h6 className={fs.h6} {...props} />
             ),
             // Paragraphs with improved spacing
             p: ({ node, children, ...props }) => {
@@ -863,7 +921,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
               if (!content || content === '') return null;
               
               return (
-                <p className="text-gray-200 leading-relaxed mb-4 text-base sm:text-lg" {...props}>
+                <p className={fs.p} {...props}>
                   {children}
                 </p>
               );
@@ -878,7 +936,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             li: ({ node, children, ...props }) => {
               // Handle nested lists properly
               return (
-                <li className="text-gray-200 leading-relaxed text-base sm:text-lg marker:text-blue-400" {...props}>
+                <li className={fs.li} {...props}>
                   <span className="inline-block">{children}</span>
                 </li>
               );
@@ -2030,6 +2088,46 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 <span>{lesson.duration_minutes} min</span>
               </Badge>
             )}
+            
+            {/* Font Size Controls */}
+            <div className="flex items-center gap-0.5 border-l border-gray-700/60 pl-2 ml-0.5">
+              <button
+                onClick={() => setFontSizeLevel(-1)}
+                className={`flex items-center justify-center h-7 w-7 rounded text-[11px] font-bold transition-all ${
+                  fontSizeLevel === -1
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
+                }`}
+                title="Smaller text"
+                aria-label="Smaller text size"
+              >
+                A⁻
+              </button>
+              <button
+                onClick={() => setFontSizeLevel(0)}
+                className={`flex items-center justify-center h-7 w-7 rounded text-[13px] font-bold transition-all ${
+                  fontSizeLevel === 0
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
+                }`}
+                title="Normal text"
+                aria-label="Normal text size"
+              >
+                A
+              </button>
+              <button
+                onClick={() => setFontSizeLevel(1)}
+                className={`flex items-center justify-center h-7 w-7 rounded text-[15px] font-bold transition-all ${
+                  fontSizeLevel === 1
+                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
+                }`}
+                title="Larger text"
+                aria-label="Larger text size"
+              >
+                A⁺
+              </button>
+            </div>
           </div>
         </div>
         

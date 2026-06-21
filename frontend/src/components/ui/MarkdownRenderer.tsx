@@ -22,7 +22,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const baseClasses = 'prose dark:prose-invert max-w-none';
   
   const variantClasses = {
-    default: 'prose-lg',
+    default: 'prose-xl',
     compact: 'prose-sm',
     card: 'prose-sm'
   };
@@ -37,7 +37,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           h1: ({ node, className, children, ...props }) => (
             <h1 
               className={cn(
-                "text-2xl font-bold mt-6 mb-4 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2",
+                "text-4xl font-bold mt-6 mb-4 text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2",
                 className
               )} 
               {...props}
@@ -48,7 +48,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           h2: ({ node, className, children, ...props }) => (
             <h2 
               className={cn(
-                "text-xl font-semibold mt-5 mb-3 text-gray-800 dark:text-gray-100",
+                "text-3xl font-semibold mt-5 mb-3 text-gray-800 dark:text-gray-100",
                 className
               )} 
               {...props}
@@ -59,7 +59,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           h3: ({ node, className, children, ...props }) => (
             <h3 
               className={cn(
-                "text-lg font-medium mt-4 mb-2 text-gray-700 dark:text-gray-200",
+                "text-2xl font-medium mt-4 mb-2 text-gray-700 dark:text-gray-200",
                 className
               )} 
               {...props}
@@ -134,7 +134,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             inline ? (
               <code 
                 className={cn(
-                  "px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-sm font-mono text-gray-900 dark:text-gray-100",
+                  "px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-base font-mono text-gray-900 dark:text-gray-100",
                   className
                 )} 
                 {...props}

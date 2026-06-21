@@ -244,7 +244,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               <span className="inline-flex items-center justify-center h-6 w-6 rounded-full bg-blue-500/15 text-blue-400 text-[10px] font-bold ring-1 ring-blue-500/30">
                 {activeStep + 1}
               </span>
-              <h3 className="text-base font-semibold text-white">
+              <h3 className="text-lg font-semibold text-white">
                 {sections[activeStep].heading}
               </h3>
             </div>

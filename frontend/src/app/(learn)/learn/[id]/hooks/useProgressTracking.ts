@@ -10,6 +10,8 @@ interface UseProgressTrackingProps {
   interactionHistory: InteractionEvent[];
   hasQuiz?: boolean;
   hasAssignment?: boolean;
+  quizScore?: number; // Current lesson quiz score (0-100)
+  assignmentScore?: number; // Current lesson assignment score (0-100)
   videoProgress?: number; // Video watch progress (0-100%)
   videoCurrentTime?: number; // Current playback position in seconds
   videoDuration?: number; // Total video duration in seconds
@@ -27,6 +29,8 @@ export const useProgressTracking = ({
   interactionHistory,
   hasQuiz = false,
   hasAssignment = false,
+  quizScore = 0,
+  assignmentScore = 0,
   videoProgress = 0,
   videoCurrentTime = 0,
   videoDuration = 0,
@@ -235,19 +239,20 @@ export const useProgressTracking = ({
     }
 
     // Calculate the actual lesson score based on available components
+    // NOW INCLUDES quiz and assignment scores so auto-completion works for all lesson types
     let actualScore = 0;
     if (!hasQuiz && !hasAssignment) {
       // No assessments: Reading 50%, Engagement 50%
       actualScore = (readingProgress * 0.5) + (engagementScore * 0.5);
     } else if (hasQuiz && !hasAssignment) {
-      // Quiz only: Reading 35%, Engagement 35%, Quiz 30% (quiz not counted yet)
-      actualScore = (readingProgress * 0.35) + (engagementScore * 0.35);
+      // Quiz only: Reading 35%, Engagement 35%, Quiz 30%
+      actualScore = (readingProgress * 0.35) + (engagementScore * 0.35) + (quizScore * 0.30);
     } else if (!hasQuiz && hasAssignment) {
-      // Assignment only: Reading 35%, Engagement 35%, Assignment 30% (assignment not counted yet)
-      actualScore = (readingProgress * 0.35) + (engagementScore * 0.35);
+      // Assignment only: Reading 35%, Engagement 35%, Assignment 30%
+      actualScore = (readingProgress * 0.35) + (engagementScore * 0.35) + (assignmentScore * 0.30);
     } else {
       // Both: Reading 25%, Engagement 25%, Quiz 25%, Assignment 25%
-      actualScore = (readingProgress * 0.25) + (engagementScore * 0.25);
+      actualScore = (readingProgress * 0.25) + (engagementScore * 0.25) + (quizScore * 0.25) + (assignmentScore * 0.25);
     }
 
     // ONLY auto-complete if the calculated lesson score meets the 80% threshold
@@ -259,6 +264,8 @@ export const useProgressTracking = ({
         actualScore: actualScore.toFixed(1),
         readingProgress: readingProgress.toFixed(1),
         engagementScore: engagementScore.toFixed(1),
+        quizScore: quizScore.toFixed(1),
+        assignmentScore: assignmentScore.toFixed(1),
         threshold: COMPLETION_THRESHOLD,
         hasQuiz,
         hasAssignment
@@ -272,7 +279,7 @@ export const useProgressTracking = ({
       remaining: (COMPLETION_THRESHOLD - actualScore).toFixed(1)
     });
     return false;
-  }, [isLessonCompleted, completionInProgress, progressLoaded, readingProgress, engagementScore, hasQuiz, hasAssignment]);
+  }, [isLessonCompleted, completionInProgress, progressLoaded, readingProgress, engagementScore, quizScore, assignmentScore, hasQuiz, hasAssignment]);
 
   // Auto-save progress and check for auto-completion
   // Always saves reading/engagement progress to prevent data loss
