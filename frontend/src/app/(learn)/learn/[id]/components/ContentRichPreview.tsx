@@ -25,6 +25,7 @@ import {
   ZoomOut,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   SkipForward,
   SkipBack,
   Volume2,
@@ -34,6 +35,8 @@ import {
   ArrowRight,
   Clipboard
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
 import { 
   Select,
   SelectContent,
@@ -339,6 +342,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
     console.log('======================================');
   }, [lesson]);
   
+  // ── Collapse/expand state for the content header section ──────────────
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+
   // ── Font size controls ────────────────────────────────────────────────
   const [fontSizeLevel, setFontSizeLevel] = useState<number>(() => {
     if (typeof window !== 'undefined') {
@@ -2061,93 +2067,145 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
         </Alert>
       )}
       
-      {/* Content Header */}
-      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg p-4 sm:p-5 md:p-6 border border-blue-800/50 w-full">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 mb-4">
-          <div className="flex-1 min-w-0">
-            <h3 className="text-lg sm:text-xl font-semibold text-white mb-1 sm:mb-2 break-words leading-snug">
+      {/* Content Header — Collapsible */}
+      <div className="bg-gradient-to-r from-blue-900/30 to-indigo-900/30 rounded-lg border border-blue-800/50 w-full overflow-hidden">
+        {/* Clickable header row — always visible */}
+        <button
+          onClick={() => setHeaderCollapsed(!headerCollapsed)}
+          className="flex w-full items-center justify-between gap-3 px-4 sm:px-5 md:px-6 py-4 text-left transition-colors hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+          aria-expanded={!headerCollapsed}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="flex items-center gap-2">
+              {lesson.content_type === 'text' && <FileText className="h-4 w-4 text-blue-400 shrink-0" />}
+              {lesson.content_type === 'video' && <Video className="h-4 w-4 text-blue-400 shrink-0" />}
+              {lesson.content_type === 'pdf' && <FileText className="h-4 w-4 text-blue-400 shrink-0" />}
+              {lesson.content_type === 'mixed' && <BookOpen className="h-4 w-4 text-blue-400 shrink-0" />}
+            </div>
+            <h3 className="text-base sm:text-lg font-semibold text-white truncate">
               {lesson.title}
             </h3>
-            {lesson.description && (
-              <p className="text-gray-300 text-sm sm:text-base">{lesson.description}</p>
+            <span className={`hidden sm:inline-flex text-[10px] uppercase tracking-wider font-medium px-2 py-0.5 rounded-full ${
+              lesson.content_type === 'video' ? 'bg-red-900/40 text-red-300' :
+              lesson.content_type === 'mixed' ? 'bg-purple-900/40 text-purple-300' :
+              lesson.content_type === 'pdf' ? 'bg-orange-900/40 text-orange-300' :
+              'bg-blue-900/40 text-blue-300'
+            }`}>
+              {lesson.content_type}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {lesson.duration_minutes && !headerCollapsed && (
+              <span className="hidden sm:inline-flex items-center gap-1 text-xs text-gray-400">
+                <Clock className="h-3 w-3" />
+                {lesson.duration_minutes} min
+              </span>
             )}
+            <motion.div
+              animate={{ rotate: headerCollapsed ? 0 : 180 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ChevronDown className="h-4 w-4 text-gray-500" />
+            </motion.div>
           </div>
-          
-          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-shrink-0">
-            <Badge variant="secondary" className="flex items-center gap-1 bg-gray-700 text-gray-200 text-xs sm:text-sm px-2 py-1">
-              {lesson.content_type === 'text' && <FileText className="h-3 w-3 flex-shrink-0" />}
-              {lesson.content_type === 'video' && <Video className="h-3 w-3 flex-shrink-0" />}
-              {lesson.content_type === 'pdf' && <FileText className="h-3 w-3 flex-shrink-0" />}
-              {lesson.content_type === 'mixed' && <BookOpen className="h-3 w-3 flex-shrink-0" />}
-              <span className="capitalize">{lesson.content_type}</span>
-            </Badge>
-            
-            {lesson.duration_minutes && (
-              <Badge variant="outline" className="flex items-center gap-1 border-gray-600 text-gray-300 text-xs sm:text-sm px-2 py-1">
-                <Clock className="h-3 w-3 flex-shrink-0" />
-                <span>{lesson.duration_minutes} min</span>
-              </Badge>
-            )}
-            
-            {/* Font Size Controls */}
-            <div className="flex items-center gap-0.5 border-l border-gray-700/60 pl-2 ml-0.5">
-              <button
-                onClick={() => setFontSizeLevel(-1)}
-                className={`flex items-center justify-center h-7 w-7 rounded text-[11px] font-bold transition-all ${
-                  fontSizeLevel === -1
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
-                }`}
-                title="Smaller text"
-                aria-label="Smaller text size"
-              >
-                A⁻
-              </button>
-              <button
-                onClick={() => setFontSizeLevel(0)}
-                className={`flex items-center justify-center h-7 w-7 rounded text-[13px] font-bold transition-all ${
-                  fontSizeLevel === 0
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
-                }`}
-                title="Normal text"
-                aria-label="Normal text size"
-              >
-                A
-              </button>
-              <button
-                onClick={() => setFontSizeLevel(1)}
-                className={`flex items-center justify-center h-7 w-7 rounded text-[15px] font-bold transition-all ${
-                  fontSizeLevel === 1
-                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
-                    : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
-                }`}
-                title="Larger text"
-                aria-label="Larger text size"
-              >
-                A⁺
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        {/* Learning Objectives */}
-        {lesson.learning_objectives && (
-          <div className="bg-gray-800/50 rounded-lg p-4 border-l-4 border-blue-500 mt-4">
-            <h4 className="font-semibold text-white mb-2 flex items-center">
-              <BookOpen className="h-4 w-4 mr-2 text-blue-400" />
-              Learning Objectives:
-            </h4>
-            <div className="text-gray-300 text-sm prose prose-invert prose-sm max-w-none">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw]}
-              >
-                {lesson.learning_objectives}
-              </ReactMarkdown>
-            </div>
-          </div>
-        )}
+        </button>
+
+        {/* Collapsible body */}
+        <AnimatePresence initial={false}>
+          {!headerCollapsed && (
+            <motion.div
+              key="header-content"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="px-4 sm:px-5 md:px-6 pb-4 sm:pb-5 md:pb-6 pt-1">
+                {/* Description */}
+                {lesson.description && (
+                  <p className="text-gray-300 text-sm sm:text-base mb-4">{lesson.description}</p>
+                )}
+
+                {/* Badges row */}
+                <div className="flex items-center gap-2 flex-wrap mb-4">
+                  <Badge variant="secondary" className="flex items-center gap-1 bg-gray-700 text-gray-200 text-xs sm:text-sm px-2 py-1">
+                    {lesson.content_type === 'text' && <FileText className="h-3 w-3 flex-shrink-0" />}
+                    {lesson.content_type === 'video' && <Video className="h-3 w-3 flex-shrink-0" />}
+                    {lesson.content_type === 'pdf' && <FileText className="h-3 w-3 flex-shrink-0" />}
+                    {lesson.content_type === 'mixed' && <BookOpen className="h-3 w-3 flex-shrink-0" />}
+                    <span className="capitalize">{lesson.content_type}</span>
+                  </Badge>
+                  
+                  {lesson.duration_minutes && (
+                    <Badge variant="outline" className="flex items-center gap-1 border-gray-600 text-gray-300 text-xs sm:text-sm px-2 py-1">
+                      <Clock className="h-3 w-3 flex-shrink-0" />
+                      <span>{lesson.duration_minutes} min</span>
+                    </Badge>
+                  )}
+                  
+                  {/* Font Size Controls */}
+                  <div className="flex items-center gap-0.5 border-l border-gray-700/60 pl-2 ml-0.5">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFontSizeLevel(-1); }}
+                      className={`flex items-center justify-center h-7 w-7 rounded text-[11px] font-bold transition-all ${
+                        fontSizeLevel === -1
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                          : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
+                      }`}
+                      title="Smaller text"
+                      aria-label="Smaller text size"
+                    >
+                      A⁻
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFontSizeLevel(0); }}
+                      className={`flex items-center justify-center h-7 w-7 rounded text-[13px] font-bold transition-all ${
+                        fontSizeLevel === 0
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                          : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
+                      }`}
+                      title="Normal text"
+                      aria-label="Normal text size"
+                    >
+                      A
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFontSizeLevel(1); }}
+                      className={`flex items-center justify-center h-7 w-7 rounded text-[15px] font-bold transition-all ${
+                        fontSizeLevel === 1
+                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40'
+                          : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50 border border-transparent'
+                      }`}
+                      title="Larger text"
+                      aria-label="Larger text size"
+                    >
+                      A⁺
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Learning Objectives */}
+                {lesson.learning_objectives && (
+                  <div className="bg-gray-800/50 rounded-lg p-4 border-l-4 border-blue-500">
+                    <h4 className="font-semibold text-white mb-2 flex items-center">
+                      <BookOpen className="h-4 w-4 mr-2 text-blue-400" />
+                      Learning Objectives:
+                    </h4>
+                    <div className="text-gray-300 text-sm prose prose-invert prose-sm max-w-none">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeRaw]}
+                      >
+                        {lesson.learning_objectives}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Content Display based on type */}
