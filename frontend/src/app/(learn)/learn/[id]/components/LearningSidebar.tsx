@@ -6,7 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { CheckCircle, Clock, Lock, ChevronDown, BookOpen, ClipboardList, FileText, FolderOpen, TrendingUp, BarChart3, AlertCircle, Target, Award } from 'lucide-react';
+import { CheckCircle, Clock, Lock, ChevronDown, BookOpen, ClipboardList, FileText, FolderOpen, TrendingUp, BarChart3, AlertCircle, Target, Award, GraduationCap, Loader2 } from 'lucide-react';
 import { ModuleData, ModuleStatus } from '../types';
 import { ProgressApiService } from '@/services/api';
 import type { ModuleProgress as ModuleProgressType } from '@/services/api/types';
@@ -61,6 +61,11 @@ interface LearningSidebarProps {
   releasedModuleCount?: number;
   // Trigger sidebar to re-fetch module progress (e.g. after quiz completion)
   progressRefreshTrigger?: number;
+  // Onboarding prerequisite courses (shown when cohort hasn't started)
+  onboardingCourses?: Array<{ id: number; title: string; description?: string; estimated_duration?: string }>;
+  enrollingOnboarding?: boolean;
+  isCohortNotStarted?: boolean;
+  onOnboardingCourseClick?: (courseId: number) => void;
 }
 
 export const LearningSidebar: React.FC<LearningSidebarProps> = ({
@@ -81,7 +86,11 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   viewAsStudent = false,
   totalModuleCount,
   releasedModuleCount,
-  progressRefreshTrigger
+  progressRefreshTrigger,
+  onboardingCourses = [],
+  enrollingOnboarding = false,
+  isCohortNotStarted = false,
+  onOnboardingCourseClick
 }) => {
   const allLessons = modules?.reduce((total, module) => total + (module.lessons?.length || 0), 0) || 0;
   
@@ -322,21 +331,76 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
       `}>
         <div className="h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)] overflow-y-auto">
         <div className="p-3 sm:p-4 border-b border-gray-800">
-          <h3 className="text-base sm:text-lg font-semibold text-white">Course Navigation</h3>
-          <p className="text-xs sm:text-sm text-gray-400 mt-1">
-            {modules?.length || 0} modules • {allLessons} lessons
-          </p>
-          {/* Module release progress indicator */}
-          {totalModuleCount && releasedModuleCount !== undefined && totalModuleCount > releasedModuleCount && (
-            <div className="mt-2 text-xs text-amber-400 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30 flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              <span>{releasedModuleCount} of {totalModuleCount} modules available</span>
-            </div>
-          )}
-          {currentLessonId && (
-            <div className="mt-2 text-xs text-blue-400 bg-blue-900/20 px-2 py-1 rounded border border-blue-700/30">
-              📍 Currently viewing lesson
-            </div>
+          {isCohortNotStarted && onboardingCourses.length > 0 ? (
+            /* ── Onboarding Prerequisite Courses ── */
+            <>
+              <h3 className="text-base sm:text-lg font-semibold text-white flex items-center gap-2">
+                <GraduationCap className="h-5 w-5 text-indigo-400" />
+                Onboarding Prerequisites
+              </h3>
+              <p className="text-xs sm:text-sm text-gray-400 mt-1 mb-3">
+                Start learning prerequisite courses while you wait for the cohort to begin.
+              </p>
+              <div className="space-y-2">
+                {onboardingCourses.map((course) => (
+                  <div
+                    key={course.id}
+                    className="flex items-center justify-between gap-2 p-2.5 bg-indigo-900/20 border border-indigo-700/40 rounded-lg hover:bg-indigo-900/30 transition-colors cursor-pointer group"
+                    onClick={() => onOnboardingCourseClick?.(course.id)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate group-hover:text-indigo-200 transition-colors">
+                        {course.title}
+                      </p>
+                      {course.estimated_duration && (
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          ⏱️ {course.estimated_duration}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={enrollingOnboarding}
+                      className="flex-shrink-0 text-xs border-indigo-500/50 text-indigo-300 hover:bg-indigo-600/30 hover:text-indigo-200"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOnboardingCourseClick?.(course.id);
+                      }}
+                    >
+                      {enrollingOnboarding ? (
+                        <>
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Enrolling...
+                        </>
+                      ) : (
+                        'Start Learning'
+                      )}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            /* ── Normal Course Navigation ── */
+            <>
+              <h3 className="text-base sm:text-lg font-semibold text-white">Course Navigation</h3>
+              <p className="text-xs sm:text-sm text-gray-400 mt-1">
+                {modules?.length || 0} modules • {allLessons} lessons
+              </p>
+              {/* Module release progress indicator */}
+              {totalModuleCount && releasedModuleCount !== undefined && totalModuleCount > releasedModuleCount && (
+                <div className="mt-2 text-xs text-amber-400 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30 flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  <span>{releasedModuleCount} of {totalModuleCount} modules available</span>
+                </div>
+              )}
+              {currentLessonId && (
+                <div className="mt-2 text-xs text-blue-400 bg-blue-900/20 px-2 py-1 rounded border border-blue-700/30">
+                  📍 Currently viewing lesson
+                </div>
+              )}
+            </>
           )}
         </div>
         

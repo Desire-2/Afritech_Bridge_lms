@@ -101,6 +101,9 @@ const LearningPage = () => {
   const [isCohortNotStarted, setIsCohortNotStarted] = useState(false);
   const [cohortStartDate, setCohortStartDate] = useState<string | null>(null);
   const [cohortStartIso, setCohortStartIso] = useState<string | null>(null);
+  // Onboarding prerequisite courses visible when cohort hasn't started
+  const [onboardingCourses, setOnboardingCourses] = useState<any[]>([]);
+  const [enrollingOnboarding, setEnrollingOnboarding] = useState(false);
   const [countdown, setCountdown] = useState<{ days: number; hours: number; minutes: number; seconds: number } | null>(null);
   const [currentLesson, setCurrentLesson] = useState<any>(null);
   const [currentModuleId, setCurrentModuleId] = useState<number | null>(null);
@@ -176,6 +179,13 @@ const LearningPage = () => {
       // Extract ISO date for countdown timer (from backend response)
       if (cohortNotStarted && paymentInfo?.cohort_start) {
         setCohortStartIso(paymentInfo.cohort_start);
+
+        // Extract prerequisite courses for onboarding display
+        if (cohortNotStarted && paymentInfo?.prerequisite_courses && Array.isArray(paymentInfo.prerequisite_courses)) {
+          setOnboardingCourses(paymentInfo.prerequisite_courses);
+        } else {
+          setOnboardingCourses([]);
+        }
       } else {
         setCohortStartIso(null);
       }
@@ -207,6 +217,7 @@ const LearningPage = () => {
       setCohortStartDate(null);
       setCohortStartIso(null);
       setCountdown(null);
+      setOnboardingCourses([]);
     }
   }, [error, paymentInfo]);
   
@@ -2278,6 +2289,44 @@ const LearningPage = () => {
     }
   };
 
+  // Handle onboarding prerequisite course click - enroll student in the
+  // prerequisite course so they can start learning while cohort hasn't started.
+  const handleStartOnboardingCourse = async (prereqCourseId: number) => {
+    if (!courseId || enrollingOnboarding) return;
+
+    setEnrollingOnboarding(true);
+    try {
+      const token = localStorage.getItem('token');
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+      const response = await fetch(
+        `${API_URL}/student/learning/course/${courseId}/onboarding-enroll/${prereqCourseId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error('Failed to enroll in onboarding course:', data);
+        return;
+      }
+
+      // Navigate to the prerequisite course's learning page
+      if (data.course_id) {
+        window.location.href = `/learn/${data.course_id}`;
+      }
+    } catch (error) {
+      console.error('Error enrolling in onboarding course:', error);
+    } finally {
+      setEnrollingOnboarding(false);
+    }
+  };
+
   // Track interactions
   const trackInteraction = useCallback((type: string, data?: any) => {
     setInteractionHistory(prev => [...prev, {
@@ -2877,6 +2926,10 @@ const LearningPage = () => {
           totalModuleCount={courseData?.course?.total_module_count}
           releasedModuleCount={courseData?.course?.released_module_count}
           progressRefreshTrigger={sidebarProgressTrigger}
+          onboardingCourses={onboardingCourses}
+          enrollingOnboarding={enrollingOnboarding}
+          isCohortNotStarted={isCohortNotStarted}
+          onOnboardingCourseClick={handleStartOnboardingCourse}
         />
 
         {currentLesson ? (

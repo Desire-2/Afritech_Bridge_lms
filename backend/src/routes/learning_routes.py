@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from functools import wraps
 from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
 import uuid
 import os
 import logging
@@ -82,6 +83,33 @@ def _check_enrollment_access(enrollment):
     }
     if error_type == 'cohort_not_started' and _cs_dt:
         resp_data["cohort_start"] = _cs_dt.isoformat()
+
+        # ── Include prerequisite courses for onboarding ──
+        # When the cohort hasn't started yet, students can still start
+        # learning any prerequisite courses for free as a head start.
+        if course and course.prerequisites:
+            import json
+            try:
+                prereqs = json.loads(course.prerequisites) if isinstance(course.prerequisites, str) else course.prerequisites or []
+                if isinstance(prereqs, list):
+                    prereq_courses = []
+                    for prereq in prereqs:
+                        if isinstance(prereq, dict) and prereq.get('type') == 'course':
+                            pid = prereq.get('course_id')
+                            if pid:
+                                from ..models.course_models import Course as _PrereqCourse
+                                pc = _PrereqCourse.query.get(pid)
+                                if pc and pc.is_published:
+                                    prereq_courses.append({
+                                        'id': pc.id,
+                                        'title': pc.title,
+                                        'description': pc.description,
+                                        'estimated_duration': pc.estimated_duration,
+                                    })
+                    if prereq_courses:
+                        resp_data['prerequisite_courses'] = prereq_courses
+            except (json.JSONDecodeError, TypeError):
+                pass
 
     return False, (jsonify(resp_data), http_status)
 
@@ -1020,6 +1048,107 @@ def get_suspension_status(course_id):
             "success": False,
             "error": "Failed to check suspension status"
         }), 500
+
+@learning_bp.route("/course/<int:course_id>/onboarding-enroll/<int:prereq_course_id>", methods=["POST"])
+@student_required
+def onboarding_enroll(course_id, prereq_course_id):
+    """
+    Enroll a student in a prerequisite course when the main course's cohort
+    hasn't started yet. The prerequisite course is offered for free as an
+    onboarding benefit so students can start learning while waiting.
+    """
+    try:
+        student_id = int(get_jwt_identity())
+
+        from ..models.course_models import Course as _Course, Enrollment as _Enrollment
+
+        # Get the main course (the one the student is enrolled in)
+        main_course = _Course.query.get(course_id)
+        if not main_course:
+            return jsonify({"error": "Course not found"}), 404
+
+        # Verify student is enrolled in the main course
+        enrollment = _Enrollment.query.filter_by(
+            student_id=student_id,
+            course_id=course_id
+        ).first()
+        if not enrollment:
+            return jsonify({"error": "Not enrolled in this course"}), 403
+
+        # Verify the main course has cohort_not_started status (not payment_required)
+        from ..services.waitlist_service import WaitlistService
+        access_allowed, access_reason = WaitlistService.is_enrollment_access_allowed(enrollment)
+        reason_lower = access_reason.lower()
+        if 'cohort has not started' not in reason_lower:
+            return jsonify({"error": "Onboarding enrollment is only available when the cohort has not started"}), 400
+
+        # Verify the prerequisite course is actually listed as a prerequisite
+        if not main_course.prerequisites:
+            return jsonify({"error": "This course has no prerequisites"}), 400
+
+        import json
+        try:
+            prereqs = json.loads(main_course.prerequisites) if isinstance(main_course.prerequisites, str) else main_course.prerequisites or []
+        except (json.JSONDecodeError, TypeError):
+            prereqs = []
+
+        prereq_course_ids = []
+        for prereq in prereqs:
+            if isinstance(prereq, dict) and prereq.get('type') == 'course':
+                pid = prereq.get('course_id')
+                if pid:
+                    prereq_course_ids.append(int(pid))
+
+        if prereq_course_id not in prereq_course_ids:
+            return jsonify({"error": "The specified course is not a prerequisite of this course"}), 400
+
+        # Get the prerequisite course
+        prereq_course = _Course.query.get(prereq_course_id)
+        if not prereq_course or not prereq_course.is_published:
+            return jsonify({"error": "Prerequisite course not found or not available"}), 404
+
+        # Check if already enrolled in the prerequisite course
+        existing_prereq_enrollment = _Enrollment.query.filter_by(
+            student_id=student_id,
+            course_id=prereq_course_id
+        ).first()
+
+        if existing_prereq_enrollment:
+            # Already enrolled - just return success
+            return jsonify({
+                "success": True,
+                "message": "Already enrolled in this prerequisite course",
+                "enrollment_id": existing_prereq_enrollment.id,
+                "course_id": prereq_course_id,
+                "course_title": prereq_course.title
+            }), 200
+
+        # Enroll with waived payment (price = 0) using EnrollmentService
+        from ..services.enrollment_service import EnrollmentService
+
+        # Create enrollment directly (waiving payment)
+        new_enrollment = EnrollmentService._create_enrollment(student_id, prereq_course_id)
+        if new_enrollment:
+            # Mark payment as waived since this is an onboarding benefit
+            new_enrollment.payment_status = 'waived'
+            new_enrollment.payment_verified = True
+            new_enrollment.payment_verified_at = datetime.utcnow()
+            get_db().session.commit()
+
+            return jsonify({
+                "success": True,
+                "message": f"Successfully enrolled in {prereq_course.title}",
+                "enrollment_id": new_enrollment.id,
+                "course_id": prereq_course_id,
+                "course_title": prereq_course.title
+            }), 200
+        else:
+            return jsonify({"error": "Failed to create enrollment"}), 500
+
+    except Exception as e:
+        current_app.logger.error(f"Onboarding enrollment error: {str(e)}")
+        return jsonify({"error": "Failed to process onboarding enrollment"}), 500
+
 
 @learning_bp.route("/course/<int:course_id>/submit-appeal", methods=["POST"])
 @student_required

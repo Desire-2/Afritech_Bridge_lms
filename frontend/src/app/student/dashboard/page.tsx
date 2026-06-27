@@ -136,6 +136,9 @@ const StudentDashboardOverviewPage = () => {
   };
 
   const enrolledCourses = dashboardData?.enrolled_courses || [];
+  const onboardingEnrolled = enrolledCourses.filter(
+    (c: any) => c.prerequisite_courses && c.prerequisite_courses.length > 0
+  );
   const inProgressCourses = enrolledCourses.filter(c => c.progress > 0 && c.progress < 100);
   const completedCourses = enrolledCourses.filter(c => c.progress >= 100);
   const recentActivity = dashboardData?.recent_activity || [];
@@ -539,7 +542,69 @@ const StudentDashboardOverviewPage = () => {
               </motion.div>
             )}
 
-            {/* Recent Activity */}
+            {/* ── Onboarding Prerequisite Courses ── */}
+            {onboardingEnrolled.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.22 }}
+                >
+                  <Card>
+                    <CardHeader>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="flex items-center space-x-2">
+                          <GraduationCap className="w-5 h-5 text-indigo-600" />
+                          <span>Start Learning Prerequisites</span>
+                        </CardTitle>
+                        <Badge variant="secondary" className="bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                          {onboardingEnrolled.length} {onboardingEnrolled.length === 1 ? 'Course' : 'Courses'}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        {onboardingEnrolled.map((course: any) => (
+                          <div key={course.id}>
+                            <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">
+                              Prerequisites for <span className="text-gray-900 dark:text-white">{course.title}</span>:
+                            </p>
+                            <div className="space-y-2">
+                              {course.prerequisite_courses.map((prereq: any) => (
+                                <div
+                                  key={prereq.id}
+                                  className="flex items-center justify-between gap-2 p-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700/40 rounded-lg hover:bg-indigo-100 dark:hover:bg-indigo-900/30 transition-all duration-200 group cursor-pointer"
+                                  onClick={() => window.location.href = `/learn/${prereq.id}`}
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-gray-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors truncate">
+                                      {prereq.title}
+                                    </p>
+                                    {prereq.estimated_duration && (
+                                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                        ⏱️ {prereq.estimated_duration}
+                                      </p>
+                                    )}
+                                  </div>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="flex-shrink-0 text-xs border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-800/40 pointer-events-none"
+                                    >
+                                      Start Learning
+                                      <ArrowRight className="w-3 h-3 ml-1" />
+                                    </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+            )}
+
+            {/* Recent Activity */}{/* Recent Activity */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}

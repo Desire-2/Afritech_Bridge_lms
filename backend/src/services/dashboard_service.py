@@ -295,6 +295,35 @@ class DashboardService:
                         from .waitlist_service import WaitlistService
                         cohort_payment_info = WaitlistService.get_enrollment_cohort_payment_info(enrollment)
                         course_dict.update(cohort_payment_info)
+
+                        # ── Include prerequisite courses for onboarding ──
+                        # When the cohort hasn't started and the course has prerequisites,
+                        # include them so students can start learning while waiting.
+                        if course_dict.get('access_reason') and 'cohort has not started' in (course_dict.get('access_reason') or '').lower():
+                            import json
+                            course_model = enrollment.course
+                            if course_model and course_model.prerequisites:
+                                try:
+                                    prereqs = json.loads(course_model.prerequisites) if isinstance(course_model.prerequisites, str) else course_model.prerequisites or []
+                                    if isinstance(prereqs, list):
+                                        prereq_courses = []
+                                        for prereq in prereqs:
+                                            if isinstance(prereq, dict) and prereq.get('type') == 'course':
+                                                pid = prereq.get('course_id')
+                                                if pid:
+                                                    from ..models.course_models import Course as _PrereqCourse
+                                                    pc = _PrereqCourse.query.get(pid)
+                                                    if pc and pc.is_published:
+                                                        prereq_courses.append({
+                                                            'id': pc.id,
+                                                            'title': pc.title,
+                                                            'description': pc.description,
+                                                            'estimated_duration': pc.estimated_duration,
+                                                        })
+                                        if prereq_courses:
+                                            course_dict['prerequisite_courses'] = prereq_courses
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
                     except Exception:
                         # Gracefully degrade — safe defaults
                         course_dict['enrollment_status'] = enrollment.status

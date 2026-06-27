@@ -50,6 +50,8 @@ export interface EnrolledCourse {
   cohort_remaining_balance?: number;
   cohort_installment_enabled?: boolean;
   cohort_installment_count?: number | null;
+  // Onboarding prerequisite courses (shown when cohort hasn't started)
+  prerequisite_courses?: Array<{ id: number; title: string; description?: string; estimated_duration?: string }>;
 }
 
 export interface CourseProgress {
