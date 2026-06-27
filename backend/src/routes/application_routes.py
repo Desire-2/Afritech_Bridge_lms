@@ -86,6 +86,20 @@ def _resolve_cohort_for_application(application, course):
     )
 
 
+def _enrolled_app_ids_subquery():
+    """Return a subquery of CourseApplication IDs that already have a linked
+    Enrollment (i.e. the applicant has been fully processed/approved).
+
+    This is used as a defense-in-depth filter in draft-related queries to
+    exclude applications that were paid/enrolled but whose ``is_draft`` flag
+    was never set to ``False`` by an older or incomplete payment flow."""
+    return (
+        db.session.query(Enrollment.application_id)
+        .filter(Enrollment.application_id.isnot(None))
+        .subquery()
+    )
+
+
 def _make_enrollment(student_id, course_id, application, course):
     """Create an Enrollment with cohort fields populated."""
     win_id, label, start, end = _resolve_cohort_for_application(application, course)
@@ -779,6 +793,13 @@ def list_draft_applications():
 
     query = CourseApplication.query.filter_by(is_draft=True)
 
+    # ── Defense-in-depth: exclude applications that have a linked Enrollment ──
+    # An Enrollment is created only after the application has been fully
+    # processed (approved + paid).  Even if is_draft was left as True by a
+    # payment/approval flow, the presence of an Enrollment means the student
+    # has been enrolled and should not appear in the "awaiting payment" list.
+    query = query.filter(~CourseApplication.id.in_(_enrolled_app_ids_subquery()))
+
     # Basic filters
     if course_id:
         query = query.filter_by(course_id=course_id)
@@ -903,7 +924,10 @@ def get_draft_statistics():
     course_id = request.args.get("course_id", type=int)
     instructor_id = request.args.get("instructor_id", type=int)
 
-    base_query = CourseApplication.query.filter_by(is_draft=True)
+    base_query = CourseApplication.query.filter(
+        CourseApplication.is_draft == True,
+        ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
+    )
 
     if course_id:
         base_query = base_query.filter_by(course_id=course_id)
@@ -925,7 +949,10 @@ def get_draft_statistics():
             CourseApplication.payment_status,
             func.count(CourseApplication.id)
         )
-        .filter(CourseApplication.is_draft == True)
+        .filter(
+            CourseApplication.is_draft == True,
+            ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
+        )
     )
     if course_id:
         payment_breakdown = payment_breakdown.filter_by(course_id=course_id)
@@ -959,7 +986,10 @@ def get_draft_statistics():
             CourseApplication.course_id,
             func.count(CourseApplication.id)
         )
-        .filter(CourseApplication.is_draft == True)
+        .filter(
+            CourseApplication.is_draft == True,
+            ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
+        )
     )
     if instructor_id:
         from ..models.course_models import Course as CourseModel
@@ -1094,9 +1124,11 @@ def bulk_remind_draft_applicants():
     max_recipients = data.get('max_recipients', 100)
 
     cutoff = datetime.utcnow() - timedelta(days=stale_days)
+
     query = CourseApplication.query.filter(
         CourseApplication.is_draft == True,
         CourseApplication.updated_at < cutoff,
+        ~CourseApplication.id.in_(_enrolled_app_ids_subquery()),
     )
 
     if course_id:
