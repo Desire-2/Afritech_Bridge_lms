@@ -4332,9 +4332,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         assignmentType={aiAssignmentType}
         setAssignmentType={setAIAssignmentType}
         isGenerating={aiGenerating}
-      />
         taskStatus={aiTaskStatus}
         onCancelTask={handleCancelAIGenerate}
+      />
 
       {/* AI Preview Modal */}
       {showAIPreview && aiPreviewData && (
