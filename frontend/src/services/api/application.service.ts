@@ -624,6 +624,7 @@ class CourseApplicationService extends BaseApiService {
     sort_by?: string;
     order?: 'asc' | 'desc';
     payment_status?: string;
+    submission_status?: 'draft' | 'processing' | 'all';
     page?: number;
     per_page?: number;
   } = {}): Promise<{

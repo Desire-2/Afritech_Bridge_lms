@@ -69,6 +69,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
   const [searchInput, setSearchInput] = useState('');
   const [courseFilter, setCourseFilter] = useState<string>('all');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<string>('all');
+  const [submissionStatusFilter, setSubmissionStatusFilter] = useState<string>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const perPage = 20;
@@ -116,6 +117,7 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
       if (searchInput) params.search = searchInput;
       if (courseFilter !== 'all') params.course_id = parseInt(courseFilter);
       if (paymentStatusFilter !== 'all') params.payment_status = paymentStatusFilter;
+      if (submissionStatusFilter !== 'all') params.submission_status = submissionStatusFilter;
       if (instructorId) params.instructor_id = instructorId;
 
       const response = await applicationService.listDrafts(params);
@@ -355,6 +357,20 @@ export default function SavedApplicationsManager({ instructorId }: Props) {
                 />
               </div>
             </div>
+
+            <Select
+              value={submissionStatusFilter}
+              onValueChange={(v) => { setSubmissionStatusFilter(v); setCurrentPage(1); }}
+            >
+              <SelectTrigger className="w-[200px]">
+                <SelectValue placeholder="Submission Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="draft">Draft (Not Submitted)</SelectItem>
+                <SelectItem value="processing">In Progress</SelectItem>
+              </SelectContent>
+            </Select>
 
             <Select
               value={paymentStatusFilter}

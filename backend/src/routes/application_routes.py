@@ -789,6 +789,7 @@ def list_draft_applications():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 50, type=int)
     payment_status_filter = request.args.get("payment_status")
+    submission_status = request.args.get("submission_status")  # 'draft' | 'processing' | 'all'
     instructor_id_filter = request.args.get("instructor_id", type=int)
 
     query = CourseApplication.query.filter_by(is_draft=True)
@@ -839,6 +840,19 @@ def list_draft_applications():
                 CourseApplication.payment_status.is_(None),
                 ~CourseApplication.payment_status.in_(['completed', 'confirmed'])
             )
+        )
+
+    # Submission status filter — lets admins narrow drafts by how far the
+    # student progressed in the payment pipeline.
+    #   'draft' / 'not_submitted' — no payment action taken yet (payment_status IS NULL)
+    #   'processing'             — payment was initiated but not completed
+    #   'all' / omitted          — no additional filter (current behaviour)
+    if submission_status == 'draft' or submission_status == 'not_submitted':
+        query = query.filter(CourseApplication.payment_status.is_(None))
+    elif submission_status == 'processing':
+        query = query.filter(
+            CourseApplication.payment_status.isnot(None),
+            ~CourseApplication.payment_status.in_(['completed', 'confirmed']),
         )
 
     # Text search
