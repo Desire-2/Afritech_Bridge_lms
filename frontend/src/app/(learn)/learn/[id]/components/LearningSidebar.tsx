@@ -49,6 +49,7 @@ interface LearningSidebarProps {
   onLessonSelect: (lessonId: number, moduleId: number) => void;
   onQuizSelect?: (lessonId: number, moduleId: number, quizId: number) => void;
   onAssignmentSelect?: (lessonId: number, moduleId: number, assignmentId: number) => void;
+  onProjectSelect?: (lessonId: number, moduleId: number, projectId: number) => void;
   lessonAssessments?: { [lessonId: number]: LessonAssessment[] };
   completedLessons?: number[];
   lessonCompletionStatus?: { [lessonId: number]: boolean };
@@ -72,6 +73,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   onLessonSelect,
   onQuizSelect,
   onAssignmentSelect,
+  onProjectSelect,
   lessonAssessments = {},
   completedLessons = [],
   lessonCompletionStatus = {},
@@ -628,6 +630,17 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                   } else if (assessment.type === 'assignment' && canAccessLesson) {
                                     // Navigate to lesson AND auto-open assignments tab
                                     handleAssignmentSelection(lesson.id, module.id, assessment.id);
+                                  } else if (assessment.type === 'project' && canAccessLesson) {
+                                    // Navigate to lesson for project
+                                    if (onProjectSelect) {
+                                      onProjectSelect(lesson.id, module.id, assessment.id);
+                                      if (setSidebarOpen && window.innerWidth < 1024) {
+                                        setSidebarOpen(false);
+                                      }
+                                    } else {
+                                      // Fallback: just navigate to the lesson
+                                      handleLessonSelection(lesson.id, module.id);
+                                    }
                                   }
                                 };
                                 

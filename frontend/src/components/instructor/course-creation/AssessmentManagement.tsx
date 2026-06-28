@@ -6,6 +6,7 @@ import CourseCreationService from '@/services/course-creation.service';
 import aiAgentService from '@/services/ai-agent.service';
 import GradingService from '@/services/grading.service';
 import AIAssessmentModal from './AIAssessmentModal';
+import EditRubricModal from './EditRubricModal';
 import TeamManagerModal from './TeamManagerModal';
 
 interface AssessmentManagementProps {
@@ -98,6 +99,9 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [showAIPreview, setShowAIPreview] = useState(false);
   const [aiPreviewData, setAIPreviewData] = useState<any>(null);
   const [aiPreviewType, setAIPreviewType] = useState<'quiz' | 'assignment' | 'project' | null>(null);
+  
+  // Edit Rubric modal state
+  const [showEditRubric, setShowEditRubric] = useState(false);
 
   // Monitor assessments prop changes for debugging
   useEffect(() => {
@@ -693,7 +697,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         }
 
         // Parse rubric_criteria if it's a string
-        let rubricCriteria = assignmentData.grading_rubric || assignmentData.rubric_criteria || [];
+        // Prefer structured rubric_criteria array, fall back to grading_rubric string
+        let rubricCriteria = assignmentData.rubric_criteria || assignmentData.grading_rubric || [];
         if (typeof rubricCriteria === 'string') {
           try {
             rubricCriteria = JSON.parse(rubricCriteria);
@@ -786,7 +791,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             description: contextualDescription,
             objectives: parseArrayField(projectData.objectives || projectData.requirements),
             requirements: parseArrayField(projectData.requirements),
-            rubric_criteria: parseArrayField(projectData.grading_rubric || projectData.rubric_criteria),
+            rubric_criteria: parseArrayField(projectData.rubric_criteria || projectData.grading_rubric),
             resources: parseArrayField(projectData.resources),
             points_possible: projectData.max_points || projectData.points_possible || 150,
             timeline_weeks: Math.ceil((projectData.due_date_days || 14) / 7) || 4,
@@ -1180,6 +1185,28 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     setAIPreviewData(null);
     setAIPreviewType(null);
     setSuccessMessage(null);
+  };
+
+  const handleSaveEditedRubric = (editedCriteria: any[]) => {
+    if (!aiPreviewData) return;
+    
+    // Update the rubric_criteria in the preview data based on type
+    const updatedData = { ...aiPreviewData };
+    if (aiPreviewType === 'assignment' && updatedData.assignmentForm) {
+      updatedData.assignmentForm = {
+        ...updatedData.assignmentForm,
+        rubric_criteria: editedCriteria,
+      };
+    } else if (aiPreviewType === 'project' && updatedData.projectForm) {
+      updatedData.projectForm = {
+        ...updatedData.projectForm,
+        rubric_criteria: editedCriteria,
+      };
+    }
+    setAIPreviewData(updatedData);
+    setShowEditRubric(false);
+    setSuccessMessage('✅ Rubric updated! Review the changes before saving.');
+    setTimeout(() => setSuccessMessage(null), 3000);
   };
 
   const handleRegeneratePreview = async () => {
@@ -4640,9 +4667,18 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       const rubric = aiPreviewData.assignmentForm?.rubric_criteria || aiPreviewData.rubric_criteria;
                       return Array.isArray(rubric) && rubric.length > 0 && (
                         <div className="border-2 border-green-200 rounded-xl p-5 bg-green-50/50">
-                          <div className="flex items-center gap-2 mb-4">
-                            <span className="text-xl">📋</span>
-                            <h4 className="font-semibold text-gray-800">Grading Rubric ({rubric.length} criteria)</h4>
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xl">📋</span>
+                              <h4 className="font-semibold text-gray-800">Grading Rubric ({rubric.length} criteria)</h4>
+                            </div>
+                            <button
+                              onClick={() => setShowEditRubric(true)}
+                              className="px-3 py-1.5 bg-white border border-green-300 text-green-700 hover:bg-green-50 rounded-lg transition-colors text-xs font-medium flex items-center gap-1.5 shadow-sm"
+                              title="Edit rubric criteria and performance levels"
+                            >
+                              ✏️ Edit Rubric
+                            </button>
                           </div>
                           <div className="space-y-4">
                             {rubric.map((criterion: any, idx: number) => (
@@ -4853,6 +4889,21 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit Rubric Modal */}
+      {showEditRubric && aiPreviewData && (
+        <EditRubricModal
+          isOpen={showEditRubric}
+          onClose={() => setShowEditRubric(false)}
+          criteria={
+            (aiPreviewType === 'assignment'
+              ? aiPreviewData.assignmentForm?.rubric_criteria
+              : aiPreviewData.projectForm?.rubric_criteria) || []
+          }
+          onSave={handleSaveEditedRubric}
+          title={`Edit Rubric for ${aiPreviewData.assignmentForm?.title || aiPreviewData.projectForm?.title || aiPreviewData.title || ''}`}
+        />
       )}
 
       {/* Team Manager Modal */}

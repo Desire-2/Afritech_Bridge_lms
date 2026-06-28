@@ -214,6 +214,7 @@ const LearningPage = () => {
   const [showCelebration, setShowCelebration] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [courseProjects, setCourseProjects] = useState<any[]>([]);
   const [lessonAssessments, setLessonAssessments] = useState<{ [lessonId: number]: any[] }>({});
   const [lessonCompletionStatus, setLessonCompletionStatus] = useState<{ [lessonId: number]: boolean }>({});
   const [quizLoadError, setQuizLoadError] = useState<string | null>(null);
@@ -1715,6 +1716,84 @@ const LearningPage = () => {
     }
   }, [courseData?.course?.modules, fetchLessonCompletionStatus]);
 
+  // ── Fetch projects and map them to the last lesson of their assigned module ──
+  useEffect(() => {
+    const loadProjectsIntoSidebar = async () => {
+      if (!courseData?.course?.modules || !courseData?.course) return;
+      
+      try {
+        const modules = courseData.course.modules;
+        if (!modules || modules.length === 0) return;
+        
+        const response = await ContentAssignmentService.getCourseProjects(courseId);
+        const projects = response.projects || [];
+        
+        if (projects.length === 0) return;
+        
+        console.log('📦 Loading course projects into sidebar:', projects.map((p: any) => ({
+          id: p.id,
+          title: p.title,
+          module_ids: p.module_ids
+        })));
+        
+        const projectAssessments: { [lessonId: number]: any[] } = {};
+        
+        projects.forEach((project: any) => {
+          const moduleIds: number[] = project.module_ids || [];
+          let targetModuleId: number | null = null;
+          
+          if (moduleIds.length > 0) {
+            // Project assigned to specific modules → show on the LAST assigned module
+            targetModuleId = moduleIds[moduleIds.length - 1];
+          } else {
+            // Project covers all course → show on the LAST module of the course
+            targetModuleId = modules[modules.length - 1]?.id || null;
+          }
+          
+          if (targetModuleId) {
+            const targetModule = modules.find((m: any) => m.id === targetModuleId);
+            if (targetModule?.lessons && targetModule.lessons.length > 0) {
+              // Place on the LAST lesson of the target module
+              const lastLesson = targetModule.lessons[targetModule.lessons.length - 1];
+              
+              if (!projectAssessments[lastLesson.id]) {
+                projectAssessments[lastLesson.id] = [];
+              }
+              projectAssessments[lastLesson.id].push({
+                id: project.id,
+                title: project.title || 'Project',
+                type: 'project',
+                status: 'pending',
+                dueDate: project.due_date,
+                points_possible: project.points_possible
+              });
+              
+              console.log(`📍 Placed project "${project.title}" on module "${targetModule.title}" > lesson "${lastLesson.title}"`);
+            }
+          }
+        });
+        
+        // Merge with existing lesson assessments
+        setLessonAssessments(prev => {
+          const merged = { ...prev };
+          Object.keys(projectAssessments).forEach(lessonIdStr => {
+            const lessonId = Number(lessonIdStr);
+            merged[lessonId] = [
+              ...(merged[lessonId] || []),
+              ...projectAssessments[lessonId]
+            ];
+          });
+          return merged;
+        });
+        
+      } catch (error) {
+        console.warn('⚠️ Failed to load course projects for sidebar:', error);
+      }
+    };
+    
+    loadProjectsIntoSidebar();
+  }, [courseData?.course?.modules, courseData?.course, courseId]);
+
   // Load lesson content (quiz and assignments) when current lesson changes
   useEffect(() => {
     if (currentLesson?.id && contentLoadedForLesson !== currentLesson.id) {
@@ -1902,6 +1981,61 @@ const LearningPage = () => {
           lessonId,
           moduleId,
           quizId,
+          timestamp: new Date().toISOString()
+        }]);
+      }
+    }
+  };
+
+  // Handle project selection from sidebar — navigates to lesson and shows content
+  const handleProjectSelect = (lessonId: number, moduleId: number, projectId: number) => {
+    console.log('🚀 Navigating to project:', projectId, 'for lesson:', lessonId);
+
+    const courseModules = courseData?.course?.modules || courseData?.modules || [];
+    if (courseModules) {
+      const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
+      const lesson = allLessons.find((l: any) => l.id === lessonId);
+      if (lesson) {
+        // If already on this lesson, just stay on content tab (projects shown there)
+        if (currentLesson?.id === lessonId) {
+          setCurrentViewMode('content');
+          console.log('✅ Already on lesson, switched to content view for project');
+          setTimeout(() => {
+            if (contentRef.current) {
+              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }, 100);
+          return;
+        }
+
+        setCurrentLesson(lesson);
+        setCurrentModuleId(moduleId);
+
+        // Auto-close sidebar on small screens (mobile/tablet)
+        if (window.innerWidth < 1024) {
+          setSidebarOpen(false);
+          console.log('📱 Auto-closing sidebar on small screen (project)');
+        }
+
+        // Load lesson content then show content tab
+        loadLessonContent(lessonId).then(() => {
+          setCurrentViewMode('content');
+          console.log('✅ Switched to content view for project');
+
+          setTimeout(() => {
+            if (contentRef.current) {
+              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }, 100);
+        });
+
+        setInteractionHistory(prev => [...prev, {
+          type: 'project_select',
+          lessonId,
+          moduleId,
+          projectId,
           timestamp: new Date().toISOString()
         }]);
       }
