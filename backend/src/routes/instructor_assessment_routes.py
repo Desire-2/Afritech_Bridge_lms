@@ -999,6 +999,9 @@ def update_assignment(assignment_id):
             assignment.allowed_file_types = data['allowed_file_types']
         if 'is_published' in data:
             assignment.is_published = data['is_published']
+        # Link rubric to assignment
+        if 'rubric_id' in data:
+            assignment.rubric_id = data['rubric_id']
         # Note: allow_late_submission and late_penalty fields don't exist in Assignment model
         # They would need to be added via database migration if needed
         
@@ -1335,6 +1338,9 @@ def update_project(project_id):
             project.max_team_size = data['max_team_size']
         if 'is_published' in data:
             project.is_published = data['is_published']
+        # Link rubric to project
+        if 'rubric_id' in data:
+            project.rubric_id = data['rubric_id']
         
         db.session.commit()
         

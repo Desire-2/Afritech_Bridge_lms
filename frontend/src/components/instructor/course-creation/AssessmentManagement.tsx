@@ -3732,6 +3732,11 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                               <span className="hidden sm:inline px-2 py-0.5 sm:py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 rounded-full text-xs font-semibold">
                                 📝 Assignment
                               </span>
+                              {assignment.rubric_id && (
+                                <span className="px-2 py-0.5 sm:py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full text-xs font-semibold">
+                                  📋 Rubric
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -3919,6 +3924,11 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                               <span className="hidden sm:inline px-2 py-0.5 sm:py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-300 rounded-full text-xs font-semibold">
                                 🎯 Project
                               </span>
+                              {project.rubric_id && (
+                                <span className="px-2 py-0.5 sm:py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded-full text-xs font-semibold">
+                                  📋 Rubric
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
