@@ -355,11 +355,13 @@ export class GradingService {
    * Get detailed view of a single assignment submission
    */
   static async getAssignmentSubmissionDetail(
-    submissionId: number
+    submissionId: number,
+    includeRubric: boolean = false
   ): Promise<SubmissionDetail> {
     try {
+      const params = includeRubric ? '?include_rubric=true' : '';
       const response = await apiClient.get(
-        `${this.BASE_PATH}/assignments/submissions/${submissionId}`
+        `${this.BASE_PATH}/assignments/submissions/${submissionId}${params}`
       );
       return response.data;
     } catch (error) {
@@ -454,11 +456,13 @@ export class GradingService {
    * Get detailed view of a single project submission
    */
   static async getProjectSubmissionDetail(
-    submissionId: number
+    submissionId: number,
+    includeRubric: boolean = false
   ): Promise<SubmissionDetail> {
     try {
+      const params = includeRubric ? '?include_rubric=true' : '';
       const response = await apiClient.get(
-        `${this.BASE_PATH}/projects/submissions/${submissionId}`
+        `${this.BASE_PATH}/projects/submissions/${submissionId}${params}`
       );
       return response.data;
     } catch (error) {

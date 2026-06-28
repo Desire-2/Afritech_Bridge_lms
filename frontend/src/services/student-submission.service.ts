@@ -61,6 +61,61 @@ export interface ProjectWithStatus {
   submission_status: SubmissionStatus;
 }
 
+export interface TeamMember {
+  id: number;
+  name: string;
+  email: string;
+  phone: string;
+  is_primary: boolean;
+  is_me: boolean;
+}
+
+export interface TeamDashboardData {
+  message: string;
+  in_team: boolean;
+  team: {
+    submission_id: number;
+    members: TeamMember[];
+    member_count: number;
+    created_at: string | null;
+  } | null;
+  project: {
+    id: number;
+    title: string;
+    description: string;
+    course_id: number;
+    course_title: string;
+    due_date: string | null;
+    points_possible: number;
+    submission_format: string;
+    max_file_size_mb: number;
+    allowed_file_types: string | null;
+    modification_requested: boolean;
+    can_resubmit: boolean;
+    modification_request_reason: string | null;
+  };
+  submission: {
+    id: number;
+    submitted: boolean;
+    submitted_at: string | null;
+    text_content: string | null;
+    file_path: string | null;
+    file_name: string | null;
+    grade: number | null;
+    feedback: string | null;
+    graded_at: string | null;
+    graded_by: number | null;
+    is_late: boolean;
+    needs_revision: boolean;
+    modification_reason: string | null;
+  } | null;
+  enrollment: {
+    id: number;
+    cohort_label: string | null;
+    course_title: string;
+  };
+}
+
 export interface SubmissionDetail {
   assignment?: AssignmentWithStatus;
   project?: ProjectWithStatus;
@@ -150,6 +205,18 @@ export class StudentSubmissionService {
   static async getProjectDetails(projectId: number): Promise<SubmissionDetail> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/projects/${projectId}/details`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Get the current student's team info for a collaborative project
+   */
+  static async getMyTeamInfo(projectId: number): Promise<TeamDashboardData> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/projects/${projectId}/my-team`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

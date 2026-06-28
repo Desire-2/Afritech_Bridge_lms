@@ -106,7 +106,7 @@ const ProjectGradingDetail = () => {
     if (!silent) setLoading(true);
     else setIsRefreshing(true);
     try {
-      const data = await GradingService.getProjectSubmissionDetail(submissionId);
+      const data = await GradingService.getProjectSubmissionDetail(submissionId, true);
       setSubmission(data);
       if (!silent) {
         if (data.grade !== undefined && data.grade !== null) {
@@ -791,6 +791,64 @@ const ProjectGradingDetail = () => {
           </div>
         </div>
       </div>
+
+
+          {/* ── Linked Rubric ── */}
+          {submission?.project?.rubric && (
+            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="bg-gradient-to-r from-green-500 to-emerald-600 px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <FileBarChart className="w-4 h-4" /> Linked Rubric
+                  </h3>
+                  <span className="bg-white/20 text-white px-2 py-0.5 rounded-full text-xs font-medium">
+                    {submission.project.rubric.total_points} pts
+                  </span>
+                </div>
+              </div>
+              <div className="p-3 max-h-80 overflow-y-auto space-y-2">
+                {submission.project.rubric.criteria.map((criterion: any, idx: number) => (
+                  <div key={criterion.id || idx} className="p-2.5 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-semibold text-slate-900 dark:text-white">
+                        {idx + 1}. {criterion.name}
+                      </span>
+                      <span className="text-xs font-bold text-green-600 dark:text-green-400">
+                        {criterion.max_points} pts
+                      </span>
+                    </div>
+                    {criterion.description && (
+                      <p className="text-[10px] text-slate-500 dark:text-slate-400 mb-1.5 line-clamp-2">
+                        {criterion.description}
+                      </p>
+                    )}
+                    {criterion.performance_levels && criterion.performance_levels.length > 0 && (
+                      <div className="grid grid-cols-2 gap-1">
+                        {criterion.performance_levels.map((level: any, li: number) => (
+                          <div key={li} className="p-1.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-medium text-slate-700 dark:text-slate-300">
+                                {level.level}
+                              </span>
+                              <span className="text-[9px] font-bold text-green-600 dark:text-green-400">
+                                {level.points}
+                              </span>
+                            </div>
+                            {level.description && (
+                              <p className="text-[8px] text-slate-400 mt-0.5 line-clamp-2">
+                                {level.description}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
 
       {/* REQUEST MODIFICATION MODAL */}
       {submission && (

@@ -4,7 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { Course, Assignment, Project, Quiz, EnhancedModule, Question, Answer, QuizQuestionPayload } from '@/types/api';
 import CourseCreationService from '@/services/course-creation.service';
 import aiAgentService from '@/services/ai-agent.service';
+import GradingService from '@/services/grading.service';
 import AIAssessmentModal from './AIAssessmentModal';
+import TeamManagerModal from './TeamManagerModal';
 
 interface AssessmentManagementProps {
   course: Course;
@@ -66,6 +68,12 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [cardActionLoading, setCardActionLoading] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  
+  // API base URL for direct fetch calls (Next.js proxy won't forward /api/v1 to Flask)
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
+
+  // Team Manager Modal state
+  const [teamManagerProject, setTeamManagerProject] = useState<any | null>(null);
 
   // AI Modal states
   const [showAIModal, setShowAIModal] = useState(false);
@@ -331,6 +339,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     module_ids: [] as number[],
     due_date: '',
     points_possible: 100,
+    passing_score: 60,
     is_published: false,
     submission_format: 'file_upload' as 'file_upload' | 'text_response' | 'both' | 'presentation',
     max_file_size_mb: 50,
@@ -381,6 +390,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       module_ids: [],
       due_date: '',
       points_possible: 100,
+      passing_score: 60,
       is_published: false,
       submission_format: 'file_upload',
       max_file_size_mb: 50,
@@ -780,6 +790,11 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             resources: parseArrayField(projectData.resources),
             points_possible: projectData.max_points || projectData.points_possible || 150,
             timeline_weeks: Math.ceil((projectData.due_date_days || 14) / 7) || 4,
+            submission_format: projectData.submission_format || 'file_upload',
+            passing_score: projectData.passing_score || 60,
+            collaboration_allowed: projectData.collaboration_allowed || false,
+            max_team_size: projectData.max_team_size || 1,
+            max_file_size_mb: projectData.max_file_size_mb || 50,
           }
         });
         setAIPreviewType('project');
@@ -1000,9 +1015,53 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         };
 
         console.log('Assignment data being saved:', assignmentData);
-        await CourseCreationService.createAssignment(assignmentData);
+        const createdAssignment = await CourseCreationService.createAssignment(assignmentData);
         
-        setSuccessMessage('✅ Assignment saved to database!');
+        // Save AI-generated rubric as a proper Rubric in the database
+        const rubricCriteria = aiPreviewData.assignmentForm?.rubric_criteria || [];
+        let rubricId: number | null = null;
+        if (Array.isArray(rubricCriteria) && rubricCriteria.length > 0) {
+          try {
+            const totalPoints = rubricCriteria.reduce((sum: number, c: any) => sum + (c.max_points || 0), 0);
+            const rubricResponse = await GradingService.createRubric({
+              title: `${createdAssignment?.title || aiPreviewData.assignmentForm?.title || 'Assignment'} Rubric`,
+              description: `AI-generated rubric for ${createdAssignment?.title || aiPreviewData.assignmentForm?.title || 'assignment'}`,
+              course_id: course.id,
+              total_points: totalPoints || aiPreviewData.assignmentForm?.points_possible || 100,
+              is_template: false,
+              criteria: rubricCriteria.map((c: any) => ({
+                name: c.name || 'Criterion',
+                description: c.description || '',
+                max_points: c.max_points || 10,
+                order_index: rubricCriteria.indexOf(c),
+                performance_levels: c.performance_levels || [
+                  { level: 'Excellent', points: c.max_points || 10, description: 'Exceeds expectations' },
+                  { level: 'Good', points: Math.round((c.max_points || 10) * 0.8), description: 'Meets expectations' },
+                  { level: 'Satisfactory', points: Math.round((c.max_points || 10) * 0.6), description: 'Meets minimum requirements' },
+                  { level: 'Needs Improvement', points: Math.round((c.max_points || 10) * 0.2), description: 'Does not meet requirements' }
+                ]
+              }))
+            });
+            rubricId = rubricResponse?.id || null;
+            console.log('✅ Rubric saved successfully, ID:', rubricId);
+          } catch (rubricError) {
+            console.warn('⚠️ Could not save rubric (non-critical):', rubricError);
+          }
+        }
+        
+        // Link the rubric to the assignment if we have both
+        if (rubricId && createdAssignment?.id) {
+          try {
+            await CourseCreationService.updateAssignment(createdAssignment.id, {
+              rubric_id: rubricId
+            });
+            console.log('✅ Assignment linked to rubric ID:', rubricId);
+          } catch (linkError) {
+            console.warn('⚠️ Could not link rubric to assignment:', linkError);
+          }
+        }
+        
+        setSuccessMessage('✅ Assignment and rubric saved to database!');
         onAssessmentUpdate();
         resetAssignmentForm();
         
@@ -1035,17 +1094,64 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           description: fullDescription,
           objectives: Array.isArray(objectives) ? formatArrayToString(objectives) : objectives,
           course_id: course.id,
-          module_ids: lastAIGeneration.params.module_id ? [parseInt(lastAIGeneration.params.module_id)] : [],
+          module_ids: selectedModuleId ? [selectedModuleId] : course.modules?.map(m => m.id) || [],
           points_possible: aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100,
           is_published: false, // Save as draft
-          submission_format: 'file_upload',
+          submission_format: aiPreviewData.projectForm?.submission_format || aiPreviewData.submission_format || 'file_upload',
+          passing_score: aiPreviewData.projectForm?.passing_score || aiPreviewData.passing_score || 60,
+          collaboration_allowed: aiPreviewData.projectForm?.collaboration_allowed || aiPreviewData.collaboration_allowed || false,
+          max_team_size: aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1,
           due_date: undefined
         };
 
         console.log('Project data being saved:', projectData);
-        await CourseCreationService.createProject(projectData);
+        const createdProject = await CourseCreationService.createProject(projectData);
         
-        setSuccessMessage('✅ Project saved to database!');
+        // Save AI-generated rubric as a proper Rubric in the database
+        const rubricCriteria = aiPreviewData.projectForm?.rubric_criteria || [];
+        let rubricId: number | null = null;
+        if (Array.isArray(rubricCriteria) && rubricCriteria.length > 0) {
+          try {
+            const totalPoints = rubricCriteria.reduce((sum: number, c: any) => sum + (c.max_points || 0), 0);
+            const rubricResponse = await GradingService.createRubric({
+              title: `${createdProject?.title || aiPreviewData.projectForm?.title || 'Project'} Rubric`,
+              description: `AI-generated rubric for ${createdProject?.title || aiPreviewData.projectForm?.title || 'project'}`,
+              course_id: course.id,
+              total_points: totalPoints || aiPreviewData.projectForm?.points_possible || 100,
+              is_template: false,
+              criteria: rubricCriteria.map((c: any) => ({
+                name: c.name || 'Criterion',
+                description: c.description || '',
+                max_points: c.max_points || 10,
+                order_index: rubricCriteria.indexOf(c),
+                performance_levels: c.performance_levels || [
+                  { level: 'Excellent', points: c.max_points || 10, description: 'Exceeds expectations' },
+                  { level: 'Good', points: Math.round((c.max_points || 10) * 0.8), description: 'Meets expectations' },
+                  { level: 'Satisfactory', points: Math.round((c.max_points || 10) * 0.6), description: 'Meets minimum requirements' },
+                  { level: 'Needs Improvement', points: Math.round((c.max_points || 10) * 0.2), description: 'Does not meet requirements' }
+                ]
+              }))
+            });
+            rubricId = rubricResponse?.id || null;
+            console.log('✅ Rubric saved successfully, ID:', rubricId);
+          } catch (rubricError) {
+            console.warn('⚠️ Could not save rubric (non-critical):', rubricError);
+          }
+        }
+        
+        // Link the rubric to the project if we have both
+        if (rubricId && createdProject?.id) {
+          try {
+            await CourseCreationService.updateProject(createdProject.id, {
+              rubric_id: rubricId
+            });
+            console.log('✅ Project linked to rubric ID:', rubricId);
+          } catch (linkError) {
+            console.warn('⚠️ Could not link rubric to project:', linkError);
+          }
+        }
+        
+        setSuccessMessage('✅ Project and rubric saved to database!');
         onAssessmentUpdate();
         resetProjectForm();
       }
@@ -1118,7 +1224,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       const projectData = {
         ...projectForm,
         course_id: course.id,
-        module_ids: projectForm.module_ids
+        module_ids: projectForm.module_ids,
+        passing_score: projectForm.passing_score
       };
 
       await CourseCreationService.createProject(projectData);
@@ -1133,6 +1240,37 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       setErrorMessage(errorMsg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleAssignTeams = async (projectId: number) => {
+    if (!confirm('Assign teams for this project? Students will be randomly grouped and notified via email.')) return;
+    
+    setCardActionLoading(`teams-project-${projectId}`);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const response = await fetch(`${apiBase}/instructor/assessments/projects/${projectId}/assign-teams`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`
+        },
+        credentials: 'include',
+        body: JSON.stringify({})
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || 'Failed to assign teams');
+      
+      setSuccessMessage(`\u2705 ${result.message}`);
+      onAssessmentUpdate();
+      setTimeout(() => setSuccessMessage(null), 5000);
+    } catch (error: any) {
+      console.error('Error assigning teams:', error);
+      const errorMsg = error?.response?.data?.message || error?.message || 'Failed to assign teams';
+      setErrorMessage(errorMsg);
+    } finally {
+      setCardActionLoading(null);
     }
   };
 
@@ -1376,6 +1514,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       module_ids: project.module_ids || [],
       due_date: project.due_date ? new Date(project.due_date).toISOString().slice(0, 16) : '',
       points_possible: project.points_possible || 100,
+      passing_score: project.passing_score ?? 60,
       is_published: project.is_published,
       submission_format: project.submission_format,
       max_file_size_mb: project.max_file_size_mb || 50,
@@ -1508,6 +1647,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         module_ids: projectForm.module_ids,
         due_date: projectForm.due_date || undefined,
         points_possible: projectForm.points_possible,
+        passing_score: projectForm.passing_score,
         is_published: projectForm.is_published,
         submission_format: projectForm.submission_format,
         max_file_size_mb: projectForm.max_file_size_mb,
@@ -2696,7 +2836,30 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                   Modules Covered *
                 </label>
-                <div className="space-y-2">
+                <div className="mb-2">
+                  <label className="flex items-center text-sm text-blue-600 dark:text-blue-400 cursor-pointer hover:text-blue-700">
+                    <input
+                      type="checkbox"
+                      checked={projectForm.module_ids.length === getModuleOptions().length && getModuleOptions().length > 0}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setProjectForm({ 
+                            ...projectForm, 
+                            module_ids: getModuleOptions().map(m => m.id)
+                          });
+                        } else {
+                          setProjectForm({ 
+                            ...projectForm, 
+                            module_ids: []
+                          });
+                        }
+                      }}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                    />
+                    <span className="ml-2 font-medium">📚 Cover All Modules (Whole-Course Project)</span>
+                  </label>
+                </div>
+                <div className="space-y-1.5 pl-6 border-l-2 border-slate-200 dark:border-slate-700">
                   {getModuleOptions().map(module => (
                     <label key={module.id} className="flex items-center">
                       <input
@@ -2749,7 +2912,23 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Passing Score (%)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={projectForm.passing_score}
+                    onChange={(e) => setProjectForm({ ...projectForm, passing_score: parseInt(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    title="Minimum percentage score required to pass this project (auto-modification request triggered below this threshold)"
+                  />
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Min % to pass. Below this → auto modification request.</p>
+                </div>
+
                 <div className="flex items-center">
                   <input
                     type="checkbox"
@@ -3740,7 +3919,32 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                             <>{project.is_published ? '📤' : '📣'} <span className="hidden sm:inline">{project.is_published ? 'Unpublish' : 'Publish'}</span></>
                           )}
                         </button>
-                        <button 
+                        {project.collaboration_allowed && (
+                          <>
+                          <button 
+                            onClick={() => handleAssignTeams(project.id)}
+                            disabled={!!cardActionLoading}
+                            title={project.max_team_size >= 2 ? `Auto-assign teams of ${project.max_team_size} from same cohort` : 'Set max team size >= 2 first'}
+                            className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed ${
+                              project.max_team_size >= 2 
+                                ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-900/50' 
+                                : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {cardActionLoading === `teams-project-${project.id}` ? (
+                              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                            ) : '👥'}
+                          </button>
+                            <button
+                              onClick={() => setTeamManagerProject(project)}
+                              className="px-2 sm:px-3 py-1.5 sm:py-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 dark:hover:bg-emerald-900/50 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium"
+                              title="Manage teams and reassign members"
+                            >
+                              ⚙️ <span className="hidden sm:inline">Teams</span>
+                            </button>
+                          </>
+                        )}
+                         <button 
                           onClick={() => handleDeleteProject(project.id)}
                           disabled={!!cardActionLoading}
                           className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-900/50 rounded-lg transition-all duration-200 text-xs sm:text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3891,6 +4095,16 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                           <span className="flex items-center gap-1"><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg> Updating...</span>
                         ) : (project.is_published ? '📤 Unpublish' : '📣 Publish')}
                       </button>
+                      {project.collaboration_allowed && (
+                        <button
+                          onClick={() => setTeamManagerProject(project)}
+                          className="text-sm px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 rounded transition-colors"
+                          title="Manage teams and members"
+                        >
+                          ⚙️ Teams
+                        </button>
+                      )}
+                      
                       <button 
                         onClick={() => handleDeleteProject(project.id)}
                         disabled={!!cardActionLoading}
@@ -4425,20 +4639,44 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     {(() => {
                       const rubric = aiPreviewData.assignmentForm?.rubric_criteria || aiPreviewData.rubric_criteria;
                       return Array.isArray(rubric) && rubric.length > 0 && (
-                        <div className="border rounded-lg p-4">
-                          <h4 className="font-semibold text-gray-800 mb-3">Rubric Criteria</h4>
-                          <div className="space-y-2">
+                        <div className="border-2 border-green-200 rounded-xl p-5 bg-green-50/50">
+                          <div className="flex items-center gap-2 mb-4">
+                            <span className="text-xl">📋</span>
+                            <h4 className="font-semibold text-gray-800">Grading Rubric ({rubric.length} criteria)</h4>
+                          </div>
+                          <div className="space-y-4">
                             {rubric.map((criterion: any, idx: number) => (
-                            <div key={idx} className="bg-gray-50 p-3 rounded">
-                              <div className="flex justify-between items-start">
+                            <div key={idx} className="bg-white rounded-lg p-4 border border-green-100 shadow-sm">
+                              <div className="flex justify-between items-start mb-2">
                                 <div className="flex-1">
-                                  <p className="font-medium text-gray-900">{criterion.criterion}</p>
-                                  <p className="text-sm text-gray-600 mt-1">{criterion.description}</p>
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-6 h-6 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-xs font-bold">
+                                      {idx + 1}
+                                    </span>
+                                    <p className="font-semibold text-gray-900">{criterion.name || criterion.criterion}</p>
+                                  </div>
+                                  <p className="text-sm text-gray-600 mt-2 ml-8">{criterion.description}</p>
                                 </div>
-                                <span className="ml-4 px-2 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded">
+                                <span className="ml-4 px-3 py-1.5 bg-green-100 text-green-800 text-sm font-bold rounded-lg shrink-0">
                                   {criterion.max_points} pts
                                 </span>
                               </div>
+                              {/* Performance Levels */}
+                              {Array.isArray(criterion.performance_levels) && criterion.performance_levels.length > 0 && (
+                                <div className="ml-8 mt-3 grid grid-cols-2 gap-2">
+                                  {criterion.performance_levels.map((level: any, lidx: number) => (
+                                    <div key={lidx} className={`text-xs p-2 rounded ${
+                                      lidx === 0 ? 'bg-emerald-50 border border-emerald-200' :
+                                      lidx === 1 ? 'bg-blue-50 border border-blue-200' :
+                                      lidx === 2 ? 'bg-amber-50 border border-amber-200' :
+                                      'bg-red-50 border border-red-200'
+                                    }`}>
+                                      <span className="font-semibold block">{level.level}: {level.points}pts</span>
+                                      <span className="text-gray-600 mt-0.5 block">{level.description}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
                           </div>
@@ -4447,8 +4685,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     })()}
 
                     <div className="flex items-center gap-4 mt-4 text-sm text-gray-600">
-                      <span>📎 Submission: {aiPreviewData.assignmentForm?.submission_format || aiPreviewData.submission_format || 'file'}</span>
-                      <span>📊 Total Points: {aiPreviewData.assignmentForm?.points_possible || aiPreviewData.points_possible || 100}</span>
+                      <span className="flex items-center gap-1">📎 Submission Format: <strong>{aiPreviewData.assignmentForm?.submission_format || aiPreviewData.submission_format || 'file'}</strong></span>
+                      <span className="flex items-center gap-1">📊 Total Points: <strong>{aiPreviewData.assignmentForm?.points_possible || aiPreviewData.points_possible || 100}</strong></span>
                     </div>
                   </div>
                 </div>
@@ -4494,24 +4732,48 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     {(() => {
                       const rubric = aiPreviewData.projectForm?.rubric_criteria || aiPreviewData.rubric_criteria;
                       return Array.isArray(rubric) && rubric.length > 0 && (
-                        <div className="border rounded-lg p-4 mb-4">
-                          <h4 className="font-semibold text-gray-800 mb-3">📋 Rubric</h4>
-                          <div className="space-y-2">
+                        <div className="border-2 border-purple-200 rounded-xl p-5 bg-purple-50/50 mb-4">
+                          <div className="flex items-center gap-2 mb-4">
+                            <span className="text-xl">📋</span>
+                            <h4 className="font-semibold text-gray-800">Grading Rubric ({rubric.length} criteria)</h4>
+                          </div>
+                          <div className="space-y-4">
                             {rubric.map((criterion: any, idx: number) => (
-                            <div key={idx} className="bg-gray-50 p-3 rounded">
-                              <div className="flex justify-between items-start">
+                            <div key={idx} className="bg-white rounded-lg p-4 border border-purple-100 shadow-sm">
+                              <div className="flex justify-between items-start mb-2">
                                 <div className="flex-1">
-                                  <p className="font-medium text-gray-900">{criterion.criterion}</p>
-                                  <p className="text-sm text-gray-600 mt-1">{criterion.description}</p>
+                                  <div className="flex items-center gap-2">
+                                    <span className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-xs font-bold">
+                                      {idx + 1}
+                                    </span>
+                                    <p className="font-semibold text-gray-900">{criterion.name || criterion.criterion}</p>
+                                  </div>
+                                  <p className="text-sm text-gray-600 mt-2 ml-8">{criterion.description}</p>
                                 </div>
-                                <span className="ml-4 px-2 py-1 bg-blue-100 text-blue-800 text-sm font-semibold rounded">
+                                <span className="ml-4 px-3 py-1.5 bg-purple-100 text-purple-800 text-sm font-bold rounded-lg shrink-0">
                                   {criterion.max_points} pts
                                 </span>
                               </div>
+                              {/* Performance Levels */}
+                              {Array.isArray(criterion.performance_levels) && criterion.performance_levels.length > 0 && (
+                                <div className="ml-8 mt-3 grid grid-cols-2 gap-2">
+                                  {criterion.performance_levels.map((level: any, lidx: number) => (
+                                    <div key={lidx} className={`text-xs p-2 rounded ${
+                                      lidx === 0 ? 'bg-emerald-50 border border-emerald-200' :
+                                      lidx === 1 ? 'bg-blue-50 border border-blue-200' :
+                                      lidx === 2 ? 'bg-amber-50 border border-amber-200' :
+                                      'bg-red-50 border border-red-200'
+                                    }`}>
+                                      <span className="font-semibold block">{level.level}: {level.points}pts</span>
+                                      <span className="text-gray-600 mt-0.5 block">{level.description}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           ))}
+                          </div>
                         </div>
-                      </div>
                       );
                     })()}
 
@@ -4529,9 +4791,25 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                       );
                     })()}
 
-                    <div className="flex items-center gap-4 mt-4 text-sm text-gray-600">
-                      <span>⏱️ Timeline: {aiPreviewData.projectForm?.timeline_weeks || aiPreviewData.timeline_weeks || 1} week(s)</span>
-                      <span>📊 Total Points: {aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100}</span>
+                    <div className="grid grid-cols-2 gap-4 mt-4 text-sm text-gray-600">
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <span className="flex items-center gap-1">⏱️ Timeline: <strong>{aiPreviewData.projectForm?.timeline_weeks || aiPreviewData.timeline_weeks || 1} week(s)</strong></span>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <span className="flex items-center gap-1">📊 Total Points: <strong>{aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100}</strong></span>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <span className="flex items-center gap-1">📎 Submission: <strong>{aiPreviewData.projectForm?.submission_format || aiPreviewData.submission_format || 'file_upload'}</strong></span>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <span className="flex items-center gap-1">🎯 Passing Score: <strong>{aiPreviewData.projectForm?.passing_score || aiPreviewData.passing_score || 60}%</strong></span>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <span className="flex items-center gap-1">🤝 Collaboration: <strong>{(aiPreviewData.projectForm?.collaboration_allowed || aiPreviewData.collaboration_allowed) ? 'Yes' : 'No'}</strong></span>
+                      </div>
+                      <div className="bg-gray-50 rounded-lg p-3">
+                        <span className="flex items-center gap-1">👥 Max Team Size: <strong>{aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1}</strong></span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -4575,6 +4853,16 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Team Manager Modal */}
+      {teamManagerProject && (
+        <TeamManagerModal
+          isOpen={!!teamManagerProject}
+          onClose={() => { setTeamManagerProject(null); onAssessmentUpdate(); }}
+          project={teamManagerProject}
+          onTeamsUpdated={onAssessmentUpdate}
+        />
       )}
     </div>
   );

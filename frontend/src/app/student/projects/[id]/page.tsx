@@ -194,6 +194,18 @@ export default function ProjectDetailPage() {
                     Team project (max {project.max_team_size} members)
                   </span>
                 )}
+                {project.collaboration_allowed && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/student/projects/${project.id}/team`);
+                    }}
+                    className="mt-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                  >
+                    <Users className="w-3 h-3" />
+                    View My Team
+                  </button>
+                )}
               </CardDescription>
             </div>
             <div className="flex flex-col items-end gap-2">
