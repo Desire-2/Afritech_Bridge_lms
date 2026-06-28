@@ -15,9 +15,10 @@ from ..models.user_models import db, User, Role
 from ..models.course_models import (
     Course, Module, Lesson, Quiz, Question, Answer, 
     Assignment, AssignmentSubmission, Project, ProjectSubmission, 
-    Submission
+    Submission, Enrollment
 )
 from ..models.quiz_progress_models import QuizAttempt
+from ..models.grading_models import Rubric, RubricCriterion
 
 # Helper for role checking
 from functools import wraps
@@ -1081,6 +1082,7 @@ def get_all_instructor_assignments():
         assignments = Assignment.query.filter(Assignment.course_id.in_(course_ids)).all()
         
         # Build response with statistics
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
         assignments_data = []
         for assignment in assignments:
             assignment_dict = assignment.to_dict()
@@ -1102,6 +1104,10 @@ def get_all_instructor_assignments():
                 assignment_dict['average_score'] = sum(s.grade for s in graded_submissions) / len(graded_submissions)
             else:
                 assignment_dict['average_score'] = 0
+            
+            # Attach rubric data if requested
+            if include_rubric:
+                _attach_rubric_to_dict(assignment_dict)
             
             assignments_data.append(assignment_dict)
         
@@ -1393,6 +1399,512 @@ def delete_project(project_id):
         return jsonify({"message": "Failed to delete project", "error": str(e)}), 500
 
 # =====================
+# TEAM ASSIGNMENT FOR COLLABORATIVE PROJECTS
+# =====================
+
+def _send_team_emails_async(app_instance, created_teams, current_user_id, project_title, course_title, project_description, due_date_str):
+    """Send team assignment emails in a background thread after the response is returned.
+    All strings are captured as plain values (not SQLAlchemy objects) to avoid DetachedInstanceError."""
+    with app_instance.app_context():
+        try:
+            from ..utils.email_notifications import send_team_assignment_notification
+
+            instructor_name = "Your Instructor"
+            try:
+                user = User.query.get(current_user_id)
+                if user:
+                    instructor_name = f"{user.first_name} {user.last_name}".strip() or user.username
+            except Exception:
+                pass
+
+            for team_data in created_teams:
+                team_member_names = [m["name"] for m in team_data["members"]]
+                team_member_phones = [m.get("phone", "N/A") for m in team_data["members"]]
+
+                for member in team_data["members"]:
+                    try:
+                        success = send_team_assignment_notification(
+                            student_email=member["email"],
+                            student_name=member["name"],
+                            project_title=project_title,
+                            course_title=course_title,
+                            project_description=project_description,
+                            due_date=due_date_str,
+                            team_member_names=team_member_names,
+                            team_member_phones=team_member_phones,
+                            instructor_name=instructor_name
+                        )
+                        if success:
+                            logger.info(f"✅ Team email sent to {member['email']} ({member['name']})")
+                        else:
+                            logger.warning(f"⚠️ Team email send returned failure for {member['email']}")
+                    except Exception as email_err:
+                        logger.error(f"❌ Failed to send team email to {member['email']}: {email_err}")
+        except Exception as e:
+            logger.error(f"❌ Error in background team email task: {e}", exc_info=True)
+
+
+@instructor_assessment_bp.route("/projects/<int:project_id>/assign-teams", methods=["POST"])
+@instructor_required
+def assign_project_teams(project_id):
+    """
+    Auto-assign students enrolled in the same cohort into random teams
+    for a collaborative project. Each team receives the project and
+    all team members are notified via email.
+    
+    Body (optional):
+        - team_size: int (default: project.max_team_size or 3)
+        - cohort_id: int (optional, use all course cohorts if not specified)
+    """
+    try:
+        import random
+        from datetime import datetime
+        
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+        
+        project = Project.query.get_or_404(project_id)
+        
+        # Verify instructor owns the course
+        if project.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied to this project"}), 403
+        
+        # Validate collaboration is enabled
+        if not project.collaboration_allowed:
+            return jsonify({"message": "This project does not have collaboration enabled. Enable it in project settings first."}), 400
+        
+        team_size = data.get('team_size', project.max_team_size)
+        if team_size < 2:
+            return jsonify({"message": "Team size must be at least 2"}), 400
+        
+        cohort_id = data.get('cohort_id')
+        
+        # Get enrolled students for this course, optionally filtered by cohort
+        enrollment_query = Enrollment.query.filter(
+            Enrollment.course_id == project.course_id,
+            Enrollment.status.in_(['active', 'completed'])
+        )
+        
+        if cohort_id:
+            enrollment_query = enrollment_query.filter(Enrollment.application_window_id == cohort_id)
+        
+        enrollments = enrollment_query.all()
+        
+        if not enrollments:
+            return jsonify({"message": "No enrolled students found for this course"}), 404
+        
+        # Get existing submissions to avoid reassigning students already in teams
+        existing_submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
+        already_assigned_student_ids = set()
+        for sub in existing_submissions:
+            already_assigned_student_ids.add(sub.student_id)
+            already_assigned_student_ids.update(sub.get_team_members() or [])
+        
+        # Filter to only unassigned students
+        unassigned_students = [
+            e.student for e in enrollments 
+            if e.student and e.student.id not in already_assigned_student_ids
+        ]
+        
+        if not unassigned_students:
+            # All students are already assigned
+            return jsonify({
+                "message": "All students are already assigned to teams. No new teams created.",
+                "teams_created": 0,
+                "students_assigned": 0,
+                "total_teams": len(existing_submissions)
+            }), 200
+        
+        # Randomly shuffle and create teams
+        random.shuffle(unassigned_students)
+        teams = []
+        for i in range(0, len(unassigned_students), team_size):
+            team = unassigned_students[i:i + team_size]
+            if len(team) >= 2:  # Only create teams with at least 2 members
+                teams.append(team)
+        
+        # Handle leftovers: distribute remaining students (less than team_size) into existing teams
+        remaining = len(unassigned_students) % team_size
+        if remaining > 0 and teams:
+            leftover_students = unassigned_students[-remaining:]
+            for idx, student in enumerate(leftover_students):
+                target_team = teams[idx % len(teams)]
+                target_team.append(student)
+        
+        # Create ProjectSubmission records for each team
+        created_teams = []
+        for team in teams:
+            team_ids = [s.id for s in team]
+            # First student is the primary submitter
+            primary_student = team[0]
+            
+            submission = ProjectSubmission(
+                project_id=project_id,
+                student_id=primary_student.id,
+                submitted_at=datetime.utcnow()
+            )
+            submission.set_team_members(team_ids)
+            db.session.add(submission)
+            db.session.flush()
+            
+            created_teams.append({
+                "submission_id": submission.id,
+                "primary_student": {
+                    "id": primary_student.id,
+                    "name": f"{primary_student.first_name} {primary_student.last_name}".strip() or primary_student.username,
+                    "email": primary_student.email
+                },
+                "members": [
+                    {
+                        "id": s.id,
+                        "name": f"{s.first_name} {s.last_name}".strip() or s.username,
+                        "email": s.email,
+                        "phone": s.phone_number
+                    }
+                    for s in team
+                ]
+            })
+        
+        db.session.commit()
+        
+        # ── Send team assignment emails in background thread ──
+        # Capture plain string values first (SQLAlchemy objects can't be safely accessed in a new thread)
+        import threading
+        from flask import current_app
+        app_instance = current_app._get_current_object()
+        project_title = project.title
+        course_title = project.course.title if project.course else "Course"
+        project_description = project.description
+        due_date_str = project.due_date.strftime('%B %d, %Y') if project.due_date else "TBD"
+        email_thread = threading.Thread(
+            target=_send_team_emails_async,
+            args=(app_instance, created_teams, current_user_id, project_title, course_title, project_description, due_date_str),
+            daemon=True
+        )
+        email_thread.start()
+        logger.info(f"📧 Background email task started for {sum(len(t['members']) for t in created_teams)} recipients")
+        
+        return jsonify({
+            "message": f"Successfully created {len(created_teams)} team(s) with {sum(len(t['members']) for t in created_teams)} students. Emails are being sent in the background.",
+            "teams_created": len(created_teams),
+            "students_assigned": sum(len(t['members']) for t in created_teams),
+            "teams": created_teams,
+            "emails_scheduled": True
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"❌ Error assigning project teams: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to assign teams", "error": str(e)}), 500
+
+# =====================
+# TEAM MANAGEMENT ENDPOINTS
+# =====================
+
+@instructor_assessment_bp.route("/projects/<int:project_id>/teams", methods=["GET"])
+@instructor_required
+def list_project_teams(project_id):
+    """
+    List all teams (submissions) for a collaborative project with member details.
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        project = Project.query.get_or_404(project_id)
+
+        if project.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+
+        submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(ProjectSubmission.submitted_at).all()
+
+        teams = []
+        for sub in submissions:
+            member_ids = sub.get_team_members() or []
+            all_member_ids = list(set(member_ids + [sub.student_id]))
+            members = []
+            for mid in all_member_ids:
+                user = User.query.get(mid)
+                if user:
+                    members.append({
+                        "id": user.id,
+                        "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                        "email": user.email,
+                        "phone": user.phone_number or "",
+                        "is_primary": user.id == sub.student_id,
+                        "joined_at": sub.submitted_at.isoformat() if sub.submitted_at else None
+                    })
+
+            if members:
+                teams.append({
+                    "submission_id": sub.id,
+                    "primary_student": members[0],
+                    "members": members,
+                    "created_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+                    "status": "active"
+                })
+
+        return jsonify({"teams": teams}), 200
+
+    except Exception as e:
+        logger.error(f"Error listing project teams: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to list teams", "error": str(e)}), 500
+
+
+@instructor_assessment_bp.route("/projects/<int:project_id>/unassigned-students", methods=["GET"])
+@instructor_required
+def list_unassigned_students(project_id):
+    """
+    List enrolled students not yet assigned to any team for this project.
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        project = Project.query.get_or_404(project_id)
+
+        if project.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+
+        # Get existing submissions and collect all assigned student IDs
+        submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
+        assigned_ids = set()
+        for sub in submissions:
+            assigned_ids.add(sub.student_id)
+            for mid in (sub.get_team_members() or []):
+                assigned_ids.add(mid)
+
+        # Get enrolled students
+        enrollments = Enrollment.query.filter(
+            Enrollment.course_id == project.course_id,
+            Enrollment.status.in_(['active', 'completed'])
+        ).all()
+
+        unassigned = []
+        for e in enrollments:
+            if e.student and e.student.id not in assigned_ids:
+                unassigned.append({
+                    "id": e.student.id,
+                    "name": f"{e.student.first_name} {e.student.last_name}".strip() or e.student.username,
+                    "email": e.student.email,
+                    "phone": e.student.phone_number or "",
+                    "cohort_label": e.cohort_label or (e.application_window.cohort_label if e.application_window else None),
+                    "enrollment_date": e.enrollment_date.isoformat() if e.enrollment_date else None
+                })
+
+        return jsonify({"students": unassigned}), 200
+
+    except Exception as e:
+        logger.error(f"Error listing unassigned students: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to list unassigned students", "error": str(e)}), 500
+
+
+@instructor_assessment_bp.route("/projects/<int:project_id>/teams/<int:submission_id>/reassign", methods=["POST"])
+@instructor_required
+def reassign_team_member(project_id, submission_id):
+    """
+    Move a member from one team (submission) to another.
+    Body: { "member_id": int, "target_team_id": int, "is_new_student": bool (optional) }
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+
+        member_id = data.get('member_id')
+        target_team_id = data.get('target_team_id')
+        is_new_student = data.get('is_new_student', False)
+
+        if not member_id or not target_team_id:
+            return jsonify({"message": "member_id and target_team_id are required"}), 400
+
+        project = Project.query.get_or_404(project_id)
+        if project.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+
+        # Get source submission
+        source_sub = ProjectSubmission.query.get_or_404(submission_id)
+        if source_sub.project_id != project_id:
+            return jsonify({"message": "Submission does not belong to this project"}), 400
+
+        # Get target submission
+        target_sub = ProjectSubmission.query.get_or_404(target_team_id)
+        if target_sub.project_id != project_id:
+            return jsonify({"message": "Target team does not belong to this project"}), 400
+
+        member_user = User.query.get(member_id)
+        if not member_user:
+            return jsonify({"message": "Student not found"}), 404
+
+        if is_new_student:
+            # Add unassigned student directly to target team
+            target_members = target_sub.get_team_members() or []
+            if member_id not in target_members and member_id != target_sub.student_id:
+                target_members.append(member_id)
+                target_sub.set_team_members(target_members)
+                target_sub.submitted_at = datetime.utcnow()  # Update timestamp to reflect change
+                message = f"Added {member_user.first_name or ''} {member_user.last_name or ''} to team"
+            else:
+                return jsonify({"message": "Student is already in this team"}), 400
+        else:
+            # Remove member from source team
+            source_members = source_sub.get_team_members() or []
+            if member_id in source_members:
+                source_members.remove(member_id)
+                source_sub.set_team_members(source_members)
+
+                # Add member to target team
+                target_members = target_sub.get_team_members() or []
+                if member_id not in target_members and member_id != target_sub.student_id:
+                    target_members.append(member_id)
+                    target_sub.set_team_members(target_members)
+                message = f"Moved {member_user.first_name or ''} {member_user.last_name or ''} to another team"
+            elif member_id == source_sub.student_id:
+                # The primary student is being moved - swap the primary to another member
+                other_members = [m for m in source_members if m != member_id]
+                if other_members:
+                    # Promote next member to primary
+                    source_sub.student_id = other_members[0]
+                    source_members.remove(other_members[0])
+                    source_sub.set_team_members(source_members)
+
+                    # Add the original primary to target
+                    target_members = target_sub.get_team_members() or []
+                    if member_id not in target_members:
+                        target_members.append(member_id)
+                        target_sub.set_team_members(target_members)
+                    message = f"Moved primary student to another team"
+                else:
+                    return jsonify({"message": "Cannot move the only member of a team"}), 400
+            else:
+                return jsonify({"message": "Member not found in source team"}), 404
+
+        db.session.commit()
+
+        return jsonify({
+            "message": message,
+            "success": True
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error reassigning team member: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to reassign member", "error": str(e)}), 500
+
+
+@instructor_assessment_bp.route("/projects/<int:project_id>/teams/<int:submission_id>/remove-member", methods=["POST"])
+@instructor_required
+def remove_team_member(project_id, submission_id):
+    """
+    Remove a member from a team (makes them unassigned).
+    Body: { "member_id": int }
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        data = request.get_json() or {}
+
+        member_id = data.get('member_id')
+        if not member_id:
+            return jsonify({"message": "member_id is required"}), 400
+
+        project = Project.query.get_or_404(project_id)
+        if project.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+
+        sub = ProjectSubmission.query.get_or_404(submission_id)
+        if sub.project_id != project_id:
+            return jsonify({"message": "Submission does not belong to this project"}), 400
+
+        member_user = User.query.get(member_id)
+        member_name = f"{member_user.first_name or ''} {member_user.last_name or ''}".strip() or "Student"
+
+        members = sub.get_team_members() or []
+
+        if member_id == sub.student_id:
+            # Removing the primary student - promote next member
+            if members:
+                sub.student_id = members[0]
+                members = members[1:]
+                sub.set_team_members(members)
+                message = f"Removed primary student, promoted next member"
+            else:
+                # Last member - delete the submission
+                db.session.delete(sub)
+                message = f"Removed last member, deleted team"
+        elif member_id in members:
+            members.remove(member_id)
+            sub.set_team_members(members)
+            message = f"Removed {member_name} from team"
+        else:
+            return jsonify({"message": "Member not found in this team"}), 404
+
+        db.session.commit()
+
+        return jsonify({
+            "message": message,
+            "success": True
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error removing team member: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to remove member", "error": str(e)}), 500
+
+
+@instructor_assessment_bp.route("/projects/<int:project_id>/team-history", methods=["GET"])
+@instructor_required
+def get_team_assignment_history(project_id):
+    """
+    Get the team assignment history for a project, derived from submissions.
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        project = Project.query.get_or_404(project_id)
+
+        if project.course.instructor_id != current_user_id:
+            return jsonify({"message": "Access denied"}), 403
+
+        submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(ProjectSubmission.submitted_at.desc()).all()
+
+        history = []
+        for idx, sub in enumerate(submissions):
+            primary_user = User.query.get(sub.student_id)
+            member_count = len(sub.get_team_members() or []) + 1
+            primary_name = f"{primary_user.first_name or ''} {primary_user.last_name or ''}".strip() or "Unknown" if primary_user else "Unknown"
+
+            # Look up grader name if graded
+            grader_name = None
+            if sub.graded_by:
+                grader = User.query.get(sub.graded_by)
+                if grader:
+                    grader_name = f"{grader.first_name or ''} {grader.last_name or ''}".strip() or grader.username
+
+            # Build action and details
+            team_number = len(submissions) - idx
+            if sub.graded_at:
+                action = "team_graded"
+                details = f"Team {team_number} graded: {sub.grade}/{sub.project.points_possible if sub.project else 'N/A'} points"
+            elif member_count > 1:
+                action = "team_created"
+                details = f"Team {team_number} created with {member_count} members, led by {primary_name}"
+            else:
+                action = "submission_created"
+                details = f"Submission by {primary_name}"
+
+            entry = {
+                "id": sub.id,
+                "action": action,
+                "student_name": primary_name,
+                "team_number": team_number,
+                "performed_by": grader_name or primary_name,
+                "created_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
+                "details": details
+            }
+            history.append(entry)
+
+        return jsonify({"history": history}), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching team history: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch team history", "error": str(e)}), 500
+
+
+# =====================
 # ASSESSMENT OVERVIEW
 # =====================
 
@@ -1402,7 +1914,8 @@ def get_assessments_overview(course_id):
     """Get overview of all assessments for a course"""
     try:
         current_user_id = get_user_id()
-        logger.info(f"[OVERVIEW] Fetching assessments for course {course_id} by user {current_user_id}")
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
+        logger.info(f"[OVERVIEW] Fetching assessments for course {course_id} by user {current_user_id}, include_rubric={include_rubric}")
         
         # Verify instructor owns the course
         course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
@@ -1433,8 +1946,19 @@ def get_assessments_overview(course_id):
             
             quizzes_data.append(quiz_dict)
         
-        assignments_data = [assignment.to_dict() for assignment in assignments]
-        projects_data = [project.to_dict() for project in projects]
+        assignments_data = []
+        for assignment in assignments:
+            assignment_dict = assignment.to_dict()
+            if include_rubric:
+                _attach_rubric_to_dict(assignment_dict)
+            assignments_data.append(assignment_dict)
+        
+        projects_data = []
+        for project in projects:
+            project_dict = project.to_dict()
+            if include_rubric:
+                _attach_rubric_to_dict(project_dict)
+            projects_data.append(project_dict)
         
         response_data = {
             "quizzes": quizzes_data,

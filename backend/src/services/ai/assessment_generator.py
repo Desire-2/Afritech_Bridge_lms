@@ -305,7 +305,7 @@ Create a comprehensive assignment that:
 2. Directly applies concepts from the {content_type} content above
 3. Has clear, detailed instructions (4-6 paragraphs)
 4. Lists specific deliverables
-5. Includes detailed grading rubric with criteria and weights
+5. Includes a DETAILED, STRUCTURED RUBRIC with 4-6 criteria, each with weights/points, descriptions, and performance levels
 6. Sets realistic timeline
 7. Provides guidance on what to submit
 
@@ -314,6 +314,7 @@ IMPORTANT:
 - Return ONLY valid JSON without any markdown formatting
 - Use \\n for line breaks in text fields
 - Ensure all quotes are properly escaped
+- The rubric_criteria array MUST include 4-6 criteria with meaningful descriptions and performance levels
 
 Return valid JSON in this exact format:
 {{
@@ -324,6 +325,30 @@ Return valid JSON in this exact format:
   "max_points": 100,
   "due_date_days": 7,
   "grading_rubric": "• Criterion 1 (XX%)\\n• Criterion 2 (XX%)\\n• Criterion 3 (XX%)",
+  "rubric_criteria": [
+    {{
+      "name": "Criterion 1 Name",
+      "description": "What this criterion measures — detailed description",
+      "max_points": 25,
+      "performance_levels": [
+        {{"level": "Excellent", "points": 25, "description": "Exceeds expectations: thorough and insightful work"}},
+        {{"level": "Good", "points": 20, "description": "Meets expectations with minor gaps"}},
+        {{"level": "Satisfactory", "points": 15, "description": "Meets minimum requirements"}},
+        {{"level": "Needs Improvement", "points": 5, "description": "Does not meet requirements"}}
+      ]
+    }},
+    {{
+      "name": "Criterion 2 Name",
+      "description": "What this criterion measures",
+      "max_points": 25,
+      "performance_levels": [
+        {{"level": "Excellent", "points": 25, "description": "..."}},
+        {{"level": "Good", "points": 20, "description": "..."}},
+        {{"level": "Satisfactory", "points": 15, "description": "..."}},
+        {{"level": "Needs Improvement", "points": 5, "description": "..."}}
+      ]
+    }}
+  ],
   "submission_format": "Description of how to submit (file type, format, etc.)"
 }}"""
         
@@ -405,6 +430,8 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "final project")
             if parsed:
+                # Validate required fields and add defaults if missing
+                parsed = self._validate_project_data(parsed, course_title)
                 return parsed
         
         return {
@@ -454,13 +481,15 @@ Create a capstone-style project that:
 3. Provides comprehensive description and context (3-4 paragraphs)
 4. Lists specific project requirements
 5. Defines clear deliverables
-6. Includes detailed grading rubric with weights
+6. Includes a DETAILED, STRUCTURED RUBRIC with 4-6 criteria, each with weights/points, descriptions, and performance levels
 7. Suggests realistic timeline (days)
 8. Lists required resources/tools
 
 The project should be challenging, real-world applicable, and demonstrate mastery of module concepts.
 
 IMPORTANT: Base the project ONLY on skills and knowledge covered in the module content above.
+
+The rubric_criteria array MUST include 4-6 criteria with meaningful descriptions and performance levels.
 
 Format as JSON:
 {{
@@ -471,6 +500,30 @@ Format as JSON:
   "max_points": 150,
   "due_date_days": 14,
   "grading_rubric": "• Criterion 1 (XX%)\\n• Criterion 2 (XX%)\\n• Criterion 3 (XX%)\\n• Criterion 4 (XX%)",
+  "rubric_criteria": [
+    {{
+      "name": "Criterion 1 Name",
+      "description": "What this criterion measures — detailed description",
+      "max_points": 40,
+      "performance_levels": [
+        {{"level": "Excellent", "points": 40, "description": "Exceeds expectations: thorough and insightful work"}},
+        {{"level": "Good", "points": 32, "description": "Meets expectations with minor gaps"}},
+        {{"level": "Satisfactory", "points": 24, "description": "Meets minimum requirements"}},
+        {{"level": "Needs Improvement", "points": 8, "description": "Does not meet requirements"}}
+      ]
+    }},
+    {{
+      "name": "Criterion 2 Name",
+      "description": "What this criterion measures",
+      "max_points": 40,
+      "performance_levels": [
+        {{"level": "Excellent", "points": 40, "description": "..."}},
+        {{"level": "Good", "points": 32, "description": "..."}},
+        {{"level": "Satisfactory", "points": 24, "description": "..."}},
+        {{"level": "Needs Improvement", "points": 8, "description": "..."}}
+      ]
+    }}
+  ],
   "resources": "• Resource/tool 1\\n• Resource/tool 2",
   "submission_format": "What to submit and how"
 }}"""
@@ -487,6 +540,8 @@ Format as JSON:
         if result:
             parsed = json_parser.parse_json_response(result, "project from content")
             if parsed:
+                # Validate required fields and add defaults if missing
+                parsed = self._validate_project_data(parsed, module_title)
                 return parsed
         
         return {
@@ -497,10 +552,49 @@ Format as JSON:
             "max_points": 150,
             "due_date_days": 14,
             "grading_rubric": "• Technical quality (40%)\\n• Documentation (30%)\\n• Presentation (30%)",
+            "rubric_criteria": [
+                {"name": "Technical Quality", "description": "Correctness, efficiency, and implementation quality", "max_points": 60, "performance_levels": [{"level": "Excellent", "points": 60, "description": "Outstanding technical implementation"}, {"level": "Good", "points": 48, "description": "Solid implementation with minor issues"}, {"level": "Satisfactory", "points": 36, "description": "Adequate implementation"}, {"level": "Needs Improvement", "points": 12, "description": "Poor implementation"}]},
+                {"name": "Documentation", "description": "Quality and thoroughness of supporting documentation", "max_points": 45, "performance_levels": [{"level": "Excellent", "points": 45, "description": "Comprehensive documentation"}, {"level": "Good", "points": 36, "description": "Good documentation with gaps"}, {"level": "Satisfactory", "points": 27, "description": "Basic documentation"}, {"level": "Needs Improvement", "points": 9, "description": "Insufficient documentation"}]},
+                {"name": "Presentation", "description": "Organization, clarity, and professional presentation", "max_points": 45, "performance_levels": [{"level": "Excellent", "points": 45, "description": "Professional and engaging"}, {"level": "Good", "points": 36, "description": "Well presented with minor issues"}, {"level": "Satisfactory", "points": 27, "description": "Adequate presentation"}, {"level": "Needs Improvement", "points": 9, "description": "Poor presentation"}]}
+            ],
             "resources": "Use module materials",
             "submission_format": "Submit as zip file with all deliverables"
         }
     
+    def _normalize_rubric_criteria(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize rubric_criteria - ensure it's a list of dicts with proper structure.
+        Shared helper used by both assignment and project validation.
+        
+        Args:
+            parsed_data: The parsed JSON data from AI
+            
+        Returns:
+            The parsed_data with normalized rubric_criteria (or removed if invalid)
+        """
+        rubric_criteria = parsed_data.get("rubric_criteria", [])
+        if not isinstance(rubric_criteria, list):
+            rubric_criteria = []
+        
+        # Normalize each criterion
+        normalized_criteria = []
+        for criterion in rubric_criteria:
+            if isinstance(criterion, dict) and criterion.get("name") and criterion.get("max_points"):
+                normalized_criteria.append({
+                    "name": str(criterion["name"]),
+                    "description": str(criterion.get("description", "")),
+                    "max_points": int(criterion["max_points"]),
+                    "performance_levels": criterion.get("performance_levels", [])
+                })
+        
+        if normalized_criteria:
+            parsed_data["rubric_criteria"] = normalized_criteria
+        else:
+            # Remove empty/invalid rubric_criteria so callers can fall back to defaults
+            parsed_data.pop("rubric_criteria", None)
+        
+        return parsed_data
+
     def _validate_assignment_data(self, parsed_data: Dict[str, Any], content_title: str) -> Dict[str, Any]:
         """
         Validate and ensure assignment data has all required fields with defaults
@@ -520,6 +614,10 @@ Format as JSON:
             "max_points": 100,
             "due_date_days": 7,
             "grading_rubric": "• Quality (50%)\\n• Completeness (50%)",
+            "rubric_criteria": [
+                {"name": "Quality", "description": "Overall quality of the work", "max_points": 50, "performance_levels": [{"level": "Excellent", "points": 50, "description": "Outstanding quality"}, {"level": "Good", "points": 40, "description": "Good quality"}, {"level": "Satisfactory", "points": 30, "description": "Adequate quality"}, {"level": "Needs Improvement", "points": 10, "description": "Poor quality"}]},
+                {"name": "Completeness", "description": "All requirements met", "max_points": 50, "performance_levels": [{"level": "Excellent", "points": 50, "description": "All requirements fulfilled"}, {"level": "Good", "points": 40, "description": "Most requirements fulfilled"}, {"level": "Satisfactory", "points": 30, "description": "Key requirements fulfilled"}, {"level": "Needs Improvement", "points": 10, "description": "Missing critical requirements"}]}
+            ],
             "submission_format": "Submit as PDF or document file"
         }
         
@@ -540,8 +638,65 @@ Format as JSON:
         except (ValueError, TypeError):
             parsed_data["due_date_days"] = 7
         
+        # Normalize rubric_criteria using shared helper
+        parsed_data = self._normalize_rubric_criteria(parsed_data)
+        
         return parsed_data
     
+    def _validate_project_data(self, parsed_data: Dict[str, Any], module_title: str) -> Dict[str, Any]:
+        """
+        Validate and ensure project data has all required fields with defaults
+        
+        Args:
+            parsed_data: The parsed JSON data from AI
+            module_title: Title of the module for fallbacks
+            
+        Returns:
+            Validated project data with all required fields
+        """
+        defaults = {
+            "title": f"{module_title} Project",
+            "description": f"Comprehensive project for {module_title}",
+            "requirements": "1. Apply concepts from the module\n2. Complete all deliverables\n3. Submit by the due date",
+            "deliverables": "• Project files\n• Documentation\n• Presentation",
+            "max_points": 150,
+            "due_date_days": 14,
+            "grading_rubric": "• Technical quality (40%)\n• Documentation (30%)\n• Presentation (30%)",
+            "rubric_criteria": [
+                {"name": "Technical Quality", "description": "Correctness, efficiency, and implementation quality", "max_points": 60, "performance_levels": [{"level": "Excellent", "points": 60, "description": "Outstanding technical implementation"}, {"level": "Good", "points": 48, "description": "Solid implementation with minor issues"}, {"level": "Satisfactory", "points": 36, "description": "Adequate implementation"}, {"level": "Needs Improvement", "points": 12, "description": "Poor implementation"}]},
+                {"name": "Documentation", "description": "Quality and thoroughness of supporting documentation", "max_points": 45, "performance_levels": [{"level": "Excellent", "points": 45, "description": "Comprehensive documentation"}, {"level": "Good", "points": 36, "description": "Good documentation with gaps"}, {"level": "Satisfactory", "points": 27, "description": "Basic documentation"}, {"level": "Needs Improvement", "points": 9, "description": "Insufficient documentation"}]},
+                {"name": "Presentation", "description": "Organization, clarity, and professional presentation", "max_points": 45, "performance_levels": [{"level": "Excellent", "points": 45, "description": "Professional and engaging"}, {"level": "Good", "points": 36, "description": "Well presented with minor issues"}, {"level": "Satisfactory", "points": 27, "description": "Adequate presentation"}, {"level": "Needs Improvement", "points": 9, "description": "Poor presentation"}]}
+            ],
+            "resources": "Use module materials and external references",
+            "submission_format": "Submit as zip file with all deliverables"
+        }
+        
+        # Merge with defaults, keeping AI-generated values when available
+        for key, default_value in defaults.items():
+            if key not in parsed_data or not parsed_data[key]:
+                parsed_data[key] = default_value
+        
+        # Ensure numeric fields are properly typed
+        try:
+            parsed_data["max_points"] = int(parsed_data["max_points"])
+        except (ValueError, TypeError):
+            parsed_data["max_points"] = 150
+        
+        try:
+            parsed_data["due_date_days"] = int(parsed_data["due_date_days"])
+        except (ValueError, TypeError):
+            parsed_data["due_date_days"] = 14
+        
+        
+        # Normalize rubric_criteria using shared helper
+        parsed_data = self._normalize_rubric_criteria(parsed_data)
+        
+        # If rubric_criteria was removed (invalid), restore from defaults
+        if "rubric_criteria" not in parsed_data or not parsed_data["rubric_criteria"]:
+            parsed_data["rubric_criteria"] = defaults["rubric_criteria"]
+        
+        return parsed_data
+
     def _generate_fallback_assignment(self, content_title: str, assignment_type: str) -> Dict[str, Any]:
         """
         Generate a fallback assignment when AI generation fails
@@ -589,7 +744,12 @@ Format as JSON:
             "deliverables": template["deliverables"],
             "max_points": 100,
             "due_date_days": 7,
-            "grading_rubric": "• Quality and accuracy (40%)\\n• Completeness (30%)\\n• Presentation and organization (30%)",
+            "grading_rubric": "• Quality and accuracy (40%)\n• Completeness (30%)\n• Presentation and organization (30%)",
+            "rubric_criteria": [
+                {"name": "Quality and Accuracy", "description": "Correctness and precision of the work", "max_points": 40, "performance_levels": [{"level": "Excellent", "points": 40, "description": "Exceptional quality with no errors"}, {"level": "Good", "points": 32, "description": "High quality with minor issues"}, {"level": "Satisfactory", "points": 24, "description": "Acceptable quality"}, {"level": "Needs Improvement", "points": 8, "description": "Significant issues"}]},
+                {"name": "Completeness", "description": "All required components are present", "max_points": 30, "performance_levels": [{"level": "Excellent", "points": 30, "description": "All deliverables included"}, {"level": "Good", "points": 24, "description": "Most deliverables included"}, {"level": "Satisfactory", "points": 18, "description": "Key deliverables present"}, {"level": "Needs Improvement", "points": 6, "description": "Missing critical components"}]},
+                {"name": "Presentation and Organization", "description": "Clarity, structure, and professionalism of submission", "max_points": 30, "performance_levels": [{"level": "Excellent", "points": 30, "description": "Well-structured and professional"}, {"level": "Good", "points": 24, "description": "Organized with minor issues"}, {"level": "Satisfactory", "points": 18, "description": "Adequate organization"}, {"level": "Needs Improvement", "points": 6, "description": "Poorly organized"}]}
+            ],
             "submission_format": "Submit as PDF document or zip file with all components"
         }
     

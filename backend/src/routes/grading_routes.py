@@ -297,8 +297,13 @@ def get_assignment_submission_detail(submission_id):
         # Build detailed response
         submission_dict = submission.to_dict()
         
+        # Check if we should include rubric data
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
+        
         # Add comprehensive assignment details
         assignment_data = submission.assignment.to_dict()
+        if include_rubric and assignment_data.get('rubric_id'):
+            _attach_rubric_dict(assignment_data)
         submission_dict['assignment'] = assignment_data
         submission_dict['assignment_title'] = assignment_data['title']
         submission_dict['assignment_points'] = assignment_data['points_possible']
@@ -1093,8 +1098,13 @@ def get_project_submission_detail(submission_id):
         # Build detailed response
         submission_dict = submission.to_dict()
         
+        # Check if we should include rubric data
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
+        
         # Add comprehensive project details
         project_data = submission.project.to_dict(include_modules=True)
+        if include_rubric and project_data.get('rubric_id'):
+            _attach_rubric_dict(project_data)
         submission_dict['project'] = project_data
         submission_dict['project_title'] = project_data['title']
         submission_dict['project_points'] = project_data['points_possible']
@@ -1211,16 +1221,137 @@ def grade_project_submission(submission_id):
             # Store as properly formatted JSON
             submission.feedback = json.dumps(rubric_data, indent=2)
         
-        # Handle team member grading for collaborative projects
+        db.session.commit()
+
+        # ===== Grade Sharing: Propagate grade to ALL team members =====
+        team_grading_results = []
         if submission.project.collaboration_allowed and submission.team_members:
             try:
                 team_ids = submission.get_team_members() if hasattr(submission, 'get_team_members') else []
                 if team_ids:
-                    logger.info(f"✅ Graded collaborative project for team: {team_ids}")
+                    logger.info(f"✅ Sharing grade {grade} to team members: {team_ids}")
+                    
+                    from ..models.student_models import ModuleProgress
+                    
+                    project = submission.project
+                    course_id = project.course_id
+                    
+                    # Calculate percentage score
+                    points_possible = project.points_possible or 100
+                    if points_possible > 0:
+                        percentage_score = round((grade / points_possible) * 100, 2)
+                        percentage_score = max(0, min(100, percentage_score))
+                    else:
+                        percentage_score = 0
+                    
+                    # Get all modules this project covers
+                    project_module_ids = project.get_modules()
+                    if not project_module_ids:
+                        all_modules = Module.query.filter_by(course_id=course_id).all()
+                        project_module_ids = [m.id for m in all_modules]
+                    
+                    for member_id in team_ids:
+                        # Skip the primary submitter — already graded above
+                        if member_id == submission.student_id:
+                            continue
+                        
+                        member_result = _propagate_grade_to_team_member(
+                            project=project,
+                            member_id=member_id,
+                            grade=grade,
+                            feedback=data.get('feedback', '').strip(),
+                            graded_at=submission.graded_at,
+                            graded_by=current_user_id,
+                            percentage_score=percentage_score,
+                            project_module_ids=project_module_ids,
+                            course_id=course_id,
+                        )
+                        team_grading_results.append(member_result)
+                        
+                        if member_result.get('success'):
+                            logger.info(f"✅ Grade shared to team member {member_id}: grade={grade}")
+                        else:
+                            logger.warning(f"⚠️ Grade sharing failed for team member {member_id}: {member_result.get('error')}")
+                    
+                    # Commit all team member grade updates
+                    db.session.commit()
+                    logger.info(f"📊 Shared grade to {len(team_grading_results)} team member(s)")
             except Exception as team_error:
-                logger.warning(f"⚠️ Error handling team members: {str(team_error)}")
+                logger.error(f"❌ Error propagating grade to team members: {str(team_error)}")
         
-        db.session.commit()
+        # ===== Update ModuleProgress for the primary submitter =====
+        try:
+            from ..models.student_models import ModuleProgress
+            
+            project = submission.project
+            student_id = submission.student_id
+            course_id = project.course_id
+            
+            # Calculate percentage score
+            points_possible = project.points_possible or 100
+            if points_possible > 0:
+                percentage_score = round((grade / points_possible) * 100, 2)
+                percentage_score = max(0, min(100, percentage_score))
+            else:
+                percentage_score = 0
+            
+            # Get all modules this project covers
+            project_module_ids = project.get_modules()
+            
+            if not project_module_ids:
+                # Course-level project — update all course modules
+                all_modules = Module.query.filter_by(course_id=course_id).all()
+                project_module_ids = [m.id for m in all_modules]
+            
+            # Get student's enrollment
+            enrollment = Enrollment.query.filter_by(
+                student_id=student_id,
+                course_id=course_id
+            ).first()
+            
+            if enrollment and project_module_ids:
+                for module_id in project_module_ids:
+                    module_progress = ModuleProgress.query.filter_by(
+                        student_id=student_id,
+                        module_id=module_id,
+                        enrollment_id=enrollment.id
+                    ).first()
+                    
+                    if module_progress:
+                        # Use best project score (keep the higher score)
+                        current_project_score = module_progress.project_score or 0.0
+                        new_score = max(current_project_score, percentage_score)
+                        module_progress.project_score = new_score
+                        
+                        # Recalculate cumulative score
+                        if hasattr(module_progress, 'calculate_cumulative_score'):
+                            module_progress.calculate_cumulative_score()
+                        
+                        logger.info(f"✅ Updated module {module_id} project score for student {student_id}: {new_score}%")
+                    else:
+                        logger.warning(f"⚠️ Module progress not found for student {student_id}, module {module_id} — creating")
+                        # Create module progress if it doesn't exist
+                        try:
+                            module_progress = ModuleProgress(
+                                student_id=student_id,
+                                module_id=module_id,
+                                enrollment_id=enrollment.id,
+                                course_id=course_id,
+                                project_score=percentage_score
+                            )
+                            db.session.add(module_progress)
+                            logger.info(f"✅ Created module progress for student {student_id}, module {module_id}")
+                        except Exception as create_err:
+                            logger.warning(f"⚠️ Could not create module progress: {create_err}")
+                
+                db.session.commit()
+                logger.info(f"📊 Updated project scores across {len(project_module_ids)} module(s)")
+            elif not enrollment:
+                logger.warning(f"⚠️ Enrollment not found for student {student_id}, course {course_id}")
+                
+        except Exception as mp_error:
+            logger.error(f"❌ Error updating module progress after project grading: {str(mp_error)}")
+            # Don't fail the whole request
         
         # ===== AUTO-MODIFICATION REQUEST for project scores below passing =====
         modification_auto_requested = False
@@ -1286,45 +1417,17 @@ def grade_project_submission(submission_id):
             logger.error(f"❌ Error in auto-modification request for project: {str(mod_error)}")
         # ===== END AUTO-MODIFICATION REQUEST =====
         
-        # Send email notification to student about project grade (with modification if applicable)
-        try:
-            student = User.query.get(submission.student_id)
-            if student and student.email:
-                if modification_auto_requested:
-                    instructor = User.query.get(current_user_id)
-                    instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Your Instructor"
-                    frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000') if hasattr(current_app, 'config') else 'http://localhost:3000'
-                    resubmission_deadline = (datetime.utcnow() + timedelta(days=7)).strftime('%B %d, %Y')
-                    
-                    send_grade_with_modification_notification(
-                        submission=submission,
-                        assignment=submission.project,
-                        student=student,
-                        grade=grade,
-                        feedback=data.get('feedback', ''),
-                        modification_reason=modification_reason,
-                        instructor_name=instructor_name,
-                        resubmission_deadline=resubmission_deadline,
-                        frontend_url=frontend_url,
-                        passing_percentage=passing_threshold,
-                        is_project=True
-                    )
-                else:
-                    send_project_graded_notification(
-                        submission=submission,
-                        project=submission.project,
-                        student=student,
-                        grade=grade,
-                        feedback=data.get('feedback', '')
-                    )
-                logger.info(f"✅ Project grade notification email sent to {student.email} for project '{submission.project.title}'")
-            else:
-                logger.warning(f"⚠️ Student not found or has no email for project submission {submission_id}")
-        except Exception as email_error:
-            logger.error(f"❌ Failed to send project grade notification email: {str(email_error)}")
-            # Don't fail the request if email fails
+        # Send email notification to the primary student and all team members
+        _send_project_grade_notifications(
+            submission=submission,
+            grade=grade,
+            feedback=data.get('feedback', ''),
+            grader_id=current_user_id,
+            passing_threshold=passing_threshold if modification_auto_requested else None,
+            modification_reason=modification_reason if modification_auto_requested else None,
+        )
         
-        # ── In-app notification ──
+        # ── In-app notifications for the primary student ──
         try:
             notify_project_graded(
                 submission=submission,
@@ -1346,6 +1449,32 @@ def grade_project_submission(submission_id):
                 )
         except Exception as notif_err:
             logger.error(f"❌ Error creating in-app project grade notification: {str(notif_err)}")
+        
+        # ── In-app notifications for team members ──
+        if team_grading_results:
+            for tm_result in team_grading_results:
+                if tm_result.get('success'):
+                    try:
+                        notify_project_graded(
+                            submission=tm_result.get('submission'),
+                            project=submission.project,
+                            student_id=tm_result['member_id'],
+                            grade=grade,
+                            feedback=data.get('feedback', ''),
+                            actor_id=current_user_id,
+                            course_id=submission.project.course_id if hasattr(submission.project, 'course_id') else None,
+                        )
+                        if tm_result.get('modification_auto_requested'):
+                            notify_modification_requested(
+                                student_id=tm_result['member_id'],
+                                assignment_or_project=submission.project,
+                                reason=tm_result.get('modification_reason', modification_reason),
+                                actor_id=current_user_id,
+                                course_id=submission.project.course_id if hasattr(submission.project, 'course_id') else None,
+                                is_project=True,
+                            )
+                    except Exception as tm_notif_err:
+                        logger.error(f"❌ Error creating in-app grade notification for team member {tm_result.get('member_id')}: {str(tm_notif_err)}")
 
         logger.info(f"✅ Project submission {submission_id} graded successfully by instructor {current_user_id}")
         
@@ -1377,6 +1506,217 @@ def grade_project_submission(submission_id):
         db.session.rollback()
         logger.error(f"❌ Error grading project: {str(e)}", exc_info=True)
         return jsonify({"message": "Failed to grade project", "error": str(e)}), 500
+
+
+# =====================
+# TEAM GRADE SHARING HELPERS
+# =====================
+
+def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_at, graded_by,
+                                     percentage_score, project_module_ids, course_id):
+    """
+    Propagate a project grade to a team member's submission and ModuleProgress.
+    
+    Args:
+        project: Project ORM object
+        member_id: Team member user ID
+        grade: Raw grade value
+        feedback: Instructor feedback string
+        graded_at: Datetime of grading
+        graded_by: Instructor user ID
+        percentage_score: Grade as percentage (0-100)
+        project_module_ids: List of module IDs this project covers
+        course_id: Course ID
+    
+    Returns:
+        dict with keys: success, member_id, submission (or None), error (or None),
+                        modification_auto_requested, modification_reason
+    """
+    result = {
+        'success': False,
+        'member_id': member_id,
+        'submission': None,
+        'error': None,
+        'modification_auto_requested': False,
+        'modification_reason': None,
+    }
+    
+    try:
+        from ..models.student_models import ModuleProgress
+        from ..models.course_models import Enrollment
+        
+        # 1) Find or create the team member's ProjectSubmission
+        member_submission = ProjectSubmission.query.filter_by(
+            project_id=project.id,
+            student_id=member_id
+        ).first()
+        
+        if not member_submission:
+            # Create a submission record for the team member so they see the grade
+            member_submission = ProjectSubmission(
+                project_id=project.id,
+                student_id=member_id,
+                team_members=None,  # Will be set below
+                text_content=None,
+                file_path=None,
+                submitted_at=datetime.utcnow(),
+            )
+            # Copy team members from an existing submission
+            existing_sub = ProjectSubmission.query.filter_by(
+                project_id=project.id
+            ).filter(ProjectSubmission.team_members.isnot(None)).first()
+            if existing_sub:
+                member_submission.set_team_members(existing_sub.get_team_members())
+            db.session.add(member_submission)
+            db.session.flush()
+            logger.info(f"✅ Created ProjectSubmission {member_submission.id} for team member {member_id}")
+        
+        # 2) Apply the grade
+        member_submission.grade = grade
+        member_submission.feedback = feedback
+        member_submission.graded_at = graded_at
+        member_submission.graded_by = graded_by
+        
+        result['submission'] = member_submission
+        
+        # 3) Update ModuleProgress for this team member
+        # Note: Modification request flags are handled ONCE in the primary grading flow
+        # (project-level), NOT per team member.
+        enrollment = Enrollment.query.filter_by(
+            student_id=member_id,
+            course_id=course_id
+        ).first()
+        
+        if enrollment and project_module_ids:
+            for module_id in project_module_ids:
+                module_progress = ModuleProgress.query.filter_by(
+                    student_id=member_id,
+                    module_id=module_id,
+                    enrollment_id=enrollment.id
+                ).first()
+                
+                if module_progress:
+                    current_project_score = module_progress.project_score or 0.0
+                    new_score = max(current_project_score, percentage_score)
+                    module_progress.project_score = new_score
+                    
+                    if hasattr(module_progress, 'calculate_cumulative_score'):
+                        module_progress.calculate_cumulative_score()
+                    
+                    logger.info(f"✅ Team member {member_id}: updated module {module_id} project score: {new_score}%")
+                else:
+                    try:
+                        module_progress = ModuleProgress(
+                            student_id=member_id,
+                            module_id=module_id,
+                            enrollment_id=enrollment.id,
+                            course_id=course_id,
+                            project_score=percentage_score
+                        )
+                        db.session.add(module_progress)
+                        logger.info(f"✅ Team member {member_id}: created module progress for module {module_id}")
+                    except Exception as create_err:
+                        logger.warning(f"⚠️ Team member {member_id}: could not create module progress: {create_err}")
+        elif not enrollment:
+            logger.warning(f"⚠️ Team member {member_id}: enrollment not found for course {course_id}")
+        
+        result['success'] = True
+        
+    except Exception as e:
+        result['error'] = str(e)
+        logger.error(f"❌ Error propagating grade to team member {member_id}: {str(e)}")
+    
+    return result
+
+
+def _send_project_grade_notifications(submission, grade, feedback, grader_id,
+                                       passing_threshold=None, modification_reason=None):
+    """
+    Send grade notification emails to the primary student and all team members.
+    """
+    try:
+        project = submission.project
+        team_graded = False
+        
+        # 1) Notify the primary student
+        student = User.query.get(submission.student_id)
+        if student and student.email:
+            if modification_reason:
+                instructor = User.query.get(grader_id)
+                instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Your Instructor"
+                frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000') if hasattr(current_app, 'config') else 'http://localhost:3000'
+                resubmission_deadline = (datetime.utcnow() + timedelta(days=7)).strftime('%B %d, %Y')
+                
+                send_grade_with_modification_notification(
+                    submission=submission,
+                    assignment=project,
+                    student=student,
+                    grade=grade,
+                    feedback=feedback,
+                    modification_reason=modification_reason,
+                    instructor_name=instructor_name,
+                    resubmission_deadline=resubmission_deadline,
+                    frontend_url=frontend_url,
+                    passing_percentage=passing_threshold,
+                    is_project=True
+                )
+            else:
+                send_project_graded_notification(
+                    submission=submission,
+                    project=project,
+                    student=student,
+                    grade=grade,
+                    feedback=feedback
+                )
+            logger.info(f"✅ Project grade notification sent to {student.email}")
+        
+        # 2) Notify team members (if collaborative)
+        if project.collaboration_allowed and submission.team_members:
+            team_ids = submission.get_team_members()
+            for member_id in team_ids:
+                if member_id == submission.student_id:
+                    continue  # Already notified above
+                
+                team_member = User.query.get(member_id)
+                if team_member and team_member.email:
+                    try:
+                        if modification_reason:
+                            instructor = User.query.get(grader_id)
+                            instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Your Instructor"
+                            frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000') if hasattr(current_app, 'config') else 'http://localhost:3000'
+                            resubmission_deadline = (datetime.utcnow() + timedelta(days=7)).strftime('%B %d, %Y')
+                            
+                            send_grade_with_modification_notification(
+                                submission=submission,
+                                assignment=project,
+                                student=team_member,
+                                grade=grade,
+                                feedback=feedback,
+                                modification_reason=modification_reason,
+                                instructor_name=instructor_name,
+                                resubmission_deadline=resubmission_deadline,
+                                frontend_url=frontend_url,
+                                passing_percentage=passing_threshold,
+                                is_project=True
+                            )
+                        else:
+                            send_project_graded_notification(
+                                submission=submission,
+                                project=project,
+                                student=team_member,
+                                grade=grade,
+                                feedback=feedback
+                            )
+                        logger.info(f"✅ Team grade notification sent to {team_member.email}")
+                        team_graded = True
+                    except Exception as tm_email_err:
+                        logger.error(f"❌ Failed to send grade notification to team member {member_id}: {str(tm_email_err)}")
+            
+            if team_graded:
+                logger.info(f"✅ Grade notifications sent to {len(team_ids) - 1} team member(s)")
+        
+    except Exception as e:
+        logger.error(f"❌ Error sending project grade notifications: {str(e)}")
 
 
 # =====================

@@ -51,6 +51,22 @@ def student_required(f):
 student_bp = Blueprint("student_bp", __name__, url_prefix="/api/v1/student")
 
 # --- Student Dashboard Routes ---
+
+
+
+def _attach_rubric_to_dict(item_dict: dict) -> None:
+    """
+    If item_dict has a rubric_id, attach the full rubric data (with criteria)
+    to the dict under the 'rubric' key. Mutates item_dict in place.
+    """
+    rubric_id = item_dict.get('rubric_id')
+    if not rubric_id:
+        return
+    from ..models.grading_models import Rubric
+    rubric = Rubric.query.get(rubric_id)
+    if rubric:
+        item_dict['rubric'] = rubric.to_dict()
+
 @student_bp.route("/dashboard", methods=["GET"])
 @student_required
 def get_student_dashboard():
@@ -1081,6 +1097,7 @@ def get_student_assignments():
         )
     ).order_by(Assignment.due_date.asc().nullslast()).all()
 
+    include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
     assignments_data = []
     for assignment in assignments:
         assignment_data = assignment.to_dict()
@@ -1098,6 +1115,10 @@ def get_student_assignments():
         assignment_data['course_title'] = assignment.course.title if assignment.course else 'Unknown Course'
         assignment_data['module_title'] = assignment.module.title if assignment.module else None
         assignment_data['module_id'] = assignment.module_id
+
+        # Attach rubric data if requested
+        if include_rubric:
+            _attach_rubric_to_dict(assignment_data)
 
         assignments_data.append(assignment_data)
 
@@ -2305,6 +2326,7 @@ def get_assignment_details(assignment_id):
             assignment_id=assignment_id
         ).first()
         
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
         assignment_data = {
             'id': assignment.id,
             'title': assignment.title,
@@ -2328,6 +2350,9 @@ def get_assignment_details(assignment_id):
             
             'submission_status': _build_assignment_submission_status(assignment, submission),
         }
+        
+        if include_rubric:
+            _attach_rubric_to_dict(assignment_data)
         
         return jsonify(assignment_data), 200
         
@@ -2541,8 +2566,13 @@ def get_student_project_details(project_id):
             student_id=current_user_id
         ).first()
         
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
         project_data = project.to_dict(include_modules=True)
         project_data['course_title'] = project.course.title
+        
+        # Attach rubric data if requested
+        if include_rubric:
+            _attach_rubric_to_dict(project_data)
         
         # Build submission_status dict
         submission_status = {
@@ -2601,6 +2631,127 @@ def get_student_project_details(project_id):
         
     except Exception as e:
         return jsonify({"message": "Error fetching project details", "error": str(e)}), 500
+
+
+@student_bp.route("/projects/<int:project_id>/my-team", methods=["GET"])
+@student_required
+def get_student_team_info(project_id):
+    """
+    Get the current student's team information for a collaborative project.
+    Returns team members with contact info, submission status, and project details.
+    """
+    try:
+        current_user_id = int(get_jwt_identity())
+        
+        project = Project.query.get_or_404(project_id)
+        
+        # Verify student is enrolled in the course
+        enrollment = Enrollment.query.filter_by(
+            student_id=current_user_id,
+            course_id=project.course_id
+        ).first()
+        
+        if not enrollment:
+            return jsonify({"message": "You are not enrolled in this course"}), 403
+        
+        # Check if collaboration is enabled
+        if not project.collaboration_allowed:
+            return jsonify({"message": "This project does not have collaboration enabled"}), 400
+        
+        # Find the submission where the student is a member
+        submissions = ProjectSubmission.query.filter_by(project_id=project_id).all()
+        
+        my_submission = None
+        team_member_ids = set()
+        
+        for sub in submissions:
+            member_ids = sub.get_team_members() or []
+            all_ids = list(set(member_ids + [sub.student_id]))
+            
+            if current_user_id in all_ids:
+                my_submission = sub
+                team_member_ids = set(all_ids)
+                break
+        
+        if not my_submission:
+            return jsonify({
+                "message": "You are not assigned to any team for this project",
+                "in_team": False,
+                "team": None,
+                "project": project.to_dict(),
+                "submission": None
+            }), 200
+        
+        # Build team members list
+        team_members = []
+        for mid in team_member_ids:
+            user = User.query.get(mid)
+            if user:
+                team_members.append({
+                    "id": user.id,
+                    "name": f"{user.first_name} {user.last_name}".strip() or user.username,
+                    "email": user.email,
+                    "phone": user.phone_number or "",
+                    "is_primary": user.id == my_submission.student_id,
+                    "is_me": user.id == current_user_id
+                })
+        
+        # Build submission status
+        submission_status = {
+            "id": my_submission.id,
+            "submitted": my_submission.file_path is not None or bool(my_submission.text_content),
+            "submitted_at": my_submission.submitted_at.isoformat() if my_submission.submitted_at else None,
+            "text_content": my_submission.text_content,
+            "file_path": my_submission.file_path,
+            "file_name": my_submission.file_name,
+            "grade": my_submission.grade,
+            "feedback": my_submission.feedback,
+            "graded_at": my_submission.graded_at.isoformat() if my_submission.graded_at else None,
+            "graded_by": my_submission.graded_by,
+            "is_late": (my_submission.submitted_at > project.due_date) if my_submission.submitted_at and project.due_date else False
+        }
+        
+        if project.modification_requested and project.can_resubmit:
+            submission_status["needs_revision"] = True
+            submission_status["modification_reason"] = project.modification_request_reason
+        else:
+            submission_status["needs_revision"] = False
+        
+        return jsonify({
+            "message": "Team info retrieved successfully",
+            "in_team": True,
+            "team": {
+                "submission_id": my_submission.id,
+                "members": team_members,
+                "member_count": len(team_members),
+                "created_at": my_submission.submitted_at.isoformat() if my_submission.submitted_at else None
+            },
+            "project": {
+                "id": project.id,
+                "title": project.title,
+                "description": project.description,
+                "course_id": project.course_id,
+                "course_title": project.course.title if project.course else "",
+                "due_date": project.due_date.isoformat() if project.due_date else None,
+                "points_possible": project.points_possible,
+                "submission_format": project.submission_format,
+                "max_file_size_mb": project.max_file_size_mb,
+                "allowed_file_types": project.allowed_file_types,
+                "modification_requested": project.modification_requested,
+                "can_resubmit": project.can_resubmit,
+                "modification_request_reason": project.modification_request_reason
+            },
+            "submission": submission_status,
+            "enrollment": {
+                "id": enrollment.id,
+                "cohort_label": enrollment.cohort_label or (enrollment.application_window.cohort_label if enrollment.application_window else None),
+                "course_title": enrollment.course.title if enrollment.course else ""
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching student team info: {str(e)}", exc_info=True)
+        return jsonify({"message": "Error fetching team info", "error": str(e)}), 500
 
 
 @student_bp.route("/projects/<int:project_id>/submit", methods=["POST"])

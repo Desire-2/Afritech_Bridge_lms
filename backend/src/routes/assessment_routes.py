@@ -12,7 +12,8 @@ import logging
 from ..models.user_models import db, User, Role
 from ..models.course_models import (
     Course, Module, Lesson, Quiz, Question, Answer, 
-    Assignment, AssignmentSubmission, Project, ProjectSubmission
+    Assignment, AssignmentSubmission, Project, ProjectSubmission,
+    Enrollment
 )
 
 # Helper for role checking
@@ -81,6 +82,22 @@ assessment_bp = Blueprint("assessment_bp", __name__, url_prefix="/api/v1/instruc
 # =====================
 # QUIZ MANAGEMENT
 # =====================
+
+
+
+
+def _attach_rubric_to_dict(item_dict: dict) -> None:
+    """
+    If item_dict has a rubric_id, attach the full rubric data (with criteria)
+    to the dict under the 'rubric' key. Mutates item_dict in place.
+    """
+    rubric_id = item_dict.get('rubric_id')
+    if not rubric_id:
+        return
+    from ..models.grading_models import Rubric
+    rubric = Rubric.query.get(rubric_id)
+    if rubric:
+        item_dict['rubric'] = rubric.to_dict()
 
 @assessment_bp.route("/quizzes", methods=["POST"])
 @instructor_required
@@ -534,28 +551,39 @@ def create_project():
         current_user_id = get_jwt_identity()
         
         # Validate required fields
-        required_fields = ['title', 'description', 'course_id', 'module_ids', 'due_date']
+        required_fields = ['title', 'description', 'course_id', 'due_date']
         for field in required_fields:
             if not data.get(field):
                 return jsonify({"message": f"{field} is required"}), 400
+        
+        # Validate module_ids separately (empty list is valid = whole-course project)
+        if 'module_ids' not in data or not isinstance(data.get('module_ids'), list):
+            return jsonify({"message": "module_ids must be a list"}), 400
+        
+        module_ids = data['module_ids']
         
         # Verify course ownership
         course = Course.query.get(data['course_id'])
         if not course or course.instructor_id != get_user_id():
             return jsonify({"message": "Access denied to this course"}), 403
         
-        # Validate module_ids belong to the course
-        module_ids = data['module_ids']
-        if not isinstance(module_ids, list) or not module_ids:
-            return jsonify({"message": "module_ids must be a non-empty list"}), 400
+        # Validate module_ids — empty list means whole-course project (all modules)
+        if not isinstance(module_ids, list):
+            return jsonify({"message": "module_ids must be a list"}), 400
         
-        modules = Module.query.filter(
-            Module.id.in_(module_ids),
-            Module.course_id == data['course_id']
-        ).all()
-        
-        if len(modules) != len(module_ids):
-            return jsonify({"message": "Some module IDs are invalid or don't belong to this course"}), 400
+        if module_ids:
+            # Validate module_ids belong to the course
+            modules = Module.query.filter(
+                Module.id.in_(module_ids),
+                Module.course_id == data['course_id']
+            ).all()
+            
+            if len(modules) != len(module_ids):
+                return jsonify({"message": "Some module IDs are invalid or don't belong to this course"}), 400
+        else:
+            # Whole-course project — use ALL modules in the course
+            all_modules = Module.query.filter_by(course_id=data['course_id']).all()
+            module_ids = [m.id for m in all_modules]
         
         # Parse due date
         try:
@@ -570,6 +598,7 @@ def create_project():
             course_id=data['course_id'],
             due_date=due_date,
             points_possible=data.get('points_possible', 100.0),
+            passing_score=data.get('passing_score', 60.0),
             is_published=data.get('is_published', False),
             submission_format=data.get('submission_format', 'file_upload'),
             max_file_size_mb=data.get('max_file_size_mb', 50),
@@ -614,18 +643,23 @@ def update_project(project_id):
         if 'objectives' in data:
             project.objectives = data['objectives']
         if 'module_ids' in data:
-            # Validate module_ids belong to the course
             module_ids = data['module_ids']
-            if not isinstance(module_ids, list) or not module_ids:
-                return jsonify({"message": "module_ids must be a non-empty list"}), 400
+            if not isinstance(module_ids, list):
+                return jsonify({"message": "module_ids must be a list"}), 400
             
-            modules = Module.query.filter(
-                Module.id.in_(module_ids),
-                Module.course_id == project.course_id
-            ).all()
-            
-            if len(modules) != len(module_ids):
-                return jsonify({"message": "Some module IDs are invalid or don't belong to this course"}), 400
+            if module_ids:
+                # Validate module_ids belong to the course
+                modules = Module.query.filter(
+                    Module.id.in_(module_ids),
+                    Module.course_id == project.course_id
+                ).all()
+                
+                if len(modules) != len(module_ids):
+                    return jsonify({"message": "Some module IDs are invalid or don't belong to this course"}), 400
+            else:
+                # Whole-course project — use ALL modules in the course
+                all_modules = Module.query.filter_by(course_id=project.course_id).all()
+                module_ids = [m.id for m in all_modules]
             
             project.set_modules(module_ids)
         
@@ -637,6 +671,8 @@ def update_project(project_id):
         
         if 'points_possible' in data:
             project.points_possible = data['points_possible']
+        if 'passing_score' in data:
+            project.passing_score = data['passing_score']
         if 'is_published' in data:
             project.is_published = data['is_published']
         if 'submission_format' in data:
@@ -715,10 +751,26 @@ def get_assessments_overview(course_id):
         assignments = Assignment.query.filter_by(course_id=course_id).all()
         projects = Project.query.filter_by(course_id=course_id).all()
         
+        include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
+        
+        assignments_data = []
+        for assignment in assignments:
+            a_dict = assignment.to_dict()
+            if include_rubric:
+                _attach_rubric_to_dict(a_dict)
+            assignments_data.append(a_dict)
+        
+        projects_data = []
+        for project in projects:
+            p_dict = project.to_dict(include_modules=True)
+            if include_rubric:
+                _attach_rubric_to_dict(p_dict)
+            projects_data.append(p_dict)
+        
         return jsonify({
             "quizzes": [quiz.to_dict(include_questions=True) for quiz in quizzes],
-            "assignments": [assignment.to_dict() for assignment in assignments],
-            "projects": [project.to_dict(include_modules=True) for project in projects]
+            "assignments": assignments_data,
+            "projects": projects_data
         }), 200
         
     except Exception as e:

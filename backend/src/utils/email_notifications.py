@@ -1084,6 +1084,133 @@ def send_admin_alert_no_next_cohort(course, cohort_label, affected_student_count
         return False
 
 
+def send_team_assignment_notification(
+    student_email,
+    student_name,
+    project_title,
+    course_title,
+    project_description,
+    due_date,
+    team_member_names,
+    team_member_phones,
+    instructor_name
+):
+    """
+    Send email notification when a student is assigned to a collaborative project team.
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("\U0001f4e7 Email service not available - cannot send team assignment notification")
+            return False
+
+        team_members_rows = ""
+        for i, name in enumerate(team_member_names):
+            phone = team_member_phones[i] if i < len(team_member_phones) else "N/A"
+            is_you = (name == student_name)
+            badge = """ <span style="display:inline-block;background:#6366f1;color:#fff;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px;">You</span>""" if is_you else ""
+            team_members_rows += f"""
+            <tr>
+                <td style="padding:10px 12px;border-bottom:1px solid #334155;">
+                    <span style="font-weight:600;color:#f1f5f9;">{name}</span>{badge}
+                </td>
+                <td style="padding:10px 12px;border-bottom:1px solid #334155;color:#94a3b8;">{phone}</td>
+            </tr>"""
+
+        frontend_url = os.environ.get('FRONTEND_URL', 'https://study.afritechbridge.online').rstrip('/')
+        project_url = f"{frontend_url}/student/projects"
+
+        email_html = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Team Assigned for Project</title>
+        </head>
+        <body style="margin:0;padding:0;background:#0f172a;font-family:Arial,sans-serif;">
+          <div style="max-width:600px;margin:0 auto;padding:24px;">
+            <!-- Header -->
+            <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:32px;border-radius:16px 16px 0 0;text-align:center;">
+              <h1 style="color:#fff;margin:0 0 8px 0;font-size:22px;">👥 Team Assignment</h1>
+              <p style="color:#c4b5fd;margin:0;font-size:14px;">You've been assigned to a collaborative project team</p>
+            </div>
+            <!-- Body -->
+            <div style="background:#1e293b;color:#e2e8f0;padding:32px;border-radius:0 0 16px 16px;">
+              <p style="font-size:16px;margin-top:0;">Hello <strong>{student_name}</strong>,</p>
+              <p style="font-size:15px;line-height:1.7;">
+                You have been assigned to a team for the project <strong>"{project_title}"</strong>
+                in the course <strong>{course_title}</strong>.
+                Please collaborate with your team members to complete and submit the project.
+              </p>
+
+              <!-- Project Info Card -->
+              <div style="background:#334155;padding:20px;border-radius:12px;margin:24px 0;border-left:4px solid #6366f1;">
+                <p style="margin:0 0 12px 0;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">📋 Project Details</p>
+                <p style="margin:0 0 4px 0;font-size:15px;"><strong>Project:</strong> {project_title}</p>
+                <p style="margin:0 0 4px 0;font-size:14px;color:#94a3b8;">{project_description[:300]}{chr(8230) if len(project_description) > 300 else ""}</p>
+                <p style="margin:0 0 4px 0;font-size:14px;"><strong>Course:</strong> {course_title}</p>
+                <p style="margin:0;font-size:14px;"><strong>Due Date:</strong> {due_date}</p>
+              </div>
+
+              <!-- Team Members Card -->
+              <div style="background:#334155;padding:20px;border-radius:12px;margin:24px 0;border-left:4px solid #10b981;">
+                <p style="margin:0 0 12px 0;font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;font-weight:600;">👥 Your Team ({len(team_member_names)} members)</p>
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead>
+                    <tr style="background:#1e293b;">
+                      <th style="padding:8px 12px;text-align:left;font-size:12px;color:#94a3b8;text-transform:uppercase;">Name</th>
+                      <th style="padding:8px 12px;text-align:left;font-size:12px;color:#94a3b8;text-transform:uppercase;">Phone</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {team_members_rows}
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Collaboration Tips -->
+              <div style="background:#1e3a5f;padding:20px;border-radius:12px;margin:24px 0;border-left:4px solid #3b82f6;">
+                <p style="margin:0 0 8px 0;font-size:12px;color:#93c5fd;text-transform:uppercase;letter-spacing:1px;font-weight:600;">💡 Collaboration Tips</p>
+                <ul style="margin:0;padding-left:20px;font-size:14px;color:#bfdbfe;line-height:1.8;">
+                  <li>Reach out to your team members using the contact info above</li>
+                  <li>Divide the project tasks among team members</li>
+                  <li>Communicate regularly to track progress</li>
+                  <li>One member submits the project on behalf of the team</li>
+                </ul>
+              </div>
+
+              <!-- CTA -->
+              <div style="text-align:center;margin:28px 0;">
+                <a href="{project_url}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;text-decoration:none;padding:14px 32px;border-radius:10px;font-weight:700;font-size:16px;">
+                  Go to Project →
+                </a>
+              </div>
+
+              <p style="font-size:14px;color:#94a3b8;line-height:1.6;">
+                If you have any questions, please reach out to your instructor <strong>{instructor_name}</strong>.
+              </p>
+            </div>
+            <!-- Footer -->
+            <div style="text-align:center;padding:20px 16px;">
+              <p style="font-size:12px;color:#64748b;margin:0;">
+                Afritec Bridge LMS &bull; Empowering Africa's Tech Talent
+              </p>
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+
+        return brevo_service.send_email(
+            to_emails=[student_email],
+            subject=f"👥 Team Assigned: {project_title} - {course_title}",
+            html_content=email_html
+        )
+    except Exception as e:
+        logger.error(f"\u274c Failed to send team assignment notification: {str(e)}")
+        return False
+
+
 def send_cohort_start_notification(enrollment):
     """Send email to enrolled students when their cohort start date arrives.
 
