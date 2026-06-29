@@ -919,6 +919,8 @@ class Enrollment(db.Model):
 
     # ── Notification tracking ──
     cohort_start_notified = db.Column(db.Boolean, default=False, nullable=False)  # True after cohort-start email is sent
+    last_payment_reminder_sent = db.Column(db.DateTime, nullable=True)  # When last payment reminder was sent (for pending-payment enrollments)
+    payment_reminder_count = db.Column(db.Integer, default=0)  # Total number of payment reminders sent
 
     migrated_from_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # If student was migrated from a waitlisted cohort
 
@@ -1014,6 +1016,8 @@ class Enrollment(db.Model):
             'payment_verified_at': self.payment_verified_at.isoformat() if self.payment_verified_at else None,
             'payment_verification_hash': self.payment_verification_hash,
             'migrated_from_window_id': self.migrated_from_window_id,
+            'last_payment_reminder_sent': self.last_payment_reminder_sent.isoformat() if self.last_payment_reminder_sent else None,
+            'payment_reminder_count': self.payment_reminder_count or 0,
         }
 
 class Quiz(db.Model):

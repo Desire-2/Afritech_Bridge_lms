@@ -17,6 +17,8 @@ from .payment_email_templates import (
     enrollment_payment_confirmed_email,
     enrollment_payment_waived_email,
     enrollment_payment_failed_email,
+    payment_submitted_unapproved_email,
+    payment_migrated_student_email,
 )
 
 # Import email service
@@ -275,6 +277,118 @@ def send_payment_failed_notification(application, course_title: str, failure_rea
         
     except Exception as e:
         logger.error(f"❌ Error sending payment failure notification: {str(e)}")
+        return False
+
+
+def send_submitted_unapproved_notification(application, course_title: str, payment_info: Dict, cohort_info: Optional[Dict] = None) -> bool:
+    """
+    Send email to applicants who submitted their application but whose
+    payment has not yet been approved by an administrator.
+    
+    Instructs them to send proof of payment on WhatsApp or pay now.
+    
+    Args:
+        application: CourseApplication object
+        course_title: str - Course title
+        payment_info: dict with payment details
+        cohort_info: dict with cohort details (optional)
+    
+    Returns:
+        bool: True if email sent successfully
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send unapproved payment notification")
+            return False
+        
+        email_html = payment_submitted_unapproved_email(
+            application=application,
+            course_title=course_title,
+            payment_info=payment_info,
+            cohort_info=cohort_info
+        )
+        
+        success = brevo_service.send_email(
+            to_emails=[application.email],
+            subject=f"⏳ Payment Action Required - {course_title}",
+            html_content=email_html
+        )
+        
+        if success:
+            logger.info(f"📧 Unapproved payment notification sent to {application.email} for application #{application.id}")
+        else:
+            logger.error(f"❌ Failed to send unapproved payment notification to {application.email}")
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"❌ Error sending unapproved payment notification: {str(e)}")
+        return False
+
+
+def send_migrated_student_payment_notification(
+    student_email: str,
+    student_name: str,
+    course_title: str,
+    payment_info: Dict,
+    cohort_info: Optional[Dict] = None
+) -> bool:
+    """
+    Send email to students who were migrated from one cohort to another
+    and need to pay to continue their learning.
+    
+    Args:
+        student_email: str - Student's email address
+        student_name: str - Student's name
+        course_title: str - Course title
+        payment_info: dict with payment details
+            - amount: float
+            - currency: str
+            - original_cohort: str
+            - new_cohort: str
+        cohort_info: dict with cohort details (optional)
+    
+    Returns:
+        bool: True if email sent successfully
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send migrated student payment notification")
+            return False
+        
+        # Build a minimal application-like object for the template
+        class _MinimalApp:
+            def __init__(self, name, email, course_id):
+                self.full_name = name
+                self.email = email
+                self.course_id = course_id
+                self.id = None
+                self.application_window_id = None
+        
+        mock_app = _MinimalApp(student_name, student_email, None)
+        
+        email_html = payment_migrated_student_email(
+            application=mock_app,
+            course_title=course_title,
+            payment_info=payment_info,
+            cohort_info=cohort_info
+        )
+        
+        success = brevo_service.send_email(
+            to_emails=[student_email],
+            subject=f"🔄 Cohort Update - Payment Required - {course_title}",
+            html_content=email_html
+        )
+        
+        if success:
+            logger.info(f"📧 Migrated student payment notification sent to {student_email}")
+        else:
+            logger.error(f"❌ Failed to send migrated student payment notification to {student_email}")
+        
+        return success
+        
+    except Exception as e:
+        logger.error(f"❌ Error sending migrated student payment notification: {str(e)}")
         return False
 
 

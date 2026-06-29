@@ -2,6 +2,7 @@
 💰 Payment-Related Email Templates for Afritech Bridge LMS
 Beautiful, responsive email designs for all payment-related actions
 """
+import os
 from datetime import datetime
 from .email_templates import get_email_header, get_email_footer, _frontend_url
 from .email_template_helpers import (
@@ -1519,6 +1520,385 @@ def enrollment_payment_failed_email(enrollment, course_title, failure_reason=Non
                     Best regards,<br><strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
                 </p>
             </div>
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
+    """
+
+
+def payment_submitted_unapproved_email(application, course_title, payment_info, cohort_info=None, unsubscribe_token=None):
+    """
+    📧 Email sent to applicants whose application was submitted but payment
+    has not yet been approved by an administrator.
+    
+    Instructs them to send proof of payment on WhatsApp OR pay now.
+    
+    Args:
+        application: CourseApplication object
+        course_title: str - Course title
+        payment_info: dict with payment details
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
+    """
+    amount = payment_info.get('amount', 0)
+    currency = payment_info.get('currency', 'USD')
+    deadline = payment_info.get('payment_deadline')
+    payment_methods = payment_info.get('payment_methods', ['Mobile Money', 'Bank Transfer', 'PayPal'])
+    
+    # WhatsApp support number
+    whatsapp_number = os.environ.get('WHATSAPP_SUPPORT_NUMBER', '+250780784924')
+    whatsapp_link = f"https://wa.me/{whatsapp_number.replace('+', '')}?text=Payment%20Proof%20-%20Application%20%23{application.id}"
+    
+    # Generate cohort card
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
+    
+    # Methods HTML
+    methods_html = ""
+    for method in payment_methods:
+        method_emoji = "💳"
+        if "mobile" in method.lower() or "momo" in method.lower():
+            method_emoji = "📱"
+        elif "bank" in method.lower():
+            method_emoji = "🏦"
+        elif "paypal" in method.lower():
+            method_emoji = "🅿️"
+        methods_html += f'''
+        <div style="background-color: #34495e; padding: 12px 20px; border-radius: 8px; margin: 8px 0; border-left: 3px solid #3b82f6;">
+            <span style="color: #ffffff; font-size: 15px; font-weight: 600;">{method_emoji} {method}</span>
+        </div>'''
+    
+    return f"""
+    {get_email_header()}
+            
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Header Icon & Title -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(245, 158, 11, 0.4);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">⏳</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #f59e0b; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
+                        Payment Action Required
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        Complete Your Payment to Proceed
+                    </p>
+                </div>
+                
+                <!-- Greeting -->
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{application.full_name}</strong> 👋
+                </p>
+                
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    Your application for <strong style="color: #f59e0b; font-size: 16px;">{course_title}</strong> has been submitted successfully, 
+                    but your payment has <strong style="color: #ef4444;">not yet been approved</strong>. 
+                </p>
+                
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 25px 0;">
+                    To proceed with your enrollment, please choose one of the following options:
+                </p>
+                
+                <!-- Option 1: Pay Now -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 25px 0; border: 2px solid #3b82f6;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <span style="font-size: 48px; display: block; margin-bottom: 10px;">💳</span>
+                        <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Option 1: Pay Online Now</h3>
+                        <p style="color: #bdc3c7; margin: 8px 0 0 0; font-size: 14px;">
+                            Complete your payment instantly using any of the methods below
+                        </p>
+                    </div>
+                    
+                    <!-- Amount Card -->
+                    <div style="background-color: #1a252f; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                        <table class="responsive-table" style="width: 100%;">
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">📚 Course</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; font-weight: 600; text-align: right;">{course_title}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">🆔 Application ID</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 14px; font-family: 'Courier New', monospace; text-align: right;">#{application.id}</td>
+                            </tr>
+                            <tr style="border-top: 2px solid #3b82f6;">
+                                <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Due</td>
+                                <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">{currency} {int(amount):,}</td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    {methods_html}
+                    
+                    <div style="text-align: center; margin-top: 25px;">
+                        <a href="{_frontend_url(f'courses/{application.course_id}/apply')}" 
+                           style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);">
+                            💳 Pay Now
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Option 2: Send Proof on WhatsApp -->
+                <div style="background: linear-gradient(135deg, #064e3b 0%, #065f46 100%); border-radius: 16px; padding: 30px; margin: 25px 0; border: 2px solid #10b981;">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <span style="font-size: 48px; display: block; margin-bottom: 10px;">📱</span>
+                        <h3 style="margin: 0; color: #6ee7b7; font-size: 20px; font-weight: 700;">Option 2: Send Payment Proof via WhatsApp</h3>
+                        <p style="color: #a7f3d0; margin: 8px 0 0 0; font-size: 14px;">
+                            Already made a payment? Send us the proof on WhatsApp!
+                        </p>
+                    </div>
+                    
+                    <div style="background-color: rgba(0,0,0,0.2); border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+                        <p style="color: #d1fae5; margin: 0 0 15px 0; font-size: 14px; line-height: 1.7;">
+                            <strong style="color: #6ee7b7;">📸 Steps:</strong>
+                        </p>
+                        <ol style="color: #d1fae5; margin: 0; padding-left: 20px; font-size: 14px; line-height: 2;">
+                            <li>Make your payment via Mobile Money, Bank Transfer, or any method</li>
+                            <li>Take a screenshot or photo of your payment confirmation</li>
+                            <li>Send it to us on WhatsApp with your <strong style="color: #6ee7b7;">Application ID #{application.id}</strong></li>
+                            <li>Our team will verify and approve your payment within 24 hours</li>
+                        </ol>
+                    </div>
+                    
+                    <div style="text-align: center; margin-top: 25px;">
+                        <a href="{whatsapp_link}" 
+                           style="display: inline-block; background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); color: #ffffff; padding: 16px 40px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 20px rgba(37, 211, 102, 0.4);" target="_blank">
+                            💬 Send Proof on WhatsApp
+                        </a>
+                    </div>
+                </div>
+                
+                {cohort_card}
+                
+                <!-- Important Notes -->
+                <div style="background-color: #1e3a5f; border-left: 4px solid #3b82f6; border-radius: 8px; padding: 20px; margin: 25px 0;">
+                    <h3 style="margin: 0 0 12px 0; color: #60a5fa; font-size: 16px; font-weight: 600;">📌 Important Notes</h3>
+                    <ul style="color: #bfdbfe; margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.8;">
+                        <li>Your application is on hold pending payment approval</li>
+                        <li>Once payment is approved, you'll get immediate access to the course</li>
+                        <li>Include your Application ID when sending proof to help us process faster</li>
+                        <li>Payment is processed within 24 hours of receiving proof</li>
+                    </ul>
+                </div>
+                
+                <!-- Support Section -->
+                <div style="background-color: #2c3e50; border-radius: 12px; padding: 25px; margin: 30px 0; text-align: center;">
+                    <p style="color: #ffffff; font-size: 16px; font-weight: 600; margin: 0 0 10px 0;">
+                        Need Help? We're Here! 🤝
+                    </p>
+                    <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
+                        Contact us on WhatsApp or at 
+                        <a href="mailto:afritech.bridge@yahoo.com" style="color: #3b82f6; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
+                    </p>
+                </div>
+                
+                <!-- Closing -->
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
+                    We're looking forward to having you in the course! 🚀
+                </p>
+                
+                <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
+                    Best regards,<br>
+                    <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
+                </p>
+            </div>
+            
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
+    """
+
+
+def payment_migrated_student_email(application, course_title, payment_info, cohort_info=None, unsubscribe_token=None):
+    """
+    📧 Email sent to students who were migrated from one cohort to another
+    and need to pay to continue their learning.
+    
+    Tells them to login and pay an affordable price to proceed.
+    
+    Args:
+        application: CourseApplication object (can be None for enrollment-based reminders)
+        course_title: str - Course title
+        payment_info: dict with payment details
+            - amount: float
+            - currency: str
+            - original_cohort: str - Previous cohort name
+            - new_cohort: str - New cohort name
+        cohort_info: dict with cohort details (optional)
+        unsubscribe_token: str - User's unsubscribe token
+        
+    OR can be called with dict-based student info:
+        student_name, student_email
+    """
+    amount = payment_info.get('amount', 0)
+    currency = payment_info.get('currency', 'USD')
+    original_cohort = payment_info.get('original_cohort', 'Previous Cohort')
+    new_cohort = payment_info.get('new_cohort', 'New Cohort')
+    
+    student_name = payment_info.get('student_name', application.full_name if application else 'Student')
+    
+    # WhatsApp support number
+    whatsapp_number = os.environ.get('WHATSAPP_SUPPORT_NUMBER', '+250780784924')
+    whatsapp_link = f"https://wa.me/{whatsapp_number.replace('+', '')}?text=Payment%20-%20Migrated%20Student"
+    
+    # Generate cohort card
+    cohort_card = ""
+    if cohort_info:
+        cohort_card = get_cohort_info_card(
+            cohort_label=cohort_info.get('cohort_label', ''),
+            cohort_start_date=cohort_info.get('cohort_start_date'),
+            cohort_end_date=cohort_info.get('cohort_end_date'),
+            timezone=cohort_info.get('timezone', 'UTC')
+        )
+    
+    return f"""
+    {get_email_header()}
+            
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <!-- Header Icon & Title -->
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(139, 92, 246, 0.4);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">🔄</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #8b5cf6; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
+                        Cohort Update - Action Required!
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        Continue Your Learning Journey
+                    </p>
+                </div>
+                
+                <!-- Greeting -->
+                <p style="color: #e5e7eb; font-size: 16px; line-height: 1.8; margin: 0 0 25px 0;">
+                    Hi <strong style="color: #ffffff; font-size: 17px;">{student_name}</strong> 👋
+                </p>
+                
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 30px 0;">
+                    We've moved you from <strong style="color: #f59e0b;">{original_cohort}</strong> to 
+                    <strong style="color: #10b981;">{new_cohort}</strong> to ensure you can continue your learning without interruption. 🎉
+                </p>
+                
+                <!-- Migration Info Card -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 25px 0; border-left: 4px solid #8b5cf6;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 20px;">
+                        <tr>
+                            <td style="vertical-align: middle; padding-right: 12px;">
+                                <span style="font-size: 28px;">🔄</span>
+                            </td>
+                            <td style="vertical-align: middle;">
+                                <h3 style="margin: 0; color: #ffffff; font-size: 20px; font-weight: 700;">Migration Details</h3>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <div style="background-color: #1a252f; border-radius: 12px; padding: 20px;">
+                        <table class="responsive-table" style="width: 100%;">
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">📚 Course</td>
+                                <td style="padding: 10px 0; color: #ffffff; font-size: 15px; font-weight: 600; text-align: right;">{course_title}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">➡️ Previous Cohort</td>
+                                <td style="padding: 10px 0; color: #f59e0b; font-size: 15px; text-align: right;">{original_cohort}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px 0; color: #bdc3c7; font-size: 14px;">🎯 New Cohort</td>
+                                <td style="padding: 10px 0; color: #10b981; font-size: 15px; font-weight: 700; text-align: right;">{new_cohort}</td>
+                            </tr>
+                            <tr style="border-top: 2px solid #8b5cf6;">
+                                <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Due</td>
+                                <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">{currency} {int(amount):,}</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 0 0 20px 0;">
+                    To continue accessing your course materials and proceed with your learning, 
+                    please <strong style="color: #ffffff;">log into your account</strong> and complete the payment.
+                </p>
+                
+                <!-- CTA: Login and Pay -->
+                <div style="text-align: center; margin: 35px 0;">
+                    <a href="{_frontend_url('auth/login')}" 
+                       style="display: inline-block; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #ffffff; padding: 18px 45px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 17px; box-shadow: 0 8px 20px rgba(139, 92, 246, 0.4);">
+                        🔐 Login &amp; Pay Now
+                    </a>
+                    <p style="color: #94a3b8; margin-top: 12px; font-size: 13px;">
+                        Or visit <a href="{_frontend_url()}" style="color: #8b5cf6; text-decoration: underline;">{_frontend_url()}</a> and log into your account
+                    </p>
+                </div>
+                
+                <!-- What You Need to Know -->
+                <div style="background-color: #2c3e50; border-radius: 16px; padding: 30px; margin: 25px 0;">
+                    <h3 style="margin: 0 0 20px 0; color: #ffffff; font-size: 18px; font-weight: 700;">
+                        <span style="margin-right: 8px;">📋</span> What You Need to Know
+                    </h3>
+                    
+                    <div style="margin: 10px 0; padding: 12px 16px; background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 6px;">
+                        <span style="color: #ffffff; font-size: 14px;">
+                            ✓ Your learning progress has been <strong>preserved</strong> in the new cohort
+                        </span>
+                    </div>
+                    <div style="margin: 10px 0; padding: 12px 16px; background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 6px;">
+                        <span style="color: #ffffff; font-size: 14px;">
+                            ✓ The new cohort offers an <strong>affordable payment option</strong> to continue
+                        </span>
+                    </div>
+                    <div style="margin: 10px 0; padding: 12px 16px; background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 6px;">
+                        <span style="color: #ffffff; font-size: 14px;">
+                            ✓ Once payment is confirmed, you'll get <strong>full access</strong> to all course materials
+                        </span>
+                    </div>
+                    <div style="margin: 10px 0; padding: 12px 16px; background-color: #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 6px;">
+                        <span style="color: #ffffff; font-size: 14px;">
+                            ✓ You can send payment proof on <strong>WhatsApp</strong> for faster processing
+                        </span>
+                    </div>
+                </div>
+                
+                <div style="text-align: center; margin: 20px 0;">
+                    <a href="{whatsapp_link}" 
+                       style="display: inline-block; background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); color: #ffffff; padding: 14px 35px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 15px; box-shadow: 0 6px 15px rgba(37, 211, 102, 0.3);" target="_blank">
+                        💬 Send Proof on WhatsApp
+                    </a>
+                </div>
+                
+                {cohort_card}
+                
+                <!-- Support Section -->
+                <div style="background-color: #2c3e50; border-radius: 12px; padding: 25px; margin: 30px 0; text-align: center;">
+                    <p style="color: #ffffff; font-size: 16px; font-weight: 600; margin: 0 0 10px 0;">
+                        Questions About Your Cohort Change? 🤝
+                    </p>
+                    <p style="color: #bdc3c7; font-size: 14px; line-height: 1.6; margin: 0;">
+                        Contact us at <a href="mailto:afritech.bridge@yahoo.com" style="color: #8b5cf6; text-decoration: none; font-weight: 600;">afritech.bridge@yahoo.com</a>
+                        or call <strong style="color: #ffffff;">+250 780 784 924</strong>
+                    </p>
+                </div>
+                
+                <!-- Closing -->
+                <p style="color: #d1d5db; font-size: 15px; line-height: 1.8; margin: 30px 0 0 0;">
+                    We're committed to helping you succeed! 🚀
+                </p>
+                
+                <p style="color: #bdc3c7; font-size: 14px; margin: 15px 0 0 0;">
+                    Best regards,<br>
+                    <strong style="color: #ffffff;">The Afritech Bridge Team</strong> 💙
+                </p>
+            </div>
+            
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
