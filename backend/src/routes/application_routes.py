@@ -6329,7 +6329,7 @@ def preview_payment_reminders():
                 "course_title": course.title,
                 "days_remaining": days_remaining,
                 "reminder_type": reminder_type,
-                "deadline": (app_window.application_deadline or app_window.cohort_start).isoformat() if (app_window.application_deadline or app_window.cohort_start) else None,
+                "deadline": (app_window.closes_at or app_window.cohort_start).isoformat() if (app_window.closes_at or app_window.cohort_start) else None,
                 "amount_due": application.amount_paid or app_window.cohort_price or course.price or 0,
                 "currency": application.payment_currency or app_window.cohort_currency or course.currency or 'USD',
                 "last_reminder_sent": application.last_payment_reminder_sent.isoformat() if application.last_payment_reminder_sent else None,

@@ -100,7 +100,7 @@ class PaymentReminderScheduler:
             return None
 
         # Get deadline
-        deadline = app_window.application_deadline
+        deadline = app_window.closes_at
         if not deadline:
             deadline = app_window.cohort_start
 
@@ -202,7 +202,7 @@ class PaymentReminderScheduler:
                         continue
 
                 # Get deadline (for reference)
-                deadline = app_window.application_deadline or app_window.cohort_start
+                deadline = app_window.closes_at or app_window.cohort_start
                 days_remaining = None
                 if deadline:
                     days_remaining = max(0, (deadline - now).days)
@@ -416,7 +416,7 @@ class PaymentReminderScheduler:
                     'amount': effective_price,
                     'currency': app_window.get_effective_currency() or course.currency or 'USD',
                     'days_remaining': days_remaining,
-                    'payment_deadline': app_window.application_deadline or app_window.cohort_start,
+                    'payment_deadline': app_window.closes_at or app_window.cohort_start,
                     'payment_methods': app_window.get_effective_payment_methods(),
                 }
 
@@ -845,7 +845,7 @@ class PaymentReminderScheduler:
             days_remaining = None
 
             if app_window:
-                deadline = app_window.application_deadline or app_window.cohort_start
+                deadline = app_window.closes_at or app_window.cohort_start
                 if deadline:
                     days_remaining = (deadline - datetime.utcnow()).days
 
