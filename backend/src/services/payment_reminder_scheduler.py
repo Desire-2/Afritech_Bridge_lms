@@ -910,3 +910,99 @@ class PaymentReminderScheduler:
         except Exception as e:
             logger.error(f"❌ Error sending single reminder: {str(e)}")
             return {'status': 'error', 'error': str(e)}
+
+    @staticmethod
+    def send_single_enrollment_reminder(enrollment_id: int) -> Dict:
+        """
+        Send a payment reminder to a specific enrollment (manual trigger).
+
+        Args:
+            enrollment_id: ID of the enrollment
+
+        Returns:
+            Dict with send status
+        """
+        from ..models.course_models import Course, ApplicationWindow, Enrollment
+        from ..models.user_models import User, db
+        from ..utils.payment_notifications import send_payment_reminder_notification
+
+        try:
+            enrollment = Enrollment.query.get(enrollment_id)
+            if not enrollment:
+                return {'status': 'error', 'error': 'Enrollment not found'}
+
+            if enrollment.status not in ('pending_payment', 'active'):
+                return {'status': 'error', 'error': 'Enrollment is not in a billable state'}
+
+            if enrollment.payment_verified:
+                return {'status': 'error', 'error': 'Payment already verified for this enrollment'}
+
+            course = Course.query.get(enrollment.course_id)
+            if not course:
+                return {'status': 'error', 'error': 'Course not found'}
+
+            student = User.query.get(enrollment.student_id)
+            if not student or not student.email:
+                return {'status': 'error', 'error': 'Student not found or has no email'}
+
+            app_window = enrollment.application_window
+            if not app_window:
+                app_window = ApplicationWindow.query.filter_by(
+                    course_id=course.id
+                ).order_by(ApplicationWindow.id.desc()).first()
+
+            effective_price = app_window.get_effective_price() if app_window else (course.price or 0)
+            currency = app_window.get_effective_currency() if app_window else (course.currency or 'USD')
+
+            student_name = f"{student.first_name} {student.last_name}".strip() or student.username or 'Student'
+
+            payment_info = {
+                'amount': effective_price,
+                'currency': currency,
+                'student_name': student_name,
+            }
+
+            # Build a mock application-like object for the notification function
+            class _AppLike:
+                def __init__(self, name, email, cid, wid, aid):
+                    self.full_name = name
+                    self.email = email
+                    self.course_id = cid
+                    self.id = aid
+                    self.application_window_id = wid
+                    self.amount_paid = None
+                    self.payment_currency = None
+
+            mock_app = _AppLike(
+                student_name,
+                student.email,
+                course.id,
+                app_window.id if app_window else None,
+                f"ENR-{enrollment.id}"
+            )
+
+            email_sent = send_payment_reminder_notification(
+                application=mock_app,
+                course_title=course.title,
+                payment_info=payment_info
+            )
+
+            if email_sent:
+                enrollment.last_payment_reminder_sent = datetime.utcnow()
+                enrollment.payment_reminder_count = (getattr(enrollment, 'payment_reminder_count', 0) or 0) + 1
+                db.session.commit()
+
+                return {
+                    'status': 'success',
+                    'message': f'Payment reminder sent to {student.email}',
+                    'enrollment_id': enrollment_id
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'error': 'Failed to send email'
+                }
+
+        except Exception as e:
+            logger.error(f"❌ Error sending enrollment reminder: {str(e)}")
+            return {'status': 'error', 'error': str(e)}

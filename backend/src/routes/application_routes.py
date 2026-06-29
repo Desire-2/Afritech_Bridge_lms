@@ -6250,6 +6250,52 @@ def send_payment_reminder_to_application(application_id):
             "details": str(e)
         }), 500
 
+@application_bp.route("/enrollment/<int:enrollment_id>/send-payment-reminder", methods=["POST"])
+@jwt_required()
+def send_enrollment_payment_reminder(enrollment_id):
+    """
+    Admin/Instructor: Manually send a payment reminder to a specific enrollment
+    with pending payment.
+    
+    Returns confirmation of email sent
+    """
+    from flask_jwt_extended import get_jwt_identity
+    from ..models.user_models import User
+    from ..services.payment_reminder_scheduler import PaymentReminderScheduler
+    
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+    
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+    
+    try:
+        logger.info(
+            f"📧 Manual enrollment payment reminder triggered for enrollment #{enrollment_id} "
+            f"by {current_user.email}"
+        )
+        
+        result = PaymentReminderScheduler.send_single_enrollment_reminder(enrollment_id)
+        
+        if result.get('status') == 'success':
+            return jsonify({
+                "message": result.get('message'),
+                "enrollment_id": enrollment_id
+            }), 200
+        else:
+            return jsonify({
+                "error": result.get('error', 'Failed to send payment reminder')
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"❌ Manual enrollment payment reminder error: {str(e)}")
+        return jsonify({
+            "error": "Failed to send payment reminder",
+            "details": str(e)
+        }), 500
+
+
+
 
 @application_bp.route("/payment-reminders/preview", methods=["GET"])
 @jwt_required()

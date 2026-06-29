@@ -287,12 +287,15 @@ function DRow({ label, children }: { label: string; children: React.ReactNode })
 
 function DetailDrawer({
   record, onClose, onStatusChange, onConfirmTransfer, onVerifyPayment,
+  onSendReminder, remindingId,
 }: {
   record: PaymentRecord;
   onClose: () => void;
   onStatusChange: (id: number | string, status: string, notes: string) => Promise<void>;
   onConfirmTransfer: (id: number | string, notes: string) => Promise<void>;
   onVerifyPayment?: (id: number | string, paymentStatus: string, notes: string) => Promise<void>;
+  onSendReminder?: (rec: PaymentRecord) => Promise<void>;
+  remindingId?: number | string | null;
 }) {
   const isEnrollment = record.source === 'enrollment';
   const [newStatus, setNewStatus] = useState('');
@@ -572,6 +575,17 @@ function DetailDrawer({
                   )}
                 </div>
 
+                {/* Send Reminder Button */}
+                {isActionable && onSendReminder && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSendReminder(record); }}
+                    disabled={remindingId === record.id}
+                    className="w-full mb-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    {remindingId === record.id ? '⏳ Sending…' : '📧'} Send Payment Reminder
+                  </button>
+                )}
+
                 {isActionable && onVerifyPayment ? (
                   <div className="space-y-3">
                     {/* Action buttons */}
@@ -616,6 +630,16 @@ function DetailDrawer({
               <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-3">Update Payment Status</p>
               {msg && (
                 <div className={`mb-3 text-xs p-2 rounded ${msg.type === 'ok' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{msg.text}</div>
+              )}
+              {/* Send Reminder Button */}
+              {onSendReminder && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onSendReminder(record); }}
+                  disabled={remindingId === record.id}
+                  className="w-full mb-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors flex items-center justify-center gap-1.5"
+                >
+                  {remindingId === record.id ? '⏳ Sending…' : '📧'} Send Payment Reminder
+                </button>
               )}
               <select value={newStatus} onChange={(e) => setNewStatus(e.target.value)}
                 className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm mb-2 bg-[#162844] focus:outline-none focus:ring-2 focus:ring-amber-400">
@@ -719,6 +743,9 @@ export default function PaymentsDashboard({ role }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('all');
   const [selected, setSelected] = useState<PaymentRecord | null>(null);
+  const [remindingId, setRemindingId] = useState<number | string | null>(null);
+  const [bulkReminding, setBulkReminding] = useState<{ total: number; sent: number; failed: number } | null>(null);
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const [filterMethod, setFilterMethod] = useState('');
@@ -810,6 +837,60 @@ export default function PaymentsDashboard({ role }: Props) {
   }, [filterMethod, filterStatus, filterCourse, search, page, tab]);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 4000); };
+
+  const handleBulkSendReminders = async () => {
+    const actionable = records.filter((r) => r.payment_status && ACTIONABLE_STATUSES.has(r.payment_status));
+    if (actionable.length === 0) {
+      showToast('No actionable records to send reminders to.');
+      return;
+    }
+    setBulkReminding({ total: actionable.length, sent: 0, failed: 0 });
+    let sent = 0;
+    let failed = 0;
+    for (const rec of actionable) {
+      try {
+        const isEnrollment = rec.source === 'enrollment';
+        const numericId = typeof rec.id === 'string' ? rec.id.replace(/^enr_/, '') : rec.id;
+        const endpoint = isEnrollment
+          ? `${API_BASE}/applications/enrollment/${numericId}/send-payment-reminder`
+          : `${API_BASE}/applications/${numericId}/send-payment-reminder`;
+        const res = await fetch(endpoint, { method: 'POST', headers: authHeaders() });
+        const text = await res.text();
+        let data: { error?: string } = {};
+        try { data = JSON.parse(text); } catch { /* ignore parse errors */ }
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        sent++;
+      } catch {
+        failed++;
+      }
+      setBulkReminding({ total: actionable.length, sent, failed });
+    }
+    showToast(`📧 Reminders sent: ${sent} succeeded, ${failed} failed (of ${actionable.length})`);
+    setBulkReminding(null);
+  };
+
+  const handleSendReminder = async (rec: PaymentRecord) => {
+    setRemindingId(rec.id);
+    try {
+      const isEnrollment = rec.source === 'enrollment';
+      const numericId = typeof rec.id === 'string' ? rec.id.replace(/^enr_/, '') : rec.id;
+      const endpoint = isEnrollment
+        ? `${API_BASE}/applications/enrollment/${numericId}/send-payment-reminder`
+        : `${API_BASE}/applications/${numericId}/send-payment-reminder`;
+      const res = await fetch(endpoint, {
+        method: 'POST', headers: authHeaders(),
+      });
+      const text = await res.text();
+      let data: { error?: string; message?: string } = {};
+      try { data = JSON.parse(text); } catch { throw new Error(`Server error (${res.status})`); }
+      if (!res.ok) throw new Error(data.error || 'Failed to send reminder');
+      showToast(`📧 Payment reminder sent to ${rec.full_name}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to send reminder');
+    } finally {
+      setRemindingId(null);
+    }
+  };
 
   const handleConfirmTransfer = async (id: number, notes: string) => {
     const res = await fetch(`${API_BASE}/applications/${id}/confirm-bank-transfer`, {
@@ -954,6 +1035,38 @@ export default function PaymentsDashboard({ role }: Props) {
 
   return (
     <div className="space-y-5">
+      {/* Bulk Confirmation Dialog */}
+      {showBulkConfirm && (() => {
+        const actionableCount = records.filter((r) => r.payment_status && ACTIONABLE_STATUSES.has(r.payment_status)).length;
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowBulkConfirm(false)}>
+            <div className="bg-[#162844] border rounded-xl shadow-2xl max-w-sm w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-4">
+                <span className="text-2xl">📧</span>
+                <div>
+                  <h3 className="font-bold text-white text-base">Send Bulk Reminders</h3>
+                  <p className="text-sm text-gray-500">This will send payment reminders to</p>
+                </div>
+              </div>
+              <p className="text-center text-3xl font-bold text-white mb-1">{actionableCount}</p>
+              <p className="text-center text-sm text-gray-500 mb-5">
+                {actionableCount === 1 ? 'applicant with pending payment' : 'applicants with pending payments'}
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setShowBulkConfirm(false)}
+                  className="flex-1 py-2.5 border border-white/15 text-gray-300 hover:text-white text-sm font-medium rounded-lg transition-colors">
+                  Cancel
+                </button>
+                <button onClick={() => { setShowBulkConfirm(false); handleBulkSendReminders(); }}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+                  Send Reminders
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 bg-gray-900 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-medium">
@@ -965,7 +1078,8 @@ export default function PaymentsDashboard({ role }: Props) {
       {selected && (
         <DetailDrawer record={selected} onClose={() => setSelected(null)}
           onStatusChange={handleStatusChange} onConfirmTransfer={handleConfirmTransfer}
-          onVerifyPayment={handleVerifyEnrollmentPayment} />
+          onVerifyPayment={handleVerifyEnrollmentPayment}
+          onSendReminder={handleSendReminder} remindingId={remindingId} />
       )}
 
       {/* ── KPI Row ─────────────────────────────────────────────────────── */}
@@ -1081,8 +1195,15 @@ export default function PaymentsDashboard({ role }: Props) {
             {(filterMethod || filterStatus || filterCourse || search) && (
               <button onClick={resetFilters} className="px-3 py-2 border border-white/15 text-gray-600 text-sm rounded-lg hover:bg-[#0a1628]">Clear</button>
             )}
+            <button onClick={() => setShowBulkConfirm(true)} disabled={!!bulkReminding}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
+              {bulkReminding
+                ? <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> {bulkReminding.sent + bulkReminding.failed}/{bulkReminding.total}</span>
+                : '📧 Send All Reminders'
+              }
+            </button>
             <button onClick={exportCSV}
-              className="ml-auto flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
@@ -1153,17 +1274,26 @@ export default function PaymentsDashboard({ role }: Props) {
                         {rec.created_at ? new Date(rec.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                        {rec.payment_method === 'bank_transfer' && rec.payment_status === 'pending_bank_transfer' ? (
-                          <button onClick={() => handleConfirmTransfer(rec.id, '')}
-                            className="px-3 py-1 bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 text-xs font-medium rounded-lg transition-colors whitespace-nowrap">
-                            ✓ Confirm
-                          </button>
-                        ) : rec.payment_status && ACTIONABLE_STATUSES.has(rec.payment_status) ? (
-                          <button onClick={() => setSelected(rec)}
-                            className="px-3 py-1 bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 text-xs font-medium rounded-lg transition-colors">
-                            Review
-                          </button>
-                        ) : null}
+                        <div className="flex flex-wrap gap-1.5">
+                          {rec.payment_method === 'bank_transfer' && rec.payment_status === 'pending_bank_transfer' ? (
+                            <button onClick={() => handleConfirmTransfer(rec.id, '')}
+                              className="px-3 py-1 bg-emerald-50 border border-emerald-300 text-emerald-700 hover:bg-emerald-100 text-xs font-medium rounded-lg transition-colors whitespace-nowrap">
+                              ✓ Confirm
+                            </button>
+                          ) : rec.payment_status && ACTIONABLE_STATUSES.has(rec.payment_status) ? (
+                            <button onClick={() => setSelected(rec)}
+                              className="px-3 py-1 bg-amber-50 border border-amber-300 text-amber-700 hover:bg-amber-100 text-xs font-medium rounded-lg transition-colors">
+                              Review
+                            </button>
+                          ) : null}
+                          {rec.payment_status && ACTIONABLE_STATUSES.has(rec.payment_status) && (
+                            <button onClick={() => handleSendReminder(rec)}
+                              disabled={remindingId === rec.id}
+                              className="px-3 py-1 bg-blue-50 border border-blue-300 text-blue-700 hover:bg-blue-100 disabled:opacity-50 text-xs font-medium rounded-lg transition-colors whitespace-nowrap">
+                              {remindingId === rec.id ? '…' : '📧'} Remind
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
