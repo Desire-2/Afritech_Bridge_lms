@@ -965,8 +965,18 @@ def download_cv(app_id):
             return error_response('Application not found', status_code=404)
         
         cv_path = application.cv_file_path
-        if not cv_path or not os.path.exists(cv_path):
-            logger.error(f"CV file not found: {cv_path}")
+        if not cv_path:
+            logger.error(f"CV file path is empty for application {app_id}")
+            return error_response('CV file not found', status_code=404)
+
+        # Resolve relative paths against the backend root directory
+        # so the file is found regardless of the app's working directory.
+        if not os.path.isabs(cv_path):
+            backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            cv_path = os.path.join(backend_dir, cv_path)
+
+        if not os.path.exists(cv_path):
+            logger.error(f"CV file not found at {cv_path}")
             return error_response('CV file not found', status_code=404)
         
         # ---- Determine MIME type ----
