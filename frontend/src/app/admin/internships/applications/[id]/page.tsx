@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import internshipService, { type InternshipApplication, type InternshipCohort, type InternshipOfferLetter } from '@/services/api/internship.service';
-import { ArrowLeft, Download, Calendar, Mail, Phone, Globe, Github, Linkedin, FileText, Clock, User, MessageSquare, CheckCircle, XCircle, ChevronRight, Send, Award, Share2, Shield, Eye, Copy, Check, Edit3, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Download, Calendar, Mail, Phone, Globe, Github, Linkedin, FileText, Clock, User, MessageSquare, CheckCircle, XCircle, ChevronRight, Send, Award, Share2, Shield, Eye, Copy, Check, Edit3, AlertTriangle, X, FileIcon, Loader2 } from 'lucide-react';
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
@@ -61,6 +61,12 @@ const ApplicationDetailPage = () => {
   const [emailForm, setEmailForm] = useState({ subject: '', message: '' });
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailResult, setEmailResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  // CV Preview
+  const [showCvPreview, setShowCvPreview] = useState(false);
+  const [cvPreviewUrl, setCvPreviewUrl] = useState<string | null>(null);
+  const [cvLoading, setCvLoading] = useState(false);
+  const [cvDownloading, setCvDownloading] = useState(false);
 
   // Alert/notification state
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -203,6 +209,47 @@ const ApplicationDetailPage = () => {
       showNotification('error', 'Failed to send email');
     } finally {
       setSendingEmail(false);
+    }
+  };
+
+  const handleOpenCvPreview = async () => {
+    try {
+      setCvLoading(true);
+      const blob = await internshipService.downloadCv(application.id);
+      const url = window.URL.createObjectURL(blob);
+      setCvPreviewUrl(url);
+      setShowCvPreview(true);
+    } catch (err: any) {
+      showNotification('error', 'Failed to load CV preview: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setCvLoading(false);
+    }
+  };
+
+  const handleCloseCvPreview = () => {
+    setShowCvPreview(false);
+    if (cvPreviewUrl) {
+      window.URL.revokeObjectURL(cvPreviewUrl);
+      setCvPreviewUrl(null);
+    }
+  };
+
+  const handleDownloadCv = async () => {
+    try {
+      setCvDownloading(true);
+      const blob = await internshipService.downloadCv(application.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = application.cv_original_name || `CV_${application.reference_code}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      showNotification('error', 'Failed to download CV: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setCvDownloading(false);
     }
   };
 
@@ -403,29 +450,40 @@ const ApplicationDetailPage = () => {
               )}
             </div>
 
-            {/* CV Download */}
-            <div className="mt-4">
-              <button
-                onClick={async () => {
-                  try {
-                    const blob = await internshipService.downloadCv(application.id);
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = application.cv_original_name;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                  } catch (err: any) {
-                    alert('Failed to download CV: ' + (err?.message || 'Unknown error'));
-                  }
-                }}
-                className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition text-sm font-medium"
-              >
-                <Download className="h-4 w-4" />
-                Download CV: {application.cv_original_name}
-              </button>
+            {/* CV Download & Preview */}
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleOpenCvPreview}
+                  disabled={cvLoading}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#0a1628] border border-white/10 hover:bg-white/5 text-gray-200 rounded-lg transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {cvLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                  Preview CV
+                </button>
+                <button
+                  onClick={handleDownloadCv}
+                  disabled={cvDownloading}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {cvDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  Download CV
+                </button>
+              </div>
+              {application.cv_original_name && (
+                <p className="text-xs text-gray-500 flex items-center gap-1.5">
+                  <FileIcon className="h-3.5 w-3.5" />
+                  {application.cv_original_name}
+                </p>
+              )}
             </div>
           </div>
 
@@ -956,6 +1014,77 @@ const ApplicationDetailPage = () => {
           )}
         </div>
       </div>
+      {/* ═══════════ CV Preview Modal ═══════════ */}
+      {showCvPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleCloseCvPreview} />
+          <div className="relative bg-[#162844] rounded-2xl border border-white/10 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <FileText className="h-5 w-5 text-blue-400" />
+                <h2 className="text-lg font-semibold text-white">
+                  CV Preview — {application.cv_original_name || 'Resume'}
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadCv}
+                  disabled={cvDownloading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition text-xs"
+                  title="Download CV"
+                >
+                  {cvDownloading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  Download
+                </button>
+                <button
+                  onClick={handleCloseCvPreview}
+                  className="p-1.5 text-gray-400 hover:text-white hover:bg-white/5 rounded-lg transition"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            {/* Body */}
+            <div className="flex-1 overflow-hidden bg-[#0a1628] rounded-b-2xl">
+              {cvPreviewUrl && application.cv_original_name?.toLowerCase().endsWith('.pdf') ? (
+                <iframe
+                  src={cvPreviewUrl}
+                  className="w-full h-[80vh] border-0"
+                  title="CV Preview"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-96 text-gray-400">
+                  <FileIcon className="h-16 w-16 mb-4 text-gray-500" />
+                  <p className="text-lg font-medium text-gray-300 mb-2">Inline preview not available</p>
+                  <p className="text-sm text-gray-500 mb-6">
+                    {application.cv_original_name?.toLowerCase().endsWith('.pdf')
+                      ? 'Failed to load PDF preview.'
+                      : 'Only PDF files can be previewed inline.'}
+                  </p>
+                  <button
+                    onClick={handleDownloadCv}
+                    disabled={cvDownloading}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition text-sm font-medium"
+                  >
+                    {cvDownloading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    Download to View
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══════════ Regenerate Offer Confirmation Modal ═══════════ */}
       {showRegenerateConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">

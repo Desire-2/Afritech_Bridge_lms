@@ -925,7 +925,7 @@ def send_applicant_email(app_id):
 @internships_bp.route('/admin/applications/<app_id>/cv', methods=['GET'])
 @role_required(['admin', 'staff'])
 def download_cv(app_id):
-    """Download CV file for application"""
+    """Download CV file for application. Use ?inline=1 to preview in browser."""
     try:
         application = InternshipApplication.query.get(app_id)
         if not application:
@@ -937,9 +937,12 @@ def download_cv(app_id):
             logger.error(f"CV file not found: {cv_path}")
             return error_response('CV file not found', status_code=404)
         
+        # ?inline=1 serves the file inline (for iframe preview) instead of forcing download
+        inline = request.args.get('inline', '0') == '1'
+        
         return send_file(
             cv_path,
-            as_attachment=True,
+            as_attachment=not inline,
             download_name=application.cv_original_name
         )
     except Exception as e:
