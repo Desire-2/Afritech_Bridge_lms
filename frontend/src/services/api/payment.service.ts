@@ -100,10 +100,7 @@ class PaymentApiService extends BaseApiService {
    * Download receipt
    */
   async downloadReceipt(paymentId: number): Promise<Blob> {
-    const response = await this.api.get(`/payments/${paymentId}/receipt`, {
-      responseType: 'blob'
-    });
-    return response.data;
+    return this.downloadBlob(`/payments/${paymentId}/receipt`);
   }
 
   // ==================== SCHOLARSHIPS ====================

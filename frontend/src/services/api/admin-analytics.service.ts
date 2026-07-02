@@ -131,10 +131,7 @@ class AdminAnalyticsService extends BaseApiService {
    * Returns a Blob for download.
    */
   async exportCsv(type: ExportType = 'enrollments', period: AnalyticsPeriod = '30days'): Promise<Blob> {
-    const response = await this.api.get(`/admin/analytics/export?type=${type}&period=${period}`, {
-      responseType: 'blob',
-    });
-    return response.data;
+    return this.downloadBlob(`/admin/analytics/export?type=${type}&period=${period}`);
   }
 
   /**

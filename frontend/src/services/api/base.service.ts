@@ -181,8 +181,28 @@ class BaseApiService {
 
   /** Download a file as a blob (uses auth headers automatically) */
   protected async downloadBlob(url: string): Promise<Blob> {
-    const response = await this.api.get(url, { responseType: 'blob' });
-    return response.data;
+    try {
+      const response = await this.api.get(url, { responseType: 'blob' });
+      return response.data;
+    } catch (error: any) {
+      // When responseType is 'blob', axios can't parse the JSON error body
+      // automatically. Try to read it as text so we get the real error message.
+      if (error.response?.data instanceof Blob) {
+        try {
+          const text = await error.response.data.text();
+          try {
+            const parsed = JSON.parse(text);
+            const msg = parsed.message || parsed.error || text;
+            error.message = msg;
+          } catch {
+            error.message = text;
+          }
+        } catch {
+          // If reading the blob fails, keep the original error
+        }
+      }
+      throw error;
+    }
   }
 
   /** Get the base URL from the configured axios instance */

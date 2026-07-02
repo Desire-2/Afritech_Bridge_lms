@@ -240,7 +240,15 @@ class InternshipService extends BaseApiService {
   /** Get CV download URL (uses JWT in query param for direct links) */
   getCvDownloadUrl(appId: string): string {
     const token = this.getToken();
-    return `${this.getBaseUrl()}${this.BASE}/admin/applications/${appId}/cv?token=${token}`;
+    return `${this.getBaseUrl()}${this.BASE}/admin/applications/${appId}/cv?token=${token}&inline=1`;
+  }
+
+  /** Get CV viewer URL for embedding in external document viewers (Office Online, etc.) */
+  getCvViewerUrl(appId: string): string {
+    const token = this.getToken();
+    const directUrl = `${this.getBaseUrl()}${this.BASE}/admin/applications/${appId}/cv?token=${token}&inline=1`;
+    // Microsoft Office Online Viewer — supports DOC, DOCX, XLS, XLSX, PPT, PPTX
+    return `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(directUrl)}`;
   }
 
   // ═══════════ Batch Operations ═══════════

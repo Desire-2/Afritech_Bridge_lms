@@ -215,9 +215,18 @@ const ApplicationDetailPage = () => {
   const handleOpenCvPreview = async () => {
     try {
       setCvLoading(true);
-      const blob = await internshipService.downloadCv(application.id);
-      const url = window.URL.createObjectURL(blob);
-      setCvPreviewUrl(url);
+      const fileName = application.cv_original_name || '';
+      const isPdf = fileName.toLowerCase().endsWith('.pdf');
+
+      if (isPdf) {
+        // PDF: fetch blob and use local blob URL for native iframe preview
+        const blob = await internshipService.downloadCv(application.id);
+        const url = window.URL.createObjectURL(blob);
+        setCvPreviewUrl(url);
+      } else {
+        // DOC/DOCX: no blob fetch needed — viewer URL computed in render
+        setCvPreviewUrl(null);
+      }
       setShowCvPreview(true);
     } catch (err: any) {
       showNotification('error', 'Failed to load CV preview: ' + (err?.message || 'Unknown error'));
@@ -1051,35 +1060,58 @@ const ApplicationDetailPage = () => {
             </div>
             {/* Body */}
             <div className="flex-1 overflow-hidden bg-[#0a1628] rounded-b-2xl">
-              {cvPreviewUrl && application.cv_original_name?.toLowerCase().endsWith('.pdf') ? (
-                <iframe
-                  src={cvPreviewUrl}
-                  className="w-full h-[80vh] border-0"
-                  title="CV Preview"
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-96 text-gray-400">
-                  <FileIcon className="h-16 w-16 mb-4 text-gray-500" />
-                  <p className="text-lg font-medium text-gray-300 mb-2">Inline preview not available</p>
-                  <p className="text-sm text-gray-500 mb-6">
-                    {application.cv_original_name?.toLowerCase().endsWith('.pdf')
-                      ? 'Failed to load PDF preview.'
-                      : 'Only PDF files can be previewed inline.'}
-                  </p>
-                  <button
-                    onClick={handleDownloadCv}
-                    disabled={cvDownloading}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition text-sm font-medium"
-                  >
-                    {cvDownloading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Download className="h-4 w-4" />
-                    )}
-                    Download to View
-                  </button>
-                </div>
-              )}
+              {(() => {
+                const fileName = (application.cv_original_name || '').toLowerCase();
+                const isPdf = fileName.endsWith('.pdf');
+                const isDoc = fileName.endsWith('.doc') || fileName.endsWith('.docx');
+
+                if (isPdf && cvPreviewUrl) {
+                  // PDF: native browser iframe with blob URL
+                  return (
+                    <iframe
+                      src={cvPreviewUrl}
+                      className="w-full h-[80vh] border-0"
+                      title="CV Preview"
+                    />
+                  );
+                }
+
+                if (isDoc && showCvPreview) {
+                  // DOC/DOCX: Microsoft Office Online Viewer embed
+                  return (
+                    <iframe
+                      src={internshipService.getCvViewerUrl(application.id)}
+                      className="w-full h-[80vh] border-0"
+                      title="CV Preview"
+                    />
+                  );
+                }
+
+                // Fallback: show download prompt
+                return (
+                  <div className="flex flex-col items-center justify-center h-96 text-gray-400">
+                    <FileIcon className="h-16 w-16 mb-4 text-gray-500" />
+                    <p className="text-lg font-medium text-gray-300 mb-2">Inline preview not available</p>
+                    <p className="text-sm text-gray-500 mb-6">
+                      {isPdf
+                        ? 'Failed to load PDF preview.'
+                        : 'Only PDF, DOC, and DOCX files can be previewed inline.'}
+                    </p>
+                    <button
+                      onClick={handleDownloadCv}
+                      disabled={cvDownloading}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition text-sm font-medium"
+                    >
+                      {cvDownloading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      Download to View
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

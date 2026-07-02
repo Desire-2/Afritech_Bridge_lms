@@ -923,27 +923,69 @@ def send_applicant_email(app_id):
 
 
 @internships_bp.route('/admin/applications/<app_id>/cv', methods=['GET'])
-@role_required(['admin', 'staff'])
 def download_cv(app_id):
-    """Download CV file for application. Use ?inline=1 to preview in browser."""
+    """
+    Download CV file for application.
+    
+    Auth (supports both):
+      - Authorization: Bearer <token> header (from axios)
+      - ?token=<jwt> query param (for direct URLs / external viewers)
+    
+    Query params:
+      - inline=1  — serve inline for iframe/embed preview (default: force download)
+      - token     — JWT for query-param auth
+    """
     try:
+        # ---- Auth: support header OR query-param token ----
+        auth_token = request.args.get('token')
+        if auth_token:
+            # Query-param authentication (for direct links / Google/MS Office viewers)
+            try:
+                from flask_jwt_extended import decode_token
+                decoded = decode_token(auth_token)
+                user_id = decoded['sub']
+            except Exception:
+                return jsonify({'message': 'Invalid or expired token'}), 401
+            user = User.query.get(user_id)
+            if not user or not user.role or user.role.name not in ['admin', 'staff']:
+                return jsonify({'message': 'Access denied. Required roles: admin, staff'}), 403
+        else:
+            # Standard header-based auth (from axios interceptor)
+            try:
+                user_id = int(get_jwt_identity())
+            except Exception:
+                return jsonify({'message': 'Authentication required'}), 401
+            user = User.query.get(user_id)
+            if not user or not user.role or user.role.name not in ['admin', 'staff']:
+                return jsonify({'message': 'Access denied. Required roles: admin, staff'}), 403
+        
+        # ---- Find application ----
         application = InternshipApplication.query.get(app_id)
         if not application:
             return error_response('Application not found', status_code=404)
         
         cv_path = application.cv_file_path
-        
-        if not os.path.exists(cv_path):
+        if not cv_path or not os.path.exists(cv_path):
             logger.error(f"CV file not found: {cv_path}")
             return error_response('CV file not found', status_code=404)
         
-        # ?inline=1 serves the file inline (for iframe preview) instead of forcing download
+        # ---- Determine MIME type ----
+        ext = application.cv_original_name.rsplit('.', 1)[-1].lower() if '.' in application.cv_original_name else ''
+        mime_map = {
+            'pdf': 'application/pdf',
+            'doc': 'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }
+        mime_type = mime_map.get(ext, 'application/octet-stream')
+        
+        # ?inline=1 serves the file inline (for iframe / external viewer) instead of forcing download
         inline = request.args.get('inline', '0') == '1'
         
         return send_file(
             cv_path,
             as_attachment=not inline,
-            download_name=application.cv_original_name
+            download_name=application.cv_original_name,
+            mimetype=mime_type,
         )
     except Exception as e:
         logger.error(f"Error downloading CV: {str(e)}")
@@ -2412,10 +2454,38 @@ def get_offer_letter(app_id):
 
 
 @internships_bp.route('/admin/offers/<offer_id>/download', methods=['GET'])
-@role_required(['admin', 'staff'])
 def download_offer_pdf(offer_id):
-    """Download the offer letter PDF."""
+    """
+    Download the offer letter PDF.
+
+    Auth (supports both):
+      - Authorization: Bearer <token> header (from axios)
+      - ?token=<jwt> query param (for direct URLs / external viewers)
+    """
     try:
+        # ---- Auth: support header OR query-param token ----
+        auth_token = request.args.get('token')
+        if auth_token:
+            # Query-param authentication (for direct links)
+            try:
+                from flask_jwt_extended import decode_token
+                decoded = decode_token(auth_token)
+                user_id = decoded['sub']
+            except Exception:
+                return jsonify({'message': 'Invalid or expired token'}), 401
+            user = User.query.get(user_id)
+            if not user or not user.role or user.role.name not in ['admin', 'staff']:
+                return jsonify({'message': 'Access denied. Required roles: admin, staff'}), 403
+        else:
+            # Standard header-based auth (from axios interceptor)
+            try:
+                user_id = int(get_jwt_identity())
+            except Exception:
+                return jsonify({'message': 'Authentication required'}), 401
+            user = User.query.get(user_id)
+            if not user or not user.role or user.role.name not in ['admin', 'staff']:
+                return jsonify({'message': 'Access denied. Required roles: admin, staff'}), 403
+
         offer = InternshipOfferLetter.query.get(offer_id)
         if not offer:
             return error_response('Offer not found', status_code=404)

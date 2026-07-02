@@ -635,7 +635,23 @@ export class StudentApiService {
       });
       return response.data;
     } catch (error: any) {
-      console.error('❌ Error downloading certificate:', error.response?.data || error.message);
+      // When responseType is 'blob', axios can't parse JSON error bodies.
+      // Try to read the blob as text to extract the real error message.
+      if (error.response?.data instanceof Blob) {
+        try {
+          const text = await error.response.data.text();
+          try {
+            const parsed = JSON.parse(text);
+            const msg = parsed.message || parsed.error || text;
+            error.message = msg;
+          } catch {
+            error.message = text;
+          }
+        } catch {
+          // If reading the blob fails, keep the original error
+        }
+      }
+      console.error('❌ Error downloading certificate:', error.message);
       throw error;
     }
   }
