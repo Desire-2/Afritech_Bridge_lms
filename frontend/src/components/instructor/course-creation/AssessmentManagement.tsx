@@ -466,14 +466,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         return;
       }
 
-      if (aiContentType === 'lesson' && !selectedLessonId) {
+      if (activeTab !== 'project' && aiContentType === 'lesson' && !selectedLessonId) {
         setErrorMessage('Please select a lesson');
         setAIGenerating(false);
         return;
       }
 
       // Validate that selected lesson/module has content
-      if (aiContentType === 'lesson') {
+      if (activeTab !== 'project' && aiContentType === 'lesson') {
         const selectedLesson = lessons.find(l => l.id === selectedLessonId);
         if (!selectedLesson?.content_data || selectedLesson.content_data.trim().length < 100) {
           setErrorMessage('Selected lesson has insufficient content. Please add lesson content first before generating assessments.');
