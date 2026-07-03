@@ -51,6 +51,8 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
   modules,
   selectedModuleId,
   setSelectedModuleId,
+  selectedModuleIds,
+  setSelectedModuleIds,
   lessons,
   selectedLessonId,
   setSelectedLessonId,
