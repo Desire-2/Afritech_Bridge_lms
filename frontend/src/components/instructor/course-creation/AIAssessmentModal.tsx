@@ -105,7 +105,7 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
                   AI {assessmentType === 'quiz' ? 'Quiz' : assessmentType === 'assignment' ? 'Assignment' : 'Project'} Generator
                 </h2>
                 <p className="text-purple-100 text-sm mt-1">
-                  Generate from lesson or module content
+                  {assessmentType === 'project' ? 'Generate from selected modules or entire course' : 'Generate from lesson or module content'}
                 </p>
               </div>
             </div>
@@ -263,44 +263,46 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
           ) : (
             /* ── Form content (shown when NOT generating) ── */
             <>
-              {/* Content Type Selection */}
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                  Generate from:
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => setContentType('lesson')}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      contentType === 'lesson'
-                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                        : 'border-slate-300 dark:border-slate-600 hover:border-purple-300'
-                    }`}
-                    disabled={isGenerating}
-                  >
-                    <div className="text-2xl mb-2">📄</div>
-                    <div className="font-semibold text-slate-900 dark:text-white">Single Lesson</div>
-                    <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                      Based on one lesson's content
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => setContentType('module')}
-                    className={`p-4 rounded-lg border-2 transition-all ${
-                      contentType === 'module'
-                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
-                        : 'border-slate-300 dark:border-slate-600 hover:border-purple-300'
-                    }`}
-                    disabled={isGenerating}
-                  >
-                    <div className="text-2xl mb-2">📚</div>
-                    <div className="font-semibold text-slate-900 dark:text-white">Entire Module</div>
-                    <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                      Based on all lessons in module
-                    </div>
-                  </button>
+              {/* Content Type Selection — hidden for projects (projects use module multi-select directly) */}
+              {assessmentType !== 'project' && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+                    Generate from:
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => setContentType('lesson')}
+                      className={`p-4 rounded-lg border-2 transition-all ${
+                        contentType === 'lesson'
+                          ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                          : 'border-slate-300 dark:border-slate-600 hover:border-purple-300'
+                      }`}
+                      disabled={isGenerating}
+                    >
+                      <div className="text-2xl mb-2">📄</div>
+                      <div className="font-semibold text-slate-900 dark:text-white">Single Lesson</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                        Based on one lesson's content
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setContentType('module')}
+                      className={`p-4 rounded-lg border-2 transition-all ${
+                        contentType === 'module'
+                          ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                          : 'border-slate-300 dark:border-slate-600 hover:border-purple-300'
+                      }`}
+                      disabled={isGenerating}
+                    >
+                      <div className="text-2xl mb-2">📚</div>
+                      <div className="font-semibold text-slate-900 dark:text-white">Entire Module</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                        Based on all lessons in module
+                      </div>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Module Selection */}
               <div>
@@ -394,8 +396,8 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
                 )}
               </div>
 
-              {/* Lesson Selection (if content type is lesson) */}
-              {contentType === 'lesson' && (
+              {/* Lesson Selection (only for quizzes/assignments when content type is lesson) */}
+              {assessmentType !== 'project' && contentType === 'lesson' && (
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
                     Select Lesson *
@@ -491,15 +493,21 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
                   <span className="text-2xl">ℹ️</span>
                   <div className="text-sm text-blue-900 dark:text-blue-100">
                     <p className="font-semibold mb-1">How it works:</p>
-                    <p>
-                      The AI will analyze the actual content from your selected {contentType} and generate a {assessmentType} that tests exactly what students learned. This ensures content alignment and saves you hours of work!
-                    </p>
+                    {assessmentType === 'project' ? (
+                      <p>
+                        The AI will analyze the actual content from your selected modules and generate a comprehensive project that integrates concepts across them. This ensures the project aligns with your course content and saves you hours of work!
+                      </p>
+                    ) : (
+                      <p>
+                        The AI will analyze the actual content from your selected {contentType} and generate a {assessmentType} that tests exactly what students learned. This ensures content alignment and saves you hours of work!
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Content Validation Warning */}
-              {!isGenerating && contentType === 'lesson' && selectedModuleId && selectedLessonId && (
+              {/* Content Validation Warning — only for quizzes/assignments with lesson content */}
+              {assessmentType !== 'project' && !isGenerating && contentType === 'lesson' && selectedModuleId && selectedLessonId && (
                 <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
                   <div className="flex items-start space-x-2">
                     <span className="text-lg">⚠️</span>
@@ -538,10 +546,12 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
                 (contentType === 'lesson' && !selectedLessonId)
               }
               title={
-                (assessmentType !== 'project' && !selectedModuleId) 
-                  ? 'Please select a module' 
-                  : (contentType === 'lesson' && !selectedLessonId) 
-                  ? 'Please select a lesson' 
+                assessmentType === 'project'
+                  ? 'Generate project with AI'
+                  : !selectedModuleId
+                  ? 'Please select a module'
+                  : contentType === 'lesson' && !selectedLessonId
+                  ? 'Please select a lesson'
                   : 'Generate assessment with AI'
               }
             >

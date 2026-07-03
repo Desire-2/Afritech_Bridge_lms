@@ -1170,7 +1170,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           passing_score: aiPreviewData.projectForm?.passing_score || aiPreviewData.passing_score || 60,
           collaboration_allowed: aiPreviewData.projectForm?.collaboration_allowed || aiPreviewData.collaboration_allowed || false,
           max_team_size: aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1,
-          due_date: undefined
+          due_date: undefined  // Backend will default to 30 days from now
         };
 
         console.log('Project data being saved:', projectData);

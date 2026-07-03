@@ -4,7 +4,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy.exc import IntegrityError
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 # Setup logger
@@ -1219,7 +1219,7 @@ def create_project():
         if not course:
             return jsonify({"message": "Course not found or access denied"}), 404
         
-        # Handle date parsing
+        # Handle date parsing - default to 30 days from now if not provided
         due_date = None
         if data.get('due_date'):
             try:
@@ -1233,6 +1233,9 @@ def create_project():
                     due_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
             except ValueError as e:
                 return jsonify({"message": f"Invalid due_date format: {str(e)}"}), 400
+        else:
+            # Default: 30 days from now (project column is NOT NULL)
+            due_date = datetime.utcnow() + timedelta(days=30)
         
         # Handle module_ids as JSON string
         import json
