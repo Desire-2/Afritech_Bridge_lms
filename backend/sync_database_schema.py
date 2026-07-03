@@ -73,6 +73,7 @@ def check_and_add_columns():
                     ("max_team_size", "INTEGER DEFAULT 1"),
                     ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
                     ("updated_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                    ("tasks", "TEXT"),
                 ],
             }
             

@@ -1241,6 +1241,10 @@ def create_project():
         import json
         module_ids = json.dumps(data.get('module_ids', []))
         
+        # Handle tasks as JSON string
+        tasks = data.get('tasks', [])
+        tasks_json = json.dumps(tasks) if isinstance(tasks, list) else '[]'
+        
         project = Project(
             title=data.get('title', ''),
             description=data.get('description', ''),
@@ -1255,7 +1259,8 @@ def create_project():
             max_file_size_mb=data.get('max_file_size_mb', 50),
             allowed_file_types=data.get('allowed_file_types', ''),
             collaboration_allowed=data.get('collaboration_allowed', False),
-            max_team_size=data.get('max_team_size', 1)
+            max_team_size=data.get('max_team_size', 1),
+            tasks=tasks_json
         )
         
         db.session.add(project)
@@ -1344,6 +1349,11 @@ def update_project(project_id):
         # Link rubric to project
         if 'rubric_id' in data:
             project.rubric_id = data['rubric_id']
+        # Update tasks
+        if 'tasks' in data:
+            import json
+            tasks = data['tasks']
+            project.tasks = json.dumps(tasks) if isinstance(tasks, list) else '[]'
         
         db.session.commit()
         

@@ -8,6 +8,7 @@ import GradingService from '@/services/grading.service';
 import AIAssessmentModal from './AIAssessmentModal';
 import EditRubricModal from './EditRubricModal';
 import TeamManagerModal from './TeamManagerModal';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 
 interface AssessmentManagementProps {
   course: Course;
@@ -350,7 +351,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
     max_file_size_mb: 50,
     allowed_file_types: '',
     collaboration_allowed: false,
-    max_team_size: 1
+    max_team_size: 1,
+    tasks: [] as { text: string; description?: string; is_optional?: boolean }[]
   });
 
   // Quiz form state
@@ -401,7 +403,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       max_file_size_mb: 50,
       allowed_file_types: '',
       collaboration_allowed: false,
-      max_team_size: 1
+      max_team_size: 1,
+      tasks: []
     });
   };
 
@@ -803,6 +806,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             collaboration_allowed: projectData.collaboration_allowed || false,
             max_team_size: projectData.max_team_size || 1,
             max_file_size_mb: projectData.max_file_size_mb || 50,
+            tasks: parseArrayField(projectData.tasks),
           }
         });
         setAIPreviewType('project');
@@ -1002,6 +1006,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             collaboration_allowed: projectData.collaboration_allowed || false,
             max_team_size: projectData.max_team_size || 1,
             max_file_size_mb: projectData.max_file_size_mb || 50,
+            tasks: parseArrayField(projectData.tasks),
           }
         });
         setAIPreviewType('project');
@@ -1178,7 +1183,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           passing_score: aiPreviewData.projectForm?.passing_score || aiPreviewData.passing_score || 60,
           collaboration_allowed: aiPreviewData.projectForm?.collaboration_allowed || aiPreviewData.collaboration_allowed || false,
           max_team_size: aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1,
-          due_date: defaultDueDate
+          due_date: defaultDueDate,
+          tasks: aiPreviewData.projectForm?.tasks || []
         };
 
         console.log('Project data being saved:', projectData);
@@ -1619,7 +1625,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       max_file_size_mb: project.max_file_size_mb || 50,
       allowed_file_types: project.allowed_file_types || '',
       collaboration_allowed: project.collaboration_allowed || false,
-      max_team_size: project.max_team_size || 1
+      max_team_size: project.max_team_size || 1,
+      tasks: (project as any).tasks || []
     });
     setActiveTab('project');
     setShowForm(true);
@@ -1752,7 +1759,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         max_file_size_mb: projectForm.max_file_size_mb,
         allowed_file_types: projectForm.allowed_file_types,
         collaboration_allowed: projectForm.collaboration_allowed,
-        max_team_size: projectForm.max_team_size
+        max_team_size: projectForm.max_team_size,
+        tasks: projectForm.tasks
       };
 
       await CourseCreationService.updateProject(editingItem.id, projectData);
@@ -2256,6 +2264,17 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
 
   const removeRubricCriteria = (index: number) => {
     setRubricCriteria(rubricCriteria.filter((_, i) => i !== index));
+  };
+
+  // Drag-and-drop task reordering
+  const handleTaskDragEnd = (result: any) => {
+    if (!result.destination) return;
+    
+    const items = Array.from(projectForm.tasks);
+    const [reordered] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reordered);
+    
+    setProjectForm({ ...projectForm, tasks: items });
   };
 
   const toggleItemExpansion = (itemId: number) => {
@@ -2918,17 +2937,115 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 />
               </div>
 
+              {/* Tasks / Checklist */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Learning Objectives
+                  📋 Project Tasks / Checklist
                 </label>
-                <textarea
-                  value={projectForm.objectives}
-                  onChange={(e) => setProjectForm({ ...projectForm, objectives: e.target.value })}
-                  rows={3}
-                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-                  placeholder="What will students learn from this project?"
-                />
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Break down the project into actionable tasks for students</p>
+                <DragDropContext onDragEnd={handleTaskDragEnd}>
+                  <Droppable droppableId="project-tasks">
+                    {(provided) => (
+                      <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-2">
+                        {projectForm.tasks.map((task, idx) => (
+                          <Draggable key={`task-${idx}`} draggableId={`task-${idx}`} index={idx}>
+                            {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                className={`flex items-start gap-2 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border transition-colors ${
+                                  snapshot.isDragging
+                                    ? "border-blue-400 shadow-lg ring-2 ring-blue-200 dark:ring-blue-800"
+                                    : "border-slate-200 dark:border-slate-700"
+                                }`}
+                              >
+                                {/* Drag handle */}
+                                <div
+                                  {...provided.dragHandleProps}
+                                  className="flex items-center justify-center w-6 h-full min-h-[3rem] cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 shrink-0"
+                                >
+                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M8 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm0 8a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm0 8a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm8-16a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm0 8a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm0 8a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" />
+                                  </svg>
+                                </div>
+                                <div className="flex-1 space-y-1.5">
+                                  <input
+                                    type="text"
+                                    value={task.text}
+                                    onChange={(e) => {
+                                      const newTasks = [...projectForm.tasks];
+                                      newTasks[idx] = { ...newTasks[idx], text: e.target.value };
+                                      setProjectForm({ ...projectForm, tasks: newTasks });
+                                    }}
+                                    className="w-full px-3 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                                    placeholder="Task name"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={task.description || ''}
+                                    onChange={(e) => {
+                                      const newTasks = [...projectForm.tasks];
+                                      newTasks[idx] = { ...newTasks[idx], description: e.target.value };
+                                      setProjectForm({ ...projectForm, tasks: newTasks });
+                                    }}
+                                    className="w-full px-3 py-1.5 text-xs border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                                    placeholder="Optional description"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 pt-1">
+                                  <label className="flex items-center gap-1 text-xs text-slate-500 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={task.is_optional || false}
+                                      onChange={(e) => {
+                                        const newTasks = [...projectForm.tasks];
+                                        newTasks[idx] = { ...newTasks[idx], is_optional: e.target.checked };
+                                        setProjectForm({ ...projectForm, tasks: newTasks });
+                                      }}
+                                      className="h-3.5 w-3.5 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                                    />
+                                    <span>Optional</span>
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setProjectForm({
+                                        ...projectForm,
+                                        tasks: projectForm.tasks.filter((_, i) => i !== idx)
+                                      });
+                                    }}
+                                    className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                                  >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
+                <button
+                    type="button"
+                    onClick={() => {
+                      setProjectForm({
+                        ...projectForm,
+                        tasks: [...projectForm.tasks, { text: '', description: '', is_optional: false }]
+                      });
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-400 transition-colors w-full justify-center"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add Task
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -4158,6 +4275,35 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                         </div>
                       )}
                     </div>
+                    
+                    {/* Project Tasks */}
+                    {(project as any).tasks && (project as any).tasks.length > 0 && (
+                      <div className="mt-4 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/15 dark:to-teal-900/10 rounded-lg border border-emerald-200 dark:border-emerald-800 p-4">
+                        <div className="flex items-center space-x-2 mb-3">
+                          <span className="text-emerald-600 dark:text-emerald-400 text-lg">📋</span>
+                          <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase">Project Tasks / Checklist</p>
+                          <span className="text-xs text-emerald-500 dark:text-emerald-400 ml-auto">{(project as any).tasks.length} task{(project as any).tasks.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {(project as any).tasks.map((task: any, idx: number) => (
+                            <div key={idx} className="flex items-start gap-2.5 py-1.5">
+                              <div className="w-5 h-5 rounded-full border-2 border-emerald-400 dark:border-emerald-500 flex items-center justify-center shrink-0 mt-0.5">
+                                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 dark:bg-emerald-500" />
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{task.text}</p>
+                                {task.description && (
+                                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{task.description}</p>
+                                )}
+                                {task.is_optional && (
+                                  <span className="inline-block mt-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded">Optional</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Keep old bottom section for reference but hidden */}
@@ -4931,6 +5077,35 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                         <span className="flex items-center gap-1">👥 Max Team Size: <strong>{aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1}</strong></span>
                       </div>
                     </div>
+                    
+                    {/* AI Preview Tasks */}
+                    {aiPreviewData.projectForm?.tasks && aiPreviewData.projectForm.tasks.length > 0 && (
+                      <div className="mt-4 bg-gradient-to-br from-emerald-50 to-teal-50 dark:from-emerald-900/15 dark:to-teal-900/10 rounded-lg border border-emerald-200 dark:border-emerald-800 p-4">
+                        <div className="flex items-center space-x-2 mb-3">
+                          <span className="text-emerald-600 dark:text-emerald-400 text-lg">📋</span>
+                          <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 uppercase">Project Tasks / Checklist</p>
+                          <span className="text-xs text-emerald-500 dark:text-emerald-400 ml-auto">{aiPreviewData.projectForm.tasks.length} task{aiPreviewData.projectForm.tasks.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {aiPreviewData.projectForm.tasks.map((task: any, idx: number) => (
+                            <div key={idx} className="flex items-start gap-2.5 py-1.5">
+                              <div className="w-5 h-5 rounded-full border-2 border-emerald-400 dark:border-emerald-500 flex items-center justify-center shrink-0 mt-0.5">
+                                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 dark:bg-emerald-500" />
+                              </div>
+                              <div className="flex-1">
+                                <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{task.text}</p>
+                                {task.description && (
+                                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{task.description}</p>
+                                )}
+                                {task.is_optional && (
+                                  <span className="inline-block mt-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-1.5 py-0.5 rounded">Optional</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

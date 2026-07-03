@@ -59,6 +59,13 @@ export interface ProjectWithStatus {
   modification_request_reason?: string;
   can_resubmit?: boolean;
   submission_status: SubmissionStatus;
+  tasks?: ProjectTask[];
+}
+
+export interface ProjectTask {
+  text: string;
+  description?: string;
+  is_optional?: boolean;
 }
 
 export interface TeamMember {

@@ -238,6 +238,52 @@ export default function ProjectDetailPage() {
         </CardContent>
       </Card>
 
+      {/* Project Tasks / Checklist */}
+      {project.tasks && project.tasks.length > 0 && (
+        <Card className="border-emerald-200 dark:border-emerald-800">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              Project Tasks / Checklist
+            </CardTitle>
+            <CardDescription>
+              Complete each task below to finish this project
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {project.tasks.map((task: any, idx: number) => (
+                <div
+                  key={idx}
+                  className="flex items-start gap-3 p-3 rounded-lg bg-emerald-50/50 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900"
+                >
+                  <div className="flex-shrink-0 mt-0.5">
+                    <div className="w-5 h-5 rounded-full border-2 border-emerald-400 dark:border-emerald-600 flex items-center justify-center">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400 dark:bg-emerald-600" />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                      {task.text}
+                      {task.is_optional && (
+                        <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 uppercase">
+                          Optional
+                        </span>
+                      )}
+                    </p>
+                    {task.description && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {task.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Grade Card (if graded) */}
       {isGraded && pct !== null && (
         <Card className="border-green-200 dark:border-green-800">

@@ -403,6 +403,7 @@ Create a capstone project that:
 5. Includes detailed grading rubric
 6. Suggests realistic timeline
 7. Lists required resources/tools
+8. Includes a TASKS/CHECKLIST section — break the project down into 5-10 actionable steps/tasks that students should complete
 
 The project should be challenging, real-world applicable, and demonstrate mastery of course objectives.
 
@@ -415,7 +416,12 @@ Format as JSON:
   "max_points": 200,
   "due_date_days": 14,
   "grading_rubric": "Detailed rubric with weights",
-  "resources": "• Resource 1\\n• Resource 2"
+  "resources": "• Resource 1\\n• Resource 2",
+  "tasks": [
+    {{"text": "Task description 1", "description": "Detailed guidance for completing this task", "is_optional": false}},
+    {{"text": "Task description 2", "description": "Detailed guidance for completing this task", "is_optional": false}},
+    {{"text": "Task description 3", "description": "Detailed guidance (optional milestone)", "is_optional": true}}
+  ]
 }}"""
         
         result, provider = rate_limit_handler.execute_with_retry(
@@ -501,6 +507,7 @@ Create a capstone-style project that:
 6. Includes a DETAILED, STRUCTURED RUBRIC with 4-6 criteria, each with weights/points, descriptions, and performance levels
 7. Suggests realistic timeline (days)
 8. Lists required resources/tools
+9. Includes a TASKS/CHECKLIST section — break the project down into 5-10 actionable steps/tasks that students should complete
 
 The project should be challenging, real-world applicable, and demonstrate mastery of {'module concepts' if not is_multiple_modules else 'the combined topics across all selected modules'}.
 
@@ -544,7 +551,12 @@ Format as JSON:
     }}
   ],
   "resources": "• Resource/tool 1\\n• Resource/tool 2",
-  "submission_format": "What to submit and how"
+  "submission_format": "What to submit and how",
+  "tasks": [
+    {{"text": "Task description 1", "description": "Detailed guidance for completing this task", "is_optional": false}},
+    {{"text": "Task description 2", "description": "Detailed guidance for completing this task", "is_optional": true}},
+    {{"text": "Task description 3", "description": "Detailed guidance for completing this task", "is_optional": false}}
+  ]
 }}"""
         
         result, provider = rate_limit_handler.execute_with_retry(
@@ -577,7 +589,14 @@ Format as JSON:
                 {"name": "Presentation", "description": "Organization, clarity, and professional presentation", "max_points": 45, "performance_levels": [{"level": "Excellent", "points": 45, "description": "Professional and engaging"}, {"level": "Good", "points": 36, "description": "Well presented with minor issues"}, {"level": "Satisfactory", "points": 27, "description": "Adequate presentation"}, {"level": "Needs Improvement", "points": 9, "description": "Poor presentation"}]}
             ],
             "resources": "Use module materials",
-            "submission_format": "Submit as zip file with all deliverables"
+            "submission_format": "Submit as zip file with all deliverables",
+            "tasks": [
+                {"text": "Research and plan your approach", "description": "Review the module materials and outline your project plan", "is_optional": false},
+                {"text": "Set up your development environment", "description": "Prepare all necessary tools and resources", "is_optional": false},
+                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": false},
+                {"text": "Test and refine", "description": "Test your implementation and fix any issues", "is_optional": false},
+                {"text": "Prepare documentation", "description": "Write documentation for your project", "is_optional": false}
+            ]
         }
     
     def _normalize_rubric_criteria(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -687,10 +706,18 @@ Format as JSON:
                 {"name": "Presentation", "description": "Organization, clarity, and professional presentation", "max_points": 45, "performance_levels": [{"level": "Excellent", "points": 45, "description": "Professional and engaging"}, {"level": "Good", "points": 36, "description": "Well presented with minor issues"}, {"level": "Satisfactory", "points": 27, "description": "Adequate presentation"}, {"level": "Needs Improvement", "points": 9, "description": "Poor presentation"}]}
             ],
             "resources": "Use module materials and external references",
-            "submission_format": "Submit as zip file with all deliverables"
+            "submission_format": "Submit as zip file with all deliverables",
+            "tasks": [
+                {"text": "Research and plan your approach", "description": "Review the course materials and outline your project plan", "is_optional": false},
+                {"text": "Design the solution architecture", "description": "Plan the structure and components of your project", "is_optional": false},
+                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": false},
+                {"text": "Test and debug", "description": "Test your implementation thoroughly and fix issues", "is_optional": false},
+                {"text": "Prepare final submission", "description": "Compile all deliverables and submit", "is_optional": false}
+            ]
         }
         
         # Merge with defaults, keeping AI-generated values when available
+        # (tasks is included in defaults dict and will be applied here)
         for key, default_value in defaults.items():
             if key not in parsed_data or not parsed_data[key]:
                 parsed_data[key] = default_value

@@ -31,6 +31,13 @@ export interface CreateProjectRequest {
   allowed_file_types?: string;
   collaboration_allowed?: boolean;
   max_team_size?: number;
+  tasks?: ProjectTask[];
+}
+
+export interface ProjectTask {
+  text: string;
+  description?: string;
+  is_optional?: boolean;
 }
 
 export interface AddQuestionRequest {

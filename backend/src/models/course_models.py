@@ -1448,6 +1448,19 @@ class Project(db.Model):
         import json
         self.module_ids = json.dumps(module_list)
 
+    def get_tasks(self):
+        """Get the list of task objects for this project"""
+        import json
+        try:
+            return json.loads(self.tasks) if self.tasks else []
+        except:
+            return []
+
+    def set_tasks(self, task_list):
+        """Set the list of task objects for this project"""
+        import json
+        self.tasks = json.dumps(task_list)
+
     def to_dict(self, include_modules=False):
         data = {
             'id': self.id,
@@ -1475,7 +1488,9 @@ class Project(db.Model):
             'modification_requested_by': self.modification_requested_by,
             'can_resubmit': self.can_resubmit,
             'max_resubmissions': self.max_resubmissions,
-            'resubmission_count': self.resubmission_count
+            'resubmission_count': self.resubmission_count,
+            # Tasks
+            'tasks': self.get_tasks()
         }
         if include_modules:
             module_ids = self.get_modules()
