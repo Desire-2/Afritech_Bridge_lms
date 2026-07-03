@@ -1154,6 +1154,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           fullDescription += '\n\n**Resources:**\n' + formatArrayToString(resources);
         }
         
+        // Only accept valid submission_format enum values
+        const validFormats = ['file_upload', 'text_response', 'both', 'presentation'];
+        const rawFormat = aiPreviewData.projectForm?.submission_format || aiPreviewData.submission_format || 'file_upload';
+        const sanitizedFormat = validFormats.includes(rawFormat) ? rawFormat : 'file_upload';
+        
+        // Default due_date to 30 days from now if not provided
+        const defaultDueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        
         const projectData = {
           title: aiPreviewData.projectForm?.title || aiPreviewData.title || 'Project',
           description: fullDescription,
@@ -1166,11 +1174,11 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
               : course.modules?.map(m => m.id) || [],
           points_possible: aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100,
           is_published: false, // Save as draft
-          submission_format: aiPreviewData.projectForm?.submission_format || aiPreviewData.submission_format || 'file_upload',
+          submission_format: sanitizedFormat,
           passing_score: aiPreviewData.projectForm?.passing_score || aiPreviewData.passing_score || 60,
           collaboration_allowed: aiPreviewData.projectForm?.collaboration_allowed || aiPreviewData.collaboration_allowed || false,
           max_team_size: aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1,
-          due_date: undefined  // Backend will default to 30 days from now
+          due_date: defaultDueDate
         };
 
         console.log('Project data being saved:', projectData);
