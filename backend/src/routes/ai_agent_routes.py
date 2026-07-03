@@ -1525,67 +1525,121 @@ def generate_project_from_content():
     Request body:
     {
         "course_id": 1,
-        "module_id": 2
+        "module_ids": [2, 3]   (optional array — if omitted/empty, generates a whole-course capstone project)
     }
     """
     try:
         current_user_id = get_jwt_identity()
         data = request.get_json()
         
-        if not data or not data.get('course_id') or not data.get('module_id'):
-            return jsonify({"message": "Course ID and Module ID are required"}), 400
+        if not data or not data.get('course_id'):
+            return jsonify({"message": "Course ID is required"}), 400
         
         course_id = data['course_id']
-        module_id = data['module_id']
+        module_ids = data.get('module_ids') or []  # Accept array; default to empty
+        # Also support legacy single module_id for backward compatibility
+        if not module_ids and data.get('module_id'):
+            module_ids = [data['module_id']]
         
         # Verify instructor owns the course
         course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
         if not course:
             return jsonify({"message": "Course not found or access denied"}), 404
         
-        module = Module.query.filter_by(id=module_id, course_id=course_id).first()
-        if not module:
-            return jsonify({"message": "Module not found"}), 404
-        
-        # Get all lessons with content
-        lessons = Lesson.query.filter_by(module_id=module_id).order_by(Lesson.order).all()
-        if not lessons:
-            return jsonify({"message": "Module has no lessons to generate project from"}), 400
-        
-        module_contents = []
-        for lesson in lessons:
-            if lesson.content_data:
-                module_contents.append({
-                    "title": lesson.title,
-                    "content": lesson.content_data
-                })
-        
-        if not module_contents:
-            return jsonify({"message": "Module lessons have no content to generate project from"}), 400
-        
-        logger.info(f"Generating project from module: {module.title} ({len(module_contents)} lessons)")
+        # Gather course-wide context regardless, so AI can cross-reference
+        course_context = _gather_course_context(course_id)
+
+        if len(module_ids) == 0:
+            # ── Whole-course capstone project ──
+            all_modules = Module.query.filter_by(course_id=course_id).order_by(Module.order).all()
+            
+            if not all_modules:
+                return jsonify({"message": "Course has no modules to generate project from"}), 400
+            
+            modules_summary_parts = []
+            all_module_contents = []
+            for mod in all_modules:
+                lessons = Lesson.query.filter_by(module_id=mod.id).order_by(Lesson.order).all()
+                lesson_titles = [l.title for l in lessons if l.content_data]
+                modules_summary_parts.append(f"- {mod.title}: {', '.join(lesson_titles) if lesson_titles else 'No content'}")
+                
+                for lesson in lessons:
+                    if lesson.content_data:
+                        all_module_contents.append({
+                            "title": lesson.title,
+                            "content": lesson.content_data,
+                            "module_title": mod.title
+                        })
+            
+            if not all_module_contents:
+                return jsonify({"message": "No lessons with content found across the course"}), 400
+            
+            modules_summary = "\n".join(modules_summary_parts)
+            
+            logger.info(f"Generating whole-course capstone project for {course.title} ({len(all_modules)} modules, {len(all_module_contents)} lessons with content)")
+            
+            task_kwargs = {
+                'method_name': 'generate_final_project',
+                'method_kwargs': {
+                    'course_title': course.title,
+                    'course_description': course.description or '',
+                    'course_objectives': course.learning_objectives or '',
+                    'modules_summary': modules_summary,
+                }
+            }
+            task_message = f"Generating whole-course capstone project in background"
+            task_meta = _make_task_meta(course_id=course_id, course_title=course.title)
+        else:
+            # ── Selected module(s) project ──
+            # Gather content from all selected modules
+            all_module_contents = []
+            module_titles_list = []
+            for mod_id in module_ids:
+                module = Module.query.filter_by(id=mod_id, course_id=course_id).first()
+                if not module:
+                    continue
+                module_titles_list.append(module.title)
+                lessons = Lesson.query.filter_by(module_id=mod_id).order_by(Lesson.order).all()
+                for lesson in lessons:
+                    if lesson.content_data:
+                        all_module_contents.append({
+                            "title": lesson.title,
+                            "content": lesson.content_data,
+                            "module_title": module.title
+                        })
+            
+            if not all_module_contents:
+                return jsonify({"message": "Selected modules have no lesson content to generate project from"}), 400
+            
+            combined_title = " + ".join(module_titles_list)
+            
+            logger.info(f"Generating project from {len(module_ids)} module(s): {combined_title} ({len(all_module_contents)} lessons)")
+            
+            task_kwargs = {
+                'method_name': 'generate_project_from_content',
+                'method_kwargs': {
+                    'module_contents': all_module_contents,
+                    'module_title': combined_title,
+                    'course_title': course.title,
+                }
+            }
+            task_message = f"Generating project from {combined_title} in background"
+            task_meta = _make_task_meta(course_id=course_id, module_id=module_ids[0] if len(module_ids) == 1 else None, course_title=course.title)
         
         # Always use background task to avoid Gunicorn worker timeout
         task_id = task_manager.submit_task(
             task_type='generate-project-from-content',
             task_func=ai_agent_service.run_single_step_background,
-            kwargs={
-                'method_name': 'generate_project_from_content',
-                'method_kwargs': {
-                    'module_contents': module_contents,
-                    'module_title': module.title,
-                    'course_title': course.title,
-                }
-            },
+            kwargs=task_kwargs,
             total_steps=1,
             user_id=current_user_id,
             on_complete=handle_task_completion,
-            task_meta=_make_task_meta(course_id=course_id, module_id=module_id, course_title=course.title),
+            task_meta=task_meta,
         )
         return jsonify({
             "success": True, "background": True,
             "task_id": task_id, "status": "pending",
-            "message": f"Generating project from {module.title} in background"
+            "message": task_message
         }), 202
         
     except Exception as e:

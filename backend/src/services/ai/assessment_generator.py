@@ -460,23 +460,40 @@ Format as JSON:
             Dict with project details
         """
         combined_content = ""
-        for idx, content_item in enumerate(module_contents[:5], 1):
-            combined_content += f"\n\n=== {content_item.get('title', f'Item {idx}')} ===\n"
+        # Track unique modules mentioned in the content items
+        modules_mentioned = set()
+        for idx, content_item in enumerate(module_contents[:8], 1):
+            mod_title = content_item.get('module_title', '')
+            if mod_title:
+                modules_mentioned.add(mod_title)
+                section_header = f"=== {content_item.get('title', f'Item {idx}')} ({mod_title}) ==="
+            else:
+                section_header = f"=== {content_item.get('title', f'Item {idx}')} ==="
+            combined_content += f"\n\n{section_header}\n"
             item_content = content_item.get('content', '')
             combined_content += item_content[:3000] if len(item_content) > 3000 else item_content
         
         optimized_content = combined_content[:15000] if len(combined_content) > 15000 else combined_content
         
+        is_multiple_modules = len(modules_mentioned) > 1
+        scope_description = "the module content" if not is_multiple_modules else "the selected modules' content"
+        integration_prompt = (
+            "Integrate concepts from across this module content, ensuring the project is cohesive and comprehensive"
+            if not is_multiple_modules else
+            "Integrate and synthesize concepts from ALL of the following modules, requiring students to draw connections across topics: "
+            + ", ".join(sorted(modules_mentioned))
+        )
+        
         prompt = f"""You are an expert instructional designer creating a comprehensive project.
 
 Course: {course_title}
-Module: {module_title}
+{'Module' if not is_multiple_modules else 'Modules'}: {module_title}
 
-Module Content Summary:
+{'Module' if not is_multiple_modules else 'Module'} Content Summary:
 {optimized_content}
 
 Create a capstone-style project that:
-1. Integrates concepts from across the module content
+1. {integration_prompt}
 2. Has a clear, professional project title
 3. Provides comprehensive description and context (3-4 paragraphs)
 4. Lists specific project requirements
@@ -485,9 +502,11 @@ Create a capstone-style project that:
 7. Suggests realistic timeline (days)
 8. Lists required resources/tools
 
-The project should be challenging, real-world applicable, and demonstrate mastery of module concepts.
+The project should be challenging, real-world applicable, and demonstrate mastery of {'module concepts' if not is_multiple_modules else 'the combined topics across all selected modules'}.
 
-IMPORTANT: Base the project ONLY on skills and knowledge covered in the module content above.
+IMPORTANT: Base the project ONLY on skills and knowledge covered in {scope_description} above.
+
+{'When multiple modules are selected, ensure the project requires students to apply knowledge from EACH module to complete it successfully.' if is_multiple_modules else ''}
 
 The rubric_criteria array MUST include 4-6 criteria with meaningful descriptions and performance levels.
 

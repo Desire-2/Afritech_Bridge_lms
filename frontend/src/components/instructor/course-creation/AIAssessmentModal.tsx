@@ -22,6 +22,9 @@ interface AIAssessmentModalProps {
   modules: EnhancedModule[];
   selectedModuleId: number | null;
   setSelectedModuleId: (id: number | null) => void;
+  /** For project multi-select: array of selected module IDs */
+  selectedModuleIds?: number[];
+  setSelectedModuleIds?: (ids: number[]) => void;
   lessons: any[];
   selectedLessonId: number | null;
   setSelectedLessonId: (id: number | null) => void;
@@ -300,29 +303,91 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
               {/* Module Selection */}
               <div>
                 <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
-                  {assessmentType === 'project' ? 'Select Module (Optional for whole course project)' : 'Select Module *'}
+                  {assessmentType === 'project' ? 'Select Modules (Optional — leave empty for whole course project)' : 'Select Module *'}
                 </label>
-                <select
-                  value={selectedModuleId || ''}
-                  onChange={(e) => setSelectedModuleId(e.target.value ? parseInt(e.target.value) : null)}
-                  className="w-full px-4 py-3 border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-slate-700 dark:text-white"
-                  disabled={isGenerating}
-                >
-                  <option value="">{assessmentType === 'project' ? 'Whole Course Project' : 'Select a module...'}</option>
-                  {modules.map((module) => (
-                    <option key={module.id} value={module.id}>
-                      {module.title} ({module.lessons?.length || 0} lessons)
-                    </option>
-                  ))}
-                </select>
-                {assessmentType === 'project' && !selectedModuleId && (
-                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                    💡 No module selected - will generate a comprehensive capstone project covering the entire course
-                  </p>
+                
+                {assessmentType === 'project' && selectedModuleIds !== undefined && setSelectedModuleIds ? (
+                  /* ── Multi-select for projects ── */
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto border-2 border-slate-300 dark:border-slate-600 rounded-lg p-2">
+                    <label className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer text-sm">
+                      <input
+                        type="checkbox"
+                        checked={selectedModuleIds.length === 0}
+                        onChange={() => {
+                          if (selectedModuleIds.length > 0) {
+                            // Save current selection and switch to whole-course mode
+                            localStorage.setItem('lastProjectModuleIds', JSON.stringify(selectedModuleIds));
+                            setSelectedModuleIds([]);
+                          } else {
+                            // Restore previous selection from localStorage, or select all if none saved
+                            const saved = localStorage.getItem('lastProjectModuleIds');
+                            if (saved) {
+                              try {
+                                const parsed = JSON.parse(saved);
+                                setSelectedModuleIds(parsed);
+                              } catch {
+                                setSelectedModuleIds(modules.map(m => m.id));
+                              }
+                            } else {
+                              setSelectedModuleIds(modules.map(m => m.id));
+                            }
+                          }
+                        }}
+                        className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                        disabled={isGenerating}
+                      />
+                      <span className="font-medium text-blue-600 dark:text-blue-400">Whole Course Project (all modules)</span>
+                    </label>
+                    <div className="border-t border-slate-200 dark:border-slate-600 my-1" />
+                    {modules.map((module) => (
+                      <label
+                        key={module.id}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedModuleIds.includes(module.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedModuleIds([...selectedModuleIds, module.id]);
+                            } else {
+                              setSelectedModuleIds(selectedModuleIds.filter(id => id !== module.id));
+                            }
+                          }}
+                          className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                          disabled={isGenerating}
+                        />
+                        <span>{module.title}</span>
+                        <span className="text-xs text-slate-400 ml-auto">({module.lessons?.length || 0} lessons)</span>
+                      </label>
+                    ))}
+                  </div>
+                ) : (
+                  /* ── Single-select for quizzes/assignments ── */
+                  <select
+                    value={selectedModuleId || ''}
+                    onChange={(e) => setSelectedModuleId(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full px-4 py-3 border-2 border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 dark:bg-slate-700 dark:text-white"
+                    disabled={isGenerating}
+                  >
+                    <option value="">Select a module...</option>
+                    {modules.map((module) => (
+                      <option key={module.id} value={module.id}>
+                        {module.title} ({module.lessons?.length || 0} lessons)
+                      </option>
+                    ))}
+                  </select>
                 )}
-                {assessmentType === 'project' && selectedModuleId && (
-                  <p className="text-xs text-purple-600 dark:text-purple-400 mt-1">
-                    📋 Will generate a project focused on the selected module
+                
+                {assessmentType === 'project' && (
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                    {selectedModuleIds !== undefined && selectedModuleIds.length === 0
+                      ? '💡 No modules selected — will generate a comprehensive capstone project covering the entire course'
+                      : selectedModuleIds !== undefined && selectedModuleIds.length === 1
+                      ? '📋 Will generate a project focused on the selected module'
+                      : selectedModuleIds !== undefined && selectedModuleIds.length > 1
+                      ? `📋 Will generate a project integrating ${selectedModuleIds.length} selected modules`
+                      : ''}
                   </p>
                 )}
               </div>

@@ -107,7 +107,7 @@ export interface AssignmentFromContentRequest {
 
 export interface ProjectFromContentRequest {
   course_id: number;
-  module_id: number;
+  module_id?: number;
 }
 
 export interface AIResponse<T = any> {

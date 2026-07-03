@@ -80,6 +80,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiContentType, setAIContentType] = useState<'lesson' | 'module'>('lesson');
   const [selectedModuleId, setSelectedModuleId] = useState<number | null>(null);
+  const [selectedModuleIds, setSelectedModuleIds] = useState<number[]>([]);
   const [selectedLessonId, setSelectedLessonId] = useState<number | null>(null);
   const [aiNumQuestions, setAINumQuestions] = useState(10);
   const [aiDifficulty, setAIDifficulty] = useState<'easy' | 'medium' | 'hard' | 'mixed'>('mixed');
@@ -516,8 +517,10 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
       } else if (activeTab === 'project') {
         endpoint = '/ai-agent/generate-project-from-content';
         requestData = { course_id: course.id };
-        if (selectedModuleId) {
-          requestData.module_id = selectedModuleId;
+        if (selectedModuleIds.length > 0) {
+          requestData.module_ids = selectedModuleIds;
+        } else if (selectedModuleId) {
+          requestData.module_ids = [selectedModuleId];
         }
       }
 
@@ -811,6 +814,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           type: 'project',
           params: {
             course_id: course.id,
+            module_ids: selectedModuleIds.length > 0 ? selectedModuleIds : [],
             module_id: selectedModuleId || null
           }
         });
@@ -941,13 +945,69 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           throw new Error('AI generated incomplete project data.');
         }
 
-        setProjectForm({
-          ...projectForm,
-          title: projectData.title || 'AI Generated Project',
-          description: projectData.description || '',
-        });
+        // Parse array fields if they're strings
+        const parseArrayField = (field: any) => {
+          if (Array.isArray(field)) return field;
+          if (typeof field === 'string' && field) {
+            try {
+              return JSON.parse(field);
+            } catch (e) {
+              return [];
+            }
+          }
+          return [];
+        };
 
-        setSuccessMessage('✅ Regenerated project!');
+        // Determine which modules were used for contextual title generation
+        const moduleIds = lastAIGeneration.params.module_ids || [];
+        const usedModules = moduleIds.length > 0
+          ? moduleIds.map((id: number) => modules.find(m => m.id === id)).filter(Boolean)
+          : [];
+        
+        let contextualTitle = projectData.title;
+        let contextualDescription = projectData.description;
+        
+        if (!contextualTitle || contextualTitle === 'Project' || contextualTitle.toLowerCase().includes('generated')) {
+          if (usedModules.length === 1) {
+            contextualTitle = `${usedModules[0].title} - Capstone Project`;
+          } else if (usedModules.length > 1) {
+            contextualTitle = `${usedModules.map((m: any) => m.title).join(' + ')} - Integrated Project`;
+          } else {
+            contextualTitle = `${course.title} - Capstone Project`;
+          }
+        }
+        
+        if (!contextualDescription || contextualDescription.length < 20) {
+          if (usedModules.length === 1) {
+            contextualDescription = `Comprehensive project to demonstrate mastery of ${usedModules[0].title} concepts`;
+          } else if (usedModules.length > 1) {
+            contextualDescription = `Integrated project combining concepts from ${usedModules.map((m: any) => m.title).join(', ')}`;
+          } else {
+            contextualDescription = `Capstone project for ${course.title}`;
+          }
+        }
+
+        setAIPreviewData({
+          projectForm: {
+            title: contextualTitle,
+            description: contextualDescription,
+            objectives: parseArrayField(projectData.objectives || projectData.requirements),
+            requirements: parseArrayField(projectData.requirements),
+            rubric_criteria: parseArrayField(projectData.rubric_criteria || projectData.grading_rubric),
+            resources: parseArrayField(projectData.resources),
+            points_possible: projectData.max_points || projectData.points_possible || 150,
+            timeline_weeks: Math.ceil((projectData.due_date_days || 14) / 7) || 4,
+            submission_format: projectData.submission_format || 'file_upload',
+            passing_score: projectData.passing_score || 60,
+            collaboration_allowed: projectData.collaboration_allowed || false,
+            max_team_size: projectData.max_team_size || 1,
+            max_file_size_mb: projectData.max_file_size_mb || 50,
+          }
+        });
+        setAIPreviewType('project');
+        setShowAIPreview(true);
+
+        setSuccessMessage('✅ Regenerated project! Review in preview.');
       }
     } catch (error: any) {
       console.error('Regeneration error:', error);
@@ -1099,7 +1159,11 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           description: fullDescription,
           objectives: Array.isArray(objectives) ? formatArrayToString(objectives) : objectives,
           course_id: course.id,
-          module_ids: selectedModuleId ? [selectedModuleId] : course.modules?.map(m => m.id) || [],
+          module_ids: lastAIGeneration.params.module_ids?.length > 0
+            ? lastAIGeneration.params.module_ids
+            : lastAIGeneration.params.module_id
+              ? [lastAIGeneration.params.module_id]
+              : course.modules?.map(m => m.id) || [],
           points_possible: aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100,
           is_published: false, // Save as draft
           submission_format: aiPreviewData.projectForm?.submission_format || aiPreviewData.submission_format || 'file_upload',
@@ -4573,6 +4637,8 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         modules={modules}
         selectedModuleId={selectedModuleId}
         setSelectedModuleId={setSelectedModuleId}
+        selectedModuleIds={selectedModuleIds}
+        setSelectedModuleIds={setSelectedModuleIds}
         lessons={lessons}
         selectedLessonId={selectedLessonId}
         setSelectedLessonId={setSelectedLessonId}
