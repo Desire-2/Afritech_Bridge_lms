@@ -543,7 +543,7 @@ const AIAssessmentModal: React.FC<AIAssessmentModalProps> = ({
               disabled={
                 isGenerating || 
                 (assessmentType !== 'project' && !selectedModuleId) || 
-                (contentType === 'lesson' && !selectedLessonId)
+                (assessmentType !== 'project' && contentType === 'lesson' && !selectedLessonId)
               }
               title={
                 assessmentType === 'project'
