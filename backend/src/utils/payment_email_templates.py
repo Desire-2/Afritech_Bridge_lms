@@ -43,7 +43,6 @@ def _build_scholarship_badge_html(scholarship_type, scholarship_percentage, orig
         </div>'''
     elif scholarship_type == 'partial' and scholarship_percentage and original_price and original_price > 0:
         discount_pct = float(scholarship_percentage)
-        discount_amount = original_price * (discount_pct / 100.0)
         return f'''
         <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #3b82f6;">
             <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
@@ -52,9 +51,7 @@ def _build_scholarship_badge_html(scholarship_type, scholarship_percentage, orig
                     <td style="vertical-align: middle;">
                         <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
                         <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
-                            Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{currency} {int(original_price):,}</span>
-                            &nbsp;&nbsp;You pay: <strong style="color: #fbbf24;">{currency} {int(amount):,}</strong>
-                            <span style="color: #93c5fd; font-size: 11px; margin-left: 8px;">(Saved {currency} {int(discount_amount):,})</span>
+                            Enjoy this course at an <strong style="color: #fbbf24;">affordable price</strong> thanks to your partial scholarship!
                         </p>
                     </td>
                 </tr>
@@ -209,7 +206,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                                     <span style="margin-right: 8px;">💵</span> Amount Due
                                 </td>
                                 <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">
-                                    {currency} {int(amount):,}
+                                    Affordable Price
                                 </td>
                             </tr>
                         </table>
@@ -341,13 +338,11 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
     enrollment_journey = _format_cohort_enrollment_timeline(cohort_info, application_end_date)
     
     # Extract community link from cohort_info for the 'While You Wait' section
-    _community_link = 'https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f'
-    _community_label = 'WhatsApp community'
-    if cohort_info:
-        if cohort_info.get('community_link'):
-            _community_link = cohort_info['community_link']
-        if cohort_info.get('community_link_label'):
-            _community_label = cohort_info['community_link_label']
+    community_join_item = ""
+    if cohort_info and cohort_info.get('community_link'):
+        _community_link = cohort_info['community_link']
+        _community_label = cohort_info.get('community_link_label', 'our community')
+        community_join_item = f'<li>Join our <a href=\"{_community_link}\" style=\"color: #34d399; text-decoration: underline;\">{_community_label}</a> to connect with fellow learners</li>'
 
     return f"""
     {get_email_header()}
@@ -451,7 +446,7 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                                     <span style="margin-right: 8px;">💵</span> Amount Paid
                                 </td>
                                 <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">
-                                    {currency} {int(amount):,}
+                                    Affordable Price
                                 </td>
                             </tr>
                         </table>
@@ -474,7 +469,7 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                                     <li>Ensure your email address is accessible — login credentials will be sent there</li>
                                     <li>Add <strong>afritech.bridge@yahoo.com</strong> to your contacts to avoid missing emails</li>
                                     <li>Prepare a quiet study space with a reliable internet connection</li>
-                                    <li>Join our <a href="{_community_link}" style="color: #34d399; text-decoration: underline;">{_community_label}</a> to connect with fellow learners</li>
+                                    {community_join_item}
                                 </ul>
                             </td>
                         </tr>
@@ -852,7 +847,7 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
                                     <span style="margin-right: 8px;">💵</span> Amount Due
                                 </td>
                                 <td style="padding: 15px 0; color: #f59e0b; font-size: 24px; font-weight: 700; text-align: right;">
-                                    {currency} {int(amount):,}
+                                    Affordable Price
                                 </td>
                             </tr>
                         </table>
@@ -1150,7 +1145,6 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
         </div>'''
     elif scholarship_type == 'partial' and scholarship_percentage and original_price and original_price > 0:
         discount_pct = float(scholarship_percentage)
-        discount_amount = original_price * (discount_pct / 100.0)
         scholarship_email_html = f'''
         <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #3b82f6;">
             <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
@@ -1159,9 +1153,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                     <td style="vertical-align: middle;">
                         <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
                         <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
-                            Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{currency} {int(original_price):,}</span>
-                            &nbsp;&nbsp;You pay: <strong style="color: #fbbf24;">{currency} {int(amount):,}</strong>
-                            <span style="color: #93c5fd; font-size: 11px; margin-left: 8px;">(Saved {currency} {int(discount_amount):,})</span>
+                            Enjoy this course at an <strong style="color: #fbbf24;">affordable price</strong> thanks to your partial scholarship!
                         </p>
                     </td>
                 </tr>
@@ -1188,13 +1180,11 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
     enrollment_journey = _format_cohort_enrollment_timeline(cohort_info, application_end_date)
 
     # Extract community link from cohort_info for the 'While You Wait' section
-    _community_link = 'https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f'
-    _community_label = 'WhatsApp community'
-    if cohort_info:
-        if cohort_info.get('community_link'):
-            _community_link = cohort_info['community_link']
-        if cohort_info.get('community_link_label'):
-            _community_label = cohort_info['community_link_label']
+    community_join_item = ""
+    if cohort_info and cohort_info.get('community_link'):
+        _community_link = cohort_info['community_link']
+        _community_label = cohort_info.get('community_link_label', 'our community')
+        community_join_item = f'<li>Join our <a href=\"{_community_link}\" style=\"color: #34d399; text-decoration: underline;\">{_community_label}</a> to connect with fellow learners</li>'
 
     return f"""
     {get_email_header()}
@@ -1269,7 +1259,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                             </tr>
                             <tr style="border-top: 2px solid #10b981;">
                                 <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Paid</td>
-                                <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">{currency} {int(amount):,}</td>
+                                <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">Affordable Price</td>
                             </tr>
                         </table>
                     </div>
@@ -1292,7 +1282,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                                     <li>Add <strong>afritech.bridge@yahoo.com</strong> to your contacts to avoid missing emails</li>
                                     <li>Prepare a quiet study space with a reliable internet connection</li>
                                     <li>Review any pre-course materials shared by the instructor</li>
-                                    <li>Join our <a href="{_community_link}" style="color: #34d399; text-decoration: underline;">{_community_label}</a> to connect with fellow learners</li>
+                                    {community_join_item}
                                 </ul>
                             </td>
                         </tr>
@@ -1631,7 +1621,7 @@ def payment_submitted_unapproved_email(application, course_title, payment_info, 
                             </tr>
                             <tr style="border-top: 2px solid #3b82f6;">
                                 <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Due</td>
-                                <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">{currency} {int(amount):,}</td>
+                                <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">Affordable Price</td>
                             </tr>
                         </table>
                     </div>
@@ -1818,7 +1808,7 @@ def payment_migrated_student_email(application, course_title, payment_info, coho
                             </tr>
                             <tr style="border-top: 2px solid #8b5cf6;">
                                 <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Due</td>
-                                <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">{currency} {int(amount):,}</td>
+                                <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">Affordable Price</td>
                             </tr>
                         </table>
                     </div>
@@ -2056,7 +2046,7 @@ def enrollment_payment_admin_alert_email(
                                     <span style="margin-right: 8px;">💵</span> Amount
                                 </td>
                                 <td style="padding: 15px 0; color: #f59e0b; font-size: 24px; font-weight: 700; text-align: right;">
-                                    {currency} {int(amount):,}
+                                    Affordable Price
                                 </td>
                             </tr>
                         </table>
@@ -2230,7 +2220,7 @@ def payment_refund_email(application, course_title, refund_details, cohort_info=
                                     <span style="margin-right: 8px;">💵</span> Refund Amount
                                 </td>
                                 <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">
-                                    {currency} {int(amount):,}
+                                    Affordable Price
                                 </td>
                             </tr>
                         </table>

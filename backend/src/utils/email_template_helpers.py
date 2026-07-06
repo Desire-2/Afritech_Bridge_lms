@@ -138,16 +138,16 @@ def get_payment_info_card(amount=None, currency="USD", payment_required=False,
         return ""
     
     # Format payment details
-    total_display = f"{currency} {int(amount):,}" if amount else f"{currency} 0"
+    total_display = 'Affordable Price' if amount else 'N/A'
     
     # Calculate partial payment if applicable
     partial_display = ""
     if payment_mode == "partial":
         if partial_amount:
-            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">{currency} {int(partial_amount):,}</td></tr>"
+            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">Affordable Price</td></tr>"
         elif partial_percentage and amount:
             partial_amt = amount * (partial_percentage / 100)
-            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment ({partial_percentage:.0f}%)</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">{currency} {int(partial_amt):,}</td></tr>"
+            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment ({partial_percentage:.0f}%)</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">Affordable Price</td></tr>"
     
     # Format deadline
     deadline_str = ""
@@ -285,7 +285,7 @@ def get_cohort_payment_combined_card(cohort_label=None, cohort_start_date=None,
         rows += f"""<tr><td style="padding: 12px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;"><span style="margin-right: 8px;">🏁</span> Ends</td><td style="padding: 12px 0; color: #ffffff; font-size: 15px; text-align: right;">{end_str}</td></tr>"""
     
     if payment_required and amount:
-        total_display = f"{currency} {int(amount):,}"
+        total_display = 'Affordable Price'
         rows += f"""<tr style="border-top: 2px solid #f59e0b; border-bottom: 2px solid #f59e0b;"><td style="padding: 12px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;"><span style="margin-right: 8px;">💰</span> Amount</td><td style="padding: 12px 0; color: #f59e0b; font-size: 18px; font-weight: 700; text-align: right;">{total_display}</td></tr>"""
     
     if not rows:

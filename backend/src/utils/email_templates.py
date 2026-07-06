@@ -301,7 +301,6 @@ def application_received_email(application, course_title, cohort_info=None, paym
                         original_price = float(getattr(window, 'price', 0) or 0)
                         if original_price > 0:
                             discount_pct = float(scholarship_percentage)
-                            discount_amount = original_price * (discount_pct / 100.0)
                             scholarship_badge_html = f'''
                             <div style="background: linear-gradient(135deg, #1e40af, #1d4ed8); border-radius: 10px; padding: 16px 20px; margin-bottom: 20px; border: 1px solid #3b82f6;">
                                 <table cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
@@ -310,9 +309,7 @@ def application_received_email(application, course_title, cohort_info=None, paym
                                         <td style="vertical-align: middle;">
                                             <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
                                             <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
-                                                Original price: <span style="text-decoration: line-through; color: #bfdbfe;">{currency} {int(original_price):,}</span>
-                                                &nbsp;&nbsp;You pay: <strong style="color: #fbbf24;">{currency} {int(amount):,}</strong>
-                                                <span style="color: #93c5fd; font-size: 11px; margin-left: 8px;">(Saved {currency} {int(discount_amount):,})</span>
+                                                Enjoy this course at an <strong style="color: #fbbf24;">affordable price</strong> thanks to your partial scholarship!
                                             </p>
                                         </td>
                                     </tr>
@@ -550,24 +547,20 @@ def application_received_email(application, course_title, cohort_info=None, paym
 
 def _build_community_section(cohort_info: dict = None) -> str:
     """Build the community/social section for email templates.
-    Uses cohort-specific community_link if provided, otherwise falls back to default WhatsApp link.
+    Uses cohort-specific community_link from cohort_info.
+    Returns empty string if no cohort_info or no community_link is provided.
     
     Args:
         cohort_info: dict with optional 'community_link' and 'community_link_label' keys
     
     Returns:
-        HTML string with community section
+        HTML string with community section, or empty string if no link is configured
     """
-    default_link = 'https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f'
-    default_label = 'WhatsApp Group'
+    if not cohort_info or not cohort_info.get('community_link'):
+        return ""
     
-    community_link = default_link
-    community_label = default_label
-    if cohort_info:
-        if cohort_info.get('community_link'):
-            community_link = cohort_info['community_link']
-        if cohort_info.get('community_link_label'):
-            community_label = cohort_info['community_link_label']
+    community_link = cohort_info['community_link']
+    community_label = cohort_info.get('community_link_label', 'our community')
     
     return f'''
     <div style="background-color: #2c3e50; border: 3px solid #25D366; border-radius: 8px; padding: 25px; margin: 25px 0; color: white;">
@@ -704,10 +697,6 @@ def _build_payment_section(payment_info: dict) -> str:
         if original_price and original_price > 0:
             discount_line = f'''
                 <tr>
-                    <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Original Price:</td>
-                    <td style="padding: 8px 0; color: #e5e7eb; text-decoration: line-through;">{currency} {int(original_price):,}</td>
-                </tr>
-                <tr>
                     <td style="padding: 8px 0; font-weight: 600; color: #e5e7eb;">Scholarship:</td>
                     <td style="padding: 8px 0; color: #34d399; font-weight: 700;">{int(scholarship_pct)}% Coverage</td>
                 </tr>'''
@@ -722,7 +711,7 @@ def _build_payment_section(payment_info: dict) -> str:
                 {discount_line}
                 <tr style="border-top: 2px solid #f59e0b;">
                     <td style="padding: 12px 0; font-weight: 700; color: #ffffff; font-size: 16px;">Amount Due:</td>
-                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">{currency} {int(effective_price):,}</td>
+                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">Affordable Price</td>
                 </tr>
             </table>
             <p style="color: #fde68a; font-size: 13px; margin: 15px 0 0 0; text-align: center;">
@@ -741,7 +730,7 @@ def _build_payment_section(payment_info: dict) -> str:
             <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                 <tr>
                     <td style="padding: 12px 0; font-weight: 700; color: #ffffff; font-size: 16px;">Amount Due:</td>
-                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">{currency} {int(effective_price):,}</td>
+                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">Affordable Price</td>
                 </tr>
             </table>
             <p style="color: #fde68a; font-size: 13px; margin: 15px 0 0 0; text-align: center;">
@@ -919,7 +908,7 @@ def application_approved_email(application, course, username, temp_password, cus
                 
                 {credentials_section}
         
-        {_build_community_section(cohort_info) if cohort_info else _build_community_section()}
+        {_build_community_section(cohort_info)}
         
         <!-- Course Information -->
         <div style="background-color: #2c3e50; border-radius: 8px; padding: 20px; margin: 20px 0;">
@@ -2165,7 +2154,7 @@ def application_status_withdrawn_email(application, course_title, reason=None, c
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='enrollment')}
     """
 
-def custom_application_email(recipient_name, subject, message, unsubscribe_token=None):
+def custom_application_email(recipient_name, subject, message, cohort_info=None, unsubscribe_token=None):
     """✨ Custom email template for application management announcements"""
     return f"""
     {get_email_header()}
@@ -2200,54 +2189,7 @@ def custom_application_email(recipient_name, subject, message, unsubscribe_token
                     </div>
                 </div>
                 
-                <!-- WhatsApp Community Section -->
-                <div style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); border-radius: 20px; padding: 35px; margin: 35px 0; box-shadow: 0 10px 30px rgba(37, 211, 102, 0.3); border: 3px solid #25D366;">
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <span class="icon-medium" style="font-size: 50px; display: block; margin-bottom: 15px;">📱</span>
-                        <h2 style="margin: 0; color: #ffffff; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">
-                            Join Our Community!
-                        </h2>
-                        <p style="color: rgba(255,255,255,0.95); margin: 10px 0 0 0; font-size: 15px; line-height: 1.6;">
-                            Connect with fellow students, get instant updates, and collaborate with your peers
-                        </p>
-                    </div>
-                    
-                    <div style="background-color: rgba(255,255,255,0.15); backdrop-filter: blur(10px); border-radius: 16px; padding: 25px; margin: 25px 0;">
-                        <table class="responsive-table" style="width: 100%;">
-                            <tr>
-                                <td style="text-align: center; padding: 10px 0;">
-                                    <div style="background-color: rgba(255,255,255,0.2); border-radius: 12px; padding: 20px; margin-bottom: 10px;">
-                                        <p style="color: #ffffff; font-size: 15px; margin: 0 0 8px 0; font-weight: 600;">
-                                            💬 WhatsApp Communication Channel
-                                        </p>
-                                        <p style="color: rgba(255,255,255,0.9); font-size: 13px; margin: 0; line-height: 1.6;">
-                                            • Share resources and study materials<br>
-                                            • Get quick answers to your questions<br>
-                                            • Network with instructors and peers<br>
-                                            • Stay updated on course announcements
-                                        </p>
-                                    </div>
-                                </td>
-                            </tr>
-                        </table>
-                    </div>
-                    
-                    <div style="text-align: center; margin-top: 25px;">
-                        <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background-color: #ffffff; color: #128C7E; padding: 18px 45px; text-decoration: none; border-radius: 50px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); text-transform: uppercase; letter-spacing: 0.5px; mobile-button; border: 3px solid rgba(255,255,255,0.3);">
-                            <span style="font-size: 20px; margin-right: 8px;">💬</span> Join WhatsApp Group
-                        </a>
-                        <p style="color: rgba(255,255,255,0.95); margin: 15px 0 0 0; font-size: 13px; font-weight: 500;">
-                            Click to join our active learning community
-                        </p>
-                    </div>
-                    
-                    <div style="background-color: rgba(255,255,255,0.1); border: 2px dashed rgba(255,255,255,0.4); border-radius: 12px; padding: 18px; margin-top: 25px;">
-                        <p style="color: rgba(255,255,255,0.95); font-size: 13px; margin: 0; line-height: 1.6; text-align: center;">
-                            <strong style="font-size: 14px;">📋 Group Guidelines:</strong><br>
-                            Be respectful, stay on topic, and help create a positive learning environment for everyone!
-                        </p>
-                    </div>
-                </div>
+                {_build_community_section(cohort_info)}
                 
                 <!-- Need Help Section -->
                 <div style="text-align: center; margin: 40px 0 20px 0; padding: 30px 20px; background: linear-gradient(135deg, #3a4c5c 0%, #455a6a 100%); border-radius: 12px;">
@@ -2452,19 +2394,7 @@ def full_credit_awarded_email(student_name, module_title, course_title, instruct
             </p>
         </div>
         
-        <!-- WhatsApp Community -->
-        <div style="background: linear-gradient(135deg, #25D366 0%, #128C7E 100%); border-radius: 20px; padding: 35px; margin: 35px 0; text-align: center; box-shadow: 0 10px 30px rgba(37, 211, 102, 0.3);">
-            <div style="margin-bottom: 20px;">
-                <span style="font-size: 50px; display: block; margin-bottom: 10px;">💬</span>
-                <h3 style="margin: 0; color: white; font-size: 22px; font-weight: 700;">Share Your Success!</h3>
-            </div>
-            <p style="color: rgba(255,255,255,0.95); margin: 0 0 25px 0; font-size: 16px; line-height: 1.6;">
-                Join our WhatsApp community to celebrate your achievement with fellow students
-            </p>
-            <a href="https://chat.whatsapp.com/I1oZ8GhZS0Q4VoRU5lK11f" style="display: inline-block; background: white; color: #128C7E; padding: 15px 35px; text-decoration: none; border-radius: 12px; font-weight: 700; font-size: 16px; box-shadow: 0 8px 25px rgba(0,0,0,0.2);">
-                🎉 Join Community
-            </a>
-        </div>
+        {_build_community_section(cohort_context)}
         
         <!-- Closing -->
         <p style="color: #ffffff; font-size: 16px; line-height: 1.8; text-align: center; margin: 40px 0 0 0; text-shadow: 1px 1px 3px rgba(0,0,0,0.4);">
