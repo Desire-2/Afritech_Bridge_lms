@@ -3045,7 +3045,6 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     </svg>
                     Add Task
                   </button>
-                </div>
               </div>
 
               <div>
