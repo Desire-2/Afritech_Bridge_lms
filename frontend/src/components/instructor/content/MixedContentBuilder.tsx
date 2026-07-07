@@ -19,6 +19,7 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; ic
 };
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { EnhancedMarkdownEditor } from '@/components/instructor/course-creation/EnhancedMarkdownEditor';
 import aiAgentService from '@/services/ai-agent.service';
 
 // Content Section Types
@@ -153,6 +154,7 @@ export default function MixedContentBuilder({
   const [generatingAI, setGeneratingAI] = useState(false);
   const [enhancingSection, setEnhancingSection] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const [textEditorPreview, setTextEditorPreview] = useState<Record<string, boolean>>({});
   const lastEmittedValueRef = useRef(''); // Track last value sent to parent to prevent feedback loop
 
   // Update sections when value prop changes (e.g., from AI generation)
@@ -529,15 +531,26 @@ export default function MixedContentBuilder({
         return (
           <div className="space-y-2">
             {isEditing ? (
-              <textarea
-                value={section.content}
-                onChange={(e) => updateSection(section.id, { content: e.target.value })}
-                onBlur={() => setEditingSection(null)}
-                placeholder="Enter text content (Markdown supported)..."
-                rows={6}
-                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm"
-                autoFocus
-              />
+              <div className="space-y-2">
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setEditingSection(null)}
+                    className="text-xs px-2.5 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-300 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors flex items-center gap-1.5 font-medium border border-green-200/60 dark:border-green-700/60"
+                  >
+                    <Check className="w-3 h-3" />
+                    Done
+                  </button>
+                </div>
+                <EnhancedMarkdownEditor
+                  value={section.content}
+                  onChange={(value) => updateSection(section.id, { content: value })}
+                  placeholder="Enter text content using markdown..."
+                  rows={6}
+                  showPreview={!!textEditorPreview[section.id]}
+                  onTogglePreview={() => setTextEditorPreview(prev => ({ ...prev, [section.id]: !prev[section.id] }))}
+                />
+              </div>
             ) : (
               <div
                 onClick={() => setEditingSection(section.id)}
