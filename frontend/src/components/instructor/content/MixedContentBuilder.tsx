@@ -19,7 +19,6 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; ic
 };
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
 import aiAgentService from '@/services/ai-agent.service';
 
 // Content Section Types
@@ -467,6 +466,17 @@ export default function MixedContentBuilder({
     }
   };
 
+  // Track created object URLs so they can be revoked on cleanup
+  const objectUrlsRef = useRef<string[]>([]);
+
+  // Cleanup object URLs on unmount
+  useEffect(() => {
+    const urls = objectUrlsRef.current;
+    return () => {
+      urls.forEach(url => URL.revokeObjectURL(url));
+    };
+  }, []);
+
   // Handle image upload
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>, sectionId: string) => {
     const file = event.target.files?.[0];
@@ -477,7 +487,11 @@ export default function MixedContentBuilder({
       // TODO: Implement actual image upload
       // For now, create a local URL
       const imageUrl = URL.createObjectURL(file);
-      updateSection(sectionId, { content: imageUrl });
+      objectUrlsRef.current.push(imageUrl);
+      updateSection(sectionId, { 
+        content: imageUrl,
+        metadata: { ...sections.find(s => s.id === sectionId)?.metadata, url: imageUrl }
+      });
     } catch (error) {
       console.error('Image upload failed:', error);
     } finally {
@@ -524,7 +538,7 @@ export default function MixedContentBuilder({
                 className="w-full min-h-[100px] px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md cursor-text hover:border-blue-400 dark:hover:border-blue-500 transition-colors prose dark:prose-invert max-w-none"
               >
                 {section.content ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {section.content}
                   </ReactMarkdown>
                 ) : (
@@ -818,7 +832,7 @@ export default function MixedContentBuilder({
                   )}
                   {section.type === 'text' && (
                     <div className="prose dark:prose-invert max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {section.content}
                       </ReactMarkdown>
                     </div>

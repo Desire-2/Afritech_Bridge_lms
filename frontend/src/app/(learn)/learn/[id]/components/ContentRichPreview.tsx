@@ -418,6 +418,8 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   // Per-video progress tracking for mixed content (videoIndex -> progress 0-100)
   const [mixedVideoProgressMap, setMixedVideoProgressMap] = useState<Record<number, number>>({});
   const [mixedVideoWatchedMap, setMixedVideoWatchedMap] = useState<Record<number, boolean>>({});
+  // Per-video duration tracking for mixed content (videoIndex -> duration in seconds)
+  const [mixedVideoDurationMap, setMixedVideoDurationMap] = useState<Record<number, number>>({});
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -1093,12 +1095,16 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                         events: {
                           onReady: (event: any) => {
                             console.log(`✅ Mixed YouTube player ${idx} ready`);
+                            const dur = event.target.getDuration();
+                            if (dur > 0) {
+                              setMixedVideoDurationMap(prev => ({ ...prev, [idx]: dur }));
+                            }
                             const interval = setInterval(() => {
                               try {
                                 const ct = event.target.getCurrentTime();
-                                const dur = event.target.getDuration();
-                                if (dur > 0) {
-                                  const pct = (ct / dur) * 100;
+                                const d = event.target.getDuration();
+                                if (d > 0) {
+                                  const pct = (ct / d) * 100;
                                   setMixedVideoProgressMap(prev => ({ ...prev, [idx]: pct }));
                                   if (typeof onMixedContentVideoProgress === 'function') {
                                     try { onMixedContentVideoProgress(idx, pct); } catch (e) {}
@@ -1162,10 +1168,11 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             const isWatched = mixedContentIndex !== undefined 
               ? (mixedVideoWatchedMap[mixedContentIndex] || false)
               : videoWatched;
-            // Per-video time: use estimate from progress * main video duration
-            // when per-video tracking isn't available.
-            const displayDuration = videoDuration;
-            const displayCurrentTime = mixedContentIndex !== undefined
+            // Use per-video duration for mixed content for accurate time display
+            const displayDuration = mixedContentIndex !== undefined
+              ? (mixedVideoDurationMap[mixedContentIndex] || 0)
+              : videoDuration;
+            const displayCurrentTime = mixedContentIndex !== undefined && displayDuration > 0
               ? (displayProgress / 100) * displayDuration
               : currentTime;
             return (
@@ -1273,6 +1280,12 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     try {
                       const player = new (window as any).Vimeo.Player(iframe);
                       console.log(`✅ Mixed Vimeo player ${idx} initialized`);
+                      // Store per-video duration
+                      player.getDuration().then((dur: number) => {
+                        if (dur > 0) {
+                          setMixedVideoDurationMap(prev => ({ ...prev, [idx]: dur }));
+                        }
+                      }).catch(() => {});
                       player.on('timeupdate', async (data: any) => {
                         try {
                           const pct = (data.percent || 0) * 100;
@@ -1333,10 +1346,11 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             const isWatched = mixedContentIndex !== undefined 
               ? (mixedVideoWatchedMap[mixedContentIndex] || false)
               : videoWatched;
-            // Per-video time: use estimate from progress * main video duration
-            // when per-video tracking isn't available.
-            const displayDuration = videoDuration;
-            const displayCurrentTime = mixedContentIndex !== undefined
+            // Use per-video duration for mixed content for accurate time display
+            const displayDuration = mixedContentIndex !== undefined
+              ? (mixedVideoDurationMap[mixedContentIndex] || 0)
+              : videoDuration;
+            const displayCurrentTime = mixedContentIndex !== undefined && displayDuration > 0
               ? (displayProgress / 100) * displayDuration
               : currentTime;
             return (
@@ -1414,11 +1428,18 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                   videoElement: el
                 };
                 
+                // Store per-video duration on loaded metadata
+                const handleLoadedMetadata = () => {
+                  if (el.duration > 0) {
+                    setMixedVideoDurationMap(prev => ({ ...prev, [mixedContentIndex]: el.duration }));
+                  }
+                };
+                el.addEventListener('loadedmetadata', handleLoadedMetadata);
+
                 // Add timeupdate listener for progress tracking
                 const handleTimeUpdate = () => {
                   if (el.duration > 0) {
                     const progress = (el.currentTime / el.duration) * 100;
-                    console.log(`📊 Mixed direct video ${mixedContentIndex} progress:`, progress.toFixed(1) + '%');
                     
                     // Update local per-video progress state for UI display
                     setMixedVideoProgressMap(prev => ({ ...prev, [mixedContentIndex]: progress }));
@@ -1433,7 +1454,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                     
                     // Check for completion (90% threshold)
                     if (progress >= 90) {
-                      console.log(`✅ Mixed direct video ${mixedContentIndex} completed (90% threshold)`);
                       setMixedVideoWatchedMap(prev => ({ ...prev, [mixedContentIndex]: true }));
                       
                       if (typeof onMixedContentVideoComplete === 'function') {
@@ -1448,10 +1468,11 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 };
                 
                 el.addEventListener('timeupdate', handleTimeUpdate);
-                
+
                 // Cleanup on unmount
                 return () => {
                   el.removeEventListener('timeupdate', handleTimeUpdate);
+                  el.removeEventListener('loadedmetadata', handleLoadedMetadata);
                 };
               }
             }}
@@ -2252,12 +2273,14 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 );
               }
               if (section.type === 'image') {
+                // Support both 'url' and 'content' fields for image src
+                const imageSrc = section.url || section.content || '';
                 return (
                   <div>
-                    {section.url && (
+                    {imageSrc && (
                       <div className="bg-gray-900/50 rounded-lg overflow-hidden">
                         <img
-                          src={section.url}
+                          src={imageSrc}
                           alt={section.alt || 'Content image'}
                           className="max-w-full h-auto mx-auto shadow-lg"
                           loading="lazy"
