@@ -153,10 +153,14 @@ export default function MixedContentBuilder({
   const [generatingAI, setGeneratingAI] = useState(false);
   const [enhancingSection, setEnhancingSection] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
+  const lastEmittedValueRef = useRef(''); // Track last value sent to parent to prevent feedback loop
 
   // Update sections when value prop changes (e.g., from AI generation)
   useEffect(() => {
     if (!value) return;
+    
+    // Skip if this value was just emitted by us — prevents feedback loop that causes focus loss
+    if (value === lastEmittedValueRef.current) return;
     
     try {
       const parsed = JSON.parse(value);
@@ -231,7 +235,9 @@ export default function MixedContentBuilder({
       }
     });
 
-    onChange(JSON.stringify(formattedSections, null, 2));
+    const serialized = JSON.stringify(formattedSections, null, 2);
+    lastEmittedValueRef.current = serialized;
+    onChange(serialized);
   };
 
   // Add new section
