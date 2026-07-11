@@ -15,6 +15,7 @@ from ..models.student_models import (
 import logging
 import csv
 import json
+import re
 from io import StringIO
 
 logger = logging.getLogger(__name__)
@@ -596,7 +597,6 @@ def create_user_admin():
             return jsonify({"error": "Username can only contain letters, numbers, underscores, and dots"}), 400
         
         # Validate email format
-        import re
         email_pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
         if not re.match(email_pattern, email):
             return jsonify({"error": "Invalid email format"}), 400

@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeHighlight from 'rehype-highlight';
-import { cn } from '@/lib/utils';
+import { cn, parseImageDimensions } from '@/lib/utils';
 import 'highlight.js/styles/atom-one-dark.css';
 
 interface MarkdownRendererProps {
@@ -224,17 +224,27 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             </a>
           ),
 
-          // Custom image styling
-          img: ({ node, className, alt, ...props }) => (
-            <img 
-              className={cn(
-                "max-w-full h-auto rounded-lg shadow-sm my-4 border border-gray-200 dark:border-gray-700",
-                className
-              )} 
-              alt={alt}
-              {...props}
-            />
-          ),
+          // Custom image styling — supports =WIDTHxHEIGHT suffix
+          img: ({ node, className, alt, src, ...props }) => {
+            const { src: cleanSrc, width, height } = parseImageDimensions(src || '');
+            const style: React.CSSProperties = {};
+            if (width) style.maxWidth = `${width}px`;
+            if (height) style.height = `${height}px`;
+            return (
+              <img 
+                className={cn(
+                  "rounded-lg shadow-sm my-4 border border-gray-200 dark:border-gray-700",
+                  className
+                )}
+                src={cleanSrc}
+                alt={alt || ''}
+                width={width}
+                height={height}
+                style={style}
+                {...props}
+              />
+            );
+          },
 
           // Custom horizontal rule styling
           hr: ({ node, className, ...props }) => (

@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useRef, useEffect, useState } from 'react';
+import { toast } from 'sonner';
+import { formatImageDimensions } from '@/lib/utils';
 
 interface EnhancedMarkdownEditorProps {
   value: string;
@@ -24,7 +26,10 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
   onToggleSplitView
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [localValue, setLocalValue] = useState(value);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   // Sync local value with prop value
   useEffect(() => {
@@ -241,10 +246,22 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
         newText = `[${textToInsert || 'Link Text'}](https://example.com)`;
         cursorOffset = selectedText ? textToInsert.length + 3 : 10;
         break;
-      case 'image':
-        newText = `![${textToInsert || 'Alt Text'}](https://example.com/image.jpg)`;
-        cursorOffset = selectedText ? textToInsert.length + 4 : 10;
+      case 'image': {
+        const url = window.prompt('Enter image URL:', selectedText || 'https://example.com/image.jpg');
+        if (!url) return;
+        const dims = window.prompt('Enter dimensions (optional, e.g. 800x600 or just width like 400):');
+        let w: number | undefined;
+        let h: number | undefined;
+        if (dims && dims.trim()) {
+          const parts = dims.trim().split('x');
+          w = parts[0] ? parseInt(parts[0], 10) || undefined : undefined;
+          h = parts[1] ? parseInt(parts[1], 10) || undefined : undefined;
+        }
+        const finalUrl = formatImageDimensions(url, w, h);
+        newText = `![${textToInsert || 'Image'}](${finalUrl})`;
+        cursorOffset = newText.length;
         break;
+      }
       case 'table':
         // Smart table generation from selected text
         if (selectedText) {
@@ -322,6 +339,146 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
       textarea.setSelectionRange(newPosition, newPosition);
     }, 0);
   };
+
+  // ── Image upload & drag-and-drop handling ──
+
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const insertImageFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file (JPEG, PNG, GIF, WebP, etc.)');
+      return;
+    }
+
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.`);
+      return;
+    }
+
+    setUploadingImage(true);
+    const toastId = toast.loading(
+      <div className="flex items-center gap-2">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        <span>Processing {file.name}...</span>
+      </div>
+    );
+
+    try {
+      const base64 = await readFileAsBase64(file);
+      const alt = file.name.replace(/\.[^/.]+$/, '');
+
+      // Prompt for dimensions
+      const dims = window.prompt('Enter image dimensions (optional, e.g. 800x600 or just width like 400):');
+      let w: number | undefined;
+      let h: number | undefined;
+      if (dims && dims.trim()) {
+        const parts = dims.trim().split('x');
+        w = parts[0] ? parseInt(parts[0], 10) || undefined : undefined;
+        h = parts[1] ? parseInt(parts[1], 10) || undefined : undefined;
+      }
+      const src = formatImageDimensions(base64, w, h);
+
+      const markdown = `![${alt}](${src})`;
+
+      const textarea = textareaRef.current;
+      if (!textarea) return;
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+
+      const newContent =
+        localValue.substring(0, start) +
+        markdown +
+        localValue.substring(end);
+
+      setLocalValue(newContent);
+      onChange(newContent);
+
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start + markdown.length, start + markdown.length);
+      }, 0);
+
+      toast.success(`Image inserted: ${alt}`, { id: toastId });
+    } catch (error) {
+      console.error('Failed to process image:', error);
+      toast.error('Failed to process image. Please try again.', { id: toastId });
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    insertImageFile(file);
+    e.target.value = '';
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          insertImageFile(file);
+        }
+        return;
+      }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only hide overlay if leaving the drop zone entirely (not entering a child element like the textarea)
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith('image/')) {
+        await insertImageFile(file);
+      }
+    }
+  };
+
+  // Drop zone overlay component
+  const DropZoneOverlay = () =>
+    isDragging ? (
+      <div className="absolute inset-0 z-10 border-2 border-dashed border-blue-400 bg-blue-50/60 dark:bg-blue-900/30 rounded-md flex items-center justify-center pointer-events-none">
+        <span className="text-sm font-medium text-blue-600 dark:text-blue-300 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-lg shadow-sm">
+          Drop image to insert inline
+        </span>
+      </div>
+    ) : null;
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -412,7 +569,13 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
     // Links
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-blue-600 dark:text-blue-400 underline" target="_blank" rel="noopener noreferrer">$1</a>');
     
-    // Images
+    // Images — support optional =WIDTHxHEIGHT suffix
+    html = html.replace(/!\[([^\]]*)\]\(([^)]+?)\s*=\s*(\d+)(?:x(\d+))?\s*\)/g, (match, alt, src, w, h) => {
+      const width = w ? ` width="${w}"` : '';
+      const height = h ? ` height="${h}"` : '';
+      return `<img src="${src}" alt="${alt}"${width}${height} class="rounded-lg my-2" style="max-width:${w ? w + 'px' : '100%'}; height:auto" />`;
+    });
+    // Images without dimensions
     html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" class="max-w-full h-auto rounded-lg my-2" />');
     
     // Unordered lists
@@ -493,7 +656,8 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
         {/* Links & Media */}
         <div className="flex gap-1 border-r border-slate-300 dark:border-slate-600 pr-2">
           <ToolbarButton onClick={() => insertMarkdown('link')} title="Insert Link (Ctrl+K)" label="🔗" />
-          <ToolbarButton onClick={() => insertMarkdown('image')} title="Insert Image" label="🖼️" />
+          <ToolbarButton onClick={() => imageInputRef.current?.click()} title={uploadingImage ? 'Uploading...' : 'Upload Image (or drag & drop)'} label={uploadingImage ? '⏳' : '📤'} />
+          <ToolbarButton onClick={() => insertMarkdown('image')} title="Insert Image URL" label="🖼️" />
         </div>
 
         {/* Callouts & Special */}
@@ -593,11 +757,26 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
       {/* Toolbar */}
       {!showPreview && <Toolbar />}
 
+      {/* Hidden file input for image upload */}
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleFileSelect}
+        className="hidden"
+      />
+
       {/* Editor/Preview */}
       {splitView ? (
         <div className="grid grid-cols-2 gap-4">
           {/* Editor */}
-          <div>
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className="relative"
+          >
+            <DropZoneOverlay />
             <textarea
               ref={textareaRef}
               value={localValue}
@@ -605,6 +784,7 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
                 setLocalValue(e.target.value);
                 onChange(e.target.value);
               }}
+              onPaste={handlePaste}
               rows={rows}
               className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm resize-y"
               placeholder={placeholder}
@@ -622,17 +802,26 @@ export const EnhancedMarkdownEditor: React.FC<EnhancedMarkdownEditorProps> = ({
           dangerouslySetInnerHTML={{ __html: renderMarkdownPreview(localValue) }}
         />
       ) : (
-        <textarea
-          ref={textareaRef}
-          value={localValue}
-          onChange={(e) => {
-            setLocalValue(e.target.value);
-            onChange(e.target.value);
-          }}
-          rows={rows}
-          className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm resize-y"
-          placeholder={placeholder}
-        />
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          className="relative"
+        >
+          <DropZoneOverlay />
+          <textarea
+            ref={textareaRef}
+            value={localValue}
+            onChange={(e) => {
+              setLocalValue(e.target.value);
+              onChange(e.target.value);
+            }}
+            onPaste={handlePaste}
+            rows={rows}
+            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white font-mono text-sm resize-y"
+            placeholder={placeholder}
+          />
+        </div>
       )}
     </div>
   );

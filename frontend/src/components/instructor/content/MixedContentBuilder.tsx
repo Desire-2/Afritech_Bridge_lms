@@ -20,6 +20,8 @@ const TYPE_COLORS: Record<string, { bg: string; border: string; text: string; ic
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { EnhancedMarkdownEditor } from '@/components/instructor/course-creation/EnhancedMarkdownEditor';
+import { parseImageDimensions, formatImageDimensions } from '@/lib/utils';
+import { toast } from 'sonner';
 import aiAgentService from '@/services/ai-agent.service';
 
 // Content Section Types
@@ -474,36 +476,99 @@ export default function MixedContentBuilder({
     }
   };
 
-  // Track created object URLs so they can be revoked on cleanup
-  const objectUrlsRef = useRef<string[]>([]);
+  // Read a file as base64 data URL for persistent inline storage
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
 
-  // Cleanup object URLs on unmount
-  useEffect(() => {
-    const urls = objectUrlsRef.current;
-    return () => {
-      urls.forEach(url => URL.revokeObjectURL(url));
-    };
-  }, []);
+  // Shared helper to validate + read + store an image file for a given section
+  const processImageFile = async (file: File, sectionId: string) => {
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      toast.error(`Image is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum is 5MB.`);
+      return;
+    }
+    setUploadingImage(true);
+    const toastId = toast.loading(
+      <div className="flex items-center gap-2">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        <span>Uploading {file.name}...</span>
+      </div>
+    );
+    try {
+      const base64 = await readFileAsBase64(file);
+      updateSection(sectionId, {
+        content: base64,
+        metadata: { ...sections.find(s => s.id === sectionId)?.metadata, url: base64 }
+      });
+      toast.success('Image uploaded successfully', { id: toastId });
+    } catch (error) {
+      console.error('Image processing failed:', error);
+      toast.error('Failed to process image. Please try again.', { id: toastId });
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
-  // Handle image upload
+  // Handle image upload — converts to base64 for persistent inline storage
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>, sectionId: string) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    await processImageFile(file, sectionId);
+  };
 
-    setUploadingImage(true);
-    try {
-      // TODO: Implement actual image upload
-      // For now, create a local URL
-      const imageUrl = URL.createObjectURL(file);
-      objectUrlsRef.current.push(imageUrl);
-      updateSection(sectionId, { 
-        content: imageUrl,
-        metadata: { ...sections.find(s => s.id === sectionId)?.metadata, url: imageUrl }
-      });
-    } catch (error) {
-      console.error('Image upload failed:', error);
-    } finally {
-      setUploadingImage(false);
+  // Handle paste of image files into the image section
+  const handleImagePaste = async (e: React.ClipboardEvent, sectionId: string) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        e.preventDefault();
+        const file = items[i].getAsFile();
+        if (file) {
+          await processImageFile(file, sectionId);
+        }
+        return;
+      }
+    }
+  };
+
+  // Track which image section is currently a drag target
+  const [imageDropTarget, setImageDropTarget] = useState<string | null>(null);
+
+  const handleImageDragOver = (e: React.DragEvent, sectionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (imageDropTarget !== sectionId) setImageDropTarget(sectionId);
+  };
+
+  const handleImageDragLeave = (e: React.DragEvent, sectionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    if (imageDropTarget === sectionId) setImageDropTarget(null);
+  };
+
+  const handleImageDrop = async (e: React.DragEvent, sectionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setImageDropTarget(null);
+    const files = e.dataTransfer?.files;
+    if (!files || files.length === 0) return;
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].type.startsWith('image/')) {
+        await processImageFile(files[i], sectionId);
+        break;
+      }
     }
   };
 
@@ -641,41 +706,132 @@ export default function MixedContentBuilder({
               placeholder="Image caption (optional)"
               className="w-full px-3 py-2 text-sm border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
             />
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={section.content}
-                onChange={(e) => updateSection(section.id, { content: e.target.value })}
-                onFocus={() => setEditingSection(section.id)}
-                onBlur={() => setEditingSection(null)}
-                placeholder="Enter image URL or upload..."
-                className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingImage}
-                className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
-              >
-                {uploadingImage ? '⏳' : '📁 Upload'}
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={(e) => handleImageUpload(e, section.id)}
-                className="hidden"
-              />
-            </div>
-            {section.content && (
-              <div className="mt-2 border border-slate-300 dark:border-slate-600 rounded-md overflow-hidden">
-                <img 
-                  src={section.content} 
-                  alt={section.metadata?.caption || 'Preview'} 
-                  className="w-full h-auto max-h-48 object-contain"
+            <div
+              className="relative"
+              onDragOver={(e) => handleImageDragOver(e, section.id)}
+              onDragLeave={(e) => handleImageDragLeave(e, section.id)}
+              onDrop={(e) => handleImageDrop(e, section.id)}
+            >
+              {/* Drag-and-drop overlay */}
+              {imageDropTarget === section.id && (
+                <div className="absolute inset-0 z-10 border-2 border-dashed border-violet-400 bg-violet-50/60 dark:bg-violet-900/30 rounded-md flex items-center justify-center pointer-events-none">
+                  <span className="text-sm font-medium text-violet-600 dark:text-violet-300 bg-white dark:bg-slate-800 px-3 py-1.5 rounded-lg shadow-sm">
+                    Drop image to upload
+                  </span>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={section.content}
+                  onChange={(e) => updateSection(section.id, { content: e.target.value })}
+                  onFocus={() => setEditingSection(section.id)}
+                  onBlur={() => setEditingSection(null)}
+                  onPaste={(e) => handleImagePaste(e, section.id)}
+                  placeholder="Enter image URL or upload..."
+                  className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingImage}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-md hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors disabled:opacity-50"
+                >
+                  {uploadingImage ? '⏳' : '📁 Upload'}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleImageUpload(e, section.id)}
+                  className="hidden"
                 />
               </div>
-            )}
+              {/* Width & Height controls — appends =WxH to content string for persistence */}
+              {section.content && (() => {
+                const { src: cleanSrc, width: parsedW, height: parsedH } = parseImageDimensions(section.content);
+                return (
+                <div className="flex items-center gap-2 mt-2">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] font-medium text-slate-500 dark:text-slate-400">W:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="4000"
+                      value={parsedW || ''}
+                      onChange={(e) => {
+                        const w = e.target.value ? parseInt(e.target.value, 10) || undefined : undefined;
+                        const h = parsedH;
+                        const newContent = w || h ? formatImageDimensions(cleanSrc, w, h) : cleanSrc;
+                        updateSection(section.id, {
+                          content: newContent,
+                          metadata: { ...section.metadata, url: newContent }
+                        });
+                      }}
+                      placeholder="auto"
+                      className="w-16 px-1.5 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    />
+                  </div>
+                  <span className="text-slate-400 text-xs">×</span>
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[11px] font-medium text-slate-500 dark:text-slate-400">H:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="4000"
+                      value={parsedH || ''}
+                      onChange={(e) => {
+                        const h = e.target.value ? parseInt(e.target.value, 10) || undefined : undefined;
+                        const w = parsedW;
+                        const newContent = w || h ? formatImageDimensions(cleanSrc, w, h) : cleanSrc;
+                        updateSection(section.id, {
+                          content: newContent,
+                          metadata: { ...section.metadata, url: newContent }
+                        });
+                      }}
+                      placeholder="auto"
+                      className="w-16 px-1.5 py-1 text-xs border border-slate-300 dark:border-slate-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    />
+                  </div>
+                  {(parsedW || parsedH) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateSection(section.id, {
+                          content: cleanSrc,
+                          metadata: { ...section.metadata, url: cleanSrc }
+                        });
+                      }}
+                      className="text-[11px] px-2 py-1 text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                      title="Reset dimensions"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+                );
+              })()}
+              {section.content && (() => {
+                const { src: displaySrc, width: imgW, height: imgH } = parseImageDimensions(section.content);
+                return (
+                <div className="mt-2 border border-slate-300 dark:border-slate-600 rounded-md overflow-hidden">
+                  <img 
+                    src={displaySrc} 
+                    alt={section.metadata?.caption || 'Preview'} 
+                    width={imgW}
+                    height={imgH}
+                    className="object-contain"
+                    style={{
+                      maxWidth: imgW ? `${imgW}px` : '100%',
+                      maxHeight: imgH ? `${imgH}px` : '192px',
+                      width: '100%',
+                      height: 'auto'
+                    }}
+                  />
+                </div>
+                );
+              })()}
+            </div>
           </div>
         );
 

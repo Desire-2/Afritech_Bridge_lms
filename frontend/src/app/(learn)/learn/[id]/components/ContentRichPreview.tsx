@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/atom-one-dark.css';
+import { parseImageDimensions } from '@/lib/utils';
 import './markdown-styles.css';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -980,10 +981,21 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             td: ({ node, ...props }) => (
               <td className="px-4 py-3 text-sm text-gray-300" {...props} />
             ),
-            // Images
-            img: ({ node, ...props }) => (
-              <img className="rounded-lg my-4 max-w-full h-auto shadow-lg" {...props} alt={props.alt || ''} />
-            ),
+            // Images — supports =WIDTHxHEIGHT suffix
+            img: ({ node, src, alt, ...props }) => {
+              const { src: cleanSrc, width, height } = parseImageDimensions(src || '');
+              return (
+                <img
+                  className="rounded-lg my-4 shadow-lg"
+                  src={cleanSrc}
+                  alt={alt || ''}
+                  width={width}
+                  height={height}
+                  style={width ? { maxWidth: `${width}px`, height: 'auto' } : { maxWidth: '100%', height: 'auto' }}
+                  {...props}
+                />
+              );
+            },
             // Strong/Bold
             strong: ({ node, ...props }) => (
               <strong className="font-bold text-white" {...props} />
@@ -2273,8 +2285,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 );
               }
               if (section.type === 'image') {
-                // Support both 'url' and 'content' fields for image src
-                const imageSrc = section.url || section.content || '';
+                // Support both 'url' and 'content' fields for image src, with =WIDTHxHEIGHT suffix
+                const rawSrc = section.url || section.content || '';
+                const { src: imageSrc, width, height } = parseImageDimensions(rawSrc);
                 return (
                   <div>
                     {imageSrc && (
@@ -2282,7 +2295,10 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                         <img
                           src={imageSrc}
                           alt={section.alt || 'Content image'}
-                          className="max-w-full h-auto mx-auto shadow-lg"
+                          width={width}
+                          height={height}
+                          className="mx-auto shadow-lg"
+                          style={width ? { maxWidth: `${width}px`, height: 'auto' } : { maxWidth: '100%', height: 'auto' }}
                           loading="lazy"
                         />
                       </div>
