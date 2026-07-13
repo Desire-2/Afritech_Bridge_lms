@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instructor Dashboard — ShieldView</title>
+    <style>
+        /* ============================================
+           ROOT VARIABLES & RESET
+           ============================================ */
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d29;
+            --surface-2: #232738;
+            --surface-3: #2a2e42;
+            --border: #2a2e42;
+            --text: #e8eaed;
+            --text-secondary: #9aa0b0;
+            --text-muted: #6b7280;
+            --primary: #6366f1;
+            --primary-hover: #5558e6;
+            --primary-glow: rgba(99, 102, 241, 0.25);
+            --primary-dim: rgba(99, 102, 241, 0.08);
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+            --danger-bg: rgba(239, 68, 68, 0.12);
+            --success: #22c55e;
+            --success-bg: rgba(34, 197, 94, 0.12);
+            --warning: #f59e0b;
+            --warning-bg: rgba(245, 158, 11, 0.12);
+            --info: #3b82f6;
+            --info-bg: rgba(59, 130, 246, 0.12);
+            --radius: 12px;
+            --radius-sm: 8px;
+            --radius-xs: 6px;
+            --shadow: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+            --shadow-lg: 0 10px 25px rgba(0,0,0,0.5), 0 4px 10px rgba(0,0,0,0.3);
+            --sidebar-w: 240px;
+            --transition: all 0.2s cubic-bezier(0.4,0,0.2,1);
+        }
+        *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6;
+        }
+        ::-webkit-scrollbar { width:6px; height:6px; }
+        ::-webkit-scrollbar-track { background:transparent; }
+        ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+        ::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
+
+        /* ============================================
+           AUTH
+           ============================================ */
+        #auth-screen {
+            display:flex; align-items:center; justify-content:center;
+            min-height:100vh; padding:20px;
+            background: radial-gradient(ellipse at top left, rgba(99,102,241,0.08), transparent 50%),
+                        radial-gradient(ellipse at bottom right, rgba(239,68,68,0.05), transparent 50%);
+        }
+        #auth-screen.hidden { display:none; }
+        .auth-card {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+            padding:40px; width:100%; max-width:420px; box-shadow:var(--shadow-lg); animation:slideUp .4s ease;
+        }
+        .auth-card .logo {
+            font-size:28px; font-weight:700; text-align:center; margin-bottom:8px;
+            background:linear-gradient(135deg,var(--primary),#a78bfa);
+            -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text;
+        }
+        .auth-card .subtitle { text-align:center; color:var(--text-secondary); font-size:14px; margin-bottom:28px; }
+        .form-group { margin-bottom:18px; }
+        .form-group label { display:block; font-size:13px; font-weight:500; color:var(--text-secondary); margin-bottom:6px; }
+        .form-group input {
+            width:100%; padding:10px 14px; background:var(--surface-2); border:1px solid var(--border);
+            border-radius:var(--radius-sm); color:var(--text); font-size:14px; transition:var(--transition); outline:none;
+        }
+        .form-group input:focus { border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-glow); }
+        .auth-error {
+            background:var(--danger-bg); border:1px solid rgba(239,68,68,0.2); color:#fca5a5;
+            padding:10px 14px; border-radius:var(--radius-sm); font-size:13px; margin-bottom:16px; display:none;
+        }
+        .auth-error.visible { display:block; }
+
+        /* ============================================
+           BUTTONS
+           ============================================ */
+        .btn {
+            display:inline-flex; align-items:center; justify-content:center; gap:8px;
+            padding:10px 20px; border:none; border-radius:var(--radius-sm); font-size:14px;
+            font-weight:600; cursor:pointer; transition:var(--transition); outline:none; white-space:nowrap;
+        }
+        .btn:disabled { opacity:0.5; cursor:not-allowed; }
+        .btn-primary { background:var(--primary); color:#fff; }
+        .btn-primary:hover:not(:disabled) { background:var(--primary-hover); box-shadow:0 0 20px var(--primary-glow); }
+        .btn-danger { background:var(--danger); color:#fff; }
+        .btn-danger:hover:not(:disabled) { background:var(--danger-hover); }
+        .btn-outline { background:transparent; color:var(--text-secondary); border:1px solid var(--border); }
+        .btn-outline:hover:not(:disabled) { border-color:var(--text-secondary); color:var(--text); }
+        .btn-sm { padding:6px 14px; font-size:12px; }
+        .btn-full { width:100%; }
+        .btn-ghost { background:transparent; color:var(--text-secondary); border:none; }
+        .btn-ghost:hover { color:var(--text); background:var(--surface-2); }
+
+        /* ============================================
+           APP LAYOUT
+           ============================================ */
+        #app {
+            display:none; min-height:100vh;
+        }
+        #app.visible { display:flex; }
+
+        /* Sidebar */
+        .sidebar {
+            width:var(--sidebar-w); background:var(--surface); border-right:1px solid var(--border);
+            display:flex; flex-direction:column; position:fixed; top:0; left:0; bottom:0; z-index:200;
+            transition:var(--transition);
+        }
+        .sidebar-brand {
+            padding:18px 20px; border-bottom:1px solid var(--border);
+            display:flex; align-items:center; gap:10px; font-size:17px; font-weight:700;
+        }
+        .sidebar-brand .brand-icon {
+            width:32px; height:32px; background:var(--primary); border-radius:var(--radius-xs);
+            display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;
+        }
+        .sidebar-nav { flex:1; padding:12px 10px; overflow-y:auto; }
+        .sidebar-nav .nav-section-label {
+            font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.06em;
+            color:var(--text-muted); padding:16px 10px 6px;
+        }
+        .sidebar-nav .nav-item {
+            display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:var(--radius-sm);
+            font-size:13px; font-weight:500; color:var(--text-secondary); cursor:pointer;
+            transition:var(--transition); text-decoration:none; margin-bottom:2px;
+        }
+        .sidebar-nav .nav-item:hover { background:var(--primary-dim); color:var(--text); }
+        .sidebar-nav .nav-item.active { background:var(--primary-dim); color:var(--primary); font-weight:600; }
+        .sidebar-nav .nav-item .nav-icon { font-size:16px; width:20px; text-align:center; flex-shrink:0; }
+        .sidebar-nav .nav-item .nav-badge {
+            margin-left:auto; background:var(--danger-bg); color:#fca5a5;
+            padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600;
+        }
+
+        /* Sub-items (courses under Quizzes) */
+        .sidebar-nav .sub-items { margin-left:10px; padding-left:12px; border-left:1px solid var(--border); display:none; }
+        .sidebar-nav .sub-items.open { display:block; }
+        .sidebar-nav .sub-item {
+            display:flex; align-items:center; gap:8px; padding:7px 10px 7px 12px;
+            border-radius:var(--radius-xs); font-size:12px; color:var(--text-muted);
+            cursor:pointer; transition:var(--transition);
+        }
+        .sidebar-nav .sub-item:hover { color:var(--text-secondary); background:var(--surface-2); }
+        .sidebar-nav .sub-item.active { color:var(--primary); font-weight:500; }
+
+        /* Sidebar footer (user info) */
+        .sidebar-footer {
+            padding:14px 20px; border-top:1px solid var(--border);
+            display:flex; align-items:center; justify-content:space-between;
+        }
+        .sidebar-footer .user-name { font-size:12px; color:var(--text-secondary); }
+        .sidebar-footer .logout-btn {
+            background:none; border:1px solid var(--border); color:var(--text-muted);
+            padding:4px 10px; border-radius:var(--radius-xs); cursor:pointer; font-size:11px; transition:var(--transition);
+        }
+        .sidebar-footer .logout-btn:hover { border-color:var(--danger); color:var(--danger); }
+
+        /* Main content */
+        .main-content {
+            margin-left:var(--sidebar-w); flex:1; min-height:100vh; display:flex; flex-direction:column;
+        }
+        .main-header {
+            background:var(--surface); border-bottom:1px solid var(--border);
+            padding:16px 32px; display:flex; align-items:center; justify-content:space-between;
+            position:sticky; top:0; z-index:100; backdrop-filter:blur(12px);
+            background:rgba(26,29,41,0.92); min-height:62px;
+        }
+        .main-header .breadcrumb {
+            display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-muted);
+        }
+        .main-header .breadcrumb .sep { color:var(--text-muted); opacity:0.4; }
+        .main-header .breadcrumb .crumb { cursor:pointer; transition:var(--transition); }
+        .main-header .breadcrumb .crumb:hover { color:var(--text-secondary); }
+        .main-header .breadcrumb .crumb.current { color:var(--text); font-weight:500; cursor:default; }
+        .main-header .header-actions { display:flex; gap:8px; align-items:center; }
+        .main-body {
+            padding:28px 32px 60px; flex:1;
+        }
+
+        /* ============================================
+           VIEWS
+           ============================================ */
+        .view { display:none; animation:slideUp .3s ease; }
+        .view.active { display:block; }
+
+        /* ── Dashboard View ── */
+        .page-title { margin-bottom:28px; }
+        .page-title h1 { font-size:26px; font-weight:700; margin-bottom:4px; }
+        .page-title p { color:var(--text-secondary); font-size:14px; }
+        .page-title .last-updated { color:var(--text-muted); font-size:12px; margin-top:4px; }
+
+        .summary-cards {
+            display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+            gap:16px; margin-bottom:28px;
+        }
+        .summary-card {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+            padding:20px 24px; transition:var(--transition); cursor:default;
+        }
+        .summary-card:hover {
+            border-color:rgba(99,102,241,0.3); transform:translateY(-2px); box-shadow:var(--shadow);
+        }
+        .summary-card .card-icon {
+            width:40px; height:40px; border-radius:var(--radius-sm);
+            display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-size:18px;
+        }
+        .summary-card .card-icon.danger { background:var(--danger-bg); }
+        .summary-card .card-icon.warning { background:var(--warning-bg); }
+        .summary-card .card-icon.info { background:var(--info-bg); }
+        .summary-card .card-icon.success { background:var(--success-bg); }
+        .summary-card .card-value { font-size:32px; font-weight:700; line-height:1.2; }
+        .summary-card .card-label { font-size:13px; color:var(--text-secondary); margin-top:2px; }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            display:flex; align-items:center; justify-content:space-between;
+            gap:12px; margin-bottom:20px; flex-wrap:wrap;
+        }
+        .toolbar .search-box {
+            display:flex; align-items:center; gap:8px; flex:1; min-width:200px; max-width:360px;
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm);
+            padding:0 14px; transition:var(--transition);
+        }
+        .toolbar .search-box:focus-within { border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-glow); }
+        .toolbar .search-box .search-icon { color:var(--text-muted); font-size:14px; }
+        .toolbar .search-box input {
+            background:none; border:none; outline:none; color:var(--text);
+            padding:10px 0; font-size:13px; width:100%;
+        }
+        .toolbar .filter-select {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm);
+            padding:0 12px; color:var(--text); font-size:13px; height:36px; min-width:160px;
+            cursor:pointer; outline:none; transition:var(--transition);
+        }
+        .toolbar .filter-select:focus { border-color:var(--primary); box-shadow:0 0 0 3px var(--primary-glow); }
+        .toolbar .filter-select option { background:var(--surface); color:var(--text); }
+        .toolbar .badge {
+            background:var(--surface-2); padding:8px 16px; border-radius:20px; font-size:12px;
+            color:var(--text-secondary); display:flex; align-items:center; gap:6px; white-space:nowrap;
+        }
+        .toolbar .badge .count { color:var(--text); font-weight:600; }
+
+        /* ── Table ── */
+        .table-wrapper {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+            overflow:hidden; animation:slideUp .3s ease;
+        }
+        .table-wrapper table { width:100%; border-collapse:collapse; }
+        .table-wrapper thead th {
+            text-align:left; padding:12px 18px; font-size:11px; font-weight:600;
+            text-transform:uppercase; letter-spacing:.05em; color:var(--text-muted);
+            background:var(--surface-2); border-bottom:1px solid var(--border);
+            white-space:nowrap; cursor:pointer; user-select:none;
+        }
+        .table-wrapper thead th:hover { color:var(--text-secondary); }
+        .table-wrapper thead th .sort-icon { margin-left:4px; opacity:0.4; }
+        .table-wrapper tbody tr { border-bottom:1px solid var(--border); transition:var(--transition); }
+        .table-wrapper tbody tr:last-child { border-bottom:none; }
+        .table-wrapper tbody tr:hover { background:var(--primary-dim); }
+        .table-wrapper tbody td { padding:12px 18px; font-size:13px; vertical-align:middle; }
+
+        .quiz-cell { cursor:pointer; }
+        .quiz-cell .quiz-name { color:var(--primary); font-weight:500; }
+        .quiz-cell .quiz-name:hover { text-decoration:underline; }
+        .quiz-cell .course-name { font-size:11px; color:var(--text-muted); display:block; }
+        .student-cell .student-name { font-weight:500; }
+        .student-cell .student-email { font-size:11px; color:var(--text-muted); display:block; }
+        .violation-reason {
+            max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary);
+        }
+        .violation-reason:hover { white-space:normal; overflow:visible; }
+        .status-badge {
+            display:inline-flex; align-items:center; gap:5px; padding:3px 10px;
+            border-radius:12px; font-size:11px; font-weight:600;
+        }
+        .status-badge.blocked { background:var(--danger-bg); color:#fca5a5; }
+        .status-badge .dot { width:6px; height:6px; border-radius:50%; }
+        .status-badge.blocked .dot { background:var(--danger); }
+        .time-cell { font-size:12px; color:var(--text-muted); white-space:nowrap; }
+        .action-cell { text-align:right; }
+        .empty-state {
+            text-align:center; padding:60px 20px; color:var(--text-muted);
+        }
+        .empty-state .empty-icon { font-size:48px; margin-bottom:16px; opacity:0.5; }
+        .empty-state h3 { font-size:18px; color:var(--text-secondary); margin-bottom:6px; }
+        .empty-state p { font-size:13px; }
+
+        /* ── Course Grid ── */
+        .course-grid {
+            display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+            gap:16px; margin-bottom:28px;
+        }
+        .course-card {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+            padding:24px; cursor:pointer; transition:var(--transition);
+        }
+        .course-card:hover {
+            border-color:var(--primary); transform:translateY(-3px); box-shadow:var(--shadow-lg);
+        }
+        .course-card .course-icon {
+            width:48px; height:48px; border-radius:var(--radius-sm); background:var(--primary-dim);
+            display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:14px;
+        }
+        .course-card .course-title { font-size:16px; font-weight:600; margin-bottom:4px; }
+        .course-card .course-meta {
+            font-size:12px; color:var(--text-muted); display:flex; gap:16px; margin-top:8px;
+        }
+        .course-card .course-meta span { display:flex; align-items:center; gap:4px; }
+        .course-card .course-violations {
+            margin-top:12px; padding-top:12px; border-top:1px solid var(--border);
+            display:flex; align-items:center; gap:6px; font-size:12px;
+        }
+        .course-card .course-violations.has-violations { color:#fca5a5; }
+        .course-card .course-violations.no-violations { color:var(--success); }
+
+        /* ── Quiz Cards (inside course) ── */
+        .quiz-grid {
+            display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+            gap:14px;
+        }
+        .quiz-card {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+            padding:18px 20px; transition:var(--transition);
+        }
+        .quiz-card:hover {
+            border-color:rgba(99,102,241,0.3); box-shadow:var(--shadow);
+        }
+        .quiz-card .quiz-card-header {
+            display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:8px;
+        }
+        .quiz-card .quiz-card-title { font-size:15px; font-weight:600; flex:1; }
+        .quiz-card .quiz-card-module {
+            font-size:11px; color:var(--text-muted); margin-bottom:6px;
+            display:flex; align-items:center; gap:6px;
+        }
+        .quiz-card .quiz-card-stats {
+            display:flex; gap:16px; font-size:12px; color:var(--text-secondary); margin-top:10px;
+        }
+        .quiz-card .quiz-card-stats span { display:flex; align-items:center; gap:4px; }
+        .quiz-card .violation-count {
+            display:inline-flex; align-items:center; gap:4px;
+            padding:2px 10px; border-radius:12px; font-size:11px; font-weight:600; cursor:pointer;
+            transition:var(--transition);
+        }
+        .quiz-card .violation-count.has-v { background:var(--danger-bg); color:#fca5a5; }
+        .quiz-card .violation-count.has-v:hover { background:rgba(239,68,68,0.2); }
+        .quiz-card .violation-count.no-v { background:var(--success-bg); color:#86efac; }
+
+        /* ── Modal ── */
+        .modal-overlay {
+            display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px);
+            z-index:1000; align-items:center; justify-content:center; padding:20px; animation:fadeIn .2s ease;
+        }
+        .modal-overlay.visible { display:flex; }
+        .modal {
+            background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+            width:100%; max-width:640px; max-height:80vh; overflow-y:auto; box-shadow:var(--shadow-lg);
+            animation:slideUp .3s ease;
+        }
+        .modal-header {
+            display:flex; align-items:center; justify-content:space-between;
+            padding:18px 24px; border-bottom:1px solid var(--border);
+        }
+        .modal-header h2 { font-size:17px; font-weight:600; }
+        .modal-header .close-btn {
+            background:none; border:none; color:var(--text-muted); font-size:20px;
+            cursor:pointer; width:32px; height:32px; border-radius:var(--radius-xs);
+            display:flex; align-items:center; justify-content:center; transition:var(--transition);
+        }
+        .modal-header .close-btn:hover { background:var(--surface-2); color:var(--text); }
+        .modal-body { padding:24px; }
+        .modal-body .detail-row {
+            display:flex; padding:10px 0; border-bottom:1px solid var(--border);
+        }
+        .modal-body .detail-row:last-child { border-bottom:none; }
+        .modal-body .detail-row .label { width:140px; flex-shrink:0; font-size:13px; color:var(--text-muted); }
+        .modal-body .detail-row .value { font-size:13px; color:var(--text); word-break:break-word; }
+        .modal-footer {
+            display:flex; justify-content:flex-end; gap:8px;
+            padding:16px 24px; border-top:1px solid var(--border);
+        }
+        .quiz-detail-list { margin-top:16px; }
+        .quiz-detail-item {
+            background:var(--surface-2); border-radius:var(--radius-sm);
+            padding:14px 16px; margin-bottom:10px;
+        }
+        .quiz-detail-item:last-child { margin-bottom:0; }
+        .quiz-detail-item .qdi-header {
+            display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;
+        }
+        .quiz-detail-item .qdi-header .qdi-name { font-weight:600; font-size:14px; }
+        .quiz-detail-item .qdi-reason { font-size:12px; color:var(--text-secondary); margin-bottom:4px; }
+        .quiz-detail-item .qdi-meta { font-size:11px; color:var(--text-muted); display:flex; gap:16px; }
+
+        /* ── Loading ── */
+        .loading-overlay { display:flex; align-items:center; justify-content:center; padding:60px 20px; }
+        .spinner {
+            width:32px; height:32px; border:3px solid var(--border);
+            border-top-color:var(--primary); border-radius:50%; animation:spin .7s linear infinite;
+        }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+
+        /* ── Toast ── */
+        .toast-container {
+            position:fixed; bottom:24px; right:24px; z-index:2000;
+            display:flex; flex-direction:column; gap:8px;
+        }
+        .toast {
+            padding:12px 18px; border-radius:var(--radius-sm); font-size:13px; font-weight:500;
+            animation:slideUp .3s ease; box-shadow:var(--shadow-lg); max-width:380px;
+        }
+        .toast.success { background:#14532d; border:1px solid #22c55e; color:#bbf7d0; }
+        .toast.error { background:#450a0a; border:1px solid #ef4444; color:#fecaca; }
+        .toast.info { background:#1e3a5f; border:1px solid #3b82f6; color:#bfdbfe; }
+
+        /* ── Responsive ── */
+        .sidebar-toggle { display:none; }
+        @media (max-width:768px) {
+            .sidebar { transform:translateX(-100%); }
+            .sidebar.open { transform:translateX(0); }
+            .sidebar-toggle {
+                display:inline-flex; align-items:center; justify-content:center;
+                background:none; border:none; color:var(--text); font-size:20px;
+                cursor:pointer; padding:4px; margin-right:12px;
+            }
+            .main-content { margin-left:0; }
+            .main-header { padding:12px 16px; }
+            .main-body { padding:16px; }
+            .course-grid { grid-template-columns:1fr; }
+            .quiz-grid { grid-template-columns:1fr; }
+            .summary-cards { grid-template-columns:repeat(2,1fr); }
+            .toolbar { flex-direction:column; align-items:stretch; }
+            .toolbar .search-box { max-width:none; }
+            .table-wrapper { overflow-x:auto; }
+        }
+        @media (max-width:480px) {
+            .summary-cards { grid-template-columns:1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ============================================
+     AUTH SCREEN
+     ============================================ -->
+<div id="auth-screen">
+    <div class="auth-card">
+        <div class="logo">🛡️ ShieldView</div>
+        <div class="subtitle">Instructor Dashboard</div>
+        <div id="auth-error" class="auth-error"></div>
+        <form id="login-form" autocomplete="off">
+            <div class="form-group">
+                <label for="identifier">Email or Username</label>
+                <input type="text" id="identifier" placeholder="you@example.com" required autofocus>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" placeholder="Enter your password" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-full" id="login-btn">Sign In</button>
+        </form>
+    </div>
+</div>
+
+<!-- ============================================
+     APP
+     ============================================ -->
+<div id="app">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-icon">🛡️</div>
+            ShieldView
+        </div>
+        <nav class="sidebar-nav">
+            <div class="nav-section-label">Main</div>
+            <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard')">
+                <span class="nav-icon">📊</span> Dashboard
+                <span class="nav-badge" id="sidebar-violation-badge" style="display:none">0</span>
+            </div>
+            <div class="nav-item" data-view="courses" onclick="switchView('courses')">
+                <span class="nav-icon">📝</span> Quizzes
+            </div>
+            <!-- Courses sub-list under Quizzes -->
+            <div class="sub-items" id="sidebar-course-list"></div>
+
+            <div class="nav-item" data-view="assignments" onclick="switchView('assignments')">
+                <span class="nav-icon">📋</span> Assignments
+            </div>
+            <!-- Courses sub-list under Assignments -->
+            <div class="sub-items" id="sidebar-assignment-course-list"></div>
+
+            <div class="nav-section-label">Quick Access</div>
+            <div class="nav-item" data-view="course-quizzes" onclick="switchView('course-quizzes')" style="display:none" id="current-course-nav">
+                <span class="nav-icon">📋</span> <span id="current-course-nav-name">Current Course</span>
+            </div>
+            <div class="nav-item" data-view="course-assignments" onclick="switchView('course-assignments')" style="display:none" id="current-assignment-course-nav">
+                <span class="nav-icon">📄</span> <span id="current-assignment-course-nav-name">Current Course</span>
+            </div>
+        </nav>
+        <div class="sidebar-footer">
+            <span class="user-name" id="user-display">Instructor</span>
+            <button class="logout-btn" onclick="logout()">Sign Out</button>
+        </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-content">
+        <!-- Top Bar -->
+        <header class="main-header">
+            <div style="display:flex;align-items:center;">
+                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+                <div class="breadcrumb" id="breadcrumb">
+                    <span class="crumb current" id="breadcrumb-text">Dashboard</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <span class="last-updated" id="last-updated" style="font-size:12px;color:var(--text-muted)"></span>
+                <button class="btn btn-outline btn-sm" onclick="refreshCurrentView()">⟳</button>
+            </div>
+        </header>
+
+        <!-- Body -->
+        <div class="main-body">
+
+            <!-- ================================
+                 VIEW: Dashboard (Violations Overview)
+                 ================================ -->
+            <div class="view active" id="view-dashboard">
+                <div class="page-title">
+                    <h1>Security Violations</h1>
+                    <p>Monitor and manage quiz security violations across all courses</p>
+                </div>
+                <div class="summary-cards">
+                    <div class="summary-card">
+                        <div class="card-icon danger">⚠️</div>
+                        <div class="card-value" id="total-violations">—</div>
+                        <div class="card-label">Total Violations</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon warning">📝</div>
+                        <div class="card-value" id="quizzes-affected">—</div>
+                        <div class="card-label">Quizzes Affected</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon info">🎓</div>
+                        <div class="card-value" id="students-affected">—</div>
+                        <div class="card-label">Students Affected</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="card-icon success">✅</div>
+                        <div class="card-value" id="unblocked-count">0</div>
+                        <div class="card-label">Unblock Actions</div>
+                    </div>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="dash-search" placeholder="Search violations..." oninput="dashFilter()">
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span class="badge">Showing <span class="count" id="dash-visible-count">0</span></span>
+                    </div>
+                </div>
+                <div class="table-wrapper" id="dash-table-wrapper">
+                    <div class="loading-overlay" id="dash-spinner"><div class="spinner"></div></div>
+                    <table id="dash-table" style="display:none;">
+                        <thead>
+                            <tr>
+                                <th onclick="dashSort('quiz_title')">Quiz <span class="sort-icon">↕</span></th>
+                                <th onclick="dashSort('student_name')">Student <span class="sort-icon">↕</span></th>
+                                <th onclick="dashSort('violation_reason')">Reason <span class="sort-icon">↕</span></th>
+                                <th onclick="dashSort('attempt_number')">Attempt <span class="sort-icon">↕</span></th>
+                                <th onclick="dashSort('violated_at')">Date <span class="sort-icon">↕</span></th>
+                                <th>Status</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="dash-body"></tbody>
+                    </table>
+                    <div class="empty-state" id="dash-empty" style="display:none;">
+                        <div class="empty-icon">🛡️</div>
+                        <h3>No violations found</h3>
+                        <p>All quizzes are running smoothly.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ================================
+                 VIEW: Courses (Quizzes → All Courses)
+                 ================================ -->
+            <div class="view" id="view-courses">
+                <div class="page-title">
+                    <h1>📚 All Courses</h1>
+                    <p>Select a course to browse its quizzes and violations</p>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="course-search" placeholder="Search courses..." oninput="renderCourses()">
+                    </div>
+                    <span class="badge"><span class="count" id="course-count">0</span> courses</span>
+                </div>
+                <div class="course-grid" id="course-grid">
+                    <div class="loading-overlay"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+            <!-- ================================
+                 VIEW: Assignments (All Courses)
+                 ================================ -->
+            <div class="view" id="view-assignments">
+                <div class="page-title">
+                    <h1>📋 All Assignments</h1>
+                    <p>Select a course to browse its assignments and submission stats</p>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="assn-course-search" placeholder="Search courses..." oninput="renderAssignmentCourses()">
+                    </div>
+                    <span class="badge"><span class="count" id="assn-course-count">0</span> courses</span>
+                </div>
+                <div class="course-grid" id="assn-course-grid">
+                    <div class="loading-overlay"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+            <!-- ================================
+                 VIEW: Course Assignments
+                 ================================ -->
+            <div class="view" id="view-course-assignments">
+                <div class="page-title">
+                    <h1 id="ca-title">Course Assignments</h1>
+                    <p id="ca-subtitle">Browse assignments and submission statistics</p>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="ca-search" placeholder="Search assignments..." oninput="renderCourseAssignments()">
+                    </div>
+                    <select class="filter-select" id="ca-module-filter" onchange="renderCourseAssignments()">
+                        <option value="">📦 All Modules</option>
+                    </select>
+                    <span class="badge"><span class="count" id="ca-count">0</span> assignments</span>
+                </div>
+                <div class="quiz-grid" id="ca-grid">
+                    <div class="loading-overlay"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+            <!-- ================================
+                 VIEW: Course Quizzes
+                 ================================ -->
+            <div class="view" id="view-course-quizzes">
+                <div class="page-title">
+                    <h1 id="cq-title">Course Quizzes</h1>
+                    <p id="cq-subtitle">Browse quizzes and monitor violations</p>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <span class="search-icon">🔍</span>
+                        <input type="text" id="cq-search" placeholder="Search quizzes..." oninput="renderCourseQuizzes()">
+                    </div>
+                    <select class="filter-select" id="cq-module-filter" onchange="renderCourseQuizzes()">
+                        <option value="">📦 All Modules</option>
+                    </select>
+                    <span class="badge"><span class="count" id="cq-count">0</span> quizzes</span>
+                </div>
+                <div class="quiz-grid" id="cq-grid">
+                    <div class="loading-overlay"><div class="spinner"></div></div>
+                </div>
+            </div>
+
+        </div><!-- /main-body -->
+    </div><!-- /main-content -->
+</div><!-- /app -->
+
+<!-- ============================================
+     DETAIL MODAL
+     ============================================ -->
+<div class="modal-overlay" id="detail-modal">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="modal-title">Violation Details</h2>
+            <button class="close-btn" onclick="closeModal()">✕</button>
+        </div>
+        <div class="modal-body" id="modal-body"><div class="loading-overlay"><div class="spinner"></div></div></div>
+        <div class="modal-footer"><button class="btn btn-outline btn-sm" onclick="closeModal()">Close</button></div>
+    </div>
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ============================================
+     JAVASCRIPT
+     ============================================ -->
+<script>
+    // ─── Config ────────────────────────────────────────
+    const API_BASE = '/api/v1/instructor/assessments';
+    const AUTH_URL = '/api/v1/auth/login';
+
+    // ─── State ────────────────────────────────────────
+    let token = localStorage.getItem('auth_token') || '';
+    let allQuizzes = [];           // full quiz list from API
+    let violationsData = [];       // from overview endpoint
+    let courses = [];              // deduplicated { id, title, violations, quizCount }
+    let modules = [];              // deduplicated per course: { id, title, courseId }
+    let unblockedCount = 0;
+
+    // Dashboard violations state
+    let dashSortField = 'violated_at';
+    let dashSortDir = -1;
+
+    // Current view
+    let currentView = 'dashboard';
+    let currentCourseId = null;
+    let allAssignments = [];       // full assignment list from API
+    let currentAssignmentCourseId = null;
+
+    // ─── DOM refs ─────────────────────────────────────
+    const authScreen = document.getElementById('auth-screen');
+    const app = document.getElementById('app');
+    const authError = document.getElementById('auth-error');
+    const loginForm = document.getElementById('login-form');
+    const loginBtn = document.getElementById('login-btn');
+
+    // ─── Init ─────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+        if (token) {
+            enterApp();
+            loadAllData();
+        } else {
+            authScreen.classList.remove('hidden');
+        }
+    });
+
+    loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        authError.classList.remove('visible');
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Signing in...';
+        const identifier = document.getElementById('identifier').value.trim();
+        const password = document.getElementById('password').value;
+        try {
+            const res = await fetch(AUTH_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ identifier, password })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.message || data.error || 'Invalid credentials');
+            token = data.access_token;
+            localStorage.setItem('auth_token', token);
+            document.getElementById('user-display').textContent = identifier;
+            enterApp();
+            loadAllData();
+        } catch (err) {
+            authError.textContent = err.message;
+            authError.classList.add('visible');
+        } finally {
+            loginBtn.disabled = false;
+            loginBtn.textContent = 'Sign In';
+        }
+    });
+
+    function logout() {
+        token = ''; localStorage.removeItem('auth_token');
+        app.classList.remove('visible'); app.style.display = 'none';
+        authScreen.classList.remove('hidden');
+        document.getElementById('password').value = '';
+    }
+
+    function enterApp() {
+        authScreen.classList.add('hidden');
+        app.style.display = 'flex';
+        app.classList.add('visible');
+    }
+
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('open');
+    }
+
+    // ─── API ──────────────────────────────────────────
+    async function apiFetch(url, options = {}) {
+        const headers = { 'Content-Type': 'application/json', ...options.headers };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(url, { ...options, headers });
+        if (res.status === 401) { logout(); throw new Error('Session expired.'); }
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || data.error || 'Request failed');
+        return data;
+    }
+
+    // ─── Load All Data ───────────────────────────────
+    async function loadAllData() {
+        try {
+            const [overview, quizzes, assignments] = await Promise.all([
+                apiFetch(`${API_BASE}/violations-overview`),
+                apiFetch(`${API_BASE}/quizzes`),
+                apiFetch(`${API_BASE}/assignments`)
+            ]);
+
+            allQuizzes = quizzes || [];
+            allAssignments = assignments || [];
+            violationsData = overview.violations || [];
+
+            // Build courses list
+            const seen = {};
+            courses = [];
+            modules = [];
+            for (const q of allQuizzes) {
+                const cid = q.course_id;
+                if (!seen[cid]) {
+                    seen[cid] = true;
+                    const countForCourse = allQuizzes.filter(x => x.course_id === cid).length;
+                    courses.push({
+                        id: cid,
+                        title: q.course_title || `Course #${cid}`,
+                        totalViolations: 0,  // computed in recalc loop below
+                        quizCount: countForCourse
+                    });
+                }
+                // Collect modules
+                if (q.module_id && q.course_id) {
+                    if (!modules.find(m => m.id === q.module_id && m.courseId === q.course_id)) {
+                        modules.push({ id: q.module_id, title: q.module_title || `Module #${q.module_id}`, courseId: q.course_id });
+                    }
+                }
+            }
+
+            // Calculate violations per course
+            for (const c of courses) {
+                c.totalViolations = violationsData.filter(v => {
+                    const qz = allQuizzes.find(x => x.id === v.quiz_id);
+                    return qz && qz.course_id === c.id;
+                }).length;
+                // Count assignments for this course
+                c.assignmentCount = allAssignments.filter(a => a.course_id === c.id).length;
+            }
+
+            // Calculate violations per quiz
+            for (const q of allQuizzes) {
+                q.violationCount = violationsData.filter(v => v.quiz_id === q.id).length;
+            }
+
+            // Sort courses by title
+            courses.sort((a, b) => a.title.localeCompare(b.title));
+
+            updateSidebar();
+            renderCurrentView();
+            updateBreadcrumb();
+            updateLastUpdated();
+            updateViolationBadge();
+        } catch (err) {
+            showToast(err.message, 'error');
+        }
+    }
+
+    function updateLastUpdated() {
+        document.getElementById('last-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    }
+
+    function updateViolationBadge() {
+        const badge = document.getElementById('sidebar-violation-badge');
+        const total = violationsData.length;
+        if (total > 0) {
+            badge.textContent = total;
+            badge.style.display = 'inline';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    // ─── View Switching ──────────────────────────────
+    function switchView(view, courseId) {
+        currentView = view;
+        if (courseId !== undefined) {
+            if (view === 'course-assignments') {
+                currentAssignmentCourseId = courseId;
+                currentCourseId = null;
+            } else {
+                currentCourseId = courseId;
+                currentAssignmentCourseId = null;
+            }
+        }
+
+        // Update sidebar
+        document.querySelectorAll('.nav-item[data-view]').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.sub-item').forEach(el => el.classList.remove('active'));
+
+        const navItem = document.querySelector(`.nav-item[data-view="${view}"]`);
+        if (navItem) navItem.classList.add('active');
+
+        // Show/hide sidebar course sub-lists
+        document.getElementById('sidebar-course-list').classList.toggle('open', view === 'courses' || view === 'course-quizzes');
+        document.getElementById('sidebar-assignment-course-list').classList.toggle('open', view === 'assignments' || view === 'course-assignments');
+
+        // Highlight the sub-item for the current course
+        if (currentCourseId) {
+            const subItem = document.querySelector(`#sidebar-course-list .sub-item[data-course-id="${currentCourseId}"]`);
+            if (subItem) subItem.classList.add('active');
+        }
+        if (currentAssignmentCourseId) {
+            const subItem = document.querySelector(`#sidebar-assignment-course-list .sub-item[data-course-id="${currentAssignmentCourseId}"]`);
+            if (subItem) subItem.classList.add('active');
+        }
+
+        // Show/hide "Current Course" nav items
+        const ccn = document.getElementById('current-course-nav');
+        if (view === 'course-quizzes' && currentCourseId) {
+            ccn.style.display = '';
+            const course = courses.find(c => c.id === currentCourseId);
+            document.getElementById('current-course-nav-name').textContent = course ? course.title : 'Current Course';
+        } else {
+            ccn.style.display = 'none';
+        }
+        const accn = document.getElementById('current-assignment-course-nav');
+        if (view === 'course-assignments' && currentAssignmentCourseId) {
+            accn.style.display = '';
+            const course = courses.find(c => c.id === currentAssignmentCourseId);
+            document.getElementById('current-assignment-course-nav-name').textContent = course ? course.title : 'Current Course';
+        } else {
+            accn.style.display = 'none';
+        }
+
+        // Close sidebar on mobile
+        document.getElementById('sidebar').classList.remove('open');
+
+        renderCurrentView();
+        updateBreadcrumb();
+    }
+
+    function renderCurrentView() {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        const el = document.getElementById(`view-${currentView}`);
+        if (el) el.classList.add('active');
+
+        switch (currentView) {
+            case 'dashboard': renderDashboard(); break;
+            case 'courses': renderCourses(); break;
+            case 'course-quizzes': renderCourseQuizzes(); break;
+            case 'assignments': renderAssignmentCourses(); break;
+            case 'course-assignments': renderCourseAssignments(); break;
+        }
+    }
+
+    function updateBreadcrumb() {
+        const bc = document.getElementById('breadcrumb');
+        switch (currentView) {
+            case 'dashboard':
+                bc.innerHTML = `<span class="crumb current">Dashboard</span>`;
+                break;
+            case 'courses':
+                bc.innerHTML = `<span class="crumb" onclick="switchView('dashboard')">Dashboard</span><span class="sep">/</span><span class="crumb current">Courses</span>`;
+                break;
+            case 'course-quizzes': {
+                const course = courses.find(c => c.id === currentCourseId);
+                bc.innerHTML = `<span class="crumb" onclick="switchView('dashboard')">Dashboard</span><span class="sep">/</span><span class="crumb" onclick="switchView('courses')">Courses</span><span class="sep">/</span><span class="crumb current">${escHtml(course ? course.title : 'Quizzes')}</span>`;
+                break;
+            }
+            case 'assignments':
+                bc.innerHTML = `<span class="crumb" onclick="switchView('dashboard')">Dashboard</span><span class="sep">/</span><span class="crumb current">Assignments</span>`;
+                break;
+            case 'course-assignments': {
+                const acourse = courses.find(c => c.id === currentAssignmentCourseId);
+                bc.innerHTML = `<span class="crumb" onclick="switchView('dashboard')">Dashboard</span><span class="sep">/</span><span class="crumb" onclick="switchView('assignments')">Assignments</span><span class="sep">/</span><span class="crumb current">${escHtml(acourse ? acourse.title : 'Assignments')}</span>`;
+                break;
+            }
+        }
+    }
+
+    function refreshCurrentView() {
+        loadAllData();
+    }
+
+    // ─── Sidebar: Courses Sub-list ────────────────────
+    function updateSidebar() {
+        // Quizzes sub-list
+        const qlist = document.getElementById('sidebar-course-list');
+        qlist.innerHTML = courses.map(c => `
+            <div class="sub-item ${currentCourseId === c.id ? 'active' : ''}" data-course-id="${c.id}" onclick="switchView('course-quizzes', ${c.id})">
+                📖 ${escHtml(c.title)}
+            </div>
+        `).join('');
+        qlist.classList.toggle('open', currentView === 'courses' || currentView === 'course-quizzes');
+
+        // Assignments sub-list — only courses that have assignments
+        const alist = document.getElementById('sidebar-assignment-course-list');
+        const coursesWithAssignments = courses.filter(c => c.assignmentCount > 0);
+        alist.innerHTML = coursesWithAssignments.map(c => `
+            <div class="sub-item ${currentAssignmentCourseId === c.id ? 'active' : ''}" data-course-id="${c.id}" onclick="switchView('course-assignments', ${c.id})">
+                📖 ${escHtml(c.title)}
+            </div>
+        `).join('');
+        alist.classList.toggle('open', currentView === 'assignments' || currentView === 'course-assignments');
+    }
+
+    // ==================================================
+    //   VIEW: Courses
+    // ==================================================
+    function renderCourses() {
+        const grid = document.getElementById('course-grid');
+        const search = document.getElementById('course-search').value.toLowerCase().trim();
+
+        let filtered = courses;
+        if (search) {
+            filtered = courses.filter(c => c.title.toLowerCase().includes(search));
+        }
+
+        document.getElementById('course-count').textContent = filtered.length;
+
+        if (filtered.length === 0) {
+            grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📚</div><h3>No courses found</h3><p>${search ? 'Try a different search term.' : 'You haven\'t created any courses yet.'}</p></div>`;
+            return;
+        }
+
+        grid.innerHTML = filtered.map(c => {
+            const hasVios = c.totalViolations > 0;
+            return `
+            <div class="course-card" onclick="switchView('course-quizzes', ${c.id})">
+                <div class="course-icon">📖</div>
+                <div class="course-title">${escHtml(c.title)}</div>
+                <div class="course-meta">
+                    <span>📝 ${c.quizCount} quiz${c.quizCount !== 1 ? 'zes' : ''}</span>
+                </div>
+                <div class="course-violations ${hasVios ? 'has-violations' : 'no-violations'}">
+                    ${hasVios ? `⚠️ ${c.totalViolations} violation${c.totalViolations !== 1 ? 's' : ''}` : '✅ No violations'}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ==================================================
+    //   VIEW: Assignments (All Courses)
+    // ==================================================
+    function renderAssignmentCourses() {
+        const grid = document.getElementById('assn-course-grid');
+        const search = document.getElementById('assn-course-search').value.toLowerCase().trim();
+
+        let filtered = courses.filter(c => c.assignmentCount > 0);
+        if (search) {
+            filtered = filtered.filter(c => c.title.toLowerCase().includes(search));
+        }
+
+        document.getElementById('assn-course-count').textContent = filtered.length;
+
+        if (filtered.length === 0) {
+            grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><h3>No courses with assignments</h3><p>${search ? 'Try a different search term.' : 'You haven\'t created any assignments yet.'}</p></div>`;
+            return;
+        }
+
+        grid.innerHTML = filtered.map(c => `
+            <div class="course-card" onclick="switchView('course-assignments', ${c.id})">
+                <div class="course-icon">📋</div>
+                <div class="course-title">${escHtml(c.title)}</div>
+                <div class="course-meta">
+                    <span>📝 ${c.assignmentCount} assignment${c.assignmentCount !== 1 ? 's' : ''}</span>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    // ==================================================
+    //   VIEW: Course Assignments (with module filter)
+    // ==================================================
+    function renderCourseAssignments() {
+        const grid = document.getElementById('ca-grid');
+        const search = document.getElementById('ca-search').value.toLowerCase().trim();
+        const moduleFilter = document.getElementById('ca-module-filter').value;
+        const course = courses.find(c => c.id === currentAssignmentCourseId);
+
+        document.getElementById('ca-title').textContent = course ? `📋 ${course.title}` : 'Course Assignments';
+        document.getElementById('ca-subtitle').textContent = course ? `Browse assignments in ${course.title}` : '';
+
+        // Build module filter
+        const courseModulesSet = new Set();
+        const caModules = [];
+        for (const a of allAssignments) {
+            if (a.course_id === currentAssignmentCourseId && a.module_id) {
+                if (!courseModulesSet.has(a.module_id)) {
+                    courseModulesSet.add(a.module_id);
+                    caModules.push({ id: a.module_id, title: a.module_title || `Module #${a.module_id}` });
+                }
+            }
+        }
+        const mfSelect = document.getElementById('ca-module-filter');
+        const currentVal = mfSelect.value;
+        mfSelect.innerHTML = `<option value="">📦 All Modules</option>` +
+            caModules.map(m => `<option value="${m.id}" ${String(m.id) === currentVal ? 'selected' : ''}>${escHtml(m.title)}</option>`).join('');
+
+        // Filter assignments
+        let filtered = allAssignments.filter(a => a.course_id === currentAssignmentCourseId);
+        if (search) {
+            filtered = filtered.filter(a => (a.title || '').toLowerCase().includes(search));
+        }
+        if (moduleFilter) {
+            filtered = filtered.filter(a => String(a.module_id) === moduleFilter);
+        }
+
+        document.getElementById('ca-count').textContent = filtered.length;
+
+        if (filtered.length === 0) {
+            grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><h3>No assignments found</h3><p>${search || moduleFilter ? 'Try different filters.' : 'This course has no assignments yet.'}</p></div>`;
+            return;
+        }
+
+        filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+
+        grid.innerHTML = filtered.map(a => {
+            const subStatus = a.total_submissions > 0
+                ? `${a.graded || 0}/${a.total_submissions} graded`
+                : 'No submissions';
+            const avgScore = a.average_score ? `Avg: ${Math.round(a.average_score)}%` : '';
+            const moduleTitle = caModules.find(m => m.id === a.module_id);
+            return `
+            <div class="quiz-card">
+                <div class="quiz-card-header">
+                    <span class="quiz-card-title">${escHtml(a.title)}</span>
+                    <span class="violation-count ${a.pending_grading > 0 ? 'has-v' : 'no-v'}"
+                          style="background:${a.pending_grading > 0 ? 'var(--warning-bg)' : 'var(--success-bg)'};color:${a.pending_grading > 0 ? '#fcd34d' : '#86efac'};">
+                        ${a.pending_grading > 0 ? `⏳ ${a.pending_grading} pending` : '✅ All graded'}
+                    </span>
+                </div>
+                <div class="quiz-card-module">📦 ${moduleTitle ? escHtml(moduleTitle.title) : 'No module'}</div>
+                <div class="quiz-card-stats">
+                    <span>📝 ${a.total_submissions || 0} submissions</span>
+                    <span>${subStatus}</span>
+                    ${avgScore ? `<span>📊 ${avgScore}</span>` : ''}
+                    <span>🎯 ${a.passing_score || 60}% pass</span>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ==================================================
+    //   VIEW: Course Quizzes (with module filter)
+    // ==================================================
+    function renderCourseQuizzes() {
+        const grid = document.getElementById('cq-grid');
+        const search = document.getElementById('cq-search').value.toLowerCase().trim();
+        const moduleFilter = document.getElementById('cq-module-filter').value;
+        const course = courses.find(c => c.id === currentCourseId);
+
+        // Update title
+        document.getElementById('cq-title').textContent = course ? `📝 ${course.title}` : 'Course Quizzes';
+        document.getElementById('cq-subtitle').textContent = course ? `Browse quizzes in ${course.title}` : '';
+
+        // Build module filter
+        const courseModules = modules.filter(m => m.courseId === currentCourseId);
+        const mfSelect = document.getElementById('cq-module-filter');
+        const currentVal = mfSelect.value;
+        mfSelect.innerHTML = `<option value="">📦 All Modules</option>` +
+            courseModules.map(m => `<option value="${m.id}" ${String(m.id) === currentVal ? 'selected' : ''}>${escHtml(m.title)}</option>`).join('');
+
+        // Filter quizzes
+        let filtered = allQuizzes.filter(q => q.course_id === currentCourseId);
+        if (search) {
+            filtered = filtered.filter(q => (q.title || '').toLowerCase().includes(search));
+        }
+        if (moduleFilter) {
+            filtered = filtered.filter(q => String(q.module_id) === moduleFilter);
+        }
+
+        document.getElementById('cq-count').textContent = filtered.length;
+
+        if (filtered.length === 0) {
+            grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📝</div><h3>No quizzes found</h3><p>${search || moduleFilter ? 'Try different filters.' : 'This course has no quizzes yet.'}</p></div>`;
+            return;
+        }
+
+        // Sort by title
+        filtered.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+
+        grid.innerHTML = filtered.map(q => {
+            const vCount = q.violationCount || 0;
+            const moduleTitle = courseModules.find(m => m.id === q.module_id);
+            return `
+            <div class="quiz-card">
+                <div class="quiz-card-header">
+                    <span class="quiz-card-title">${escHtml(q.title)}</span>
+                    <span class="violation-count ${vCount > 0 ? 'has-v' : 'no-v'}" onclick="event.stopPropagation();openQuizViolations(${q.id}, '${escHtml(q.title)}')">
+                        ${vCount > 0 ? `⚠️ ${vCount}` : '✅ 0'}
+                    </span>
+                </div>
+                <div class="quiz-card-module">
+                    📦 ${moduleTitle ? escHtml(moduleTitle.title) : 'No module'}
+                </div>
+                <div class="quiz-card-stats">
+                    <span>❓ ${q.questions ? q.questions.length : '?'} questions</span>
+                    <span>⏱️ ${q.time_limit ? q.time_limit + ' min' : 'No limit'}</span>
+                    <span>🎯 ${q.passing_score || 70}% pass</span>
+                </div>
+                <div style="margin-top:10px;display:flex;gap:8px;">
+                    <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openQuizViolations(${q.id}, '${escHtml(q.title)}')">
+                        ${vCount > 0 ? `⚠️ View Violations (${vCount})` : '✅ No Violations'}
+                    </button>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    // ==================================================
+    //   VIEW: Dashboard
+    // ==================================================
+    function renderDashboard() {
+        const spinner = document.getElementById('dash-spinner');
+        const table = document.getElementById('dash-table');
+        const empty = document.getElementById('dash-empty');
+        const tbody = document.getElementById('dash-body');
+
+        // Update cards
+        document.getElementById('total-violations').textContent = violationsData.length;
+        document.getElementById('quizzes-affected').textContent = new Set(violationsData.map(v => v.quiz_id)).size;
+        document.getElementById('students-affected').textContent = new Set(violationsData.map(v => v.student_id)).size;
+        document.getElementById('unblocked-count').textContent = unblockedCount;
+
+        spinner.style.display = 'none';
+
+        if (violationsData.length === 0) {
+            table.style.display = 'none';
+            empty.style.display = 'block';
+            return;
+        }
+
+        table.style.display = 'table';
+        empty.style.display = 'none';
+
+        const search = document.getElementById('dash-search').value.toLowerCase().trim();
+        const sorted = [...violationsData].sort((a, b) => {
+            let va = a[dashSortField] ?? '', vb = b[dashSortField] ?? '';
+            if (typeof va === 'string') va = va.toLowerCase();
+            if (typeof vb === 'string') vb = vb.toLowerCase();
+            return va < vb ? -1 * dashSortDir : va > vb ? 1 * dashSortDir : 0;
+        });
+
+        const filtered = search ? sorted.filter(v =>
+            (v.student_name || '').toLowerCase().includes(search) ||
+            (v.quiz_title || '').toLowerCase().includes(search) ||
+            (v.violation_reason || '').toLowerCase().includes(search) ||
+            (v.course_title || '').toLowerCase().includes(search) ||
+            (v.student_email || '').toLowerCase().includes(search)
+        ) : sorted;
+
+        document.getElementById('dash-visible-count').textContent = filtered.length;
+
+        tbody.innerHTML = filtered.map(v => `
+            <tr>
+                <td class="quiz-cell" onclick="openQuizViolations(${v.quiz_id}, '${escHtml(v.quiz_title)}')">
+                    <span class="quiz-name">${escHtml(v.quiz_title)}</span>
+                    <span class="course-name">${escHtml(v.course_title)}</span>
+                </td>
+                <td class="student-cell">
+                    <span class="student-name">${escHtml(v.student_name)}</span>
+                    <span class="student-email">${escHtml(v.student_email)}</span>
+                </td>
+                <td><span class="violation-reason" title="${escHtml(v.violation_reason)}">${escHtml(v.violation_reason)}</span></td>
+                <td>#${v.attempt_number || 1}</td>
+                <td class="time-cell">${fmtDate(v.violated_at)}</td>
+                <td><span class="status-badge blocked"><span class="dot"></span> Blocked</span></td>
+                <td class="action-cell">
+                    <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();unblockStudent(${v.quiz_id}, ${v.student_id}, '${escHtml(v.student_name)}')">Unblock</button>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    function dashFilter() { renderDashboard(); }
+    function dashSort(field) {
+        if (dashSortField === field) dashSortDir *= -1;
+        else { dashSortField = field; dashSortDir = 1; }
+        renderDashboard();
+    }
+
+    // ==================================================
+    //   Quiz Violations Modal
+    // ==================================================
+    async function openQuizViolations(quizId, quizTitle) {
+        const modal = document.getElementById('detail-modal');
+        const title = document.getElementById('modal-title');
+        const body = document.getElementById('modal-body');
+        modal.classList.add('visible');
+        title.textContent = `Loading violations for "${escHtml(quizTitle)}"...`;
+        body.innerHTML = `<div class="loading-overlay"><div class="spinner"></div></div>`;
+
+        try {
+            const data = await apiFetch(`${API_BASE}/quizzes/${quizId}/violations`);
+            title.textContent = `${escHtml(data.quiz_title)} — ${data.total_violations} Violation${data.total_violations !== 1 ? 's' : ''}`;
+
+            const rows = data.violations.map(v => `
+                <div class="quiz-detail-item">
+                    <div class="qdi-header">
+                        <span class="qdi-name">${escHtml(v.student_name)}</span>
+                        <span class="status-badge blocked"><span class="dot"></span> Blocked</span>
+                    </div>
+                    <div class="qdi-reason">${escHtml(v.violation_reason)}</div>
+                    <div class="qdi-meta">
+                        <span>📧 ${escHtml(v.student_email)}</span>
+                        <span>🔢 Attempt #${v.attempt_number || 1}</span>
+                        <span>⏱️ ${fmtDate(v.violated_at)}</span>
+                        ${v.score ? `<span>📊 ${v.score}%</span>` : ''}
+                    </div>
+                    <div style="margin-top:8px;">
+                        <button class="btn btn-danger btn-sm" onclick="unblockStudent(${v.quiz_id}, ${v.user_id}, '${escHtml(v.student_name)}');closeModal();">
+                            Unblock ${escHtml(v.student_name)}
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+
+            body.innerHTML = `
+                <div class="detail-row"><span class="label">Quiz</span><span class="value">${escHtml(data.quiz_title)}</span></div>
+                <div class="detail-row"><span class="label">Total Violations</span><span class="value">${data.total_violations}</span></div>
+                <div class="quiz-detail-list">${rows || '<p style="color:var(--text-muted);">No violations recorded.</p>'}</div>
+            `;
+        } catch (err) {
+            body.innerHTML = `<p style="color:#fca5a5;">Failed: ${escHtml(err.message)}</p>`;
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('detail-modal').classList.remove('visible');
+    }
+    document.getElementById('detail-modal').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeModal();
+    });
+
+    // ==================================================
+    //   Unblock Student
+    // ==================================================
+    async function unblockStudent(quizId, studentId, studentName) {
+        if (!confirm(`Unblock ${studentName}? They can reattempt the quiz.`)) return;
+        const reason = prompt('Reason for unblocking:', 'Instructor granted additional chance');
+        if (reason === null) return;
+        try {
+            const data = await apiFetch(`${API_BASE}/quizzes/${quizId}/unblock-student/${studentId}`, {
+                method: 'POST',
+                body: JSON.stringify({ reason: reason || 'Instructor granted additional chance' })
+            });
+            unblockedCount++;
+            showToast(`✅ ${data.message || 'Unblocked'}`, 'success');
+            loadAllData();
+        } catch (err) {
+            showToast(`❌ ${err.message}`, 'error');
+        }
+    }
+
+    // ==================================================
+    //   Toast
+    // ==================================================
+    function showToast(message, type = 'info') {
+        const container = document.getElementById('toast-container');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateY(8px)';
+            toast.style.transition = 'all 0.3s ease';
+            setTimeout(() => toast.remove(), 300);
+        }, 4000);
+    }
+
+    // ==================================================
+    //   Helpers
+    // ==================================================
+    function escHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = String(str);
+        return div.innerHTML;
+    }
+
+    function fmtDate(isoStr) {
+        if (!isoStr) return '—';
+        try {
+            return new Date(isoStr).toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+        } catch { return isoStr; }
+    }
+
+    // Auto-refresh every 60s
+    setInterval(() => {
+        if (token && app.classList.contains('visible')) loadAllData();
+    }, 60000);
+</script>
+</body>
+</html>

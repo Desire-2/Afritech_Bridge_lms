@@ -4,6 +4,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func as sql_func
 from datetime import datetime, timedelta
 import logging
 
@@ -60,7 +61,7 @@ logger.info("=" * 80)
 @instructor_assessment_bp.route("/quizzes", methods=["GET"])
 @instructor_required
 def get_instructor_quizzes():
-    """Get all quizzes for instructor's courses"""
+    """Get all quizzes for instructor's courses with violation counts"""
     try:
         current_user_id = get_user_id()
         
@@ -73,6 +74,26 @@ def get_instructor_quizzes():
         
         # Get all quizzes for these courses
         quizzes = Quiz.query.filter(Quiz.course_id.in_(course_ids)).all()
+        quiz_ids = [q.id for q in quizzes]
+        
+        # Bulk-load violation counts for all quizzes at once
+        violation_counts = {}
+        if quiz_ids:
+            counts = db.session.query(
+                QuizAttempt.quiz_id,
+                sql_func.count(QuizAttempt.id)
+            ).filter(
+                QuizAttempt.quiz_id.in_(quiz_ids),
+                QuizAttempt.security_violation == True
+            ).group_by(QuizAttempt.quiz_id).all()
+            violation_counts = {qid: count for qid, count in counts}
+        
+        # Bulk-load module titles for all quizzes
+        module_id_set = {q.module_id for q in quizzes if q.module_id}
+        module_titles = {}
+        if module_id_set:
+            module_map = Module.query.filter(Module.id.in_(module_id_set)).all()
+            module_titles = {m.id: m.title for m in module_map}
         
         # Return quizzes with enhanced data
         quizzes_data = []
@@ -82,6 +103,10 @@ def get_instructor_quizzes():
             course = next((c for c in courses if c.id == quiz.course_id), None)
             if course:
                 quiz_dict['course_title'] = course.title
+            # Add module title for display (for module filter in frontend)
+            quiz_dict['module_title'] = module_titles.get(quiz.module_id)
+            # Add violation count — makes the violations card clickable on frontend
+            quiz_dict['violation_count'] = violation_counts.get(quiz.id, 0)
             quizzes_data.append(quiz_dict)
         
         return jsonify(quizzes_data), 200
@@ -1084,6 +1109,13 @@ def get_all_instructor_assignments():
         # Get all assignments for these courses
         assignments = Assignment.query.filter(Assignment.course_id.in_(course_ids)).all()
         
+        # Bulk-load module titles for all assignments
+        assn_module_ids = {a.module_id for a in assignments if a.module_id}
+        assn_module_titles = {}
+        if assn_module_ids:
+            assn_module_map = Module.query.filter(Module.id.in_(assn_module_ids)).all()
+            assn_module_titles = {m.id: m.title for m in assn_module_map}
+        
         # Build response with statistics
         include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
         assignments_data = []
@@ -1094,6 +1126,9 @@ def get_all_instructor_assignments():
             course = next((c for c in courses if c.id == assignment.course_id), None)
             if course:
                 assignment_dict['course_title'] = course.title
+            
+            # Add module title (for module filter in frontend)
+            assignment_dict['module_title'] = assn_module_titles.get(assignment.module_id)
             
             # Add submission statistics
             submissions = AssignmentSubmission.query.filter_by(assignment_id=assignment.id).all()
@@ -2122,6 +2157,125 @@ def unblock_quiz_student(quiz_id, student_id):
         return jsonify({"message": "Failed to unblock student", "error": str(e)}), 500
 
 
+@instructor_assessment_bp.route("/violations-overview", methods=["GET"])
+@instructor_required
+def get_all_violations_overview():
+    """
+    Get a comprehensive violations dashboard across all instructor quizzes.
+    Returns quizzes with violation counts AND a flat list of all violation records
+    so the frontend can render a clickable violations card that shows every
+    student violation across all quizzes.
+    
+    Query params:
+        course_id (int, optional): Filter violations to a specific course.
+                                   Only courses the instructor owns are accepted.
+    """
+    try:
+        current_user_id = get_user_id()
+        
+        # Get all courses owned by this instructor
+        instructor_courses = Course.query.filter_by(instructor_id=current_user_id).all()
+        course_ids = [c.id for c in instructor_courses]
+        
+        if not course_ids:
+            return jsonify({
+                "total_violations": 0,
+                "quizzes_with_violations": 0,
+                "affected_students": 0,
+                "course_id": None,
+                "quizzes": [],
+                "violations": []
+            }), 200
+        
+        # Optional course_id filter — narrow to a specific course
+        course_id_filter = request.args.get('course_id', type=int)
+        if course_id_filter is not None:
+            # Verify the instructor actually owns this course
+            if course_id_filter not in course_ids:
+                return jsonify({
+                    "message": "Course not found or access denied"
+                }), 404
+            course_ids = [course_id_filter]
+        
+        # Get all quizzes for the filtered courses
+        quizzes = Quiz.query.filter(Quiz.course_id.in_(course_ids)).all()
+        quiz_ids = [q.id for q in quizzes]
+        quiz_lookup = {q.id: q for q in quizzes}
+        
+        if not quiz_ids:
+            return jsonify({
+                "total_violations": 0,
+                "quizzes_with_violations": 0,
+                "affected_students": 0,
+                "course_id": course_id_filter,
+                "quizzes": [],
+                "violations": []
+            }), 200
+        
+        # Get ALL violation attempts across all quizzes
+        violation_attempts = QuizAttempt.query.filter(
+            QuizAttempt.quiz_id.in_(quiz_ids),
+            QuizAttempt.security_violation == True
+        ).order_by(QuizAttempt.created_at.desc()).all()
+        
+        # Track unique students affected
+        affected_student_ids = set()
+        quizzes_with_violations = set()
+        
+        # Build detailed violation records
+        violations_list = []
+        for attempt in violation_attempts:
+            quiz = quiz_lookup.get(attempt.quiz_id)
+            student = User.query.get(attempt.user_id)
+            
+            affected_student_ids.add(attempt.user_id)
+            if attempt.quiz_id:
+                quizzes_with_violations.add(attempt.quiz_id)
+            
+            violations_list.append({
+                'violation_id': attempt.id,
+                'quiz_id': attempt.quiz_id,
+                'quiz_title': quiz.title if quiz else 'Unknown Quiz',
+                'course_title': quiz.course.title if quiz and quiz.course else 'Unknown Course',
+                'student_id': attempt.user_id,
+                'student_name': f"{student.first_name} {student.last_name}".strip() if student else 'Unknown Student',
+                'student_email': student.email if student else 'unknown',
+                'attempt_number': attempt.attempt_number,
+                'violation_reason': attempt.violation_reason or 'Security policy violation',
+                'score': attempt.score_percentage or attempt.score or 0,
+                'violated_at': attempt.end_time.isoformat() if attempt.end_time else attempt.created_at.isoformat(),
+                'is_blocked': True,
+            })
+        
+        # Build per-quiz summary
+        quiz_summaries = []
+        for qid in sorted(quizzes_with_violations):
+            quiz = quiz_lookup.get(qid)
+            if quiz:
+                quiz_count = sum(1 for v in violations_list if v['quiz_id'] == qid)
+                unique_students = len(set(v['student_id'] for v in violations_list if v['quiz_id'] == qid))
+                quiz_summaries.append({
+                    'quiz_id': qid,
+                    'quiz_title': quiz.title,
+                    'course_title': quiz.course.title if quiz.course else 'Unknown',
+                    'violation_count': quiz_count,
+                    'affected_students': unique_students
+                })
+        
+        return jsonify({
+            'total_violations': len(violations_list),
+            'quizzes_with_violations': len(quizzes_with_violations),
+            'affected_students': len(affected_student_ids),
+            'course_id': course_id_filter,
+            'quizzes': quiz_summaries,
+            'violations': violations_list
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch violations overview: {str(e)}", exc_info=True)
+        return jsonify({"message": "Failed to fetch violations overview", "error": str(e)}), 500
+
+
 @instructor_assessment_bp.route("/quizzes/violation-counts", methods=["GET"])
 @instructor_required
 def get_all_quiz_violation_counts():
@@ -2144,10 +2298,9 @@ def get_all_quiz_violation_counts():
             return jsonify({"violation_counts": {}}), 200
         
         # Count violations per quiz
-        from sqlalchemy import func
         violation_counts = db.session.query(
             QuizAttempt.quiz_id,
-            func.count(QuizAttempt.id)
+            sql_func.count(QuizAttempt.id)
         ).filter(
             QuizAttempt.quiz_id.in_(quiz_ids),
             QuizAttempt.security_violation == True
