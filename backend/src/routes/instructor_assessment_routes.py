@@ -44,6 +44,12 @@ def instructor_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def _is_admin_user():
+    """Check whether the current JWT identity is an admin user."""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    return user and user.role and user.role.name.lower() == 'admin'
+
 instructor_assessment_bp = Blueprint("instructor_assessment_bp", __name__, url_prefix="/api/v1/instructor/assessments")
 
 # Log that this module was loaded
@@ -157,9 +163,9 @@ def create_quiz():
         
         course_id = data['course_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
+        # Verify instructor owns the course (admin bypass)
+        course = Course.query.get(course_id)
+        if not course or (course.instructor_id != current_user_id and not _is_admin_user()):
             return jsonify({"message": "Course not found or access denied"}), 404
         
         # Get module if specified
@@ -898,9 +904,9 @@ def create_assignment():
         
         course_id = data['course_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
+        # Verify instructor owns the course (admin bypass)
+        course = Course.query.get(course_id)
+        if not course or (course.instructor_id != current_user_id and not _is_admin_user()):
             return jsonify({"message": "Course not found or access denied"}), 404
         
         # Handle date parsing
@@ -1249,9 +1255,9 @@ def create_project():
         
         course_id = data['course_id']
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
+        # Verify instructor owns the course (admin bypass)
+        course = Course.query.get(course_id)
+        if not course or (course.instructor_id != current_user_id and not _is_admin_user()):
             return jsonify({"message": "Course not found or access denied"}), 404
         
         # Handle date parsing - default to 30 days from now if not provided
@@ -1971,9 +1977,9 @@ def get_assessments_overview(course_id):
         include_rubric = request.args.get('include_rubric', 'false').lower() == 'true'
         logger.info(f"[OVERVIEW] Fetching assessments for course {course_id} by user {current_user_id}, include_rubric={include_rubric}")
         
-        # Verify instructor owns the course
-        course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
-        if not course:
+        # Verify instructor owns the course (admin bypass)
+        course = Course.query.get(course_id)
+        if not course or (course.instructor_id != current_user_id and not _is_admin_user()):
             logger.warning(f"[OVERVIEW] Course {course_id} not found or access denied for user {current_user_id}")
             return jsonify({"message": "Course not found or access denied"}), 404
         
@@ -2173,8 +2179,13 @@ def get_all_violations_overview():
     try:
         current_user_id = get_user_id()
         
-        # Get all courses owned by this instructor
-        instructor_courses = Course.query.filter_by(instructor_id=current_user_id).all()
+        is_admin = _is_admin_user()
+        
+        # Get all courses (all for admin, owned-only for instructors)
+        if is_admin:
+            instructor_courses = Course.query.all()
+        else:
+            instructor_courses = Course.query.filter_by(instructor_id=current_user_id).all()
         course_ids = [c.id for c in instructor_courses]
         
         if not course_ids:
@@ -2190,8 +2201,8 @@ def get_all_violations_overview():
         # Optional course_id filter — narrow to a specific course
         course_id_filter = request.args.get('course_id', type=int)
         if course_id_filter is not None:
-            # Verify the instructor actually owns this course
-            if course_id_filter not in course_ids:
+            # Verify the instructor actually owns this course (admin bypass)
+            if not is_admin and course_id_filter not in course_ids:
                 return jsonify({
                     "message": "Course not found or access denied"
                 }), 404

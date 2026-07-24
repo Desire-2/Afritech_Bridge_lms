@@ -315,7 +315,21 @@ export class AdminService {
   /** Get single course by ID (uses the general /courses/:id which admin can access) */
   static async getCourse(courseId: number): Promise<Course> {
     try {
-      const response = await apiClient.get(`/courses/${courseId}`);
+      const response = await apiClient.get("/courses/" + courseId);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Get course with full modules, lessons, and assessments (instructor-style management) */
+  static async getCourseWithModules(courseId: number): Promise<Course & {
+    assignments: any[];
+    quizzes: any[];
+    projects: any[];
+  }> {
+    try {
+      const response = await apiClient.get("/instructor/courses/" + courseId);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

@@ -350,7 +350,10 @@ export default function CourseApplicationForm({
     setCheckingDuplicate(true);
     try {
       const result = await applicationService.checkDuplicate(courseId, email);
-      setExistingApplication(result.exists ? result.application : null);
+      // The public endpoint deliberately returns no application details.
+      // Keeping only a local marker prevents an applicant's status/scores from
+      // being exposed to anyone who knows their email address.
+      setExistingApplication(result.exists ? { exists: true } : null);
       setEmailChecked(true);
     } catch (err: any) {
       console.error('Error checking duplicate:', err);
@@ -1195,28 +1198,6 @@ export default function CourseApplicationForm({
               <p className="font-bold text-amber-900 dark:text-amber-200 text-lg">
                 You have already applied for this course!
               </p>
-              <div className="text-sm text-amber-800 dark:text-amber-300 space-y-2 bg-white/50 p-4 rounded-lg">
-                <p className="flex items-center gap-2">
-                  <Shield className="w-4 h-4" />
-                  <strong>Application ID:</strong> #{existingApplication.id}
-                </p>
-                <p className="flex items-center gap-2">
-                  <Award className="w-4 h-4" />
-                  <strong>Status:</strong> <span className="capitalize font-semibold">{existingApplication.status}</span>
-                </p>
-                {existingApplication.submitted_at && (
-                  <p className="flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    <strong>Submitted:</strong> {new Date(existingApplication.submitted_at).toLocaleDateString()}
-                  </p>
-                )}
-                {existingApplication.final_rank && (
-                  <p className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4" />
-                    <strong>Final Rank:</strong> {existingApplication.final_rank}/100
-                  </p>
-                )}
-              </div>
               <p className="text-sm text-amber-700 dark:text-amber-400 pt-2 bg-white/50 p-3 rounded-lg">
                 Please check your email ({formData.email}) for updates on your application status.
                 You cannot submit multiple applications for the same course.

@@ -85,9 +85,20 @@ def course_ownership_required(f):
                 logger.debug(f"OWNERSHIP - Course instructor_id: {course.instructor_id} (type: {type(course.instructor_id)})")
                 logger.debug(f"OWNERSHIP - Match: {course.instructor_id == current_user_id}")
             
-            if not course or course.instructor_id != current_user_id:
-                logger.debug(f"OWNERSHIP - Access denied!")
+            # Check ownership — admin users can access any course
+            user = User.query.get(current_user_id)
+            is_admin = user and user.role and user.role.name == 'admin'
+            
+            if not course:
+                logger.debug(f"OWNERSHIP - Course not found!")
+                return jsonify({"message": "Course not found"}), 404
+            
+            if not is_admin and course.instructor_id != current_user_id:
+                logger.debug(f"OWNERSHIP - Access denied! Not course owner and not admin.")
                 return jsonify({"message": "Access denied to this course"}), 403
+            
+            if is_admin:
+                logger.debug(f"OWNERSHIP - Admin access granted to course {course_id}")
         
         return f(*args, **kwargs)
     return decorated_function

@@ -27,6 +27,15 @@ class Role(db.Model):
     def __repr__(self):
         return f'<Role {self.name}>'
 
+
+class RevokedToken(db.Model):
+    """Persist JWT revocations so logout works across workers and restarts."""
+    __tablename__ = 'revoked_tokens'
+
+    jti = db.Column(db.String(36), primary_key=True)
+    revoked_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=True, index=True)
+
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -230,4 +239,3 @@ class User(db.Model):
             'deleted_by': self.deleted_by,
             'deletion_reason': self.deletion_reason
         }
-

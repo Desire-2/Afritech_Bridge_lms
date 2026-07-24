@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask, send_from_directory, jsonify, request
-from flask_jwt_extended import JWTManager
+from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
 from datetime import timedelta
 import logging
 
@@ -514,18 +514,16 @@ def pool_status_endpoint():
 
 
 @app.route('/api/v1/health/db/force-cleanup', methods=['POST'])
+@jwt_required()
 def force_cleanup_endpoint():
     """
     EMERGENCY ONLY: Force cleanup of connection pool
     Use when pool is exhausted and needs reset
     """
     try:
-        # Simple authentication check (in production, use proper auth)
-        auth_key = request.headers.get('X-Admin-Key')
-        expected_key = os.environ.get('ADMIN_KEY', 'dev-admin-key')
-        
-        if auth_key != expected_key:
-            return jsonify({"error": "Unauthorized"}), 401
+        current_user = db.session.get(User, get_jwt_identity())
+        if not current_user or not current_user.role or current_user.role.name.lower() != 'admin':
+            return jsonify({"error": "Admin access required"}), 403
         
         result = force_pool_cleanup(db)
         return jsonify(result), 200
@@ -546,4 +544,3 @@ if __name__ == '__main__':
         debug=debug_mode,
         use_reloader=use_reloader
     )
-

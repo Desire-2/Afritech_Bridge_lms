@@ -4,7 +4,7 @@ import os
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 from ..utils.brevo_email_service import brevo_service
 
 # Assuming db and User, Role models are correctly set up and accessible.
@@ -15,14 +15,10 @@ from ..utils.brevo_email_service import brevo_service
 # Placeholder for db and models until actual app structure is fully integrated
 # This is a common pattern, assuming db and models are imported from where they are defined.
 # For now, we'll define them locally for structure, then integrate with the main app.
-from ..models.user_models import db, User, Role # Adjusted import assuming this file is in src/routes
+from ..models.user_models import db, User, Role, RevokedToken # Adjusted import assuming this file is in src/routes
 
 auth_bp = Blueprint('auth_bp', __name__, url_prefix='/api/v1/auth')
 user_bp = Blueprint('user_bp', __name__, url_prefix='/api/v1/users')
-
-# In-memory blocklist for JWT tokens (for logout)
-# In a production environment, this should be a persistent store like Redis.
-BLOCKLIST = set()
 
 # Registration endpoint disabled - users are created automatically upon course application approval
 @auth_bp.route('/register', methods=['POST'])
@@ -240,7 +236,15 @@ def refresh():
 @jwt_required()
 def logout():
     jti = get_jwt()['jti']
-    BLOCKLIST.add(jti)
+    token_expiry = get_jwt().get('exp')
+    expires_at = (
+        datetime.fromtimestamp(token_expiry, tz=timezone.utc).replace(tzinfo=None)
+        if token_expiry else None
+    )
+    # The primary key makes logout idempotent when a client retries a request.
+    if not db.session.get(RevokedToken, jti):
+        db.session.add(RevokedToken(jti=jti, expires_at=expires_at))
+        db.session.commit()
     return jsonify({'message': 'Successfully logged out'}), 200
 
 @user_bp.route('/me', methods=['GET'])
@@ -277,7 +281,7 @@ def update_me():
 # It's needed for JWTManager configuration.
 def token_in_blocklist_loader(jwt_header, jwt_payload):
     jti = jwt_payload['jti']
-    return jti in BLOCKLIST
+    return db.session.get(RevokedToken, jti) is not None
 
 # Password reset routes
 @auth_bp.route('/forgot-password', methods=['POST'])
@@ -478,4 +482,3 @@ def validate_reset_token():
         return jsonify({'message': 'Invalid or expired reset token'}), 400
     
     return jsonify({'message': 'Token is valid'}), 200
-

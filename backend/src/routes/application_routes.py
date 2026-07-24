@@ -9,6 +9,7 @@ from sqlalchemy import or_, func, and_, case
 from ..models.course_application import CourseApplication
 from ..models.user_models import db, User, Role
 from ..models.course_models import Enrollment, Course, ApplicationWindow
+from ..models.task_models import BackgroundTask, TaskStatus
 from ..utils.application_scoring import (
     calculate_risk,
     calculate_application_score,
@@ -158,10 +159,98 @@ def send_emails_with_brevo(emails_data, retries=3):
     
     return successful_emails, failed_emails
 
-# In-memory task tracking (use Redis in production)
-bulk_action_tasks = {}
-custom_email_tasks = {}
-custom_email_tasks = {}
+class _PersistentNestedTaskData(dict):
+    """A nested task field that writes through when a caller mutates it."""
+    def __init__(self, task, key, value):
+        super().__init__(value or {})
+        self._task = task
+        self._key = key
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self._task._set_value(self._key, dict(self))
+
+    def update(self, *args, **kwargs):
+        super().update(*args, **kwargs)
+        self._task._set_value(self._key, dict(self))
+
+
+class _PersistentTaskData(dict):
+    """Dictionary-compatible task payload backed by ``background_tasks``."""
+    def __init__(self, task_id, payload):
+        super().__init__(payload or {})
+        self._task_id = task_id
+
+    def _save(self):
+        task = db.session.get(BackgroundTask, self._task_id)
+        if not task:
+            raise KeyError(self._task_id)
+        task.set_result(dict(self))
+        status = self.get('status')
+        task.status = {
+            'completed': TaskStatus.COMPLETED,
+            'failed': TaskStatus.FAILED,
+            'pending': TaskStatus.PENDING,
+        }.get(status, TaskStatus.RUNNING)
+        if status in ('completed', 'failed') and not task.completed_at:
+            task.completed_at = datetime.utcnow()
+        db.session.commit()
+
+    def _set_value(self, key, value):
+        dict.__setitem__(self, key, value)
+        self._save()
+
+    def __getitem__(self, key):
+        value = dict.__getitem__(self, key)
+        if isinstance(value, dict):
+            return _PersistentNestedTaskData(self, key, value)
+        return value
+
+    def __setitem__(self, key, value):
+        self._set_value(key, value)
+
+    def update(self, *args, **kwargs):
+        dict.update(self, *args, **kwargs)
+        self._save()
+
+
+class _PersistentTaskStore:
+    """Compatibility layer replacing the old per-process task dictionaries."""
+    def __setitem__(self, task_id, payload):
+        owner_id = payload.get('user_id') or payload.get('admin_id')
+        task = BackgroundTask(
+            id=task_id,
+            task_name=payload.get('task_type') or payload.get('action') or 'application_task',
+            user_id=int(owner_id) if owner_id is not None else None,
+            status=TaskStatus.PENDING,
+            started_at=datetime.utcnow(),
+        )
+        task.set_result(payload)
+        db.session.add(task)
+        db.session.commit()
+
+    def __getitem__(self, task_id):
+        task = db.session.get(BackgroundTask, task_id)
+        if not task:
+            raise KeyError(task_id)
+        return _PersistentTaskData(task_id, task.get_result())
+
+    def get(self, task_id, default=None):
+        try:
+            return self[task_id]
+        except KeyError:
+            return default
+
+    def all(self):
+        return {task.id: task.get_result() for task in BackgroundTask.query.order_by(BackgroundTask.created_at.desc()).all()}
+
+    def __len__(self):
+        return BackgroundTask.query.count()
+
+
+# Persisted task status is shared by all application workers and survives restarts.
+bulk_action_tasks = _PersistentTaskStore()
+custom_email_tasks = _PersistentTaskStore()
 
 application_bp = Blueprint(
     "application_bp", __name__, url_prefix="/api/v1/applications"
@@ -173,7 +262,8 @@ def check_duplicate_application():
     """
     Check if a user has already applied for a specific course.
     Query params: course_id (required), email (required)
-    Returns: {exists: bool, application: {...} if exists}
+    Returns only whether a submitted application exists.  This endpoint is
+    public so it must not disclose review status, timestamps, IDs, or scores.
     """
     course_id = request.args.get("course_id")
     email = request.args.get("email")
@@ -190,18 +280,7 @@ def check_duplicate_application():
         ).first()
         
         if existing:
-            return jsonify({
-                "exists": True,
-                "application": {
-                    "id": existing.id,
-                    "status": existing.status,
-                    "submitted_at": existing.created_at.isoformat() if existing.created_at else None,
-                    "application_score": existing.application_score,
-                    "readiness_score": existing.readiness_score,
-                    "commitment_score": existing.commitment_score,
-                    "final_rank": existing.final_rank_score
-                }
-            }), 200
+            return jsonify({"exists": True}), 200
         else:
             return jsonify({"exists": False}), 200
             
@@ -3784,7 +3863,7 @@ def debug_all_custom_email_tasks():
     
     return jsonify({
         "total_tasks": len(custom_email_tasks),
-        "tasks": custom_email_tasks
+        "tasks": custom_email_tasks.all()
     }), 200
 
 
@@ -6350,4 +6429,3 @@ def preview_payment_reminders():
             "error": "Failed to preview payment reminders",
             "details": str(e)
         }), 500
-
