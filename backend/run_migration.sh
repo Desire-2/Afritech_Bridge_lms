@@ -4,7 +4,7 @@
 # This script runs the data-safe migration
 
 # Set the database URL from .env
-DATABASE_URL=postgresql://lms_29v2_user:OINTaVIN08TR5sylgMhvsAbGecQNiZYg@dpg-d84qos3rjlhs73de3390-a.virginia-postgres.render.com/lms_29v2
+DATABASE_URL=postgresql://lms_gxrv_user:mM4MgECVsrvNGwp1B5N0nqs0JtnWteCe@dpg-d9akpq3eo5us73abtec0-a.virginia-postgres.render.com/lms_gxrv
 
 echo "🔍 Testing PostgreSQL connection..."
 if psql "$DATABASE_URL" -c "SELECT current_database(), current_user;" > /dev/null 2>&1; then

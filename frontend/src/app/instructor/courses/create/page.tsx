@@ -28,6 +28,7 @@ type CourseFormData = {
   cohort_end_date: string;
   cohort_label: string;
   application_timezone: string;
+  thumbnail_url: string | null;
 };
 
 const EMPTY_FORM: CourseFormData = {
@@ -42,6 +43,7 @@ const EMPTY_FORM: CourseFormData = {
   cohort_end_date: '',
   cohort_label: '',
   application_timezone: 'UTC',
+  thumbnail_url: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -303,6 +305,7 @@ const CreateCoursePage = () => {
         cohort_end_date: formData.cohort_end_date || null,
         cohort_label: formData.cohort_label || null,
         application_timezone: formData.application_timezone || 'UTC',
+        thumbnail_url: formData.thumbnail_url || null,
       };
 
       const course = await CourseService.createCourse(payload);
@@ -552,6 +555,80 @@ const CreateCoursePage = () => {
                   aria-describedby={fieldErrors.title ? 'title-error' : undefined}
                 />
                 <FieldError name="title" />
+              </div>
+
+              {/* Thumbnail Upload */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Course Thumbnail
+                  </label>
+                  <span className="text-xs text-slate-400">Optional</span>
+                </div>
+                <div className="flex items-start gap-4">
+                  {/* Preview */}
+                  <div className="w-32 h-20 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 flex-shrink-0 flex items-center justify-center">
+                    {formData.thumbnail_url ? (
+                      <img
+                        src={formData.thumbnail_url}
+                        alt="Course thumbnail preview"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <svg className="w-8 h-8 text-slate-300 dark:text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        name="thumbnail_url"
+                        value={formData.thumbnail_url || ''}
+                        onChange={(e) => setFormData(prev => ({ ...prev, thumbnail_url: e.target.value || null }))}
+                        placeholder="Paste image URL..."
+                        className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                      />
+                      <label className="cursor-pointer inline-flex items-center px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors text-sm font-medium shrink-0">
+                        <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                        </svg>
+                        Upload
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            try {
+                              const { FileUploadService } = await import('@/services/file-upload.service');
+                              const result = await FileUploadService.uploadFile(file, {
+                                folder: 'course-thumbnails'
+                              });
+                              setFormData(prev => ({ ...prev, thumbnail_url: result.url }));
+                            } catch (err: any) {
+                              setSubmitError('Failed to upload thumbnail: ' + (err.message || 'Unknown error'));
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {formData.thumbnail_url && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, thumbnail_url: null }))}
+                        className="text-xs text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                      >
+                        Remove thumbnail
+                      </button>
+                    )}
+                    <p className="text-xs text-slate-400">
+                      Upload a 16:9 image or paste a URL. Recommended size: 1280x720px.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* Description */}

@@ -52,6 +52,8 @@ const EMPTY_FORM: CourseFormData = {
   module_release_count: null,
   module_release_interval: null,
   module_release_interval_days: null,
+  thumbnail_url: null,
+  difficulty_level: "",
 };
 
 type Tab = "basic" | "payment" | "schedule" | "advanced";
@@ -121,6 +123,8 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
         module_release_count: course.module_release_count ?? null,
         module_release_interval: course.module_release_interval ?? null,
         module_release_interval_days: course.module_release_interval_days ?? null,
+        thumbnail_url: course.thumbnail_url ?? null,
+        difficulty_level: course.difficulty_level ?? "",
       });
     } catch (err: any) {
       setError(err.message || "Failed to load course");
@@ -297,6 +301,76 @@ export const CourseForm: React.FC<CourseFormProps> = ({ courseId, onSuccess, onC
                 placeholder="e.g., Introduction to Web Development"
                 className={inputClass}
               />
+            </div>
+
+            {/* Thumbnail Upload */}
+            <div>
+              <label className={labelClass}>Course Thumbnail</label>
+              <div className="flex items-start gap-4">
+                {/* Preview */}
+                <div className="w-32 h-20 rounded-lg overflow-hidden shrink-0 bg-brand-light border border-brand-lighter flex items-center justify-center">
+                  {formData.thumbnail_url ? (
+                    <img
+                      src={formData.thumbnail_url}
+                      alt="Course thumbnail"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <svg className="w-8 h-8 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <input
+                    type="text"
+                    name="thumbnail_url"
+                    value={formData.thumbnail_url || ""}
+                    onChange={handleChange}
+                    placeholder="Paste image URL or upload..."
+                    className={inputClass}
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-light border border-brand-lighter rounded-lg text-xs text-slate-300 hover:border-slate-500 transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      Upload Image
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const { FileUploadService } = await import('@/services/file-upload.service');
+                            const result = await FileUploadService.uploadFile(file, {
+                              folder: 'course-thumbnails'
+                            });
+                            set('thumbnail_url', result.url);
+                          } catch (err: any) {
+                            setError('Failed to upload thumbnail: ' + (err.message || 'Unknown error'));
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                    {formData.thumbnail_url && (
+                      <button
+                        type="button"
+                        onClick={() => set('thumbnail_url', null)}
+                        className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <p className={helpClass}>
+                    Upload a thumbnail image (JPEG, PNG, or WEBP). Will be shown on course cards.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div>

@@ -40,3 +40,51 @@ export interface CohortStatus {
 }
 
 export type CohortStatus = 'open' | 'closed' | 'upcoming';
+
+/**
+ * Public Course interface used on browse/courses pages
+ */
+export interface Course {
+  id: number;
+  title: string;
+  description: string;
+  instructor_id: number;
+  instructor_name: string;
+  thumbnail_url?: string;
+  difficulty_level?: string;
+  target_audience?: string;
+  category?: string;
+  estimated_duration?: string;
+  rating?: number;
+  total_students?: number;
+  enrollment_count?: number;
+  modules?: { title: string; id: number }[];
+  enrollment_type?: string;
+  price?: number | null;
+  currency?: string | null;
+  payment_mode?: string;
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  payment_methods?: string[];
+  paypal_enabled?: boolean;
+  mobile_money_enabled?: boolean;
+  bank_transfer_enabled?: boolean;
+  require_payment_before_application?: boolean;
+  payment_summary?: any;
+  // Application / cohort fields
+  application_start_date?: string | null;
+  application_end_date?: string | null;
+  cohort_start_date?: string | null;
+  cohort_end_date?: string | null;
+  cohort_label?: string | null;
+  application_timezone?: string;
+  application_window?: ApplicationWindowData | null;
+  application_windows?: ApplicationWindowData[];
+  is_published?: boolean;
+  start_date?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  // Additional computed fields
+  enrollment?: any;
+  progress?: any;
+}

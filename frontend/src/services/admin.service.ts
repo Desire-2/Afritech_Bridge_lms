@@ -19,6 +19,8 @@ export interface CourseFormData {
   estimated_duration?: string;
   instructor_id: number | string;
   is_published?: boolean;
+  thumbnail_url?: string | null;
+  difficulty_level?: string;
   enrollment_type?: 'free' | 'paid' | 'scholarship';
   price?: number | null;
   currency?: string;

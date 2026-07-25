@@ -1,6 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 
 // Enhanced mock opportunity data 
 const mockOpportunities = [
@@ -153,17 +154,14 @@ const PublicOpportunitiesPage: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <Link href="/" className="flex items-center gap-3">
-              <svg 
-                className="w-8 h-8 text-emerald-400"
-                viewBox="0 0 64 64" 
-                fill="none" 
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path 
-                  d="M32 0L38.9282 24H25.0718L32 0ZM50.954 18L57.8822 42H44.0258L50.954 18Z" 
-                  fill="currentColor"
-                />
-              </svg>
+              <Image
+                src="/logo.jpg"
+                alt="Afritec Bridge"
+                width={32}
+                height={32}
+                priority
+                className="w-8 h-8 rounded-full object-cover"
+              />
               <span className="text-xl font-bold text-white">Afritec Bridge</span>
             </Link>
             <Link 

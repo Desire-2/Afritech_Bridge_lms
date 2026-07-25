@@ -149,6 +149,8 @@ def create_course():
             estimated_duration=data.get('estimated_duration', ''),
             instructor_id=current_user_id,  # Already converted to int by helper
             is_published=data.get('is_published', False),
+            thumbnail_url=data.get('thumbnail_url'),
+            difficulty_level=data.get('difficulty_level'),
             application_start_date=application_start_date,
             application_end_date=application_end_date,
             cohort_start_date=cohort_start_date,
@@ -206,6 +208,10 @@ def update_course(course_id):
             course.estimated_duration = data['estimated_duration']
         if 'is_published' in data:
             course.is_published = data['is_published']
+        if 'thumbnail_url' in data:
+            course.thumbnail_url = data['thumbnail_url']
+        if 'difficulty_level' in data:
+            course.difficulty_level = data['difficulty_level']
 
         try:
             if 'application_start_date' in data:

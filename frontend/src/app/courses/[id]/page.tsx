@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, use, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChevronLeft, 
@@ -413,11 +414,28 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 text-white shadow-2xl"
+            className="relative overflow-hidden rounded-2xl text-white shadow-2xl bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600"
           >
-            <div className="absolute inset-0 bg-black/20" />
-            <div className="absolute -left-10 -top-10 h-48 w-48 rounded-full bg-white/15 blur-3xl" />
-            <div className="absolute -right-10 -bottom-16 h-56 w-56 rounded-full bg-indigo-400/30 blur-3xl" />
+            {/* Hero background image (optimized with Next.js Image) */}
+            {course.thumbnail_url && (
+              <Image
+                src={course.thumbnail_url}
+                alt={course.title}
+                fill
+                className="object-cover"
+                priority
+                sizes="100vw"
+              />
+            )}
+            {/* Dark overlay for readability */}
+            <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/50 to-black/40" />
+            {/* Decorative elements (only when no thumbnail) */}
+            {!course.thumbnail_url && (
+              <>
+                <div className="absolute -left-10 -top-10 h-48 w-48 rounded-full bg-white/15 blur-3xl" />
+                <div className="absolute -right-10 -bottom-16 h-56 w-56 rounded-full bg-indigo-400/30 blur-3xl" />
+              </>
+            )}
             <div className="relative p-8 md:p-12">
               <div className="grid md:grid-cols-2 gap-8 items-center">
                 <div className="space-y-6">
@@ -611,17 +629,9 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
                 {/* Course Image/Video Preview */}
                 <div className="relative">
                   <div className="aspect-video rounded-xl overflow-hidden bg-black/20 backdrop-blur-sm border border-white/20">
-                    {course.thumbnail_url ? (
-                      <img
-                        src={course.thumbnail_url}
-                        alt={course.title}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Play className="h-16 w-16 text-white/60" />
-                      </div>
-                    )}
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Play className="h-16 w-16 text-white/60" />
+                    </div>
                     <div className="absolute inset-0 bg-black/20" />
                     <div className="absolute inset-0 flex items-center justify-center">
                       <Button

@@ -36,6 +36,7 @@ export default function Header({ transparent = false }: HeaderProps) {
                   alt="Afritec Bridge"
                   width={32}
                   height={32}
+                  priority
                   className="w-full h-full object-contain rounded"
                 />
               </div>

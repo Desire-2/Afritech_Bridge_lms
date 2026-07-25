@@ -50,6 +50,10 @@ class Course(db.Model):
     cohort_label = db.Column(db.String(120), nullable=True)
     application_timezone = db.Column(db.String(64), nullable=False, default='UTC')
     
+    # Thumbnail / Media
+    thumbnail_url = db.Column(db.String(500), nullable=True)  # URL to course thumbnail image
+    difficulty_level = db.Column(db.String(20), nullable=True)  # 'beginner', 'intermediate', 'advanced'
+
     # Module Release Settings
     start_date = db.Column(db.DateTime, nullable=True)  # Course start date for module release calculations
     module_release_count = db.Column(db.Integer, nullable=True)  # Number of modules to release initially (None = all)
@@ -332,6 +336,8 @@ class Course(db.Model):
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
             'is_published': self.is_published,
+            'thumbnail_url': self.thumbnail_url,
+            'difficulty_level': self.difficulty_level,
             'enrollment_type': self.enrollment_type,
             'price': self.price,
             'currency': self.currency,

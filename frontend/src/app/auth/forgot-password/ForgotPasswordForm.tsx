@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api/v1';
 
@@ -99,17 +100,14 @@ export default function ForgotPasswordForm() {
       <div className="bg-white/5 backdrop-blur-sm p-8 rounded-2xl shadow-xl w-full max-w-md border border-white/10">
         {/* Company Logo */}
         <div className="flex items-center justify-center gap-3 mb-8">
-          <svg 
-            className="w-10 h-10 text-sky-400"
-            viewBox="0 0 64 64" 
-            fill="none" 
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path 
-              d="M32 0L38.9282 24H25.0718L32 0ZM50.954 18L57.8822 42H44.0258L50.954 18ZM13.046 18L19.9742 42H6.11783L13.046 18ZM32 48L38.9282 72H25.0718L32 48Z" 
-              fill="currentColor"
-            />
-          </svg>
+          <Image
+            src="/logo.jpg"
+            alt="Afritec Bridge"
+            width={40}
+            height={40}
+            priority
+            className="w-10 h-10 rounded-full object-cover"
+          />
           <h1 className="text-2xl font-bold text-white">Afritec Bridge LMS</h1>
         </div>
 
