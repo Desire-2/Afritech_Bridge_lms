@@ -516,11 +516,12 @@ export class GradingService {
   /**
    * Get summary of grading workload and statistics
    */
-  static async getGradingSummary(courseId?: number, cohortId?: number): Promise<GradingSummary> {
+  static async getGradingSummary(courseId?: number, cohortId?: number, cohortLabel?: string): Promise<GradingSummary> {
     try {
       const params = new URLSearchParams();
       if (courseId) params.append('course_id', String(courseId));
       if (cohortId) params.append('cohort_id', String(cohortId));
+      if (cohortLabel) params.append('cohort_label', cohortLabel);
       const queryString = params.toString();
       const url = queryString
         ? `${this.BASE_PATH}/analytics/summary?${queryString}`

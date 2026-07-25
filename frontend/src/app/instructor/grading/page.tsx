@@ -112,6 +112,7 @@ const GradingPage = () => {
   // ── Selection state ────────────────────
   const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
   const [selectedCohortId, setSelectedCohortId] = useState<number | null>(null);
+  const [selectedCohortLabel, setSelectedCohortLabel] = useState<string | null>(null);
   const [selectedCohortData, setSelectedCohortData] = useState<any>(null);
   const [selectedCourseData, setSelectedCourseData] = useState<Course | null>(null);
 
@@ -155,17 +156,20 @@ const GradingPage = () => {
   // Step 1: fetch courses on mount
   useEffect(() => {
     if (token) fetchCourses();
-  }, [token]);
-
-  // Restore from URL params on mount
+  }, [token]);    // Restore from URL params on mount
   useEffect(() => {
     const courseParam = searchParams.get('course_id');
     const cohortParam = searchParams.get('cohort_id');
+    const cohortLabelParam = searchParams.get('cohort_label');
     if (courseParam) {
       const cId = parseInt(courseParam);
       setSelectedCourseId(cId);
       if (cohortParam) {
         setSelectedCohortId(parseInt(cohortParam));
+        setStep('grading');
+      } else if (cohortLabelParam) {
+        // Restore legacy cohort (no ApplicationWindow) by cohort_label
+        setSelectedCohortLabel(decodeURIComponent(cohortLabelParam));
         setStep('grading');
       } else {
         setStep('cohorts');
@@ -187,15 +191,17 @@ const GradingPage = () => {
 
   // Step 3: fetch grading data when course + cohort are both selected
   useEffect(() => {
-    if (selectedCourseId && selectedCohortId && step === 'grading') {
+    if (selectedCourseId && (selectedCohortId !== null || selectedCohortLabel !== null) && step === 'grading') {
       fetchGradingData();
       fetchSummary();
-      fetchStudents(selectedCourseId, selectedCohortId);
-      const cohort = cohorts.find(c => c.id === selectedCohortId);
-      if (cohort) setSelectedCohortData(cohort);
+      fetchStudents(selectedCourseId, selectedCohortId, selectedCohortLabel);
+      if (selectedCohortId) {
+        const cohort = cohorts.find(c => c.id === selectedCohortId);
+        if (cohort) setSelectedCohortData(cohort);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCourseId, selectedCohortId, step, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent, currentPage]);
+  }, [selectedCourseId, selectedCohortId, selectedCohortLabel, step, selectedStatus, selectedType, selectedModule, selectedLesson, selectedStudent, currentPage]);
 
   // Fetch lessons when module changes
   useEffect(() => {
@@ -208,10 +214,19 @@ const GradingPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModule]);
 
+  // Fetch cohorts after URL param restoration when step is grading
+  // (fetches cohort data object to populate selectedCohortData)
+  useEffect(() => {
+    if (step === 'grading' && selectedCourseId && selectedCohortLabel && cohorts.length === 0) {
+      fetchCohorts(selectedCourseId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, selectedCourseId, selectedCohortLabel]);
+
   // ── Auto-refresh polling (30s) when on grading step ──
   // Picks up auto-grading results without manual refresh
   useEffect(() => {
-    if (step !== 'grading' || !selectedCourseId || !selectedCohortId) return;
+    if (step !== 'grading' || !selectedCourseId || (selectedCohortId === null && selectedCohortLabel === null)) return;
 
     const POLL_INTERVAL = 30_000; // 30 seconds
 
@@ -302,10 +317,13 @@ const GradingPage = () => {
     }
   };
 
-  const fetchStudents = async (courseId: number, cohortId?: number) => {
+  const fetchStudents = async (courseId: number, cohortId?: number | null, cohortLabel?: string | null) => {
     try {
-      let url = `${API_BASE_URL}/instructor/courses/${courseId}/enrollments`;
-      if (cohortId) url += `?cohort_id=${cohortId}`;
+      const params = new URLSearchParams();
+      if (cohortId) params.append('cohort_id', String(cohortId));
+      else if (cohortLabel) params.append('cohort_label', cohortLabel);
+      const qs = params.toString();
+      const url = `${API_BASE_URL}/instructor/courses/${courseId}/enrollments${qs ? `?${qs}` : ''}`;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       });
@@ -321,8 +339,7 @@ const GradingPage = () => {
     setGradingLoading(true);
     setError(null);
 
-    try {
-      const allFilters: SubmissionFilters = {
+    try {    const allFilters: SubmissionFilters = {
         status: 'all',
         page: 1,
         per_page: 200,
@@ -331,7 +348,8 @@ const GradingPage = () => {
         sort_order: 'desc',
         course_id: selectedCourseId!,
         cohort_id: selectedCohortId!,
-      };
+        cohort_label: selectedCohortLabel ?? undefined,
+    };
       if (selectedModule !== 'all') allFilters.module_id = parseInt(selectedModule);
       if (selectedLesson !== 'all') allFilters.lesson_id = parseInt(selectedLesson);
       if (selectedStudent !== 'all') allFilters.student_id = parseInt(selectedStudent);
@@ -457,7 +475,11 @@ const GradingPage = () => {
 
   const fetchSummary = async () => {
     try {
-      const summaryData = await GradingService.getGradingSummary(selectedCourseId!, selectedCohortId!);
+      const summaryData = await GradingService.getGradingSummary(
+        selectedCourseId!,
+        selectedCohortId!,
+        selectedCohortLabel ?? undefined
+      );
       setSummary(summaryData);
     } catch (err: any) {
       console.error('Failed to fetch grading summary:', err);
@@ -482,7 +504,10 @@ const GradingPage = () => {
   };
 
   const selectCohort = (cohort: any) => {
+    // For cohorts with a valid id (from ApplicationWindow), filter by cohort_id
+    // For legacy cohorts (id is null), fall back to filtering by cohort_label
     setSelectedCohortId(cohort.id);
+    setSelectedCohortLabel(cohort.cohort_label || null);
     setSelectedCohortData(cohort);
     setGradingItems([]);
     setSummary(null);
@@ -496,13 +521,17 @@ const GradingPage = () => {
     setSearchQuery('');
     setCurrentPage(1);
     setStep('grading');
-    router.push(`/instructor/grading?course_id=${selectedCourseId}&cohort_id=${cohort.id}`, { scroll: false });
+    const cohortQuery = cohort.id
+      ? `cohort_id=${cohort.id}`
+      : `cohort_label=${encodeURIComponent(cohort.cohort_label || '')}`;
+    router.push(`/instructor/grading?course_id=${selectedCourseId}&${cohortQuery}`, { scroll: false });
   };
 
   const goBackToCourses = () => {
     setSelectedCourseId(null);
     setSelectedCourseData(null);
     setSelectedCohortId(null);
+    setSelectedCohortLabel(null);
     setSelectedCohortData(null);
     setCohorts([]);
     setGradingItems([]);
@@ -514,6 +543,7 @@ const GradingPage = () => {
 
   const goBackToCohorts = () => {
     setSelectedCohortId(null);
+    setSelectedCohortLabel(null);
     setSelectedCohortData(null);
     setGradingItems([]);
     setSummary(null);
@@ -885,7 +915,7 @@ const GradingPage = () => {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-              {selectedCohortData?.cohort_label || 'Cohort'} — Assessments
+              {selectedCohortData?.cohort_label || selectedCohortLabel || 'Cohort'} — Assessments
             </h1>
             <p className="text-slate-600 dark:text-slate-400 mt-1 text-sm">
               {selectedCourseData?.title}

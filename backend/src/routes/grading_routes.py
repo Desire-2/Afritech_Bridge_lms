@@ -62,6 +62,7 @@ def get_assignment_submissions():
         # Get filter parameters
         course_id = request.args.get('course_id', type=int)
         cohort_id = request.args.get('cohort_id', type=int)  # application_window_id for cohort filtering
+        cohort_label = request.args.get('cohort_label', type=str)  # cohort_label fallback for legacy cohorts
         module_id = request.args.get('module_id', type=int)
         lesson_id = request.args.get('lesson_id', type=int)
         assignment_id = request.args.get('assignment_id', type=int)
@@ -85,10 +86,19 @@ def get_assignment_submissions():
         if course_id:
             query = query.filter(Assignment.course_id == course_id)
         
-        # Cohort filter: join through Enrollment to filter by application_window_id
+        # Cohort filter: join through Enrollment to filter by application_window_id OR cohort_label
         if cohort_id:
             cohort_student_ids = db.session.query(Enrollment.student_id).filter(
                 Enrollment.application_window_id == cohort_id,
+                Enrollment.status.in_(['active', 'completed'])
+            )
+            if course_id:
+                cohort_student_ids = cohort_student_ids.filter(Enrollment.course_id == course_id)
+            query = query.filter(AssignmentSubmission.student_id.in_(cohort_student_ids))
+        elif cohort_label:
+            # Fallback: filter by cohort_label for legacy cohorts without an ApplicationWindow
+            cohort_student_ids = db.session.query(Enrollment.student_id).filter(
+                Enrollment.cohort_label == cohort_label,
                 Enrollment.status.in_(['active', 'completed'])
             )
             if course_id:
@@ -920,9 +930,9 @@ def get_project_submissions():
         current_user_id = int(get_jwt_identity())
         
         # Get filter parameters
-        # Get filter parameters
         course_id = request.args.get('course_id', type=int)
         cohort_id = request.args.get('cohort_id', type=int)  # application_window_id for cohort filtering
+        cohort_label = request.args.get('cohort_label', type=str)  # cohort_label fallback for legacy cohorts
         module_id = request.args.get('module_id', type=int)
         lesson_id = request.args.get('lesson_id', type=int)
         project_id = request.args.get('project_id', type=int)
@@ -941,10 +951,19 @@ def get_project_submissions():
         if course_id:
             query = query.filter(Project.course_id == course_id)
         
-        # Cohort filter: join through Enrollment to filter by application_window_id
+        # Cohort filter: join through Enrollment to filter by application_window_id OR cohort_label
         if cohort_id:
             cohort_student_ids = db.session.query(Enrollment.student_id).filter(
                 Enrollment.application_window_id == cohort_id,
+                Enrollment.status.in_(['active', 'completed'])
+            )
+            if course_id:
+                cohort_student_ids = cohort_student_ids.filter(Enrollment.course_id == course_id)
+            query = query.filter(ProjectSubmission.student_id.in_(cohort_student_ids))
+        elif cohort_label:
+            # Fallback: filter by cohort_label for legacy cohorts without an ApplicationWindow
+            cohort_student_ids = db.session.query(Enrollment.student_id).filter(
+                Enrollment.cohort_label == cohort_label,
                 Enrollment.status.in_(['active', 'completed'])
             )
             if course_id:
@@ -1731,6 +1750,7 @@ def get_grading_summary():
         current_user_id = int(get_jwt_identity())
         course_id = request.args.get('course_id', type=int)
         cohort_id = request.args.get('cohort_id', type=int)  # application_window_id for cohort filtering
+        cohort_label = request.args.get('cohort_label', type=str)  # cohort_label fallback for legacy cohorts
         
         # Get instructor's courses
         courses_query = Course.query.filter_by(instructor_id=current_user_id)
@@ -1744,6 +1764,15 @@ def get_grading_summary():
         if cohort_id:
             cohort_student_subq = db.session.query(Enrollment.student_id).filter(
                 Enrollment.application_window_id == cohort_id,
+                Enrollment.status.in_(['active', 'completed'])
+            )
+            if course_id:
+                cohort_student_subq = cohort_student_subq.filter(Enrollment.course_id == course_id)
+            cohort_student_filter = cohort_student_subq
+        elif cohort_label:
+            # Fallback: filter by cohort_label for legacy cohorts without an ApplicationWindow
+            cohort_student_subq = db.session.query(Enrollment.student_id).filter(
+                Enrollment.cohort_label == cohort_label,
                 Enrollment.status.in_(['active', 'completed'])
             )
             if course_id:
