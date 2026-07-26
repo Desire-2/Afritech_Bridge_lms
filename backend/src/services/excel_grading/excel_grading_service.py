@@ -1191,6 +1191,10 @@ class ExcelGradingService:
                     'comment': data.get('comment', ''),
                 }
 
+            # NEW: Extract full rubric_data (includes rubric_metadata with
+            # task_checklist, theory_questions, all_formulas, etc.)
+            rubric_data = grading_result.get('rubric_data')
+
             result = ExcelGradingResult(
                 submission_type=submission_type,
                 assignment_submission_id=submission_id if submission_type == 'assignment' else None,
@@ -1204,6 +1208,7 @@ class ExcelGradingService:
                 max_score=grading_result.get('max_score', 100),
                 grade_letter=grading_result.get('grade', ''),
                 rubric_breakdown=strict_breakdown,
+                rubric_data=rubric_data,
                 analysis_data=grading_result.get('analysis_data'),
                 overall_feedback=feedback,
                 confidence=grading_result.get('confidence', 'medium'),

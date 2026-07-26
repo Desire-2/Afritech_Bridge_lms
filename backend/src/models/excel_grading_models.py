@@ -36,6 +36,10 @@ class ExcelGradingResult(db.Model):
     # Rubric breakdown (JSON matching the strict output schema)
     rubric_breakdown = Column(JSON, nullable=True)
 
+    # NEW: Full rubric data from the AI RubricGenerator (includes rubric_metadata,
+    # task_checklist, theory_questions, all_formulas, etc.)
+    rubric_data = Column(JSON, nullable=True)
+
     # Full analysis data (detailed workbook structure, formula list, etc.)
     analysis_data = Column(JSON, nullable=True)
 
@@ -87,6 +91,7 @@ class ExcelGradingResult(db.Model):
             'max_score': self.max_score,
             'grade_letter': self.grade_letter,
             'rubric_breakdown': self.rubric_breakdown,
+            'rubric_data': self.rubric_data,
             'analysis_data': self.analysis_data,
             'overall_feedback': self.overall_feedback,
             'confidence': self.confidence,
@@ -114,6 +119,7 @@ class ExcelGradingResult(db.Model):
             'max_score': self.max_score,
             'grade': self.grade_letter or '',
             'rubric_breakdown': self.rubric_breakdown or {},
+            'rubric_data': self.rubric_data,
             'overall_feedback': self.overall_feedback or '',
             'confidence': self.confidence,
             'manual_review_required': self.manual_review_required,
