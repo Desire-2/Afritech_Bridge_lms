@@ -591,6 +591,10 @@ class ExcelGradingService:
         Parse assignment description/instructions + module context into
         machine-checkable requirements.  Now also determines the *scope*
         — which rubric categories are relevant for this specific assignment.
+        
+        NEW: Analyzes task structure (parts, steps, deliverables) to build
+        an assignment-specific complexity profile that the GradingEngine
+        uses to calibrate per-criterion weights.
         """
         desc = (getattr(assignment_or_project, 'description', '') or '').lower()
         instructions = (getattr(assignment_or_project, 'instructions', '') or '').lower()
@@ -713,9 +717,57 @@ class ExcelGradingService:
         if sheets:
             requirements['required_sheets'] = [s.strip() for s in sheets]
 
+        # ═══════════════════════════════════════════════════════════════
+        # NEW: Task Structure Analysis — count parts, steps, deliverables
+        # ═══════════════════════════════════════════════════════════════
+        instructions_raw = getattr(assignment_or_project, 'instructions', '') or ''
+        
+        # Count parts (Part 1, Part 2, Section A, etc.)
+        part_pattern = re.compile(
+            r'(?:part|section|exercise|step|task)\s*(#?\d+|[a-d]\)|\([a-d]\)|[ivxlcdm]+)\.?',
+            re.IGNORECASE
+        )
+        parts_found = part_pattern.findall(instructions_raw)
+        task_part_count = max(len(parts_found), 1)
+        
+        # Count numbered steps (1. 2. 3. etc. at line starts)
+        step_pattern = re.compile(r'(?:^|\n)\s*(\d+)\.\s+', re.MULTILINE)
+        steps_found = step_pattern.findall(instructions_raw)
+        task_step_count = len(steps_found)
+        
+        # Count theoretical/written deliverables ("explain", "describe", "discuss", "justify")
+        theory_pattern = re.compile(
+            r'\b(explain|describe|discuss|justify|reflect|interpret|summarize|state|formulate|provide)\b',
+            re.IGNORECASE
+        )
+        theory_count = len(theory_pattern.findall(instructions_raw))
+        
+        # Count specific deliverables ("create", "build", "design", "construct", "implement")
+        deliverable_pattern = re.compile(
+            r'\b(create|build|design|construct|implement|develop|write|produce|prepare|set up)\b',
+            re.IGNORECASE
+        )
+        deliverable_count = len(deliverable_pattern.findall(instructions_raw))
+        
+        # Store task complexity metrics
+        requirements['_task_parts'] = task_part_count
+        requirements['_task_steps'] = task_step_count
+        requirements['_task_theory_count'] = theory_count
+        requirements['_task_deliverable_count'] = deliverable_count
+        requirements['_task_complexity_score'] = (
+            task_part_count * 3 + task_step_count * 1 + theory_count * 2 + deliverable_count * 2
+        )
+        
+        logger.info(
+            f"Task analysis for '{requirements.get('_assignment_title', '?')}': "
+            f"{task_part_count} parts, {task_step_count} steps, "
+            f"{theory_count} theory items, {deliverable_count} deliverables, "
+            f"complexity={requirements['_task_complexity_score']}"
+        )
+
         # ── Store raw context for feedback generator ──────────────────
         requirements['_assignment_title'] = getattr(assignment_or_project, 'title', '')
-        requirements['_assignment_instructions'] = getattr(assignment_or_project, 'instructions', '') or ''
+        requirements['_assignment_instructions'] = instructions_raw
         requirements['_module_title'] = getattr(module, 'title', '') if module else ''
         requirements['_module_order'] = getattr(module, 'order', None) if module else None
 

@@ -4,34 +4,20 @@ Excel Mastery Levels — Skill-level classification and grading expectations.
 Defines four mastery tiers:
 
   1. **Foundation** (Beginner) — Basic spreadsheet skills
-     Modules covering: data entry, basic formulas (SUM, AVERAGE, COUNT, IF),
-     simple charts, basic formatting, simple sorting/filtering.
-
   2. **Intermediate** — Competent spreadsheet user
-     Modules covering: SUMIFS/COUNTIFS, VLOOKUP/HLOOKUP, nested IFs,
-     PivotTables (basic), conditional formatting, data validation,
-     named ranges, basic charts with labels.
-
   3. **Advanced** — Power user
-     Modules covering: INDEX/MATCH, XLOOKUP, dynamic arrays, Power Query,
-     Data Model with relationships, complex PivotTables (calculated fields,
-     slicers), combo charts, dashboards, What-If Analysis, Solver.
-
   4. **Expert** — Professional/developer level
-     Modules covering: VBA programming, LAMBDA/LET, Power Pivot, DAX,
-     advanced M language, custom functions, automation, array manipulation,
-     complex data modelling, financial modelling, statistical analysis.
 
-Each level defines:
-  - Expected functions / features at that level
-  - Scoring expectations (what counts as "excellent" varies by level)
-  - Minimum expectations (what a student MUST demonstrate)
-  - Bonus features (what earns extra credit)
+Each level defines expected functions, features, scoring expectations, and
+feedback templates.
+
+NEW: Deep content analysis — detect level from actual assignment instructions
+by analyzing task complexity, concept density, and deliverables.
 """
 
 import re
 import logging
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List, Set
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +41,6 @@ MASTERY_LEVELS = {
             'data entry', 'spreadsheet basics',
         ],
 
-        # Expected functions at this level
         'expected_functions': {
             'SUM', 'AVERAGE', 'COUNT', 'COUNTA', 'MIN', 'MAX',
             'IF', 'ROUND', 'ABS', 'INT',
@@ -64,46 +49,23 @@ MASTERY_LEVELS = {
             'TODAY', 'NOW', 'DATE', 'YEAR', 'MONTH', 'DAY',
         },
 
-        # Features expected to be present
         'expected_features': {
             'basic_formulas', 'basic_formatting', 'sorting',
             'filtering', 'simple_charts',
         },
 
-        # Grading adjustments: how strict the grading should be per criterion
         'scoring_expectations': {
             'Formulas': {
-                'min_formulas': 3,         # Minimum formula count for full marks
-                'min_categories': 1,       # Minimum function category diversity
-                'min_advanced': 0,         # No advanced functions expected
-                'complexity_weight': 0.1,  # Lower weight on complexity
-                'presence_weight': 0.5,    # Higher weight on just having formulas
-                'diversity_weight': 0.2,   # Some diversity expected
-                'advanced_weight': 0.0,    # No weight on advanced functions
-                'error_handling_weight': 0.1,  # Minimal error handling expected
+                'min_formulas': 3, 'min_categories': 1, 'min_advanced': 0,
+                'complexity_weight': 0.1, 'presence_weight': 0.5,
+                'diversity_weight': 0.2, 'advanced_weight': 0.0,
+                'error_handling_weight': 0.1,
             },
-            'PivotTables': {
-                'expected': False,         # Not expected at this level
-                'bonus_if_present': True,  # Give bonus credit
-            },
-            'Charts': {
-                'min_charts': 1,
-                'require_titles': False,   # Don't penalise heavily for missing titles
-                'diversity_weight': 0.1,   # Minimal type diversity expected
-            },
-            'PowerQuery_M': {
-                'expected': False,
-                'bonus_if_present': True,
-            },
-            'VBA': {
-                'expected': False,
-                'bonus_if_present': True,
-            },
-            'Formatting': {
-                'min_score': 20,           # Basic formatting expected
-                'cf_expected': False,      # Conditional formatting not expected
-                'dv_expected': False,      # Data validation not expected
-            },
+            'PivotTables': {'expected': False, 'bonus_if_present': True},
+            'Charts': {'min_charts': 1, 'require_titles': False, 'diversity_weight': 0.1},
+            'PowerQuery_M': {'expected': False, 'bonus_if_present': True},
+            'VBA': {'expected': False, 'bonus_if_present': True},
+            'Formatting': {'min_score': 20, 'cf_expected': False, 'dv_expected': False},
         },
     },
 
@@ -130,8 +92,7 @@ MASTERY_LEVELS = {
             'TEXT', 'VALUE', 'TRIM',
             'DATE', 'TODAY', 'YEAR', 'MONTH', 'DAY',
             'EDATE', 'EOMONTH', 'DATEDIF',
-            'ROUND', 'ROUNDUP', 'ROUNDDOWN',
-            'SUBTOTAL',
+            'ROUND', 'ROUNDUP', 'ROUNDDOWN', 'SUBTOTAL',
         },
 
         'expected_features': {
@@ -142,39 +103,16 @@ MASTERY_LEVELS = {
 
         'scoring_expectations': {
             'Formulas': {
-                'min_formulas': 8,
-                'min_categories': 3,
-                'min_advanced': 1,
-                'complexity_weight': 0.2,
-                'presence_weight': 0.3,
-                'diversity_weight': 0.2,
-                'advanced_weight': 0.15,
+                'min_formulas': 8, 'min_categories': 3, 'min_advanced': 1,
+                'complexity_weight': 0.2, 'presence_weight': 0.3,
+                'diversity_weight': 0.2, 'advanced_weight': 0.15,
                 'error_handling_weight': 0.15,
             },
-            'PivotTables': {
-                'expected': True,
-                'min_pivots': 1,
-                'slicers_expected': False,
-                'calc_fields_expected': False,
-            },
-            'Charts': {
-                'min_charts': 1,
-                'require_titles': True,
-                'diversity_weight': 0.2,
-            },
-            'PowerQuery_M': {
-                'expected': False,
-                'bonus_if_present': True,
-            },
-            'VBA': {
-                'expected': False,
-                'bonus_if_present': True,
-            },
-            'Formatting': {
-                'min_score': 40,
-                'cf_expected': True,
-                'dv_expected': True,
-            },
+            'PivotTables': {'expected': True, 'min_pivots': 1, 'slicers_expected': False, 'calc_fields_expected': False},
+            'Charts': {'min_charts': 1, 'require_titles': True, 'diversity_weight': 0.2},
+            'PowerQuery_M': {'expected': False, 'bonus_if_present': True},
+            'VBA': {'expected': False, 'bonus_if_present': True},
+            'Formatting': {'min_score': 40, 'cf_expected': True, 'dv_expected': True},
         },
     },
 
@@ -213,40 +151,16 @@ MASTERY_LEVELS = {
 
         'scoring_expectations': {
             'Formulas': {
-                'min_formulas': 15,
-                'min_categories': 4,
-                'min_advanced': 3,
-                'complexity_weight': 0.3,
-                'presence_weight': 0.2,
-                'diversity_weight': 0.15,
-                'advanced_weight': 0.25,
+                'min_formulas': 15, 'min_categories': 4, 'min_advanced': 3,
+                'complexity_weight': 0.3, 'presence_weight': 0.2,
+                'diversity_weight': 0.15, 'advanced_weight': 0.25,
                 'error_handling_weight': 0.1,
             },
-            'PivotTables': {
-                'expected': True,
-                'min_pivots': 1,
-                'slicers_expected': True,
-                'calc_fields_expected': True,
-            },
-            'Charts': {
-                'min_charts': 2,
-                'require_titles': True,
-                'diversity_weight': 0.25,
-            },
-            'PowerQuery_M': {
-                'expected': True,
-                'min_queries': 1,
-                'merge_expected': True,
-            },
-            'VBA': {
-                'expected': False,
-                'bonus_if_present': True,
-            },
-            'Formatting': {
-                'min_score': 60,
-                'cf_expected': True,
-                'dv_expected': True,
-            },
+            'PivotTables': {'expected': True, 'min_pivots': 1, 'slicers_expected': True, 'calc_fields_expected': True},
+            'Charts': {'min_charts': 2, 'require_titles': True, 'diversity_weight': 0.25},
+            'PowerQuery_M': {'expected': True, 'min_queries': 1, 'merge_expected': True},
+            'VBA': {'expected': False, 'bonus_if_present': True},
+            'Formatting': {'min_score': 60, 'cf_expected': True, 'dv_expected': True},
         },
     },
 
@@ -285,50 +199,171 @@ MASTERY_LEVELS = {
 
         'scoring_expectations': {
             'Formulas': {
-                'min_formulas': 20,
-                'min_categories': 5,
-                'min_advanced': 5,
-                'complexity_weight': 0.3,
-                'presence_weight': 0.15,
-                'diversity_weight': 0.1,
-                'advanced_weight': 0.3,
+                'min_formulas': 20, 'min_categories': 5, 'min_advanced': 5,
+                'complexity_weight': 0.3, 'presence_weight': 0.15,
+                'diversity_weight': 0.1, 'advanced_weight': 0.3,
                 'error_handling_weight': 0.15,
             },
-            'PivotTables': {
-                'expected': True,
-                'min_pivots': 2,
-                'slicers_expected': True,
-                'calc_fields_expected': True,
-            },
-            'Charts': {
-                'min_charts': 2,
-                'require_titles': True,
-                'diversity_weight': 0.3,
-            },
-            'PowerQuery_M': {
-                'expected': True,
-                'min_queries': 2,
-                'merge_expected': True,
-            },
-            'VBA': {
-                'expected': True,
-                'min_modules': 1,
-                'min_procedures': 2,
-                'error_handling_expected': True,
-                'modularity_expected': True,
-            },
-            'Formatting': {
-                'min_score': 70,
-                'cf_expected': True,
-                'dv_expected': True,
-            },
+            'PivotTables': {'expected': True, 'min_pivots': 2, 'slicers_expected': True, 'calc_fields_expected': True},
+            'Charts': {'min_charts': 2, 'require_titles': True, 'diversity_weight': 0.3},
+            'PowerQuery_M': {'expected': True, 'min_queries': 2, 'merge_expected': True},
+            'VBA': {'expected': True, 'min_modules': 1, 'min_procedures': 2, 'error_handling_expected': True, 'modularity_expected': True},
+            'Formatting': {'min_score': 70, 'cf_expected': True, 'dv_expected': True},
         },
     },
 }
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Level Detection
+# NEW: Deep Content Analysis for Mastery Level Detection
+# ──────────────────────────────────────────────────────────────────────
+
+def analyze_assignment_complexity(
+    assignment_title: str = '',
+    assignment_description: str = '',
+    assignment_instructions: str = '',
+) -> Dict[str, Any]:
+    """
+    Deeply analyze assignment content to determine its actual cognitive complexity.
+    
+    Analyzes:
+      - Number of structured parts (Part 1, Part 2, etc.)
+      - Number of numbered tasks/steps
+      - Types of concepts mentioned (lookups, pivots, VBA, etc.)
+      - Presence of theoretical/reflection questions
+      - Deliverable complexity
+      - Instruction verbosity and detail level
+    
+    Returns:
+        Dict with complexity scores per category and overall level estimate.
+    """
+    text = f"{assignment_title} {assignment_description} {assignment_instructions}"
+    text_lower = text.lower()
+    
+    # Part counter — how many major sections?
+    part_pattern = re.compile(r'(?:part|section|exercise|task)\s*(#?\d+|[ivxlcdm]+)\.?', re.IGNORECASE)
+    parts_found = part_pattern.findall(text_lower)
+    part_count = max(len(parts_found), 1)
+    
+    # Step counter — how many numbered steps?
+    step_pattern = re.compile(r'(?:^|\n)\s*(\d+)\.\s+', re.MULTILINE)
+    steps_found = step_pattern.findall(text)
+    step_count = len(steps_found)
+    
+    # Word count — complexity signal
+    word_count = len(text.split())
+    
+    # ── Concept detection ───────────────────────────────────────────
+    concepts_detected = {
+        'vlookup': bool(re.search(r'vlookup', text_lower)),
+        'hlookup': bool(re.search(r'hlookup', text_lower)),
+        'xlookup': bool(re.search(r'xlookup', text_lower)),
+        'index_match': bool(re.search(r'index.*match|match.*index', text_lower)),
+        'pivot_table': bool(re.search(r'pivot\s*table|pivottable', text_lower)),
+        'pivot_chart': bool(re.search(r'pivot\s*chart|pivotchart', text_lower)),
+        'calculated_item': bool(re.search(r'calculated\s*item', text_lower)),
+        'calculated_field': bool(re.search(r'calculated\s*field', text_lower)),
+        'slicer': bool(re.search(r'slicer|timeline', text_lower)),
+        'data_model': bool(re.search(r'data\s*model|relationship', text_lower)),
+        'power_query': bool(re.search(r'power\s*query|get\s*&\s*transform|m\s*language', text_lower)),
+        'merge_query': bool(re.search(r'merge|append\s+query|combine\s+query', text_lower)),
+        'vba': bool(re.search(r'\bvba\b|macro|visual\s*basic|userform|module', text_lower)),
+        'event_handling': bool(re.search(r'event\s*handl|\bworkbook_open\b|\bworksheet_change\b', text_lower)),
+        'dynamic_array': bool(re.search(r'dynamic\s*array|filter\s*function|sort\s*function|unique\s*function|sequence\s*function', text_lower)),
+        'lambda': bool(re.search(r'\blambda\b', text_lower)),
+        'dax': bool(re.search(r'\bdax\b|measure', text_lower)),
+        'power_pivot': bool(re.search(r'power\s*pivot|data\s*model', text_lower)),
+        'financial': bool(re.search(r'npv|irr|pmt|financial\s*model|amorti', text_lower)),
+        'statistical': bool(re.search(r'regression|correlation|hypothesis|anova|t-test|monte\s*carlo', text_lower)),
+        'monte_carlo': bool(re.search(r'monte\s*carlo|simulation', text_lower)),
+        'dashboard': bool(re.search(r'dashboard|kpi', text_lower)),
+        'data_validation': bool(re.search(r'data\s*validation|dropdown|validation\s*rule', text_lower)),
+        'conditional_formatting': bool(re.search(r'conditional\s*format', text_lower)),
+        'class_module': bool(re.search(r'class\s*module|custom\s*object|oop|object.orient', text_lower)),
+        'error_handling': bool(re.search(r'error\s*handl|on\s*error|try\.*catch|err\.number', text_lower)),
+        'userform': bool(re.search(r'userform|user\s*form|dialog\s*box|form\s*control', text_lower)),
+        'solver': bool(re.search(r'solver|optimization|optimization', text_lower)),
+        'what_if': bool(re.search(r'what.if|scenario\s*manager|goal\s*seek|data\s*table', text_lower)),
+        'power_bi': bool(re.search(r'power\s*bi|powerbi|power\s*bi\s*service', text_lower)),
+        'gateway': bool(re.search(r'data\s*gateway|on.premise\s*gateway', text_lower)),
+        'query_folding': bool(re.search(r'query\s*folding|native\s*query', text_lower)),
+        'named_range': bool(re.search(r'named\s*range|name\s*manager', text_lower)),
+        'protection': bool(re.search(r'sheet\s*protect|workbook\s*protect|password', text_lower)),
+        'collection': bool(re.search(r'dictionary|collection|array\s*list', text_lower)),
+        'vba_class': bool(re.search(r'class\s*module|property\s*get|property\s*let', text_lower)),
+        'vba_events': bool(re.search(r'workbook_open|workbook_beforesave|worksheet_change|worksheet_selectionchange', text_lower)),
+    }
+    
+    # ── Complexity score calculation ────────────────────────────────
+    # Weight each concept by its cognitive level
+    concept_level_weights = {
+        'vlookup': 2, 'hlookup': 2, 'xlookup': 3, 'index_match': 3,
+        'pivot_table': 2, 'pivot_chart': 2.5, 'calculated_item': 3, 'calculated_field': 3,
+        'slicer': 2.5, 'data_model': 3.5, 'power_query': 3, 'merge_query': 3.5,
+        'vba': 4, 'event_handling': 4, 'dynamic_array': 3, 'lambda': 4,
+        'dax': 4, 'power_pivot': 3.5, 'financial': 3.5,
+        'statistical': 3.5, 'monte_carlo': 4,
+        'dashboard': 3, 'data_validation': 2, 'conditional_formatting': 2,
+        'class_module': 4, 'error_handling': 3, 'userform': 3.5,
+        'solver': 3.5, 'what_if': 3, 'power_bi': 3.5,
+        'gateway': 3.5, 'query_folding': 3.5, 'named_range': 2,
+        'protection': 2.5, 'collection': 4, 'vba_class': 4, 'vba_events': 4,
+    }
+    
+    # Count active concepts and compute weighted complexity
+    active_concepts = {k: v for k, v in concepts_detected.items() if v}
+    concept_count = len(active_concepts)
+    
+    weighted_complexity = sum(
+        concept_level_weights.get(k, 2) for k in active_concepts.keys()
+    )
+    
+    # Average concept complexity
+    avg_concept_complexity = weighted_complexity / max(concept_count, 1)
+    
+    # ── Mastery level from content analysis ───────────────────────
+    if avg_concept_complexity >= 3.8:
+        content_level = 'expert'
+    elif avg_concept_complexity >= 3.0:
+        content_level = 'advanced'
+    elif avg_concept_complexity >= 2.0:
+        content_level = 'intermediate'
+    else:
+        content_level = 'foundation'
+    
+    # Additional signals to shift level
+    if concept_count >= 10:
+        # Many different concepts → higher level
+        content_level = _bump_level(content_level, 1)
+    if word_count > 1500 and avg_concept_complexity > 2.5:
+        # Long instructions with moderate complexity → advanced
+        content_level = _bump_level(content_level, 1)
+    
+    return {
+        'content_level': content_level,
+        'concept_count': concept_count,
+        'weighted_complexity': round(weighted_complexity, 1),
+        'avg_concept_complexity': round(avg_concept_complexity, 2),
+        'part_count': part_count,
+        'step_count': step_count,
+        'word_count': word_count,
+        'concepts_detected': active_concepts,
+        'concept_names': list(active_concepts.keys()),
+    }
+
+
+def _bump_level(current: str, steps: int = 1) -> str:
+    """Move up N levels from current."""
+    levels = ['foundation', 'intermediate', 'advanced', 'expert']
+    try:
+        idx = levels.index(current)
+        return levels[min(len(levels) - 1, idx + steps)]
+    except ValueError:
+        return current
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Level Detection (Enhanced)
 # ──────────────────────────────────────────────────────────────────────
 
 def detect_mastery_level(
@@ -341,15 +376,15 @@ def detect_mastery_level(
 ) -> Dict[str, Any]:
     """
     Detect the mastery level from module/assignment metadata.
-
-    Uses a weighted scoring system:
-      - Title keyword matching (primary signal)
-      - Description/instructions keyword matching (secondary)
-      - Module order/number (tertiary, fallback)
-
+    
+    Uses a three-signal approach:
+      1. **Title keyword matching** (primary signal)
+      2. **Content complexity analysis** (new — deep task analysis)
+      3. **Module order** (tertiary fallback)
+    
     Returns:
         Dict with level_id, level_name, level_number, confidence,
-        scoring_expectations, and matched_keywords.
+        scoring_expectations, matched_keywords, and content_analysis.
     """
     all_text = ' '.join(filter(None, [
         module_title, module_description, module_objectives,
@@ -364,7 +399,6 @@ def detect_mastery_level(
         keywords_matched = []
 
         for kw in level_def['title_keywords']:
-            # Title matches are worth more
             if kw in (module_title or '').lower():
                 score += 3.0
                 keywords_matched.append(f"title:{kw}")
@@ -375,14 +409,12 @@ def detect_mastery_level(
                 score += 1.0
                 keywords_matched.append(kw)
 
-        # Check for expected feature keywords in text
         for feature in level_def.get('expected_features', set()):
             feature_readable = feature.replace('_', ' ')
             if feature_readable in all_text:
                 score += 1.5
                 keywords_matched.append(f"feature:{feature_readable}")
 
-        # Check for expected function names in text
         for func in level_def.get('expected_functions', set()):
             if func.lower() in all_text:
                 score += 0.5
@@ -391,11 +423,24 @@ def detect_mastery_level(
         scores[level_id] = score
         matched[level_id] = keywords_matched
 
-    # Find the best match
+    # ── Content analysis (new) ────────────────────────────────────
+    content_analysis = analyze_assignment_complexity(
+        assignment_title=assignment_title,
+        assignment_description='',
+        assignment_instructions=assignment_instructions,
+    )
+    content_level = content_analysis['content_level']
+    
+    # Boost score for the content-detected level
+    scores[content_level] = scores.get(content_level, 0) + 5.0
+    matched.setdefault(content_level, []).append(
+        f"content_analysis:{content_level} ({content_analysis['avg_concept_complexity']})"
+    )
+
     best_level = max(scores, key=scores.get)
     best_score = scores[best_level]
 
-    # If no keywords matched, use module order as fallback
+    # Fallback to module order if no strong signal
     if best_score < 1.0 and module_order is not None:
         if module_order <= 2:
             best_level = 'foundation'
@@ -405,16 +450,15 @@ def detect_mastery_level(
             best_level = 'advanced'
         else:
             best_level = 'expert'
-
         confidence = 'low'
-    elif best_score < 3.0:
+    elif best_score < 5.0:
         confidence = 'low'
-    elif best_score < 8.0:
+    elif best_score < 10.0:
         confidence = 'medium'
     else:
         confidence = 'high'
 
-    level_def = MASTERY_LEVELS[best_level]
+    level_def = MASTERY_LEVELS.get(best_level, MASTERY_LEVELS['intermediate'])
 
     return {
         'level_id': best_level,
@@ -429,61 +473,53 @@ def detect_mastery_level(
         'expected_functions': level_def['expected_functions'],
         'expected_features': level_def['expected_features'],
         'all_scores': {k: round(v, 1) for k, v in scores.items()},
+        'content_analysis': content_analysis,
     }
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Helper functions (unchanged)
+# ──────────────────────────────────────────────────────────────────────
+
 def get_level_expectations(level_id: str) -> Dict[str, Any]:
-    """Get the full level definition by ID."""
     return MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Level-Aware Scoring Helpers
-# ──────────────────────────────────────────────────────────────────────
-
 def get_formula_scoring_params(level_id: str) -> Dict[str, Any]:
-    """Get formula scoring parameters for the given level."""
     level = MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
     return level['scoring_expectations'].get('Formulas', {})
 
 
 def get_pivot_expectations(level_id: str) -> Dict[str, Any]:
-    """Get PivotTable expectations for the given level."""
     level = MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
     return level['scoring_expectations'].get('PivotTables', {})
 
 
 def get_chart_expectations(level_id: str) -> Dict[str, Any]:
-    """Get chart expectations for the given level."""
     level = MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
     return level['scoring_expectations'].get('Charts', {})
 
 
 def get_pq_expectations(level_id: str) -> Dict[str, Any]:
-    """Get Power Query expectations for the given level."""
     level = MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
     return level['scoring_expectations'].get('PowerQuery_M', {})
 
 
 def get_vba_expectations(level_id: str) -> Dict[str, Any]:
-    """Get VBA expectations for the given level."""
     level = MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
     return level['scoring_expectations'].get('VBA', {})
 
 
 def get_formatting_expectations(level_id: str) -> Dict[str, Any]:
-    """Get formatting expectations for the given level."""
     level = MASTERY_LEVELS.get(level_id, MASTERY_LEVELS['intermediate'])
     return level['scoring_expectations'].get('Formatting', {})
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Excel Expert Knowledge Base — Comprehensive Function Taxonomy
+# Knowledge Base (unchanged from original)
 # ──────────────────────────────────────────────────────────────────────
 
-# Complete reference of all Excel function categories with mastery level tags
 EXCEL_FUNCTION_TAXONOMY = {
-    # ── Basic Math & Arithmetic (Foundation) ──────────────────────
     'basic_math': {
         'level': 'foundation',
         'functions': {
@@ -499,8 +535,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'LOG', 'LOG10', 'LN', 'EXP',
         },
     },
-
-    # ── Statistical Analysis (Intermediate → Advanced) ────────────
     'statistical': {
         'level': 'intermediate',
         'functions': {
@@ -519,8 +553,7 @@ EXCEL_FUNCTION_TAXONOMY = {
             'CONFIDENCE', 'CONFIDENCE.NORM', 'CONFIDENCE.T',
             'AVERAGEIF', 'AVERAGEIFS',
             'GEOMEAN', 'HARMEAN', 'TRIMMEAN',
-            'DEVSQ', 'AVEDEV',
-            'SKEW', 'KURT',
+            'DEVSQ', 'AVEDEV', 'SKEW', 'KURT',
             'NORM.DIST', 'NORM.INV', 'NORM.S.DIST', 'NORM.S.INV',
             'T.DIST', 'T.INV', 'T.DIST.2T', 'T.INV.2T', 'T.TEST',
             'F.DIST', 'F.INV', 'F.DIST.RT', 'F.INV.RT', 'F.TEST',
@@ -533,8 +566,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'PROB', 'PERMUT', 'PERMUTATIONA',
         },
     },
-
-    # ── Logical Functions (Foundation → Intermediate) ─────────────
     'logical': {
         'level': 'foundation',
         'functions': {
@@ -543,8 +574,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'TRUE', 'FALSE',
         },
     },
-
-    # ── Lookup & Reference (Intermediate → Expert) ────────────────
     'lookup_reference': {
         'level': 'intermediate',
         'functions': {
@@ -556,8 +585,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'AREAS', 'TRANSPOSE',
         },
     },
-
-    # ── Text & String Manipulation (Foundation → Intermediate) ────
     'text': {
         'level': 'foundation',
         'functions': {
@@ -571,8 +598,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'VALUETOTEXT', 'ARRAYTOTEXT',
         },
     },
-
-    # ── Date & Time (Foundation → Intermediate) ───────────────────
     'date_time': {
         'level': 'foundation',
         'functions': {
@@ -584,8 +609,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'YEARFRAC', 'DAYS', 'DAYS360',
         },
     },
-
-    # ── Conditional Aggregation (Intermediate) ────────────────────
     'conditional_aggregation': {
         'level': 'intermediate',
         'functions': {
@@ -594,8 +617,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'SUMPRODUCT',
         },
     },
-
-    # ── Dynamic Array (Advanced → Expert) ─────────────────────────
     'dynamic_array': {
         'level': 'advanced',
         'functions': {
@@ -608,8 +629,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'EXPAND', 'GROUPBY', 'PIVOTBY',
         },
     },
-
-    # ── Error Handling & Information (Foundation → Intermediate) ───
     'error_handling': {
         'level': 'foundation',
         'functions': {
@@ -619,17 +638,10 @@ EXCEL_FUNCTION_TAXONOMY = {
             'ERROR.TYPE', 'TYPE', 'N', 'NA',
         },
     },
-
-    # ── Information Functions (Intermediate) ──────────────────────
     'information': {
         'level': 'intermediate',
-        'functions': {
-            'CELL', 'INFO', 'SHEET', 'SHEETS',
-            'TYPE', 'FORMULATEXT', 'ISFORMULA',
-        },
+        'functions': {'CELL', 'INFO', 'SHEET', 'SHEETS', 'TYPE', 'FORMULATEXT', 'ISFORMULA'},
     },
-
-    # ── Financial Functions (Advanced → Expert) ───────────────────
     'financial': {
         'level': 'advanced',
         'functions': {
@@ -641,16 +653,14 @@ EXCEL_FUNCTION_TAXONOMY = {
             'DISC', 'INTRATE', 'PRICEDISC', 'PRICEMAT',
             'RECEIVED', 'YIELD', 'YIELDDISC', 'YIELDMAT',
             'PRICE', 'ACCRINT', 'ACCRINTM',
-            'DURATION', 'MDURATION', 'COUPDAYBS', 'COUPDAYS',
-            'COUPDAYSNC', 'COUPNCD', 'COUPNUM', 'COUPPCD',
+            'DURATION', 'MDURATION',
+            'COUPDAYBS', 'COUPDAYS', 'COUPDAYSNC', 'COUPNCD', 'COUPNUM', 'COUPPCD',
             'TBILLEQ', 'TBILLPRICE', 'TBILLYIELD',
             'ODDFPRICE', 'ODDFYIELD', 'ODDLPRICE', 'ODDLYIELD',
             'AMORLINC', 'AMORDEGRC',
             'FVSCHEDULE', 'PDURATION', 'RRI',
         },
     },
-
-    # ── Database Functions (Intermediate → Advanced) ──────────────
     'database': {
         'level': 'intermediate',
         'functions': {
@@ -659,8 +669,6 @@ EXCEL_FUNCTION_TAXONOMY = {
             'DSTDEV', 'DSTDEVP', 'DPRODUCT',
         },
     },
-
-    # ── Engineering Functions (Expert) ────────────────────────────
     'engineering': {
         'level': 'expert',
         'functions': {
@@ -679,16 +687,10 @@ EXCEL_FUNCTION_TAXONOMY = {
             'BITAND', 'BITOR', 'BITXOR', 'BITLSHIFT', 'BITRSHIFT',
         },
     },
-
-    # ── Web Functions (Advanced) ──────────────────────────────────
     'web': {
         'level': 'advanced',
-        'functions': {
-            'ENCODEURL', 'FILTERXML', 'WEBSERVICE',
-        },
+        'functions': {'ENCODEURL', 'FILTERXML', 'WEBSERVICE'},
     },
-
-    # ── Cube Functions (Expert — Power Pivot) ─────────────────────
     'cube': {
         'level': 'expert',
         'functions': {
@@ -700,104 +702,67 @@ EXCEL_FUNCTION_TAXONOMY = {
 }
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Comprehensive Excel Concept Reference
-# ──────────────────────────────────────────────────────────────────────
-
 EXCEL_CONCEPTS_BY_LEVEL = {
     'foundation': [
-        'Cell references (A1, B2)',
-        'Relative vs absolute references ($A$1)',
+        'Cell references (A1, B2)', 'Relative vs absolute references ($A$1)',
         'Basic formulas (SUM, AVERAGE, COUNT, MIN, MAX)',
         'IF function for conditional logic',
         'Text functions (CONCATENATE, LEFT, RIGHT, MID)',
         'Date functions (TODAY, NOW, DATE)',
         'Number formatting (currency, percentage, dates)',
         'Cell formatting (bold, colour, borders, alignment)',
-        'Sorting data (A-Z, Z-A, custom sort)',
-        'Filtering data (AutoFilter)',
-        'Simple bar, line, and pie charts',
-        'Printing and page layout basics',
-        'Freeze panes and split windows',
-        'Fill handle and AutoFill series',
-        'Find & Replace',
-        'Tables (Format as Table, Ctrl+T)',
-        'Basic data entry and editing',
-        'Paste Special (values, formulas, formats)',
+        'Sorting data (A-Z, Z-A, custom sort)', 'Filtering data (AutoFilter)',
+        'Simple bar, line, and pie charts', 'Printing and page layout basics',
+        'Freeze panes and split windows', 'Fill handle and AutoFill series',
+        'Find & Replace', 'Tables (Format as Table, Ctrl+T)',
+        'Basic data entry and editing', 'Paste Special (values, formulas, formats)',
         'Workbook and worksheet management',
     ],
-
     'intermediate': [
-        'VLOOKUP and HLOOKUP functions',
-        'Nested IF statements',
-        'SUMIF/SUMIFS/COUNTIF/COUNTIFS',
-        'AVERAGEIF/AVERAGEIFS',
-        'IFERROR error handling',
-        'Named ranges and Name Manager',
+        'VLOOKUP and HLOOKUP functions', 'Nested IF statements',
+        'SUMIF/SUMIFS/COUNTIF/COUNTIFS', 'AVERAGEIF/AVERAGEIFS',
+        'IFERROR error handling', 'Named ranges and Name Manager',
         'Data validation (dropdown lists, input rules)',
         'Conditional formatting (rules, data bars, colour scales, icon sets)',
         'Basic PivotTables (row/column/value fields)',
         'PivotTable grouping (dates, numbers)',
-        'Sorting and filtering PivotTables',
-        'Basic PivotCharts',
-        'SUMPRODUCT for multi-criteria calculations',
-        'Text-to-Columns',
-        'Remove Duplicates',
-        'Flash Fill',
-        'Subtotals and outlining',
-        'Multiple worksheets (3D references)',
-        'Goal Seek',
-        'Data tables (one-variable, two-variable)',
-        'Protection (sheet, workbook, cells)',
-        'Custom number formats',
-        'Sparklines (line, column, win/loss)',
-        'Comments and Notes',
-        'Hyperlinks within and between workbooks',
-        'Database functions (DSUM, DGET, DCOUNT)',
+        'Sorting and filtering PivotTables', 'Basic PivotCharts',
+        'SUMPRODUCT for multi-criteria calculations', 'Text-to-Columns',
+        'Remove Duplicates', 'Flash Fill',
+        'Subtotals and outlining', 'Multiple worksheets (3D references)',
+        'Goal Seek', 'Data tables (one-variable, two-variable)',
+        'Protection (sheet, workbook, cells)', 'Custom number formats',
+        'Sparklines (line, column, win/loss)', 'Comments and Notes',
+        'Hyperlinks within and between workbooks', 'Database functions (DSUM, DGET, DCOUNT)',
     ],
-
     'advanced': [
-        'INDEX/MATCH combination',
-        'XLOOKUP and XMATCH',
+        'INDEX/MATCH combination', 'XLOOKUP and XMATCH',
         'Dynamic array functions (FILTER, SORT, UNIQUE, SEQUENCE)',
         'Array formulas (Ctrl+Shift+Enter legacy)',
         'Power Query (Get & Transform)',
         'Power Query transformations (merge, append, group by, unpivot)',
         'M language basics in Power Query',
         'Data Model (relationships between tables)',
-        'PivotTables from Data Model',
-        'Calculated fields in PivotTables',
-        'Calculated items in PivotTables',
-        'Slicers and timelines',
-        'GETPIVOTDATA function',
-        'Dashboard design',
+        'PivotTables from Data Model', 'Calculated fields in PivotTables',
+        'Calculated items in PivotTables', 'Slicers and timelines',
+        'GETPIVOTDATA function', 'Dashboard design',
         'Combo charts and secondary axes',
         'Advanced conditional formatting (formulas)',
-        'What-If Analysis (Scenario Manager)',
-        'Solver for optimisation problems',
-        'INDIRECT and dynamic references',
-        'OFFSET for dynamic ranges',
-        'SUMPRODUCT advanced patterns',
-        'Structured references (Table[@Column])',
-        'TEXTJOIN, CONCAT',
-        'Advanced chart formatting (trendlines, error bars)',
-        'External data connections',
-        'Consolidation across workbooks',
+        'What-If Analysis (Scenario Manager)', 'Solver for optimisation problems',
+        'INDIRECT and dynamic references', 'OFFSET for dynamic ranges',
+        'SUMPRODUCT advanced patterns', 'Structured references (Table[@Column])',
+        'TEXTJOIN, CONCAT', 'Advanced chart formatting (trendlines, error bars)',
+        'External data connections', 'Consolidation across workbooks',
         'Form controls (buttons, checkboxes, dropdowns)',
     ],
-
     'expert': [
         'VBA programming (Sub, Function, variables, loops)',
-        'VBA error handling (On Error)',
-        'VBA UserForms design',
+        'VBA error handling (On Error)', 'VBA UserForms design',
         'VBA working with ranges, worksheets, workbooks',
         'VBA events (Workbook_Open, Worksheet_Change)',
-        'VBA class modules and OOP',
-        'LAMBDA function and custom functions',
-        'LET for intermediate variables',
-        'MAP, REDUCE, SCAN for array manipulation',
-        'BYROW, BYCOL for row/column operations',
-        'MAKEARRAY for custom array generation',
+        'VBA class modules and OOP', 'LAMBDA function and custom functions',
+        'LET for intermediate variables', 'MAP, REDUCE, SCAN for array manipulation',
+        'BYROW, BYCOL for row/column operations', 'MAKEARRAY for custom array generation',
         'Power Pivot and DAX basics',
         'DAX measures (CALCULATE, SUMX, RELATED)',
         'DAX time intelligence (SAMEPERIODLASTYEAR, DATEADD)',
@@ -805,12 +770,10 @@ EXCEL_CONCEPTS_BY_LEVEL = {
         'Financial modelling (NPV, IRR, PMT, amortisation)',
         'Sensitivity analysis and scenario modelling',
         'Statistical analysis (regression, hypothesis testing)',
-        'Engineering functions',
-        'Cube functions for OLAP',
+        'Engineering functions', 'Cube functions for OLAP',
         'Custom number format codes',
         'Advanced array manipulation (HSTACK, VSTACK, TOCOL, TOROW)',
-        'Regular expressions via VBA',
-        'Add-in development',
+        'Regular expressions via VBA', 'Add-in development',
         'Performance optimisation (volatile functions, calculation modes)',
         'Collaboration (co-authoring, version history)',
     ],
@@ -818,7 +781,7 @@ EXCEL_CONCEPTS_BY_LEVEL = {
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Level-Aware Feedback Templates
+# Level-Aware Feedback Templates (unchanged from original)
 # ──────────────────────────────────────────────────────────────────────
 
 LEVEL_FEEDBACK_TEMPLATES = {
@@ -838,7 +801,7 @@ LEVEL_FEEDBACK_TEMPLATES = {
         'criterion_suggestions': {
             'Formulas': {
                 0: "Start with basic formulas: type =SUM(A1:A10) to add numbers, =AVERAGE(B1:B5) for averages, and =COUNT(C1:C20) to count entries. These are the building blocks of all Excel work.",
-                30: "Good start with formulas! Next, try using =IF(A1>50, \"Pass\", \"Fail\") for conditional logic, and =ROUND(B1, 2) for rounding. Practice referencing cells instead of typing numbers directly.",
+                30: "Good start with formulas! Next, try using =IF(A1>50, \\\"Pass\\\", \\\"Fail\\\") for conditional logic, and =ROUND(B1, 2) for rounding. Practice referencing cells instead of typing numbers directly.",
                 60: "Nice formula work! To reach the next level, try =CONCATENATE() or =TEXTJOIN() for combining text, and learn the difference between relative (A1) and absolute ($A$1) references.",
             },
             'Charts': {
@@ -853,7 +816,6 @@ LEVEL_FEEDBACK_TEMPLATES = {
             },
         },
     },
-
     'intermediate': {
         'opening_excellent': (
             "Outstanding work! Your competency with intermediate Excel features is impressive. "
@@ -886,7 +848,6 @@ LEVEL_FEEDBACK_TEMPLATES = {
             },
         },
     },
-
     'advanced': {
         'opening_excellent': (
             "Exceptional work! Your mastery of advanced Excel features is evident. "
@@ -905,7 +866,7 @@ LEVEL_FEEDBACK_TEMPLATES = {
         'criterion_suggestions': {
             'Formulas': {
                 0: "Advanced work requires INDEX/MATCH or XLOOKUP for flexible lookups, dynamic array functions (FILTER, SORT, UNIQUE), and SUMPRODUCT for multi-criteria analysis. Start incorporating these.",
-                30: "You need more advanced formulas. Use XLOOKUP with match_mode and search_mode parameters, dynamic arrays (=FILTER(A:A, B:B=\"criteria\")), and LET() to simplify complex calculations.",
+                30: "You need more advanced formulas. Use XLOOKUP with match_mode and search_mode parameters, dynamic arrays (=FILTER(A:A, B:B=\\\"criteria\\\")), and LET() to simplify complex calculations.",
                 60: "Good advanced formula usage! Consider using INDIRECT for dynamic references, OFFSET for dynamic named ranges, and combining FILTER with SORT for powerful data extraction.",
             },
             'PivotTables': {
@@ -920,7 +881,6 @@ LEVEL_FEEDBACK_TEMPLATES = {
             },
         },
     },
-
     'expert': {
         'opening_excellent': (
             "Outstanding professional-level work! Your mastery of VBA, advanced formulas, "

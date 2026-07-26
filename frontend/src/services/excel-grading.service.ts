@@ -22,6 +22,71 @@ export interface FlaggedIssue {
   description: string;
 }
 
+// ─── NEW: Rubric metadata types (from backend RubricGenerator) ─────────────
+
+export interface RubricTaskChecklistItem {
+  task_number: number;
+  task_text: string;
+  task_type: string;
+  is_theory: boolean;
+  deliverables: string[];
+  formulas: string[];
+  expected_sheets: string[];
+}
+
+export interface TasksSummaryItem {
+  number: number;
+  text: string;
+  type: string;
+  is_theory: boolean;
+  formulas: string[];
+  deliverables: string[];
+}
+
+export interface TheoryQuestion {
+  task_number: number;
+  text: string;
+}
+
+export interface RubricMetadata {
+  total_tasks: number;
+  theory_tasks: number;
+  auto_gradable_tasks: number;
+  total_formulas_requested: number;
+  total_deliverables_requested: number;
+  all_formulas: string[];
+  all_deliverables: string[];
+  tasks_summary: TasksSummaryItem[];
+  theory_questions: TheoryQuestion[];
+}
+
+export interface RubricCriterion {
+  name: string;
+  description: string;
+  category: string;
+  expected_elements: string[];
+  max_points: number;
+  task_count: number;
+  concept_count: number;
+  raw_weight: number;
+  task_checklist: RubricTaskChecklistItem[];
+  all_formulas: string[];
+  all_deliverables: string[];
+  theory_questions: TheoryQuestion[];
+  theory_count: number;
+}
+
+export interface RubricData {
+  criteria: RubricCriterion[];
+  total_points: number;
+  parts: any[];
+  scope: Record<string, boolean>;
+  generation_method: string;
+  task_count: number;
+  concept_count: number;
+  rubric_metadata: RubricMetadata;
+}
+
 /** Full AI grading result (instructor view) */
 export interface ExcelGradingResult {
   id: number;
@@ -38,6 +103,8 @@ export interface ExcelGradingResult {
   max_score: number;
   grade_letter: string;
   rubric_breakdown: Record<string, RubricItem>;
+  // NEW: Full rubric data from the AI RubricGenerator
+  rubric_data?: RubricData;
   analysis_data?: Record<string, any>;
   overall_feedback: string;
   confidence: 'high' | 'medium' | 'low';
@@ -66,6 +133,8 @@ export interface StudentGradingResult {
   max_score: number;
   grade_letter: string;
   rubric_breakdown: Record<string, RubricItem>;
+  // NEW: Full rubric data from the AI RubricGenerator
+  rubric_data?: RubricData;
   overall_feedback: string;
   confidence: string;
   graded_at?: string;

@@ -398,11 +398,14 @@ class RubricGenerator:
         Generate a rubric from assignment text.
 
         Returns a dict with:
-          - criteria: list of {name, description, max_points, expected_elements}
+          - criteria: list of {name, description, max_points, expected_elements,
+                               task_checklist, all_formulas, all_deliverables, theory_questions}
           - total_points: float
           - parts: list of detected assignment parts
           - scope: {scope_formulas, scope_pivots, …}  flags
           - generation_method: 'instruction_analysis'
+          - rubric_metadata: {total_tasks, theory_tasks, auto_gradable_tasks,
+                              all_formulas, all_deliverables, tasks_summary}
         """
         self.max_points = points_possible or 100.0
 
@@ -437,7 +440,58 @@ class RubricGenerator:
         # Step 6: Derive scope flags from criteria categories
         scope = self._derive_scope(criteria)
 
-        # Step 7: Build the rubric dict (compatible with GradingEngine)
+        # Step 7: Build per-task checklist and rubric metadata
+        task_checklist_flat = []
+        theory_questions_flat = []
+        all_formulas_flat = []
+        all_deliverables_flat = []
+        auto_gradable_count = 0
+        task_count_total = 0
+
+        for c in criteria:
+            checklist = c.get('task_checklist', [])
+            task_checklist_flat.extend(checklist)
+            task_count_total += c.get('task_count', 0)
+
+            for t_item in checklist:
+                if t_item.get('is_theory'):
+                    theory_questions_flat.append({
+                        'task_number': t_item['task_number'],
+                        'text': t_item['task_text'][:100],
+                    })
+                else:
+                    auto_gradable_count += 1
+
+            all_formulas_flat.extend(c.get('all_formulas', []))
+            all_deliverables_flat.extend(c.get('all_deliverables', []))
+
+        # Dedupe and sort
+        all_formulas_flat = list(dict.fromkeys(all_formulas_flat))
+        all_deliverables_flat = list(dict.fromkeys(all_deliverables_flat))
+
+        rubric_metadata = {
+            'total_tasks': len(tasks) or task_count_total,
+            'theory_tasks': len(theory_questions_flat),
+            'auto_gradable_tasks': auto_gradable_count,
+            'total_formulas_requested': len(all_formulas_flat),
+            'total_deliverables_requested': len(all_deliverables_flat),
+            'all_formulas': all_formulas_flat,
+            'all_deliverables': all_deliverables_flat[:20],  # cap display
+            'tasks_summary': [
+                {
+                    'number': t['number'],
+                    'text': t['text'][:80],
+                    'type': t['type'],
+                    'is_theory': t.get('is_theory', False),
+                    'formulas': t.get('required_formulas', []),
+                    'deliverables': t.get('deliverables', [])[:3],
+                }
+                for t in tasks
+            ],
+            'theory_questions': theory_questions_flat,
+        }
+
+        # Step 8: Build the rubric dict (compatible with GradingEngine)
         total_pts = sum(c['max_points'] for c in criteria)
         rubric = {
             'criteria': criteria,
@@ -445,14 +499,17 @@ class RubricGenerator:
             'parts': parts,
             'scope': scope,
             'generation_method': 'instruction_analysis',
-            'task_count': len(tasks),
+            'task_count': len(tasks) or task_count_total,
             'concept_count': len(concepts),
+            'rubric_metadata': rubric_metadata,
         }
 
         logger.info(
             f"Generated rubric for '{assignment_title}': "
             f"{len(criteria)} criteria, {len(parts)} parts, "
-            f"{len(tasks)} tasks, {round(total_pts, 1)} total pts"
+            f"{len(tasks)} tasks, {rubric_metadata['theory_tasks']} theory, "
+            f"{rubric_metadata['auto_gradable_tasks']} auto-gradable, "
+            f"{round(total_pts, 1)} total pts"
         )
 
         return rubric
@@ -507,6 +564,12 @@ class RubricGenerator:
           1. Define the goal: Calculate the 'Variance' ...
           2. Explain the critical distinction: ...
           8. Theoretical Reflection: Based on ...
+
+        ENHANCED: Each task now includes:
+          - required_formulas: formulas explicitly mentioned in the task
+          - deliverables: specific deliverable items to create
+          - is_theory: whether this is a written/theory question
+          - expected_sheets: sheet names mentioned in the task
         """
         tasks = []
 
@@ -528,15 +591,143 @@ class RubricGenerator:
             # Extract expected elements from the task text
             expected = self._extract_expected_elements(task_text)
 
+            # ── NEW: Extract per-task specifics ────────────────────────
+            required_formulas = self._extract_formulas_from_text(task_text)
+            deliverables = self._extract_deliverables(task_text)
+            is_theory = task_type == 'theoretical'
+            expected_sheets = self._extract_sheets_from_text(task_text)
+
             tasks.append({
                 'number': task_num,
                 'text': task_text[:300],  # truncate for storage
                 'type': task_type,
                 'expected_elements': expected,
                 'complexity': self._estimate_complexity(task_text),
+                # NEW fields
+                'required_formulas': required_formulas,
+                'deliverables': deliverables,
+                'is_theory': is_theory,
+                'expected_sheets': expected_sheets,
             })
 
         return tasks
+
+    # ------------------------------------------------------------------
+    # NEW: Per-task formula extraction
+    # ------------------------------------------------------------------
+
+    def _extract_formulas_from_text(self, text: str) -> List[str]:
+        """Extract specific Excel function names mentioned in task text."""
+        text_lower = text.lower()
+        formulas = []
+
+        formula_patterns = [
+            (r'\bvlookup\b', 'VLOOKUP'),
+            (r'\bxlookup\b', 'XLOOKUP'),
+            (r'\bhlookup\b', 'HLOOKUP'),
+            (r'\bindex/match\b', 'INDEX/MATCH'),
+            (r'(?<!x)match\b', 'MATCH'),  # match, but not xmatch
+            (r'\bsumif\b', 'SUMIF'),
+            (r'\bsumifs\b', 'SUMIFS'),
+            (r'\bcountif\b', 'COUNTIF'),
+            (r'\bcountifs\b', 'COUNTIFS'),
+            (r'\baverageif\b', 'AVERAGEIF'),
+            (r'\baverageifs\b', 'AVERAGEIFS'),
+            (r'\biferror\b', 'IFERROR'),
+            (r'\bisna\b', 'ISNA'),
+            (r'\bifna\b', 'IFNA'),
+            (r'\bifs\b', 'IFS'),
+            (r'\bswitch\b', 'SWITCH'),
+            (r'\bsumproduct\b', 'SUMPRODUCT'),
+            (r'\bindex\b', 'INDEX'),
+            (r'\beomonth\b', 'EOMONTH'),
+            (r'\bedate\b', 'EDATE'),
+            (r'\bnetworkdays\b', 'NETWORKDAYS'),
+            (r'\bsequence\b', 'SEQUENCE'),
+            (r'\bfilter\b', 'FILTER'),
+            (r'\bsort\b', 'SORT'),
+            (r'\bunique\b', 'UNIQUE'),
+            (r'\blambda\b', 'LAMBDA'),
+            (r'\blet\b', 'LET'),
+            (r'\bdivide\b', 'DIVIDE'),
+            (r'\bcalculate\b', 'CALCULATE'),
+            (r'\ball(?=\s*\(|\s*[\'\(])', 'ALL'),  # DAX ALL()
+            (r'\bsumx\b', 'SUMX'),
+            (r'\bfilter\s*\(', 'FILTER'),  # DAX FILTER()
+            (r'\bnorm\.inv\b', 'NORM.INV'),
+            (r'\brand\b(?!omize)', 'RAND'),
+            (r'\bstdev\b', 'STDEV'),
+            (r'\bpercentile\b', 'PERCENTILE'),
+            (r'\bquartile\b', 'QUARTILE'),
+            (r'\bcorrel\b', 'CORREL'),
+            (r'\bforecast\b', 'FORECAST'),
+            (r'\bnpv\b', 'NPV'),
+            (r'\birr\b', 'IRR'),
+            (r'\bxnpv\b', 'XNPV'),
+            (r'\bxirr\b', 'XIRR'),
+            (r'\bpmt\b', 'PMT'),
+            (r'\bconcatenate\b', 'CONCATENATE'),
+            (r'\btextjoin\b', 'TEXTJOIN'),
+            (r'\btrim\b', 'TRIM'),
+            (r'\bleft\b', 'LEFT'),
+            (r'\bright\b', 'RIGHT'),
+            (r'\bmid\b', 'MID'),
+        ]
+
+        for pattern, func_name in formula_patterns:
+            if re.search(pattern, text_lower):
+                if func_name not in formulas:
+                    formulas.append(func_name)
+
+        return formulas
+
+    def _extract_deliverables(self, text: str) -> List[str]:
+        """Extract specific deliverable actions from task text."""
+        deliverables = []
+        text_lower = text.lower()
+
+        # Action-deliverable patterns
+        patterns = [
+            (r'create\s+(?:a\s+)?(\w[\w\s]{1,40}?)(?:\.|\bto\b|\bthat\b|\busing\b|\bwith\b|$)', 'Create'),
+            (r'build\s+(?:a\s+)?(\w[\w\s]{1,40}?)(?:\.|\bto\b|\bthat\b|\busing\b|\bwith\b|$)', 'Build'),
+            (r'design\s+(?:a\s+)?(\w[\w\s]{1,40}?)(?:\.|\bto\b|\bwhich\b|\bthat\b|$)', 'Design'),
+            (r'write\s+(?:a\s+)?(\w[\w\s]{1,40}?)(?:\.|\bto\b|\bthat\b|$)', 'Write'),
+            (r'calculate\s+(?:the\s+)?(\w[\w\s]{1,20}?)(?:\.|\busing\b|\bfor\b|$)', 'Calculate'),
+            (r'use\s+(?:the\s+)?(\w+\s+function[\w\s]*)', 'Use function'),
+            (r'apply\s+(\w[\w\s]{1,30}?)(?:\.|\bto\b|$)', 'Apply'),
+            (r'define\s+(?:a\s+)?(\w[\w\s]{1,30}?)(?:\.|\bto\b|\bthe\b|$)', 'Define'),
+            (r'add\s+(?:a\s+)?(\w[\w\s]{1,30}?)(?:\.|\bto\b|\bthat\b|$)', 'Add'),
+            (r'insert\s+(?:a\s+)?(\w[\w\s]{1,30}?)(?:\.|\bto\b|\bwith\b|$)', 'Insert'),
+            (r'set\s+up\s+(?:a\s+)?(\w[\w\s]{1,40}?)(?:\.|\bto\b|\bthat\b|\busing\b|$)', 'Set up'),
+            (r'generate\s+(?:a\s+)?(\w[\w\s]{1,30}?)(?:\.|\bfor\b|\bto\b|$)', 'Generate'),
+            (r'develop\s+(?:a\s+)?(\w[\w\s]{1,40}?)(?:\.|\bto\b|\bthat\b|$)', 'Develop'),
+            (r'prepare\s+(?:a\s+)?(\w[\w\s]{1,30}?)(?:\.|\bto\b|$)', 'Prepare'),
+        ]
+
+        for pattern, action in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for m in matches[:2]:  # max 2 per action type
+                deliverable = m.strip().rstrip('.,;:').strip()
+                if deliverable and len(deliverable) > 3:
+                    formatted = f"{action} {deliverable}"
+                    if formatted not in deliverables:
+                        deliverables.append(formatted)
+
+        return deliverables[:8]  # cap at 8
+
+    def _extract_sheets_from_text(self, text: str) -> List[str]:
+        """Extract specific sheet/worksheet names mentioned in task text."""
+        sheets = []
+        pattern = re.compile(
+            r"sheet\s+(?:named?|called?|titled?)?\s*[\"\']?(\w[\w\s]*\w)[\"\']?",
+            re.IGNORECASE
+        )
+        matches = pattern.findall(text)
+        for s in matches:
+            s = s.strip()
+            if s and s not in sheets:
+                sheets.append(s)
+        return sheets
 
     # ------------------------------------------------------------------
     # Step 3: Extract concepts
@@ -582,6 +773,12 @@ class RubricGenerator:
         """
         Build rubric criteria by merging parts, tasks, and concepts.
 
+        ENHANCED: Each criterion now includes:
+          - task_checklist: specific task items that map to this criterion
+          - all_formulas: compiled list of all required formulas across tasks
+          - theory_questions: tasks flagged as theoretical/written
+          - deliverables: combined deliverable list for the criterion
+
         Strategy:
           - If parts are detected, create one criterion per part.
           - Sub-tasks within parts add expected elements and increase weight.
@@ -615,6 +812,33 @@ class RubricGenerator:
                 complexity = sum(t.get('complexity', 1.0) for t in part_tasks) + \
                              sum(c.get('weight', 1.0) for c in part_concepts)
 
+                # ── NEW: Build task-specific checklist ──────────────
+                task_checklist = []
+                for t in part_tasks:
+                    item = {
+                        'task_number': t['number'],
+                        'task_text': t['text'][:120],
+                        'task_type': t['type'],
+                        'is_theory': t.get('is_theory', False),
+                        'deliverables': t.get('deliverables', []),
+                        'formulas': t.get('required_formulas', []),
+                        'expected_sheets': t.get('expected_sheets', []),
+                    }
+                    task_checklist.append(item)
+
+                # Compile all formulas across part tasks
+                all_formulas = list(dict.fromkeys(
+                    f for t in part_tasks for f in t.get('required_formulas', [])
+                ))
+
+                # Compile all deliverables
+                all_deliverables = list(dict.fromkeys(
+                    d for t in part_tasks for d in t.get('deliverables', [])
+                ))
+
+                # Compile theory questions
+                theory_questions = [t for t in part_tasks if t.get('is_theory')]
+
                 criteria.append({
                     'name': f"Part {part['number']}: {part['title'][:60]}",
                     'description': part.get('title', ''),
@@ -624,6 +848,12 @@ class RubricGenerator:
                     'concept_count': len(part_concepts),
                     'raw_weight': complexity,
                     'max_points': 0,  # assigned in step 5
+                    # NEW: task-specific detail
+                    'task_checklist': task_checklist,
+                    'all_formulas': all_formulas,
+                    'all_deliverables': all_deliverables,
+                    'theory_questions': theory_questions,
+                    'theory_count': len(theory_questions),
                 })
         elif tasks:
             # ── Task-based criteria (no parts detected) ────────
@@ -643,6 +873,22 @@ class RubricGenerator:
                     'concept_count': len(task_concepts),
                     'raw_weight': task.get('complexity', 1.0) + sum(c.get('weight', 1.0) for c in task_concepts),
                     'max_points': 0,
+                    # NEW: task-specific detail
+                    'task_checklist': [
+                        {
+                            'task_number': task['number'],
+                            'task_text': task['text'][:120],
+                            'task_type': task['type'],
+                            'is_theory': task.get('is_theory', False),
+                            'deliverables': task.get('deliverables', []),
+                            'formulas': task.get('required_formulas', []),
+                            'expected_sheets': task.get('expected_sheets', []),
+                        }
+                    ],
+                    'all_formulas': task.get('required_formulas', []),
+                    'all_deliverables': task.get('deliverables', []),
+                    'theory_questions': [task] if task.get('is_theory') else [],
+                    'theory_count': 1 if task.get('is_theory') else 0,
                 })
         else:
             # ── Concept-based criteria (no structure) ──────────
@@ -660,6 +906,12 @@ class RubricGenerator:
                     'concept_count': len(cat_concepts),
                     'raw_weight': sum(c['weight'] for c in cat_concepts),
                     'max_points': 0,
+                    # NEW: still provide empty checklists
+                    'task_checklist': [],
+                    'all_formulas': [],
+                    'all_deliverables': [],
+                    'theory_questions': [],
+                    'theory_count': 0,
                 })
 
         # ── Always add Formatting criterion if not present ─────
@@ -674,6 +926,11 @@ class RubricGenerator:
                 'concept_count': 0,
                 'raw_weight': 2.0,
                 'max_points': 0,
+                'task_checklist': [],
+                'all_formulas': [],
+                'all_deliverables': [],
+                'theory_questions': [],
+                'theory_count': 0,
             })
 
         # ── Always add Completeness criterion ──────────────────
@@ -686,6 +943,11 @@ class RubricGenerator:
             'concept_count': 0,
             'raw_weight': 2.0,
             'max_points': 0,
+            'task_checklist': [],
+            'all_formulas': [],
+            'all_deliverables': [],
+            'theory_questions': [],
+            'theory_count': 0,
         })
 
         return criteria

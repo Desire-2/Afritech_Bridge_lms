@@ -33,6 +33,147 @@ const ERROR_DISPLAY: Record<string, { icon: React.ElementType; className: string
   default:         { icon: AlertCircle, className: "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700" },
 };
 
+// ─── Loading Skeleton ────────────────────────────────────────
+
+/** Shimmer bar — animated placeholder for text/block content */
+function ShimmerBar({ className = "" }: { className?: string }) {
+  return (
+    <div
+      className={`animate-pulse rounded bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200 dark:from-gray-700 dark:via-gray-600 dark:to-gray-700 bg-[length:200%_100%] animate-shimmer ${className}`}
+    />
+  );
+}
+
+/** Circle shimmer for the grade circle */
+function ShimmerCircle({ size = "h-20 w-20" }: { size?: string }) {
+  return (
+    <div
+      className={`${size} rounded-full animate-pulse bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600`}
+    />
+  );
+}
+
+/** Skeleton for the full grading result panel while AI is processing */
+function GradingSkeleton() {
+  return (
+    <div className="space-y-4 animate-pulse">
+      {/* ── Score Header Skeleton ────────────────── */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-md border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="h-1.5 bg-gray-200 dark:bg-gray-700" />
+        <div className="p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="h-5 w-5 rounded bg-gray-200 dark:bg-gray-700" />
+            <ShimmerBar className="h-5 w-40" />
+            <div className="ml-auto">
+              <ShimmerBar className="h-5 w-24 rounded-full" />
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-center gap-5">
+            {/* Grade circle skeleton */}
+            <ShimmerCircle size="h-20 w-20" />
+
+            {/* Score + meta skeleton */}
+            <div className="flex-1 space-y-3 w-full">
+              <ShimmerBar className="h-7 w-60" />
+              <ShimmerBar className="h-2 w-full max-w-sm" />
+              <div className="flex gap-3">
+                <ShimmerBar className="h-4 w-28" />
+                <ShimmerBar className="h-4 w-20" />
+                <ShimmerBar className="h-4 w-32" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Tab Bar Skeleton ────────────────────── */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="flex border-b border-gray-200 dark:border-gray-700">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="flex-1 px-4 py-3">
+              <ShimmerBar className="h-4 w-20 mx-auto" />
+            </div>
+          ))}
+        </div>
+
+        <div className="p-5 space-y-5">
+          {/* ── Category Score Bars Skeleton ────── */}
+          <div className="space-y-4">
+            <ShimmerBar className="h-4 w-32" />
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="space-y-1.5">
+                <div className="flex justify-between">
+                  <ShimmerBar className="h-4 w-24" />
+                  <ShimmerBar className="h-4 w-16" />
+                </div>
+                <ShimmerBar className="h-2 w-full" />
+              </div>
+            ))}
+          </div>
+
+          {/* ── Task Checklist Skeleton ─────────── */}
+          <div className="border-t border-gray-200 dark:border-gray-700 pt-5 space-y-4">
+            <div className="flex items-center">
+              <ShimmerBar className="h-5 w-5 rounded mr-2" />
+              <ShimmerBar className="h-4 w-48" />
+            </div>
+
+            {/* Summary stat badges */}
+            <div className="flex gap-2">
+              <ShimmerBar className="h-6 w-20 rounded-lg" />
+              <ShimmerBar className="h-6 w-28 rounded-lg" />
+              <ShimmerBar className="h-6 w-24 rounded-lg" />
+            </div>
+
+            {/* Formula badges */}
+            <div className="flex gap-1.5">
+              <ShimmerBar className="h-5 w-16 rounded-full" />
+              <ShimmerBar className="h-5 w-20 rounded-full" />
+              <ShimmerBar className="h-5 w-14 rounded-full" />
+              <ShimmerBar className="h-5 w-18 rounded-full" />
+            </div>
+
+            {/* Task cards */}
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div
+                key={i}
+                className={`rounded-lg border p-3 ${
+                  i % 3 === 0
+                    ? 'bg-amber-50/50 dark:bg-amber-900/5 border-amber-200/50 dark:border-amber-700/30'
+                    : 'bg-gray-50/50 dark:bg-slate-800/30 border-gray-200/50 dark:border-gray-700/30'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  {/* Task number circle */}
+                  <ShimmerBar className="h-6 w-6 rounded-full flex-shrink-0" />
+                  <div className="flex-1 min-w-0 space-y-1.5">
+                    <ShimmerBar className="h-3 w-full" />
+                    <ShimmerBar className="h-3 w-3/4" />
+                    {/* Formula badges */}
+                    <div className="flex gap-1 mt-1">
+                      <ShimmerBar className="h-4 w-14 rounded" />
+                      <ShimmerBar className="h-4 w-18 rounded" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Progress indicator at the bottom ──── */}
+      <div className="flex items-center justify-center gap-2 py-3">
+        <Loader2 className="h-4 w-4 animate-spin text-purple-500" />
+        <span className="text-sm text-purple-600 dark:text-purple-400 font-medium">
+          AI is analyzing the Excel file...
+        </span>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   submissionId: number;
   submissionType?: "assignment" | "project";
@@ -198,6 +339,9 @@ export default function ExcelAIGradingButton({
           </div>
         );
       })()}
+
+      {/* ── Loading Skeleton ────────────────────── */}
+      {loading && !result && !compact && <GradingSkeleton />}
 
       {/* ── Result Panel ───────────────────────── */}
       {!compact && result && result.id && (

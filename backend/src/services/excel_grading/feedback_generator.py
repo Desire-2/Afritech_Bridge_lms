@@ -160,7 +160,10 @@ class FeedbackGenerator:
         )
 
     def _strengths_weaknesses_summary(self) -> str:
-        """Build a quick summary of strengths and areas to improve."""
+        """Build a quick summary of strengths and areas to improve.
+        
+        ENHANCED: Includes rubric_metadata summary (theory tasks, auto-gradable count).
+        """
         strengths = self.result.get('strengths', [])
         weaknesses = self.result.get('weaknesses', [])
 
@@ -176,10 +179,33 @@ class FeedbackGenerator:
             lines.append("**Areas to Improve:**")
             for w in weaknesses:
                 lines.append(f"  🔧 {w}")
+
+        # ── NEW: Add rubric metadata insight ──────────────────────────
+        rubric = self.result.get('rubric_data', {})
+        meta = rubric.get('rubric_metadata', {})
+        if meta:
+            theory_count = meta.get('theory_tasks', 0)
+            auto_count = meta.get('auto_gradable_tasks', 0)
+            total = meta.get('total_tasks', 0)
+            if total > 0:
+                lines.append(f"\n**Assignment Scope:** {total} task(s) detected — "
+                             f"{auto_count} auto-gradable, {theory_count} theory/written "
+                             f"question(s) flagged for instructor review.")
+
+            theory_qs = meta.get('theory_questions', [])
+            if theory_qs:
+                lines.append("**Theory Questions (Instructor Review Required):**")
+                for tq in theory_qs[:3]:
+                    lines.append(f"  • Task {tq['task_number']}: {tq['text'][:80]}")
+
         return '\n'.join(lines)
 
     def _criterion_feedback(self, name: str, data: Dict[str, Any]) -> str:
-        """Build feedback for a single criterion."""
+        """Build feedback for a single criterion.
+        
+        ENHANCED: References specific task items from the rubric's task_checklist
+        when available, telling the student which tasks were detected/missing.
+        """
         score = data.get('score', 0)
         max_pts = data.get('max', 0)
         comment = data.get('comment', '')
@@ -194,6 +220,11 @@ class FeedbackGenerator:
         if comment:
             output.append(comment)
 
+        # ── NEW: Add task-specific references from rubric metadata ──
+        task_notes = self._task_specific_notes(name)
+        if task_notes:
+            output.append(task_notes)
+
         # Add specific improvement suggestions
         suggestion = self._improvement_suggestion(name, pct, data)
         if suggestion:
@@ -201,10 +232,119 @@ class FeedbackGenerator:
 
         return '\n'.join(output)
 
+    # ------------------------------------------------------------------
+    # NEW: Task-specific feedback from rubric metadata
+    # ------------------------------------------------------------------
+
+    def _task_specific_notes(self, criterion_name: str) -> str:
+        """
+        Generate task-specific notes from the rubric's task_checklist.
+        References actual numbered tasks from the assignment instructions.
+        """
+        # Find the rubric that was used (stored in grading result)
+        rubric = self.result.get('rubric_data', {})
+        if not rubric:
+            # Try to get rubric metadata from criteria breakdown
+            return ''
+
+        # Map criterion name to category
+        criterion_lower = criterion_name.lower()
+        category_map = {
+            'formulas': 'Formulas',
+            'pivottables': 'PivotTables',
+            'pivot_tables': 'PivotTables',
+            'charts': 'Charts',
+            'visualization': 'Charts',
+            'vba': 'VBA',
+            'power query': 'PowerQuery_M',
+            'powerquery': 'PowerQuery_M',
+            'powerquery_m': 'PowerQuery_M',
+            'formatting': 'Formatting',
+            'completeness': 'Completeness',
+        }
+
+        # Find the matching rubric criterion
+        matched_criteria = None
+        for crit in rubric.get('criteria', []):
+            crit_name = crit.get('name', '').lower()
+            crit_cat = crit.get('category', '').lower()
+            if criterion_lower in crit_name or criterion_lower in crit_cat:
+                matched_criteria = crit
+                break
+
+        if not matched_criteria:
+            return ''
+
+        checklist = matched_criteria.get('task_checklist', [])
+        if not checklist:
+            # Fall back to rubric_metadata tasks_summary
+            meta = rubric.get('rubric_metadata', {})
+            tasks_summary = meta.get('tasks_summary', [])
+            if tasks_summary:
+                lines = ["**Related Assignment Tasks:**"]
+                for t in tasks_summary:
+                    label = "📝 " if t.get('is_theory') else "🔧 "
+                    lines.append(f"  {label}Task {t['number']}: {t['text'][:80]}")
+                return '\n'.join(lines[:6])  # cap at 6
+            return ''
+
+        lines = ["**Assignment Tasks Covered in this Section:**"]
+        for item in checklist[:6]:  # max 6 items
+            task_num = item.get('task_number', '?')
+            task_text = item.get('task_text', '')[:80]
+            label = "📝 " if item.get('is_theory') else "🔧 "
+            lines.append(f"  {label}Task {task_num}: {task_text}")
+
+            # Add expected deliverables if available
+            deliverables = item.get('deliverables', [])
+            if deliverables:
+                for d in deliverables[:3]:
+                    lines.append(f"      → Expected: {d}")
+
+            # Add required formulas if available
+            formulas = item.get('formulas', [])
+            if formulas:
+                lines.append(f"      → Formulas: {', '.join(formulas)}")
+
+            if item.get('is_theory'):
+                lines.append(f"      → ⚠️ Theory/written question — requires manual review")
+
+        return '\n'.join(lines)
+
     def _improvement_suggestion(self, criterion: str, pct: int, data: Dict) -> str:
-        """Generate improvement suggestion based on criterion performance and mastery level."""
+        """Generate improvement suggestion based on criterion performance and mastery level.
+        
+        ENHANCED: Uses the rubric's task_checklist to reference specific missed deliverables
+        from the assignment instructions.
+        """
         if pct >= 90:
             return ""
+
+        # Try to give a task-specific suggestion from rubric metadata
+        rubric = self.result.get('rubric_data', {})
+        rubric_meta = rubric.get('rubric_metadata', {})
+        all_formulas_requested = rubric_meta.get('all_formulas', [])
+
+        # Check if this criterion has specific formulas expected
+        for crit in rubric.get('criteria', []):
+            crit_name = crit.get('name', '').lower()
+            crit_cat = crit.get('category', '').lower()
+            if criterion.lower() in crit_name or criterion.lower() in crit_cat:
+                formulas = crit.get('all_formulas', [])
+                if formulas and pct < 70:
+                    return (
+                        f"The assignment specifically requests these functions: "
+                        f"{', '.join(formulas)}. Review the task instructions and "
+                        f"ensure each is used correctly."
+                    )
+                deliverables = crit.get('all_deliverables', [])
+                if deliverables and pct < 50:
+                    return (
+                        f"Expected deliverables: {', '.join(deliverables[:5])}. "
+                        f"Review the assignment instructions and check if all items "
+                        f"were completed."
+                    )
+                break
 
         # Try level-specific suggestions from templates first
         level_suggestions = self.level_templates.get('criterion_suggestions', {}).get(criterion, {})
@@ -260,7 +400,10 @@ class FeedbackGenerator:
         return ""
 
     def _detailed_references(self) -> str:
-        """Add specific cell/formula references."""
+        """Add specific cell/formula references.
+        
+        ENHANCED: Cross-references detected formulas against rubric's expected formula list.
+        """
         details = []
 
         # Formula issues
@@ -278,6 +421,42 @@ class FeedbackGenerator:
             details.append("\n**Sample Formulas Reviewed:**")
             for f in sample_formulas[:5]:
                 details.append(f"  - `{f['cell']}` ({f['sheet']}): `{f['formula'][:80]}`")
+
+        # ── NEW: Cross-reference detected formulas with rubric expectations ──
+        rubric = self.result.get('rubric_data', {})
+        rubric_meta = rubric.get('rubric_metadata', {})
+        expected_formulas = rubric_meta.get('all_formulas', [])
+        if expected_formulas:
+            detected_funcs = self.formulas.get('function_categories', {})
+            detected_func_names = set()
+            for cat, funcs in detected_funcs.items():
+                if isinstance(funcs, list):
+                    for f in funcs:
+                        if isinstance(f, dict):
+                            detected_func_names.add(f.get('function', '').upper())
+                        elif isinstance(f, str):
+                            detected_func_names.add(f.upper())
+
+            # Check which expected formulas were found
+            found = []
+            missing = []
+            for f in expected_formulas:
+                if f.upper() in detected_func_names:
+                    found.append(f)
+                else:
+                    # Loose match: check if formula name appears in any detected string
+                    f_upper = f.upper()
+                    if any(f_upper in d for d in detected_func_names):
+                        found.append(f)
+                    else:
+                        missing.append(f)
+
+            if found:
+                details.append("\n**✅ Required Formulas Detected:** " + ', '.join(found[:8]))
+            if missing:
+                details.append("\n**❌ Formulas Expected But Not Found:** " +
+                               ', '.join(missing[:8]) +
+                               " — These were requested in the assignment instructions.")
 
         # VBA module references
         if self.vba.get('has_vba') and self.vba.get('modules'):

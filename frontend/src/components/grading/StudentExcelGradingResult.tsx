@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import ExcelGradingService, {
   StudentGradingResult,
+  TasksSummaryItem,
+  TheoryQuestion,
 } from "@/services/excel-grading.service";
 import MarkdownRenderer from "@/components/ui/MarkdownRenderer";
 
@@ -279,6 +281,114 @@ export default function StudentExcelGradingResult({
           )}
         </div>
       )}
+
+      {/* ── NEW: Task-Level Rubric Detail ───────────── */}
+      {(() => {
+        const rubricData = result.rubric_data;
+        const meta = rubricData?.rubric_metadata;
+        if (!meta) return null;
+        const tasks = meta.tasks_summary || [];
+        const theoryQs = meta.theory_questions || [];
+        const formulas = meta.all_formulas || [];
+        if (tasks.length === 0) return null;
+
+        return (
+          <div className="bg-white dark:bg-slate-800 rounded-xl p-5 border border-gray-200 dark:border-gray-700 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <BookOpen className="h-4 w-4 text-violet-500" />
+              <h5 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                Assignment Tasks Breakdown
+              </h5>
+              <span className="ml-auto text-[11px] text-gray-500 dark:text-gray-400">
+                {meta.auto_gradable_tasks} checked · {meta.theory_tasks} for review
+              </span>
+            </div>
+
+            {/* Expected formulas summary */}
+            {formulas.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                <span className="text-[11px] font-medium text-gray-500 dark:text-gray-400 flex items-center">Required Formulas:</span>
+                {formulas.map((f: string) => (
+                  <span key={f} className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[11px] rounded-full font-mono border border-blue-200 dark:border-blue-800">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Task list */}
+            <div className="space-y-2">
+              {tasks.map((t: TasksSummaryItem) => (
+                <div
+                  key={t.number}
+                  className={`rounded-lg border p-3 transition-colors ${
+                    t.is_theory
+                      ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700'
+                      : 'bg-gray-50 dark:bg-gray-800/60 border-gray-200 dark:border-gray-700'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    {/* Task number */}
+                    <span className={`flex-shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      t.is_theory
+                        ? 'bg-amber-200 dark:bg-amber-700 text-amber-800 dark:text-amber-200'
+                        : 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300'
+                    }`}>
+                      {t.number}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-700 dark:text-gray-300 leading-relaxed">
+                          {t.text}
+                        </p>
+                        {t.is_theory ? (
+                          <span className="flex-shrink-0 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-bold rounded-full">
+                            MANUAL REVIEW
+                          </span>
+                        ) : (
+                          <Lightbulb className="flex-shrink-0 h-3.5 w-3.5 text-green-500" />
+                        )}
+                      </div>
+                      {t.formulas && t.formulas.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {t.formulas.map((f: string) => (
+                            <span key={f} className="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] rounded font-mono">
+                              {f}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {t.deliverables && t.deliverables.length > 0 && (
+                        <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+                          <span className="font-medium">Expected:</span> {t.deliverables.join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Theory questions section */}
+            {theoryQs.length > 0 && (
+              <div className="mt-3 bg-amber-50 dark:bg-amber-900/10 rounded-lg p-3 border border-amber-200 dark:border-amber-700">
+                <p className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  {theoryQs.length} Written Question(s) Require Instructor Review
+                </p>
+                <ul className="mt-1.5 space-y-1">
+                  {theoryQs.map((tq: TheoryQuestion) => (
+                    <li key={tq.task_number} className="text-[11px] text-amber-700 dark:text-amber-300 flex items-start gap-1">
+                      <span className="font-bold">Task {tq.task_number}:</span>
+                      <span>{tq.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Detailed Feedback ─────────────────── */}
       {result.overall_feedback && (

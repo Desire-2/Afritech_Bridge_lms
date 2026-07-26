@@ -38,6 +38,8 @@ import {
 import ExcelGradingService, {
   ExcelGradingResult,
   ReviewRequest,
+  TasksSummaryItem,
+  TheoryQuestion,
 } from "@/services/excel-grading.service";
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -467,41 +469,178 @@ export default function ExcelGradingResultPanel({
 
         <div className="p-5">
           {/* ── Rubric Tab ─────────────── */}
-          {activeTab === "rubric" && rubricEntries.length > 0 && (
-            <div className="space-y-4">
-              {rubricEntries.map(([key, item]) => (
-                <div key={key} className="group">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <div className={`h-2 w-2 rounded-full ${
-                        item.max > 0 && item.score / item.max >= 0.8
-                          ? "bg-green-500"
-                          : item.max > 0 && item.score / item.max >= 0.6
-                          ? "bg-yellow-500"
-                          : item.max === 0
-                          ? "bg-gray-300 dark:bg-gray-600"
-                          : "bg-red-500"
-                      }`} />
-                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 capitalize">
-                        {key.replace(/_/g, " ")}
+          {activeTab === "rubric" && (
+            <div className="space-y-6">
+              {/* Score breakdown by category */}
+              {rubricEntries.length > 0 && (
+                <div className="space-y-4">
+                  <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                    Category Scores
+                  </h5>
+                  {rubricEntries.map(([key, item]) => (
+                    <div key={key} className="group">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <div className={`h-2 w-2 rounded-full ${
+                            item.max > 0 && item.score / item.max >= 0.8
+                              ? "bg-green-500"
+                              : item.max > 0 && item.score / item.max >= 0.6
+                              ? "bg-yellow-500"
+                              : item.max === 0
+                              ? "bg-gray-300 dark:bg-gray-600"
+                              : "bg-red-500"
+                          }`} />
+                          <span className="text-sm font-medium text-gray-800 dark:text-gray-200 capitalize">
+                            {key.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums">
+                          {item.score}/{item.max}
+                        </span>
+                      </div>
+                      {percentBar(item.score, item.max)}
+                      {item.comment && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 pl-4 border-l-2 border-gray-200 dark:border-gray-700 italic">
+                          {item.comment}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {rubricEntries.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-6">No rubric data available.</p>
+              )}
+
+              {/* ── NEW: Task-specific checklist from rubric metadata ── */}
+              {(() => {
+                const rubricData = result.rubric_data;
+                const meta = rubricData?.rubric_metadata;
+                if (!meta) return null;
+
+                const tasks = meta.tasks_summary || [];
+                const theoryQs = meta.theory_questions || [];
+                const formulas = meta.all_formulas || [];
+                const deliverables = meta.all_deliverables || [];
+
+                if (tasks.length === 0) return null;
+
+                return (
+                  <div className="border-t border-gray-200 dark:border-gray-700 pt-5 space-y-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Layers className="h-4 w-4 text-violet-500" />
+                      <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                        Assignment Task Checklist
+                      </h5>
+                      <span className="ml-auto text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                        {meta.auto_gradable_tasks} auto-gradable · {meta.theory_tasks} theory
                       </span>
                     </div>
-                    <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums">
-                      {item.score}/{item.max}
-                    </span>
+
+                    {/* Summary stats */}
+                    <div className="flex gap-2 flex-wrap mb-3">
+                      <span className="px-2.5 py-1 rounded-lg bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 text-[11px] font-semibold">
+                        {meta.total_tasks} Tasks
+                      </span>
+                      {formulas.length > 0 && (
+                        <span className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-[11px] font-semibold">
+                          {formulas.length} Formulas Requested
+                        </span>
+                      )}
+                      {theoryQs.length > 0 && (
+                        <span className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-[11px] font-semibold">
+                          {theoryQs.length} Theory Questions
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Required formulas badge */}
+                    {formulas.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase">Expected Formulas:</span>
+                        {formulas.map((f: string) => (
+                          <span key={f} className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-[11px] rounded-full font-medium font-mono border border-blue-200 dark:border-blue-800">
+                            {f}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Per-task checklist */}
+                    <div className="space-y-2">
+                      {tasks.map((t: TasksSummaryItem) => (
+                        <div
+                          key={t.number}
+                          className={`rounded-lg border p-3 transition-colors ${
+                            t.is_theory
+                              ? 'bg-amber-50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-700'
+                              : 'bg-white dark:bg-slate-800/60 border-gray-200 dark:border-gray-700'
+                          }`}
+                        >
+                          <div className="flex items-start gap-2">
+                            {/* Task number badge */}
+                            <span className={`flex-shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                              t.is_theory
+                                ? 'bg-amber-200 dark:bg-amber-700 text-amber-800 dark:text-amber-200'
+                                : 'bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
+                            }`}>
+                              {t.number}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-medium text-gray-800 dark:text-gray-200 line-clamp-2">
+                                  {t.text}
+                                </p>
+                                {t.is_theory && (
+                                  <span className="flex-shrink-0 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-bold rounded-full">
+                                    THEORY
+                                  </span>
+                                )}
+                              </div>
+                              {/* Expected formulas per task */}
+                              {t.formulas && t.formulas.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                  {t.formulas.map((f: string) => (
+                                    <span key={f} className="px-1.5 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] rounded font-mono">
+                                      {f}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {/* Expected deliverables */}
+                              {t.deliverables && t.deliverables.length > 0 && (
+                                <div className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                  <span className="font-medium">Deliverables:</span>{' '}
+                                  {t.deliverables.join(', ')}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Theory questions flagged */}
+                    {theoryQs.length > 0 && (
+                      <div className="bg-amber-50 dark:bg-amber-900/10 rounded-lg p-3 border border-amber-200 dark:border-amber-700">
+                        <h6 className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5 mb-2">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          Theory Questions (Require Manual Review)
+                        </h6>
+                        <ul className="space-y-1">
+                          {theoryQs.map((tq: TheoryQuestion) => (
+                            <li key={tq.task_number} className="text-xs text-amber-700 dark:text-amber-300 flex items-start gap-1.5">
+                              <span className="font-bold">Task {tq.task_number}:</span>
+                              <span>{tq.text}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
-                  {percentBar(item.score, item.max)}
-                  {item.comment && (
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 pl-4 border-l-2 border-gray-200 dark:border-gray-700 italic">
-                      {item.comment}
-                    </p>
-                  )}
-                </div>
-              ))}
+                );
+              })()}
             </div>
-          )}
-          {activeTab === "rubric" && rubricEntries.length === 0 && (
-            <p className="text-sm text-gray-400 text-center py-6">No rubric data available.</p>
           )}
 
           {/* ── Analysis Tab ──────────── */}

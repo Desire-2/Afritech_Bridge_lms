@@ -126,6 +126,7 @@ class GradingEngine:
           - confidence level
           - flagged_issues
           - manual_review_required
+          - rubric_data: the rubric used for grading (for feedback generator)
         """
         breakdown = {}
 
@@ -154,11 +155,16 @@ class GradingEngine:
             confidence == 'low' or
             len(flagged) > 0 or
             self.vba.get('security', {}).get('risk_level') == 'high' or
-            percentage < 30 or percentage > 95
+            percentage < 30 or percentage > 95 or
+            self._has_theory_questions()
         )
 
         # Strengths & weaknesses analysis
         strengths, weaknesses = self._analyze_strengths_weaknesses(breakdown)
+
+        # ── NEW: Add theory questions from rubric to weaknesses ──────
+        theory_warnings = self._check_theory_questions()
+        weaknesses.extend(theory_warnings)
 
         return {
             'rubric_breakdown': breakdown,
@@ -177,6 +183,9 @@ class GradingEngine:
                 'level_number': self.mastery_level.get('level_number', 2),
                 'confidence': self.mastery_level.get('confidence', 'medium'),
             },
+            # NEW: Include rubric data so the feedback generator can use
+            # the task-specific checklists
+            'rubric_data': self.instructor_rubric,
         }
 
     # ------------------------------------------------------------------
@@ -186,9 +195,18 @@ class GradingEngine:
     def _analyze_strengths_weaknesses(
         self, breakdown: Dict[str, Dict[str, Any]]
     ) -> Tuple[List[str], List[str]]:
-        """Derive student strengths and weaknesses from rubric breakdown."""
+        """Derive student strengths and weaknesses from rubric breakdown.
+        
+        NEW: References specific assignment task requirements when available.
+        """
         strengths: List[str] = []
         weaknesses: List[str] = []
+
+        # ── Check assignment task structure ───────────────────────────
+        task_parts = self.requirements.get('_task_parts', 1)
+        task_steps = self.requirements.get('_task_steps', 0)
+        theory_count = self.requirements.get('_task_theory_count', 0)
+        deliverable_count = self.requirements.get('_task_deliverable_count', 0)
 
         for criterion, result in breakdown.items():
             max_pts = result.get('max', 0)
@@ -230,6 +248,19 @@ class GradingEngine:
 
         if self.formatting.get('conditional_formatting', {}).get('rule_count', 0) > 0:
             strengths.append("Uses conditional formatting for data visualization")
+
+        # ── Task-specific feedback ────────────────────────────────────
+        if task_steps >= 5 and formula_count < task_steps * 0.5:
+            # If there are many steps but few formulas, likely missing work
+            weaknesses.append(
+                f"Assignment has {task_steps} steps but only {formula_count} "
+                f"formulas detected — some requirements may be incomplete"
+            )
+        
+        # NOTE: Theory question warnings are now handled by
+        # _check_theory_questions() in grade(), which provides
+        # specific task-number references from the rubric_metadata.
+        # The old generic theory count check is replaced by that.
 
         return strengths[:6], weaknesses[:6]
 
@@ -1003,11 +1034,42 @@ class GradingEngine:
         }
 
     # ------------------------------------------------------------------
+    # NEW: Theory question detection from rubric
+    # ------------------------------------------------------------------
+
+    def _has_theory_questions(self) -> bool:
+        """Check if the rubric contains theory/written questions that
+        cannot be auto-graded by the AI analyzer."""
+        if not self.instructor_rubric:
+            return False
+        meta = self.instructor_rubric.get('rubric_metadata', {})
+        theory_count = meta.get('theory_tasks', 0)
+        return theory_count > 0
+
+    def _check_theory_questions(self) -> List[str]:
+        """Extract theory question warnings from the rubric metadata."""
+        if not self.instructor_rubric:
+            return []
+
+        meta = self.instructor_rubric.get('rubric_metadata', {})
+        theory_questions = meta.get('theory_questions', [])
+        if not theory_questions:
+            return []
+
+        warnings = []
+        for tq in theory_questions[:3]:
+            warnings.append(
+                f"📝 Theory task #{tq['task_number']}: \"{tq['text'][:60]}\" "
+                f"— requires manual instructor review (cannot auto-grade written responses)"
+            )
+        return warnings
+
+    # ------------------------------------------------------------------
     # Confidence & anomaly detection
     # ------------------------------------------------------------------
 
     def _determine_confidence(self) -> str:
-        """Determine grading confidence level — level-aware."""
+        """Determine grading confidence level — level & task-complexity aware."""
         low_triggers = 0
 
         # VBA that couldn't be fully analyzed
@@ -1032,8 +1094,23 @@ class GradingEngine:
         if self.wb.get('file_type') in ('xls', 'csv'):
             low_triggers += 1
 
-        # Very high or very low score relative to level expectations
-        # (handled in the grade() method via manual_review flag)
+        # ── NEW: Task complexity adjustment ───────────────────────────
+        # If the assignment has many parts/steps but missing required
+        # features, the grading is less confident because we can't verify
+        # all requirements were met
+        task_parts = self.requirements.get('_task_parts', 1)
+        task_steps = self.requirements.get('_task_steps', 0)
+        task_complexity = task_parts * 3 + task_steps
+        
+        # More complex assignments naturally have lower confidence
+        if task_complexity > 30:
+            low_triggers += 1
+        
+        # Check if there are theory questions we can't auto-verify
+        theory_count = self.requirements.get('_task_theory_count', 0)
+        if theory_count >= 3:
+            # Multiple theory questions = manual review needed
+            low_triggers += 1
 
         if low_triggers >= 3:
             return 'low'
