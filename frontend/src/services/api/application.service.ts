@@ -53,6 +53,37 @@ class CourseApplicationService extends BaseApiService {
   }
 
   /**
+   * Look up a saved draft application by email + course (Public endpoint).
+   * Used to let applicants resume where they left off from any device.
+   */
+  async lookupDraft(courseId: number, email: string): Promise<{
+    found: boolean;
+    submitted_exists?: boolean;
+    draft?: Partial<ApplicationSubmitData> & {
+      id: number;
+      current_section?: number | null;
+      saved_at?: string | null;
+    };
+  }> {
+    return this.get(`${this.BASE_PATH}/draft-lookup`, {
+      params: { course_id: courseId, email: email.trim().toLowerCase() }
+    });
+  }
+
+  /**
+   * Delete a saved draft application by email + course (Public endpoint).
+   * Used when an applicant chooses "Start Over" on the resume-draft banner.
+   */
+  async deleteDraft(courseId: number, email: string): Promise<{
+    deleted: boolean;
+    message?: string;
+  }> {
+    return this.delete(`${this.BASE_PATH}/draft`, {
+      params: { course_id: courseId, email: email.trim().toLowerCase() }
+    });
+  }
+
+  /**
    * List applications with enhanced search and filters (Admin only)
    */
   async listApplications(params: {

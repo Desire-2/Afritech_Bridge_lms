@@ -45,6 +45,22 @@ const TIME_SLOTS = [
   { value: 'any_time', label: 'Flexible / Any Time' },
 ];
 
+// Format an ISO timestamp for the resume-draft banner (e.g. "3 Aug 2026, 14:05")
+function formatSavedAt(iso?: string | null): string {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString([], {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
 export default function CourseApplicationForm({
   courseId,
   courseTitle,
@@ -191,6 +207,20 @@ export default function CourseApplicationForm({
   const [existingApplication, setExistingApplication] = useState<any>(null);
   const [emailChecked, setEmailChecked] = useState(false);
 
+  // ── Cross-device draft resume (server-side draft found by email) ──
+  const [resumeDraft, setResumeDraft] = useState<(Partial<ApplicationSubmitData> & {
+    id: number;
+    current_section?: number | null;
+    saved_at?: string | null;
+  }) | null>(null);
+  const [checkingDraft, setCheckingDraft] = useState(false);
+  const [discardingDraft, setDiscardingDraft] = useState(false);
+  // Emails the user explicitly chose "Start Over" for this session — don't re-offer the draft
+  const discardedDraftEmailRef = useRef<string | null>(null);
+  // Serialize/debounce background draft saves to avoid concurrent-insert races
+  const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressSaveInFlightRef = useRef(false);
+
   // ── Cohort-aware effective payment values ────────────────────────────────
   // Prefer values from selectedWindow (cohort-level) over courseData (course-level).
   // The backend payment_summary on applicationWindow already factors in
@@ -294,6 +324,7 @@ export default function CourseApplicationForm({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
       if (autoSaveIdleTimerRef.current) clearTimeout(autoSaveIdleTimerRef.current);
+      if (progressSaveTimerRef.current) clearTimeout(progressSaveTimerRef.current);
     };
   }, []);
 
@@ -336,6 +367,13 @@ export default function CourseApplicationForm({
   // "Start Over" clears the draft and resets the form to blank
   const handleDiscardDraft = () => {
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+    // Also clear the server-side draft (by email, regardless of savedDraftId)
+    // so it isn't offered again on another device.
+    if (formData.email) {
+      applicationService.deleteDraft(courseId, formData.email).catch(() => { /* non-fatal */ });
+    }
+    setSavedDraftId(null);
+    try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
     setFormData(defaultFormData);
     setCurrentSection(1);
     setShowDraftBanner(false);
@@ -364,7 +402,12 @@ export default function CourseApplicationForm({
 
   const handleInputChange = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-    
+
+    // If the email changes, drop any draft offered for the previous email
+    if (field === 'email' && value !== resumeDraft?.email) {
+      setResumeDraft(null);
+    }
+
     // Clear validation error for this field
     if (validationErrors[field]) {
       setValidationErrors((prev) => {
@@ -375,10 +418,85 @@ export default function CourseApplicationForm({
     }
   };
 
-  // Email blur handler for immediate duplicate check
+  // Look for a previously-saved draft for this email (any device)
+  const checkDraftByEmail = async (email: string) => {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return; // Don't check if email is invalid
+    }
+    // If the user just chose "Start Over" for this email, don't re-offer the draft
+    if (discardedDraftEmailRef.current === email.trim().toLowerCase()) return;
+
+    setCheckingDraft(true);
+    try {
+      const result = await applicationService.lookupDraft(courseId, email);
+      if (result.found && result.draft && !result.submitted_exists) {
+        setResumeDraft(result.draft);
+      } else {
+        setResumeDraft(null);
+      }
+    } catch (err: any) {
+      console.error('Error looking up draft:', err);
+      setResumeDraft(null);
+    } finally {
+      setCheckingDraft(false);
+    }
+  };
+
+  // Restore the server draft into the form and jump to where they left off
+  const handleResumeDraft = () => {
+    if (!resumeDraft) return;
+    const { id, current_section, saved_at, ...draftFields } = resumeDraft;
+    const restored = { ...defaultFormData, ...draftFields, course_id: courseId };
+    const targetSection = Math.min(Math.max(Number(current_section) || 1, 1), totalSections);
+
+    setFormData(restored);
+    setCurrentSection(targetSection);
+    setSavedDraftId(id);
+    if (saved_at) setDraftSavedAt(new Date(saved_at));
+    setResumeDraft(null);
+
+    // Persist locally so the existing auto-save flow keeps working seamlessly
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        formData: restored,
+        currentSection: targetSection,
+        savedAt: saved_at || new Date().toISOString(),
+      }));
+      localStorage.setItem(`draft_id_for_course_${courseId}`, String(id));
+    } catch { /* ignore */ }
+
+    // Hide the local-draft banner too — the data is now in state
+    setShowDraftBanner(false);
+    document.getElementById('application-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Discard the server draft and start over (also clears local draft)
+  const handleDiscardServerDraft = async () => {
+    const email = resumeDraft?.email || formData.email;
+    if (email) {
+      discardedDraftEmailRef.current = email.trim().toLowerCase();
+      setDiscardingDraft(true);
+      try {
+        await applicationService.deleteDraft(courseId, email);
+      } catch (err: any) {
+        console.error('Failed to delete server draft:', err);
+      } finally {
+        setDiscardingDraft(false);
+      }
+    }
+    setResumeDraft(null);
+    setSavedDraftId(null);
+    setFormData(defaultFormData);
+    setCurrentSection(1);
+    try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
+  };
+
+  // Email blur handler: immediate duplicate check + cross-device draft lookup
   const handleEmailBlur = () => {
     if (formData.email) {
       checkDuplicateApplication(formData.email);
+      checkDraftByEmail(formData.email);
     }
   };
 
@@ -592,6 +710,7 @@ export default function CourseApplicationForm({
         try {
           const draftPayload = {
             ...formData,
+            current_section: 7,
             payment_method: method,
             payment_phone_number: formData.payment_phone_number || formData.phone,
             payment_payer_name: formData.payment_payer_name || formData.full_name,
@@ -828,7 +947,7 @@ export default function CourseApplicationForm({
     setError(null);
 
     try {
-      const result = await applicationService.saveDraft({ ...formData });
+      const result = await applicationService.saveDraft({ ...formData, current_section: 7 } as any);
       setSavedDraftId(result.application_id);
       // Persist so PayPal/Stripe redirects can recover the draft ID
       try { localStorage.setItem(`draft_id_for_course_${courseId}`, String(result.application_id)); } catch { /* ignore */ }
@@ -850,8 +969,37 @@ export default function CourseApplicationForm({
     }
 
     if (validateSection(currentSection)) {
-      setCurrentSection((prev) => Math.min(prev + 1, totalSections));
+      const nextSection = Math.min(currentSection + 1, totalSections);
+      setCurrentSection(nextSection);
       setError(null); // Clear any errors when moving to next section
+
+      // Background-save the draft (silently) once the mandatory DB fields exist
+      // (full_name, email, phone, motivation — NOT NULL columns) so the applicant
+      // can resume from where they left off on any device. Debounced + serialized
+      // so rapid section clicks can't create duplicate draft rows.
+      if (formData.full_name?.trim() && formData.email?.trim() && formData.phone?.trim() && formData.motivation?.trim()) {
+        const progressPayload: any = {
+          ...formData,
+          current_section: nextSection,
+          silent: true,
+        };
+        if (selectedWindow?.id != null) progressPayload.application_window_id = selectedWindow.id;
+        if (progressSaveTimerRef.current) clearTimeout(progressSaveTimerRef.current);
+        progressSaveTimerRef.current = setTimeout(() => {
+          if (progressSaveInFlightRef.current) return;
+          progressSaveInFlightRef.current = true;
+          applicationService.saveDraft(progressPayload)
+            .then((res) => {
+              if (res?.application_id) {
+                setSavedDraftId(res.application_id);
+                try { localStorage.setItem(`draft_id_for_course_${courseId}`, String(res.application_id)); } catch { /* ignore */ }
+              }
+            })
+            .catch(() => { /* silent background save — non-fatal */ })
+            .finally(() => { progressSaveInFlightRef.current = false; });
+        }, 800);
+      }
+
       // Scroll to top of form on section advance
       document.getElementById('application-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } else {
@@ -1208,11 +1356,60 @@ export default function CourseApplicationForm({
       )}
 
       {/* Email checking indicator */}
-      {checkingDuplicate && (
+      {(checkingDuplicate || checkingDraft) && (
         <div className="flex items-center gap-3 text-base text-blue-700 bg-gradient-to-r from-blue-50 to-sky-50 border-2 border-blue-200 p-4 rounded-xl shadow-sm">
           <Loader2 className="w-5 h-5 animate-spin" />
-          <span className="font-semibold">Checking if you've already applied...</span>
+          <span className="font-semibold">Checking your email for existing applications or saved drafts...</span>
         </div>
+      )}
+
+      {/* Cross-device draft resume banner */}
+      {resumeDraft && (
+        <Alert className="border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 shadow-lg rounded-xl">
+          <CheckCircle2 className="h-6 w-6 text-emerald-600 flex-shrink-0" />
+          <AlertDescription className="ml-2 w-full">
+            <div className="space-y-3">
+              <p className="font-bold text-emerald-900 dark:text-emerald-200 text-lg">
+                Welcome back{resumeDraft.full_name ? `, ${resumeDraft.full_name.trim().split(' ')[0]}` : ''}! We found your saved application.
+              </p>
+              <p className="text-sm text-emerald-700 dark:text-emerald-400 bg-white/60 p-3 rounded-lg">
+                A draft for <strong className="text-emerald-800">{resumeDraft.email || formData.email}</strong>
+                {resumeDraft.saved_at ? ` was last saved on ${formatSavedAt(resumeDraft.saved_at)}` : ' was saved previously'}.{" "}
+                {resumeDraft.current_section ? (
+                  <>You left off at <strong className="text-emerald-800">Section {Math.min(Math.max(Number(resumeDraft.current_section), 1), totalSections)}</strong>.</>
+                ) : (
+                  <>We couldn't tell exactly where you left off — your saved answers are pre-filled below.</>
+                )}{" "}
+                Continue where you left off?
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  type="button"
+                  onClick={handleResumeDraft}
+                  disabled={discardingDraft}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                >
+                  <ChevronRight className="w-4 h-4 mr-1.5" />
+                  Continue Application
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleDiscardServerDraft}
+                  disabled={discardingDraft}
+                  className="border-emerald-300 text-emerald-700 hover:bg-emerald-100 font-semibold"
+                >
+                  {discardingDraft ? (
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 mr-1.5" />
+                  )}
+                  Start Over
+                </Button>
+              </div>
+            </div>
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Full Name Input */}
@@ -1276,7 +1473,7 @@ export default function CourseApplicationForm({
         />
         <p className="text-sm text-gray-700 mt-2 ml-1 flex items-center gap-2">
           <Sparkles className="w-4 h-4" />
-          We will use this for all official communication and check for duplicate applications.
+          We will use this for all official communication, check for duplicate applications, and let you resume a saved draft from any device.
         </p>
         {validationErrors.email && (
           <p className="text-sm text-red-600 mt-2 font-semibold flex items-center gap-2">

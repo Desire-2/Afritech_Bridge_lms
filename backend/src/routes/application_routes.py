@@ -771,6 +771,12 @@ def save_application_draft():
         app.is_draft = True
         app.status = "pending"  # Will be kept pending until fully submitted
 
+        # Track which form section the applicant was on (enables cross-device resume)
+        try:
+            app.current_section = min(max(int(data.get("current_section") or 1), 1), 7)
+        except (TypeError, ValueError):
+            app.current_section = 1
+
         # Legacy name split
         app.split_name()
 
@@ -806,8 +812,11 @@ def save_application_draft():
                     (enrollment_type == 'scholarship' and amount > 0)
                 )
             
+            # Silent saves (background auto-save of progress) must not spam emails
+            silent_save = data.get("silent", False) in (True, "true", "1", 1)
+
             # Send email notification if payment is required
-            if requires_payment and amount > 0:
+            if not silent_save and requires_payment and amount > 0:
                 logger.info(f"📧 Sending payment pending email for draft application #{app.id}")
                 email_sent = send_payment_pending_notification(
                     application=app,
@@ -839,6 +848,150 @@ def save_application_draft():
         db.session.rollback()
         logger.error(f"save-draft error: {e}")
         return jsonify({"error": "Failed to save application draft", "details": str(e)}), 500
+
+
+# ── Draft lookup & delete (public, keyed by the email the applicant enters) ──
+def _draft_json_list(value):
+    """Parse a DB JSON-array text column (tool_tasks_done, available_time, ...)
+    back into a Python list for the application form."""
+    import json as _json
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = _json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except Exception:
+        return []
+
+
+@application_bp.route("/draft-lookup", methods=["GET"])
+def lookup_draft_application():
+    """
+    Look up a saved *draft* application by email + course (public endpoint).
+
+    Lets an applicant resume where they left off from any device: they type
+    their email into the application form, and if a draft exists for that
+    email + course, this returns the draft's own form data plus the section
+    they were last on.  The endpoint is deliberately keyed by the email the
+    applicant entered (same trust model as check-duplicate / status lookups).
+
+    Returns ``{found: False}`` when no draft exists, and never returns a draft
+    when a submitted (non-draft) application already exists for that email.
+    """
+    course_id = request.args.get("course_id")
+    email = (request.args.get("email") or "").lower().strip()
+
+    if not course_id or not email:
+        return jsonify({"error": "course_id and email are required"}), 400
+
+    try:
+        cid = int(course_id)
+    except ValueError:
+        return jsonify({"error": "Invalid course_id"}), 400
+
+    try:
+        # A submitted application takes precedence — never offer a stale draft
+        submitted_exists = CourseApplication.query.filter_by(
+            course_id=cid, email=email, is_draft=False
+        ).first() is not None
+        if submitted_exists:
+            return jsonify({"found": False, "submitted_exists": True}), 200
+
+        draft = CourseApplication.query.filter_by(
+            course_id=cid, email=email, is_draft=True
+        ).order_by(CourseApplication.updated_at.desc()).first()
+        if not draft:
+            return jsonify({"found": False}), 200
+
+        saved_at = None
+        if draft.updated_at:
+            saved_at = draft.updated_at.isoformat()
+        elif draft.created_at:
+            saved_at = draft.created_at.isoformat()
+
+        return jsonify({
+            "found": True,
+            "submitted_exists": False,
+            "draft": {
+                "id": draft.id,
+                # Null for drafts saved before this feature shipped — the frontend
+                # treats it as "start from the top with answers pre-filled".
+                "current_section": draft.current_section,
+                "saved_at": saved_at,
+                # Form fields the application form needs to pre-fill
+                "full_name": draft.full_name,
+                "email": draft.email,
+                "phone": draft.phone,
+                "whatsapp_number": draft.whatsapp_number,
+                "gender": draft.gender,
+                "age_range": draft.age_range,
+                "country": draft.country,
+                "city": draft.city,
+                "education_level": draft.education_level,
+                "current_status": draft.current_status,
+                "field_of_study": draft.field_of_study,
+                "skill_profile_key": draft.skill_profile_key,
+                "has_used_tool": draft.has_used_tool,
+                "tool_skill_level": draft.tool_skill_level,
+                "tool_tasks_done": _draft_json_list(draft.tool_tasks_done),
+                "skill_open_answer": draft.skill_open_answer,
+                "has_used_excel": draft.has_used_excel,
+                "excel_skill_level": draft.excel_skill_level,
+                "excel_tasks_done": _draft_json_list(draft.excel_tasks_done),
+                "motivation": draft.motivation,
+                "learning_outcomes": draft.learning_outcomes,
+                "career_impact": draft.career_impact,
+                "has_computer": draft.has_computer,
+                "internet_access_type": draft.internet_access_type,
+                "preferred_learning_mode": draft.preferred_learning_mode,
+                "available_time": _draft_json_list(draft.available_time),
+                "committed_to_complete": draft.committed_to_complete,
+                "agrees_to_assessments": draft.agrees_to_assessments,
+                "referral_source": draft.referral_source,
+                "application_window_id": draft.application_window_id,
+            }
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"draft-lookup error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@application_bp.route("/draft", methods=["DELETE"])
+def delete_draft_application():
+    """
+    Delete a saved draft application (public, keyed by email + course).
+
+    Used when an applicant chooses "Start Over" on the resume-draft banner so
+    the draft is not offered again on any device.
+    """
+    course_id = request.args.get("course_id")
+    email = (request.args.get("email") or "").lower().strip()
+
+    if not course_id or not email:
+        return jsonify({"error": "course_id and email are required"}), 400
+
+    try:
+        cid = int(course_id)
+    except ValueError:
+        return jsonify({"error": "Invalid course_id"}), 400
+
+    try:
+        draft = CourseApplication.query.filter_by(
+            course_id=cid, email=email, is_draft=True
+        ).first()
+        if not draft:
+            return jsonify({"deleted": False, "message": "No draft found"}), 200
+
+        db.session.delete(draft)
+        db.session.commit()
+        return jsonify({"deleted": True, "message": "Draft deleted"}), 200
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"delete-draft error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ── List saved (draft) applications ─────────────────────────────────────────

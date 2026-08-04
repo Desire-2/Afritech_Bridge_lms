@@ -140,6 +140,11 @@ class CourseApplication(db.Model):
     # Used for the "Save & Proceed to Payment" flow — drafts are hidden from admin review.
     is_draft = db.Column(db.Boolean, default=False, nullable=False, server_default='0')
 
+    # ========== Draft Resume Progress ==========
+    # Which form section the applicant was on when the draft was last saved.
+    # Lets applicants resume where they left off from any device (via email lookup).
+    current_section = db.Column(db.Integer, nullable=True, default=1)
+
     # Cohort snapshot
     application_window_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)
     cohort_label = db.Column(db.String(120), nullable=True)
@@ -207,6 +212,7 @@ class CourseApplication(db.Model):
             "is_high_risk": self.is_high_risk,
             "status": self.status,
             "is_draft": self.is_draft,
+            "current_section": self.current_section,
             "payment_method": self.payment_method,
             "payment_status": self.payment_status,
             "payment_reference": self.payment_reference,

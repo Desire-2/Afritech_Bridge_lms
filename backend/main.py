@@ -383,6 +383,7 @@ def _auto_migrate_missing_columns():
             'tool_skill_level': sa.Column('tool_skill_level', sa.String(100), nullable=True),
             'tool_tasks_done': sa.Column('tool_tasks_done', sa.Text, nullable=True),
             'skill_open_answer': sa.Column('skill_open_answer', sa.Text, nullable=True),
+            'current_section': sa.Column('current_section', sa.Integer, nullable=True),
         }
         missing = {k: v for k, v in additions.items() if k not in existing}
         if missing:
