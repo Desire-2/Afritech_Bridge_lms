@@ -61,6 +61,12 @@ function formatSavedAt(iso?: string | null): string {
   }
 }
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 export default function CourseApplicationForm({
   courseId,
   courseTitle,
@@ -206,6 +212,10 @@ export default function CourseApplicationForm({
   const [checkingDuplicate, setCheckingDuplicate] = useState(false);
   const [existingApplication, setExistingApplication] = useState<any>(null);
   const [emailChecked, setEmailChecked] = useState(false);
+  const emailLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const emailLookupVersionRef = useRef(0);
+  const latestEmailRef = useRef('');
+  const lastLookupEmailRef = useRef<string | null>(null);
 
   // ── Cross-device draft resume (server-side draft found by email) ──
   const [resumeDraft, setResumeDraft] = useState<(Partial<ApplicationSubmitData> & {
@@ -215,8 +225,11 @@ export default function CourseApplicationForm({
   }) | null>(null);
   const [checkingDraft, setCheckingDraft] = useState(false);
   const [discardingDraft, setDiscardingDraft] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
   // Emails the user explicitly chose "Start Over" for this session — don't re-offer the draft
   const discardedDraftEmailRef = useRef<string | null>(null);
+  // The email currently associated with the local/server draft ID.
+  const draftOwnerEmailRef = useRef(normalizeEmail(formData.email));
   // Serialize/debounce background draft saves to avoid concurrent-insert races
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressSaveInFlightRef = useRef(false);
@@ -262,6 +275,17 @@ export default function CourseApplicationForm({
   const requiresPaymentStep = effectiveNeedsPayment;
   // Total form sections: 6 for free/scholarship, 7 for courses requiring payment
   const totalSections = requiresPaymentStep ? 7 : 6;
+
+  // If course/cohort payment data arrives after the email lookup, finish the
+  // automatic resume transition once the payment requirement is known.
+  useEffect(() => {
+    if (draftRestored && requiresPaymentStep && currentSection !== 7) {
+      setCurrentSection(7);
+    }
+  // Deliberately omit currentSection: the applicant may navigate back after
+  // the automatic transition without being forced forward again.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftRestored, requiresPaymentStep]);
 
   // Persisted draft ID returned by /save-draft (needed to upsert on final submit)
   const [savedDraftId, setSavedDraftId] = useState<number | null>(() => {
@@ -325,6 +349,7 @@ export default function CourseApplicationForm({
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
       if (autoSaveIdleTimerRef.current) clearTimeout(autoSaveIdleTimerRef.current);
       if (progressSaveTimerRef.current) clearTimeout(progressSaveTimerRef.current);
+      if (emailLookupTimerRef.current) clearTimeout(emailLookupTimerRef.current);
     };
   }, []);
 
@@ -373,6 +398,9 @@ export default function CourseApplicationForm({
       applicationService.deleteDraft(courseId, formData.email).catch(() => { /* non-fatal */ });
     }
     setSavedDraftId(null);
+    draftOwnerEmailRef.current = '';
+    setDraftRestored(false);
+    setResumeDraft(null);
     try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
     setFormData(defaultFormData);
     setCurrentSection(1);
@@ -380,14 +408,19 @@ export default function CourseApplicationForm({
   };
 
   // Check for duplicate application when email is entered
-  const checkDuplicateApplication = async (email: string) => {
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  const checkDuplicateApplication = async (
+    email: string,
+    lookupVersion = emailLookupVersionRef.current,
+  ) => {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
       return; // Don't check if email is invalid
     }
 
     setCheckingDuplicate(true);
     try {
-      const result = await applicationService.checkDuplicate(courseId, email);
+      const result = await applicationService.checkDuplicate(courseId, normalizedEmail);
+      if (lookupVersion !== emailLookupVersionRef.current || latestEmailRef.current !== normalizedEmail) return;
       // The public endpoint deliberately returns no application details.
       // Keeping only a local marker prevents an applicant's status/scores from
       // being exposed to anyone who knows their email address.
@@ -396,15 +429,32 @@ export default function CourseApplicationForm({
     } catch (err: any) {
       console.error('Error checking duplicate:', err);
     } finally {
-      setCheckingDuplicate(false);
+      if (lookupVersion === emailLookupVersionRef.current) setCheckingDuplicate(false);
     }
   };
 
   const handleInputChange = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
 
-    // If the email changes, drop any draft offered for the previous email
-    if (field === 'email' && value !== resumeDraft?.email) {
+    // If the email changes, drop all client-side draft references for the
+    // previous email. Otherwise a stale draft ID could finalize another
+    // applicant's draft when this form is submitted.
+    if (field === 'email') {
+      const normalizedEmail = normalizeEmail(String(value));
+      // Invalidate in-flight responses immediately, before React's effect for
+      // the new value runs.
+      latestEmailRef.current = normalizedEmail;
+      emailLookupVersionRef.current += 1;
+      lastLookupEmailRef.current = null;
+      if (normalizedEmail !== draftOwnerEmailRef.current) {
+        draftOwnerEmailRef.current = normalizedEmail;
+        setSavedDraftId(null);
+        setShowDraftBanner(false);
+        setDraftRestored(false);
+        setExistingApplication(null);
+        setEmailChecked(false);
+        try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
+      }
       setResumeDraft(null);
     }
 
@@ -418,44 +468,27 @@ export default function CourseApplicationForm({
     }
   };
 
-  // Look for a previously-saved draft for this email (any device)
-  const checkDraftByEmail = async (email: string) => {
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return; // Don't check if email is invalid
-    }
-    // If the user just chose "Start Over" for this email, don't re-offer the draft
-    if (discardedDraftEmailRef.current === email.trim().toLowerCase()) return;
-
-    setCheckingDraft(true);
-    try {
-      const result = await applicationService.lookupDraft(courseId, email);
-      if (result.found && result.draft && !result.submitted_exists) {
-        setResumeDraft(result.draft);
-      } else {
-        setResumeDraft(null);
-      }
-    } catch (err: any) {
-      console.error('Error looking up draft:', err);
-      setResumeDraft(null);
-    } finally {
-      setCheckingDraft(false);
-    }
-  };
-
-  // Restore the server draft into the form and jump to where they left off
-  const handleResumeDraft = () => {
-    if (!resumeDraft) return;
-    const { id, current_section, saved_at, ...draftFields } = resumeDraft;
+  // Restore a server draft into the form. Paid courses go directly to the
+  // payment step after restoration; payment still requires the applicant's
+  // explicit action in the payment UI.
+  const restoreServerDraft = (draft: NonNullable<typeof resumeDraft>) => {
+    const { id, current_section, saved_at, ...draftFields } = draft;
     const restored = { ...defaultFormData, ...draftFields, course_id: courseId };
-    const targetSection = Math.min(Math.max(Number(current_section) || 1, 1), totalSections);
+    const savedSection = Math.min(Math.max(Number(current_section) || 1, 1), totalSections);
+    const targetSection = requiresPaymentStep ? 7 : savedSection;
+    const restoredEmail = normalizeEmail(String(restored.email || formData.email));
 
     setFormData(restored);
     setCurrentSection(targetSection);
     setSavedDraftId(id);
+    draftOwnerEmailRef.current = restoredEmail;
     if (saved_at) setDraftSavedAt(new Date(saved_at));
     setResumeDraft(null);
+    setDraftRestored(true);
+    setShowDraftBanner(false);
 
-    // Persist locally so the existing auto-save flow keeps working seamlessly
+    // Persist locally so the applicant can refresh or complete payment
+    // without losing the server draft ID.
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify({
         formData: restored,
@@ -465,9 +498,42 @@ export default function CourseApplicationForm({
       localStorage.setItem(`draft_id_for_course_${courseId}`, String(id));
     } catch { /* ignore */ }
 
-    // Hide the local-draft banner too — the data is now in state
-    setShowDraftBanner(false);
     document.getElementById('application-form-top')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Look for a previously-saved draft for this email (any device).
+  const checkDraftByEmail = async (
+    email: string,
+    lookupVersion = emailLookupVersionRef.current,
+  ) => {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
+      return; // Don't check if email is invalid
+    }
+    // If the user just chose "Start Over" for this email, don't re-offer the draft
+    if (discardedDraftEmailRef.current === normalizedEmail) return;
+
+    setCheckingDraft(true);
+    try {
+      const result = await applicationService.lookupDraft(courseId, normalizedEmail);
+      if (lookupVersion !== emailLookupVersionRef.current || latestEmailRef.current !== normalizedEmail) return;
+      if (result.found && result.draft && !result.submitted_exists) {
+        setResumeDraft(result.draft);
+        restoreServerDraft(result.draft);
+      } else {
+        setResumeDraft(null);
+      }
+    } catch (err: any) {
+      console.error('Error looking up draft:', err);
+      if (lookupVersion === emailLookupVersionRef.current) setResumeDraft(null);
+    } finally {
+      if (lookupVersion === emailLookupVersionRef.current) setCheckingDraft(false);
+    }
+  };
+
+  // Restore the server draft into the form and jump to where they left off
+  const handleResumeDraft = () => {
+    if (resumeDraft) restoreServerDraft(resumeDraft);
   };
 
   // Discard the server draft and start over (also clears local draft)
@@ -486,19 +552,58 @@ export default function CourseApplicationForm({
     }
     setResumeDraft(null);
     setSavedDraftId(null);
+    draftOwnerEmailRef.current = '';
+    setDraftRestored(false);
     setFormData(defaultFormData);
     setCurrentSection(1);
     try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
     try { localStorage.removeItem(`draft_id_for_course_${courseId}`); } catch { /* ignore */ }
   };
 
-  // Email blur handler: immediate duplicate check + cross-device draft lookup
+  // Email blur handler: perform an immediate lookup instead of waiting for the
+  // debounce when the applicant leaves the email field.
   const handleEmailBlur = () => {
-    if (formData.email) {
-      checkDuplicateApplication(formData.email);
-      checkDraftByEmail(formData.email);
-    }
+    const normalizedEmail = normalizeEmail(formData.email);
+    if (!EMAIL_PATTERN.test(normalizedEmail) || lastLookupEmailRef.current === normalizedEmail) return;
+    if (emailLookupTimerRef.current) clearTimeout(emailLookupTimerRef.current);
+    const lookupVersion = ++emailLookupVersionRef.current;
+    latestEmailRef.current = normalizedEmail;
+    lastLookupEmailRef.current = normalizedEmail;
+    void checkDuplicateApplication(normalizedEmail, lookupVersion);
+    void checkDraftByEmail(normalizedEmail, lookupVersion);
   };
+
+  // Automatically synchronize the entered email with this course's submitted
+  // applications and saved drafts. Requests are versioned so a slow response
+  // for an older email can never overwrite the current form.
+  useEffect(() => {
+    const normalizedEmail = normalizeEmail(formData.email);
+    latestEmailRef.current = normalizedEmail;
+
+    if (emailLookupTimerRef.current) clearTimeout(emailLookupTimerRef.current);
+
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      emailLookupVersionRef.current += 1;
+      lastLookupEmailRef.current = null;
+      setCheckingDuplicate(false);
+      setCheckingDraft(false);
+      setEmailChecked(false);
+      return;
+    }
+
+    emailLookupTimerRef.current = setTimeout(() => {
+      if (lastLookupEmailRef.current === normalizedEmail) return;
+      const lookupVersion = ++emailLookupVersionRef.current;
+      lastLookupEmailRef.current = normalizedEmail;
+      void checkDuplicateApplication(normalizedEmail, lookupVersion);
+      void checkDraftByEmail(normalizedEmail, lookupVersion);
+    }, 450);
+
+    return () => {
+      if (emailLookupTimerRef.current) clearTimeout(emailLookupTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.email, courseId]);
 
   const handleCheckboxChange = (field: string, checked: boolean) => {
     setFormData((prev) => ({ ...prev, [field]: checked }));
@@ -3066,6 +3171,30 @@ export default function CourseApplicationForm({
               restoreLabel="Keep Progress"
               discardLabel="Start Over"
             />
+          )}
+
+          {/* This confirmation is global because paid drafts are moved to
+              section 7 immediately after restoration. */}
+          {draftRestored && (
+            <Alert className="mb-6 border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 shadow-lg rounded-xl">
+              <CheckCircle2 className="h-6 w-6 text-emerald-600 flex-shrink-0" />
+              <AlertDescription className="ml-2 w-full">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-semibold text-emerald-900 dark:text-emerald-200">
+                    Your saved application was restored automatically.
+                    {requiresPaymentStep && ' Review the payment details below to continue.'}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleDiscardDraft}
+                    className="border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Start Over
+                  </Button>
+                </div>
+              </AlertDescription>
+            </Alert>
           )}
 
           {/* Global Error Message */}

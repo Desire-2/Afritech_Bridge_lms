@@ -326,6 +326,8 @@ def apply_for_course():
             "error": "Missing required fields",
             "missing": missing_fields
         }), 400
+
+    incoming_email = str(data.get("email") or "").strip().lower()
     
     course = Course.query.get(data.get("course_id"))
     if not course:
@@ -347,7 +349,7 @@ def apply_for_course():
     try:
         dup_query = CourseApplication.query.filter_by(
             course_id=data.get("course_id"),
-            email=data.get("email").lower(),
+            email=incoming_email,
             is_draft=False,
         )
         existing_count = dup_query.count()
@@ -357,7 +359,7 @@ def apply_for_course():
             existing_id = db.session.execute(
                 db.select(CourseApplication.id, CourseApplication.status).filter_by(
                     course_id=data.get("course_id"),
-                    email=data.get("email").lower(),
+                    email=incoming_email,
                     is_draft=False,
                 )
             ).first()
@@ -515,8 +517,17 @@ def apply_for_course():
     # If the student saved a draft first, update that record instead of inserting a new one
     draft_id = data.get("draft_id")
     if draft_id:
-        draft = CourseApplication.query.filter_by(id=int(draft_id), is_draft=True).first()
+        try:
+            draft = CourseApplication.query.filter_by(id=int(draft_id), is_draft=True).first()
+        except (TypeError, ValueError):
+            draft = None
         if draft and draft.course_id == data.get("course_id"):
+            # A client can hold an old localStorage draft ID. Never allow that
+            # ID to attach a different email's saved application to this submit.
+            if (draft.email or "").strip().lower() != incoming_email:
+                return jsonify({
+                    "error": "The saved application does not belong to this email address",
+                }), 409
             # Re-use the draft record – copy all fields from the new application object
             new_app = application  # temporary object (not yet added to session)
             application = draft
@@ -701,6 +712,9 @@ def save_application_draft():
             course_id=data.get("course_id"),
             email=email_norm,
             is_draft=True,
+        ).order_by(
+            CourseApplication.updated_at.desc(),
+            CourseApplication.id.desc(),
         ).first()
     except Exception:
         db.session.rollback()
@@ -768,6 +782,11 @@ def save_application_draft():
         app.cohort_end_date = resolved_cohort_end
         app.online_learning_experience = data.get("online_learning_experience", False)
         app.available_for_live_sessions = data.get("preferred_learning_mode") in ["live_sessions", "hybrid"]
+        # Keep the selected payment method when the applicant saves before
+        # payment. Fields omitted by background saves intentionally preserve the
+        # previous value on an existing draft.
+        if data.get("payment_method") is not None:
+            app.payment_method = data.get("payment_method")
         app.is_draft = True
         app.status = "pending"  # Will be kept pending until fully submitted
 
@@ -950,6 +969,7 @@ def lookup_draft_application():
                 "committed_to_complete": draft.committed_to_complete,
                 "agrees_to_assessments": draft.agrees_to_assessments,
                 "referral_source": draft.referral_source,
+                "payment_method": draft.payment_method,
                 "application_window_id": draft.application_window_id,
             }
         }), 200
@@ -981,6 +1001,9 @@ def delete_draft_application():
     try:
         draft = CourseApplication.query.filter_by(
             course_id=cid, email=email, is_draft=True
+        ).order_by(
+            CourseApplication.updated_at.desc(),
+            CourseApplication.id.desc(),
         ).first()
         if not draft:
             return jsonify({"deleted": False, "message": "No draft found"}), 200

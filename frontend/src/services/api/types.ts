@@ -486,7 +486,7 @@ export interface CourseApplication {
   agrees_to_assessments: boolean;
   referral_source?: string;
   status: 'pending' | 'approved' | 'rejected' | 'waitlisted';
-  payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe';
+  payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe' | 'kpay' | 'momo_pay_code' | 'flutterwave';
   payment_status?: 'pending' | 'pending_bank_transfer' | 'completed' | 'confirmed' | 'failed';
   payment_reference?: string;
   // Payment amount & currency
@@ -554,7 +554,7 @@ export interface ApplicationSubmitData {
   committed_to_complete: boolean;
   agrees_to_assessments: boolean;
   referral_source?: string;
-  payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe';
+  payment_method?: 'mobile_money' | 'paypal' | 'bank_transfer' | 'stripe' | 'kpay' | 'momo_pay_code' | 'flutterwave';
   payment_phone_number?: string;
   payment_payer_name?: string;
   paypal_email?: string;
