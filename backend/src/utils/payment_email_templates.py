@@ -9,7 +9,8 @@ from .email_template_helpers import (
     get_cohort_info_card,
     get_payment_info_card,
     get_cohort_payment_combined_card,
-    get_payment_deadline_warning
+    get_payment_deadline_warning,
+    format_email_amount,
 )
 
 
@@ -51,7 +52,7 @@ def _build_scholarship_badge_html(scholarship_type, scholarship_percentage, orig
                     <td style="vertical-align: middle;">
                         <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
                         <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
-                            Enjoy this course at an <strong style="color: #fbbf24;">affordable price</strong> thanks to your partial scholarship!
+                            Your amount due is <strong style="color: #fbbf24;">{format_email_amount(amount, currency)}</strong> thanks to your partial scholarship!
                         </p>
                     </td>
                 </tr>
@@ -83,6 +84,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
     currency = payment_info.get('currency', 'USD')
     deadline = payment_info.get('payment_deadline')
     payment_methods = payment_info.get('payment_methods', ['Mobile Money', 'Bank Transfer', 'PayPal'])
+    amount_display = format_email_amount(amount, currency)
 
     # ── Resolve scholarship info from application's cohort window ──
     scholarship_type = None
@@ -206,7 +208,7 @@ def application_saved_payment_pending_email(application, course_title, payment_i
                                     <span style="margin-right: 8px;">💵</span> Amount Due
                                 </td>
                                 <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">
-                                    Affordable Price
+                                    {amount_display}
                                 </td>
                             </tr>
                         </table>
@@ -303,6 +305,7 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
     method = payment_details.get('payment_method', 'Payment Gateway')
     reference = payment_details.get('payment_reference', 'N/A')
     payment_date = payment_details.get('payment_date', datetime.utcnow())
+    amount_display = format_email_amount(amount, currency)
 
     # ── Resolve scholarship info from application's cohort window ──
     scholarship_type = None
@@ -446,7 +449,7 @@ def payment_confirmation_email(application, course_title, payment_details, cohor
                                     <span style="margin-right: 8px;">💵</span> Amount Paid
                                 </td>
                                 <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">
-                                    Affordable Price
+                                    {amount_display}
                                 </td>
                             </tr>
                         </table>
@@ -718,6 +721,7 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
     currency = payment_info.get('currency', 'USD')
     days_remaining = payment_info.get('days_remaining', None)
     deadline = payment_info.get('payment_deadline')
+    amount_display = format_email_amount(amount, currency)
 
     # ── Resolve scholarship info from application's cohort window ──
     scholarship_type = None
@@ -847,7 +851,7 @@ def payment_reminder_email(application, course_title, payment_info, cohort_info=
                                     <span style="margin-right: 8px;">💵</span> Amount Due
                                 </td>
                                 <td style="padding: 15px 0; color: #f59e0b; font-size: 24px; font-weight: 700; text-align: right;">
-                                    Affordable Price
+                                    {amount_display}
                                 </td>
                             </tr>
                         </table>
@@ -1122,6 +1126,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
     method = payment_details.get('payment_method', 'Manual Payment')
     reference = payment_details.get('payment_reference', 'N/A')
     payment_date = payment_details.get('payment_date', datetime.utcnow())
+    amount_display = format_email_amount(amount, currency)
 
     # ── Extract scholarship info from payment_details (now includes it from _get_payment_info_from_enrollment) ──
     scholarship_type = payment_details.get('scholarship_type')
@@ -1153,7 +1158,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                     <td style="vertical-align: middle;">
                         <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
                         <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
-                            Enjoy this course at an <strong style="color: #fbbf24;">affordable price</strong> thanks to your partial scholarship!
+                            Your amount due is <strong style="color: #fbbf24;">{format_email_amount(amount, currency)}</strong> thanks to your partial scholarship!
                         </p>
                     </td>
                 </tr>
@@ -1259,7 +1264,7 @@ def enrollment_payment_confirmed_email(enrollment, course_title, payment_details
                             </tr>
                             <tr style="border-top: 2px solid #10b981;">
                                 <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Paid</td>
-                                <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">Affordable Price</td>
+                                <td style="padding: 15px 0; color: #10b981; font-size: 24px; font-weight: 700; text-align: right;">{amount_display}</td>
                             </tr>
                         </table>
                     </div>
@@ -1532,6 +1537,7 @@ def payment_submitted_unapproved_email(application, course_title, payment_info, 
     currency = payment_info.get('currency', 'USD')
     deadline = payment_info.get('payment_deadline')
     payment_methods = payment_info.get('payment_methods', ['Mobile Money', 'Bank Transfer', 'PayPal'])
+    amount_display = format_email_amount(amount, currency)
     
     # WhatsApp support number
     whatsapp_number = os.environ.get('WHATSAPP_SUPPORT_NUMBER', '+250780784924')
@@ -1621,7 +1627,7 @@ def payment_submitted_unapproved_email(application, course_title, payment_info, 
                             </tr>
                             <tr style="border-top: 2px solid #3b82f6;">
                                 <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Due</td>
-                                <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">Affordable Price</td>
+                                <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">{amount_display}</td>
                             </tr>
                         </table>
                     </div>
@@ -1710,7 +1716,7 @@ def payment_migrated_student_email(application, course_title, payment_info, coho
     📧 Email sent to students who were migrated from one cohort to another
     and need to pay to continue their learning.
     
-    Tells them to login and pay an affordable price to proceed.
+    Tells them to login and pay the displayed amount to proceed.
     
     Args:
         application: CourseApplication object (can be None for enrollment-based reminders)
@@ -1730,6 +1736,7 @@ def payment_migrated_student_email(application, course_title, payment_info, coho
     currency = payment_info.get('currency', 'USD')
     original_cohort = payment_info.get('original_cohort', 'Previous Cohort')
     new_cohort = payment_info.get('new_cohort', 'New Cohort')
+    amount_display = format_email_amount(amount, currency)
     
     student_name = payment_info.get('student_name', application.full_name if application else 'Student')
     
@@ -1808,7 +1815,7 @@ def payment_migrated_student_email(application, course_title, payment_info, coho
                             </tr>
                             <tr style="border-top: 2px solid #8b5cf6;">
                                 <td style="padding: 15px 0; color: #ffffff; font-size: 18px; font-weight: 700;">💵 Amount Due</td>
-                                <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">Affordable Price</td>
+                                <td style="padding: 15px 0; color: #8b5cf6; font-size: 24px; font-weight: 700; text-align: right;">{amount_display}</td>
                             </tr>
                         </table>
                     </div>
@@ -1931,6 +1938,7 @@ def enrollment_payment_admin_alert_email(
     }
     method_label = method_labels.get(payment_method, payment_method.replace('_', ' ').title())
     status_label = 'With Proof (Screenshot)' if screenshot_available else 'Submitted'
+    amount_display = format_email_amount(amount, currency)
 
     review_url = admin_panel_url or _frontend_url('admin/payments')
 
@@ -2046,7 +2054,7 @@ def enrollment_payment_admin_alert_email(
                                     <span style="margin-right: 8px;">💵</span> Amount
                                 </td>
                                 <td style="padding: 15px 0; color: #f59e0b; font-size: 24px; font-weight: 700; text-align: right;">
-                                    Affordable Price
+                                    {amount_display}
                                 </td>
                             </tr>
                         </table>
@@ -2126,6 +2134,7 @@ def payment_refund_email(application, course_title, refund_details, cohort_info=
     reason = refund_details.get('refund_reason', 'As requested')
     refund_date = refund_details.get('refund_date', datetime.utcnow())
     processing_days = refund_details.get('processing_days', '5-10 business days')
+    amount_display = format_email_amount(amount, currency)
     
     if isinstance(refund_date, str):
         date_str = refund_date
@@ -2220,7 +2229,7 @@ def payment_refund_email(application, course_title, refund_details, cohort_info=
                                     <span style="margin-right: 8px;">💵</span> Refund Amount
                                 </td>
                                 <td style="padding: 15px 0; color: #3b82f6; font-size: 24px; font-weight: 700; text-align: right;">
-                                    Affordable Price
+                                    {amount_display}
                                 </td>
                             </tr>
                         </table>

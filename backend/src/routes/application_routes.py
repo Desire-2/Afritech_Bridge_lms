@@ -2357,32 +2357,36 @@ def change_application_status(app_id):
                 payment_info = None
                 if current_window:
                     # Use current window's payment info
-                    enrollment_type = current_window.enrollment_type or 'free'
+                    enrollment_type = current_window.get_effective_enrollment_type()
                     if enrollment_type != 'free':
+                        payment_summary = current_window.get_payment_summary()
                         payment_info = {
                             'cohort_label': current_window.cohort_label,
                             'cohort_enrollment_type': enrollment_type,
                             'cohort_scholarship_type': current_window.scholarship_type,
                             'cohort_scholarship_percentage': current_window.scholarship_percentage,
-                            'cohort_original_price': current_window.price if enrollment_type == 'paid' else None,
-                            'cohort_effective_price': current_window.get_effective_price(),
-                            'cohort_currency': current_window.currency or 'USD',
-                            'payment_required': enrollment_type in ['paid', 'partial'],
-                            'payment_mode': 'full' if enrollment_type == 'paid' else 'partial',
+                            'cohort_original_price': payment_summary.get('original_price'),
+                            'cohort_effective_price': payment_summary.get('total_price'),
+                            'cohort_amount_due': payment_summary.get('amount_due_now'),
+                            'cohort_currency': payment_summary.get('currency') or 'USD',
+                            'payment_required': payment_summary.get('required', False),
+                            'payment_mode': payment_summary.get('payment_mode', 'full'),
                             'payment_deadline': current_window.payment_deadline_days
                         }
                 elif course and course.enrollment_type != 'free':
                     # Fallback to course defaults if no window
+                    payment_summary = course.get_payment_summary()
                     payment_info = {
                         'cohort_label': course.cohort_label,
                         'cohort_enrollment_type': course.enrollment_type,
                         'cohort_scholarship_type': getattr(course, 'scholarship_type', None),
                         'cohort_scholarship_percentage': getattr(course, 'scholarship_percentage', None),
-                        'cohort_original_price': course.price if course.enrollment_type == 'paid' else None,
-                        'cohort_effective_price': course.price,
-                        'cohort_currency': course.currency or 'USD',
-                        'payment_required': course.enrollment_type in ['paid', 'partial'],
-                        'payment_mode': 'full' if course.enrollment_type == 'paid' else 'partial',
+                        'cohort_original_price': payment_summary.get('total_price', course.price),
+                        'cohort_effective_price': payment_summary.get('total_price', course.price),
+                        'cohort_amount_due': payment_summary.get('amount_due_now', course.price),
+                        'cohort_currency': payment_summary.get('currency') or course.currency or 'USD',
+                        'payment_required': payment_summary.get('required', course.enrollment_type in ['paid', 'partial']),
+                        'payment_mode': payment_summary.get('payment_mode', 'full'),
                         'payment_deadline': course.payment_deadline_days
                     }
                 

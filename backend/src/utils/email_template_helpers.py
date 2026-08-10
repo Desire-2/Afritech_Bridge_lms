@@ -5,6 +5,29 @@ Reusable components for cohort and payment information across all email template
 from datetime import datetime
 
 
+def format_email_amount(amount, currency="USD"):
+    """Format a backend-calculated amount for display in an email.
+
+    Email templates receive amounts after cohort pricing and scholarship
+    calculations. Keeping this formatting in one place prevents those values
+    from being replaced by descriptive placeholder text.
+    """
+    if amount is None:
+        return "N/A"
+
+    currency_code = str(currency or "USD").upper()
+    try:
+        numeric_amount = float(amount)
+    except (TypeError, ValueError):
+        return f"{currency_code} {amount}"
+
+    if numeric_amount.is_integer():
+        amount_text = f"{numeric_amount:,.0f}"
+    else:
+        amount_text = f"{numeric_amount:,.2f}"
+    return f"{currency_code} {amount_text}"
+
+
 def get_cohort_info_card(cohort_label=None, cohort_start_date=None, cohort_end_date=None, 
                          timezone="UTC", include_duration=True):
     """
@@ -138,16 +161,16 @@ def get_payment_info_card(amount=None, currency="USD", payment_required=False,
         return ""
     
     # Format payment details
-    total_display = 'Affordable Price' if amount else 'N/A'
+    total_display = format_email_amount(amount, currency) if amount else 'N/A'
     
     # Calculate partial payment if applicable
     partial_display = ""
     if payment_mode == "partial":
         if partial_amount:
-            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">Affordable Price</td></tr>"
+            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">{format_email_amount(partial_amount, currency)}</td></tr>"
         elif partial_percentage and amount:
             partial_amt = amount * (partial_percentage / 100)
-            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment ({partial_percentage:.0f}%)</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">Affordable Price</td></tr>"
+            partial_display = f"<tr><td style=\"padding: 10px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;\"><span style=\"margin-right: 8px;\">💳</span> Partial Payment ({partial_percentage:.0f}%)</td><td style=\"padding: 10px 0; color: #fbbf24; font-size: 15px; font-weight: 700; text-align: right;\">{format_email_amount(partial_amt, currency)}</td></tr>"
     
     # Format deadline
     deadline_str = ""
@@ -285,7 +308,7 @@ def get_cohort_payment_combined_card(cohort_label=None, cohort_start_date=None,
         rows += f"""<tr><td style="padding: 12px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;"><span style="margin-right: 8px;">🏁</span> Ends</td><td style="padding: 12px 0; color: #ffffff; font-size: 15px; text-align: right;">{end_str}</td></tr>"""
     
     if payment_required and amount:
-        total_display = 'Affordable Price'
+        total_display = format_email_amount(amount, currency)
         rows += f"""<tr style="border-top: 2px solid #f59e0b; border-bottom: 2px solid #f59e0b;"><td style="padding: 12px 0; color: #bdc3c7; font-size: 14px; font-weight: 600;"><span style="margin-right: 8px;">💰</span> Amount</td><td style="padding: 12px 0; color: #f59e0b; font-size: 18px; font-weight: 700; text-align: right;">{total_display}</td></tr>"""
     
     if not rows:

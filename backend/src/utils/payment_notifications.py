@@ -964,14 +964,27 @@ def get_payment_info_from_application_window(application_window) -> Dict:
         enrollment_type = application_window.get_effective_enrollment_type() if hasattr(application_window, 'get_effective_enrollment_type') else getattr(application_window, 'enrollment_type', 'free')
         payment_info['enrollment_type'] = enrollment_type
 
-        # Get pricing using ApplicationWindow's effective methods (handles scholarship)
+        # Get pricing using the ApplicationWindow payment summary. This keeps
+        # the email amount aligned with the backend's due-now calculation,
+        # including scholarship-adjusted prices and paid partial payments.
         if enrollment_type in ['paid', 'scholarship']:
-            effective_price = application_window.get_effective_price() if hasattr(application_window, 'get_effective_price') else 0
-            effective_currency = application_window.get_effective_currency() if hasattr(application_window, 'get_effective_currency') else 'USD'
+            payment_summary = application_window.get_payment_summary() if hasattr(application_window, 'get_payment_summary') else {}
+            effective_price = payment_summary.get('total_price')
+            if effective_price is None:
+                effective_price = application_window.get_effective_price() if hasattr(application_window, 'get_effective_price') else 0
+            amount_due_now = payment_summary.get('amount_due_now', effective_price)
+            effective_currency = payment_summary.get('currency') or (
+                application_window.get_effective_currency() if hasattr(application_window, 'get_effective_currency') else 'USD'
+            )
 
-            payment_info['amount'] = float(effective_price or 0)
+            payment_info['amount'] = float(amount_due_now or 0)
+            payment_info['amount_due_now'] = float(amount_due_now or 0)
+            payment_info['total_price'] = float(effective_price or 0)
             payment_info['currency'] = effective_currency or 'USD'
-            payment_info['original_price'] = float(getattr(application_window, 'price', 0) or (application_window.course.price if application_window.course else 0))
+            payment_info['payment_mode'] = payment_summary.get('payment_mode', 'full')
+            payment_info['original_price'] = payment_summary.get('original_price')
+            if payment_info['original_price'] is None:
+                payment_info['original_price'] = float(getattr(application_window, 'price', 0) or (application_window.course.price if application_window.course else 0))
 
             # Attach scholarship metadata for email templates
             scholarship_type = getattr(application_window, 'scholarship_type', None)

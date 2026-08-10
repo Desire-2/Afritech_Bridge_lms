@@ -5,6 +5,7 @@ Beautiful, responsive, and engaging email designs
 import os
 import base64
 from datetime import datetime
+from .email_template_helpers import format_email_amount
 
 
 # ── Embedded logo (base64) ──────────────────────────────────────────────────
@@ -309,7 +310,7 @@ def application_received_email(application, course_title, cohort_info=None, paym
                                         <td style="vertical-align: middle;">
                                             <p style="margin: 0; color: #ffffff; font-size: 15px; font-weight: 700;">Partial Scholarship — {discount_pct:.0f}% Covered</p>
                                             <p style="margin: 2px 0 0 0; color: #93c5fd; font-size: 13px;">
-                                                Enjoy this course at an <strong style="color: #fbbf24;">affordable price</strong> thanks to your partial scholarship!
+                                                Your amount due is <strong style="color: #fbbf24;">{format_email_amount(amount, currency)}</strong> thanks to your partial scholarship!
                                             </p>
                                         </td>
                                     </tr>
@@ -671,6 +672,9 @@ def _build_payment_section(payment_info: dict) -> str:
     scholarship_type = payment_info.get('cohort_scholarship_type')
     scholarship_pct = payment_info.get('cohort_scholarship_percentage')
     effective_price = payment_info.get('cohort_effective_price', 0)
+    amount_due = payment_info.get('cohort_amount_due')
+    if amount_due is None:
+        amount_due = effective_price
     currency = payment_info.get('cohort_currency', 'USD')
     original_price = payment_info.get('cohort_original_price')
     payment_required = payment_info.get('payment_required', False)
@@ -711,7 +715,7 @@ def _build_payment_section(payment_info: dict) -> str:
                 {discount_line}
                 <tr style="border-top: 2px solid #f59e0b;">
                     <td style="padding: 12px 0; font-weight: 700; color: #ffffff; font-size: 16px;">Amount Due:</td>
-                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">Affordable Price</td>
+                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">{format_email_amount(amount_due, currency)}</td>
                 </tr>
             </table>
             <p style="color: #fde68a; font-size: 13px; margin: 15px 0 0 0; text-align: center;">
@@ -730,7 +734,7 @@ def _build_payment_section(payment_info: dict) -> str:
             <table class="responsive-table" style="width: 100%; color: #e5e7eb;">
                 <tr>
                     <td style="padding: 12px 0; font-weight: 700; color: #ffffff; font-size: 16px;">Amount Due:</td>
-                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">Affordable Price</td>
+                    <td style="padding: 12px 0; color: #fbbf24; font-weight: 700; font-size: 18px;">{format_email_amount(amount_due, currency)}</td>
                 </tr>
             </table>
             <p style="color: #fde68a; font-size: 13px; margin: 15px 0 0 0; text-align: center;">
