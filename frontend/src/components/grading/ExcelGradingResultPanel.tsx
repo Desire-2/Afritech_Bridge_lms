@@ -53,6 +53,29 @@ function confidenceBadge(c: string) {
   return map[c] || "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
 }
 
+function statusBadge(status?: string) {
+  const map: Record<string, string> = {
+    SATISFIED: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+    PARTIAL: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+    FAILED: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+    NOT_FOUND: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+    MANUAL_REVIEW: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+    EXCEEDED: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+    NOT_APPLICABLE: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+  };
+  return map[status || ""] || "";
+}
+
+function criticalityChip(c?: string) {
+  const map: Record<string, string> = {
+    critical: "bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300",
+    major: "bg-orange-50 text-orange-700 dark:bg-orange-900/20 dark:text-orange-300",
+    normal: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400",
+    minor: "bg-gray-50 text-gray-500 dark:bg-gray-800 dark:text-gray-500",
+  };
+  return map[c || ""] || "";
+}
+
 function gradeColorClass(letter: string) {
   const map: Record<string, string> = {
     A: "from-green-500 to-emerald-500",
@@ -475,7 +498,9 @@ export default function ExcelGradingResultPanel({
               {rubricEntries.length > 0 && (
                 <div className="space-y-4">
                   <h5 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                    Category Scores
+                    {rubricEntries.some(([, i]: [string, any]) => i.requirement)
+                      ? "Requirement Scores"
+                      : "Category Scores"}
                   </h5>
                   {rubricEntries.map(([key, item]) => (
                     <div key={key} className="group">
@@ -499,7 +524,56 @@ export default function ExcelGradingResultPanel({
                         </span>
                       </div>
                       {percentBar(item.score, item.max)}
-                      {item.comment && (
+                      {item.requirement && (
+                        <p className="text-xs text-gray-600 dark:text-gray-300 mt-1.5 pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+                          {item.requirement}
+                        </p>
+                      )}
+                      {(item.status || item.criticality) && (
+                        <div className="flex items-center gap-1.5 mt-1.5 pl-4 flex-wrap">
+                          {item.status && (
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide ${statusBadge(item.status)}`}>
+                              {item.status.replace(/_/g, " ")}
+                            </span>
+                          )}
+                          {item.criticality && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase tracking-wide ${criticalityChip(item.criticality)}`}>
+                              {item.criticality}
+                            </span>
+                          )}
+                          {typeof item.confidence === "number" && (
+                            <span className="text-[10px] text-gray-400">
+                              confidence {Math.round(item.confidence * 100)}%
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {item.evidence && item.evidence.length > 0 && (
+                        <ul className="mt-1.5 pl-4 space-y-0.5">
+                          {item.evidence.slice(0, 4).map((e: string, i: number) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-green-700 dark:text-green-400">
+                              <CheckCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                              <span>{e}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {item.missing && item.missing.length > 0 && (
+                        <ul className="mt-1 pl-4 space-y-0.5">
+                          {item.missing.slice(0, 4).map((m: string, i: number) => (
+                            <li key={i} className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                              <AlertTriangle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                              <span>{m}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {item.fix && (
+                        <p className="text-xs text-blue-700 dark:text-blue-300 mt-1 pl-4">
+                          <span className="font-semibold">Fix:</span> {item.fix}
+                        </p>
+                      )}
+                      {item.comment && !item.requirement && (
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 pl-4 border-l-2 border-gray-200 dark:border-gray-700 italic">
                           {item.comment}
                         </p>

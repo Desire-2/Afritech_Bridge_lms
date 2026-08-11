@@ -70,7 +70,7 @@ except ImportError:
 
 # Excel AI Grading Models
 try:
-    from .excel_grading_models import ExcelGradingResult
+    from .excel_grading_models import ExcelGradingResult, AssignmentAssessmentSpec
 except ImportError:
     pass  # Excel grading models optional
 

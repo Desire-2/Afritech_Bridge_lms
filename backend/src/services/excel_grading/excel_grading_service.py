@@ -16,6 +16,7 @@ import json
 import time
 import logging
 import re
+from copy import deepcopy
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 
@@ -126,7 +127,7 @@ class ExcelGradingService:
 
             # Step 7: Parse assignment requirements (module-aware)
             module = self._load_module(assignment_or_project)
-            requirements = self._parse_requirements(assignment_or_project, module)
+            requirements = self._parse_requirements(assignment_or_project, module, course)
 
             # Step 8: Get rubric — instructor → cached generated → generate new
             instructor_rubric = self._get_instructor_rubric(assignment_or_project, course)
@@ -186,6 +187,26 @@ class ExcelGradingService:
                 self._cache_generated_rubric(
                     assignment_or_project, course, module, generated_rubric,
                 )
+            if db_result:
+                self._persist_assessment_spec(
+                    assignment_or_project, course, module,
+                    grading_result.get('analysis_data', {}).get('assessment_spec'),
+                )
+
+            logger.info(
+                "excel_assessment_run assignment_id=%s submission_id=%s spec_version=%s "
+                "requirements=%s satisfied=%s partial=%s failed=%s analyzers=%s "
+                "confidence=%s manual_review=%s duration_seconds=%.3f",
+                getattr(assignment_or_project, 'id', None), submission_id,
+                (grading_result.get('analysis_data', {}).get('assessment_spec') or {}).get('engine_version'),
+                len(grading_result.get('requirement_results', [])),
+                grading_result.get('status_counts', {}).get('SATISFIED', 0),
+                grading_result.get('status_counts', {}).get('PARTIAL', 0),
+                grading_result.get('status_counts', {}).get('FAILED', 0) + grading_result.get('status_counts', {}).get('NOT_FOUND', 0),
+                grading_result.get('analyzers_used', []),
+                grading_result.get('overall_confidence', grading_result.get('confidence')),
+                grading_result.get('manual_review_required'), processing_time,
+            )
 
             return {
                 'status': 'completed',
@@ -586,7 +607,7 @@ class ExcelGradingService:
     # Internal: Requirement parsing
     # ------------------------------------------------------------------
 
-    def _parse_requirements(self, assignment_or_project, module=None) -> Dict[str, Any]:
+    def _parse_requirements(self, assignment_or_project, module=None, course=None) -> Dict[str, Any]:
         """
         Parse assignment description/instructions + module context into
         machine-checkable requirements.  Now also determines the *scope*
@@ -596,6 +617,52 @@ class ExcelGradingService:
         an assignment-specific complexity profile that the GradingEngine
         uses to calibrate per-criterion weights.
         """
+        # The assignment record is the source of truth.  The intelligence
+        # parser produces requirement-level criteria and exact verification
+        # contracts; the legacy keyword parser below is intentionally retained
+        # as a compatibility reference but is no longer on the execution path.
+        from .assignment_intelligence import AssignmentKnowledge, build_assignment_knowledge
+
+        context = {
+            'assignment_id': getattr(assignment_or_project, 'id', None),
+            'title': getattr(assignment_or_project, 'title', ''),
+            'description': getattr(assignment_or_project, 'description', ''),
+            'instructions': getattr(assignment_or_project, 'instructions', ''),
+            'course_id': getattr(assignment_or_project, 'course_id', None),
+            'course_title': getattr(course, 'title', '') if course else '',
+            'course_description': getattr(course, 'description', '') if course else '',
+            'module_id': getattr(assignment_or_project, 'module_id', None),
+            'module_title': getattr(module, 'title', '') if module else '',
+            'module_order': getattr(module, 'order', None) if module else None,
+            'points_possible': getattr(assignment_or_project, 'points_possible', 100) or 100,
+        }
+
+        # A repository report may help future parser versions during
+        # development, but it is deliberately not merged into the contract.
+        # This prevents stale documentation from overriding current database
+        # instructions.
+        report_text = ''
+        try:
+            from pathlib import Path
+            report_path = Path(__file__).resolve().parents[4] / 'COURSE1_ASSIGNMENTS_AND_AI_GRADING_REPORT.md'
+            if report_path.exists():
+                report_text = report_path.read_text(encoding='utf-8')
+        except Exception:
+            report_text = ''
+
+        knowledge = build_assignment_knowledge(context, report_text=report_text)
+        requirements = AssignmentKnowledge().to_requirements(knowledge)
+        logger.info(
+            "Assignment intelligence parsed '%s': %s requirement(s), %s difficulty, source=%s",
+            knowledge.get('title', '?'),
+            len(knowledge.get('requirements', [])),
+            knowledge.get('difficulty', {}).get('level', 'Unknown'),
+            knowledge.get('source_priority'),
+        )
+        return requirements
+
+        # Legacy scope parser retained below for backwards-compatible source
+        # history and emergency comparison; it is unreachable by design.
         desc = (getattr(assignment_or_project, 'description', '') or '').lower()
         instructions = (getattr(assignment_or_project, 'instructions', '') or '').lower()
         title = (getattr(assignment_or_project, 'title', '') or '').lower()
@@ -784,8 +851,13 @@ class ExcelGradingService:
         try:
             from src.models.grading_models import Rubric
 
-            # Try course-specific rubric first
-            rubric = Rubric.query.filter_by(course_id=course.id).first()
+            # An explicitly linked assignment rubric is the most specific
+            # instructor intent and must win over a course/template rubric.
+            linked_id = getattr(assignment_or_project, 'rubric_id', None)
+            rubric = Rubric.query.get(linked_id) if linked_id else None
+            # Try course-specific rubric next
+            if not rubric:
+                rubric = Rubric.query.filter_by(course_id=course.id).first()
             if not rubric:
                 # Try instructor's template rubric
                 instructor_id = getattr(assignment_or_project, 'instructor_id', None)
@@ -822,7 +894,6 @@ class ExcelGradingService:
           3. None (fall back to default scope-based rubric)
         """
         import hashlib
-        from .rubric_generator import RubricGenerator
         from .learning_engine import LearningEngine
 
         title = getattr(assignment_or_project, 'title', '') or ''
@@ -836,31 +907,34 @@ class ExcelGradingService:
             return None
 
         # Hash instructions to detect changes
-        hash_input = f"{title}|{desc}|{instructions}".encode('utf-8')
-        instructions_hash = hashlib.sha256(hash_input).hexdigest()[:16]
+        # Include the complete assignment context and assessment engine
+        # version.  A rubric from a different title/module/version is never
+        # reused merely because the instructions happen to look similar.
+        hash_input = "|".join([
+            str(assignment_id), title, desc, instructions,
+            str(getattr(assignment_or_project, 'course_id', getattr(course, 'id', ''))),
+            str(getattr(assignment_or_project, 'module_id', getattr(module, 'id', ''))),
+            'assessment-engine-2',
+        ]).encode('utf-8')
+        instructions_hash = hashlib.sha256(hash_input).hexdigest()
 
         # 1) Try cached rubric
         try:
             learning = LearningEngine()
             cached = learning.get_cached_rubric(assignment_id, instructions_hash)
-            if cached:
+            if cached and cached.get('requirement_level') and cached.get('version'):
                 logger.info(f"Using cached generated rubric for assignment #{assignment_id}")
                 return cached
         except Exception as e:
             logger.debug(f"Cache lookup failed: {e}")
 
-        # 2) Generate fresh rubric from instructions
+        # 2) Generate fresh rubric from the already parsed, database-backed
+        # assessment specification.  This keeps generation and grading on the
+        # same requirement IDs and verification rules.
         try:
-            generator = RubricGenerator(max_points=points)
-            rubric = generator.generate(
-                assignment_title=title,
-                assignment_description=desc,
-                assignment_instructions=instructions,
-                module_title=getattr(module, 'title', '') if module else '',
-                module_description=getattr(module, 'description', '') if module else '',
-                module_objectives=getattr(module, 'learning_objectives', '') if module else '',
-                points_possible=points,
-            )
+            rubric = deepcopy(requirements.get('assessment_spec', {}).get('rubric', {}))
+            rubric['source_assignment_hash'] = requirements.get('assessment_spec', {}).get('source_hash')
+            rubric['rubric_version'] = '2.0.0'
 
             if rubric and rubric.get('criteria'):
                 rubric['_instructions_hash'] = instructions_hash
@@ -919,7 +993,29 @@ class ExcelGradingService:
         try:
             from .learning_engine import LearningEngine
             learning = LearningEngine()
-            return learning.apply_calibration(grading_result, insights)
+            result = learning.apply_calibration(grading_result, insights)
+            # Re-sync the per-requirement breakdown so the instructor view
+            # reflects learning-adjusted confidence/evidence exactly like the
+            # persisted analysis snapshot.
+            try:
+                by_id = {
+                    req['requirement_id']: req
+                    for req in result.get('requirement_results', [])
+                    if isinstance(req, dict) and req.get('requirement_id')
+                }
+                for rid, entry in (result.get('rubric_breakdown') or {}).items():
+                    req = by_id.get(rid)
+                    if not req:
+                        continue
+                    entry['confidence'] = req.get('confidence', entry.get('confidence'))
+                    entry['status'] = req.get('status', entry.get('status'))
+                    if req.get('evidence'):
+                        entry['evidence'] = req.get('evidence')
+                    if req.get('missing'):
+                        entry['missing'] = req.get('missing')
+            except Exception as sync_error:
+                logger.debug(f"Could not sync breakdown after calibration: {sync_error}")
+            return result
         except Exception as e:
             logger.debug(f"Could not apply calibration: {e}")
             return grading_result
@@ -950,10 +1046,15 @@ class ExcelGradingService:
         from .pivot_analyzer import PivotAnalyzer
         from .vba_analyzer import VBAAnalyzer
         from .power_query_analyzer import PowerQueryAnalyzer
+        from .dax_analyzer import DAXAnalyzer
         from .formatting_analyzer import FormattingAnalyzer
         from .grading_engine import GradingEngine
         from .feedback_generator import FeedbackGenerator
         from .excel_mastery_levels import detect_mastery_level
+        from .assignment_intelligence import (
+            RequirementEvaluator,
+            build_evidence_feedback,
+        )
 
         # Scope flags (default True for backward compat if flag is absent)
         scope_formulas = requirements.get('scope_formulas', True)
@@ -961,6 +1062,7 @@ class ExcelGradingService:
         scope_charts = requirements.get('scope_charts', False)
         scope_vba = requirements.get('scope_vba', False)
         scope_pq = requirements.get('scope_power_query', False)
+        scope_dax = requirements.get('scope_dax', False)
         scope_formatting = requirements.get('scope_formatting', True)
 
         # 1. Workbook structure analysis — ALWAYS runs (needed by many others)
@@ -1002,6 +1104,13 @@ class ExcelGradingService:
         else:
             pq_analysis = {'has_power_query': False, 'query_count': 0, 'all_transformations': [], 'total_steps': 0, 'queries': []}
 
+        # 6b. DAX/model evidence is deliberately separate from PivotTable
+        # evidence; a pivot does not prove that a requested measure exists.
+        if scope_dax:
+            dax_analysis = DAXAnalyzer(file_bytes, wb_analysis).analyze()
+        else:
+            dax_analysis = {'has_dax': False, 'measure_count': 0, 'functions_used': [], 'measures': []}
+
         # 7. Formatting analysis — always (basic formatting matters)
         if scope_formatting:
             fmt_analyzer = FormattingAnalyzer(wb_analysis)
@@ -1027,7 +1136,8 @@ class ExcelGradingService:
             f"score={mastery_level.get('match_score', 0)})"
         )
 
-        # 8. Grading
+        # 8. Legacy category grading remains available for backwards
+        # compatibility and comparison, but it is no longer authoritative.
         engine = GradingEngine(
             workbook_analysis=wb_analysis,
             formula_analysis=formula_analysis,
@@ -1040,25 +1150,101 @@ class ExcelGradingService:
             instructor_rubric=instructor_rubric,
             mastery_level=mastery_level,
         )
-        grading_result = engine.grade()
+        legacy_result = engine.grade()
+        grading_result = legacy_result
 
-        # 9. Feedback generation
-        fb_gen = FeedbackGenerator(
-            grading_result=grading_result,
-            workbook_analysis=wb_analysis,
-            formula_analysis=formula_analysis,
-            chart_analysis=chart_analysis,
-            pivot_analysis=pivot_analysis,
-            vba_analysis=vba_analysis,
-            pq_analysis=pq_analysis,
-            formatting_analysis=fmt_analysis,
-            assignment_title=requirements.get('_assignment_title', file_name),
-            module_title=requirements.get('_module_title', ''),
-            assignment_instructions=requirements.get('_assignment_instructions', ''),
-            mastery_level=mastery_level,
-        )
-        feedback = fb_gen.generate()
-        grading_result['feedback'] = feedback
+        # 9. Requirement-level grading is authoritative whenever an
+        # assignment specification exists. Every score below is backed by an
+        # analyzer observation or is explicitly marked manual review.
+        assessment_spec = requirements.get('assessment_spec')
+        if assessment_spec and assessment_spec.get('requirements'):
+            evidence_inputs = {
+                'spec': assessment_spec,
+                'workbook': wb_analysis,
+                'formulas': formula_analysis,
+                'charts': chart_analysis,
+                'pivots': pivot_analysis,
+                'vba': vba_analysis,
+                'power_query': pq_analysis,
+                'dax': dax_analysis,
+                'formatting': fmt_analysis,
+            }
+            evaluation = RequirementEvaluator().evaluate(assessment_spec, evidence_inputs)
+            legacy_breakdown = grading_result.get('rubric_breakdown', {})
+            grading_result['legacy_rubric_breakdown'] = legacy_breakdown
+            grading_result['rubric_breakdown'] = {
+                item['requirement_id']: {
+                    'score': item['score'],
+                    'max': item['max_score'],
+                    'status': item['status'],
+                    'confidence': item['confidence'],
+                    'comment': ' '.join(item.get('evidence', []) + item.get('missing', [])),
+                    'evidence': item.get('evidence', []),
+                    'missing': item.get('missing', []),
+                    'fix': item.get('fix', ''),
+                    'requirement': item.get('requirement', ''),
+                    'criticality': item.get('criticality', 'normal'),
+                }
+                for item in evaluation['requirement_results']
+            }
+            grading_result.update({
+                'total_score': evaluation['total_score'],
+                'max_score': evaluation['max_score'],
+                'percentage': evaluation['percentage'],
+                'grade': self._compute_grade_letter(evaluation['percentage']),
+                'confidence': self._confidence_label(evaluation['overall_confidence']),
+                'overall_confidence': evaluation['overall_confidence'],
+                'requirement_confidence': evaluation['requirement_confidence'],
+                'requirement_results': evaluation['requirement_results'],
+                'evidence_graph': evaluation['evidence_graph'],
+                'status_counts': evaluation['status_counts'],
+                'critical_failures': evaluation.get('critical_failures', []),
+                'analyzers_used': evaluation.get('analyzers_used', []),
+                'assignment_understanding': {
+                    'title': assessment_spec.get('title'),
+                    'requirements_count': len(assessment_spec.get('requirements', [])),
+                    'difficulty': assessment_spec.get('difficulty'),
+                    'scope': assessment_spec.get('scope'),
+                },
+                'rubric_data': instructor_rubric or assessment_spec.get('rubric'),
+                'manual_review_required': bool(
+                    evaluation['manual_review_required']
+                    or legacy_result.get('flagged_issues')
+                    or vba_analysis.get('security', {}).get('risk_level') == 'high'
+                    or bool(wb_analysis.get('error'))
+                ),
+                'flagged_issues': list(legacy_result.get('flagged_issues', [])) + [
+                    {
+                        'type': 'critical_requirement_uncertain',
+                        'description': f"Critical requirement(s) require review: {', '.join(evaluation['critical_failures'])}",
+                    }
+                    for _ in [1] if evaluation['critical_failures']
+                ],
+            })
+            grading_result['feedback'] = build_evidence_feedback(
+                requirements.get('_assignment_title', file_name), evaluation,
+            )
+        else:
+            grading_result['rubric_data'] = instructor_rubric
+
+        # 10. Legacy feedback is used only for file-only previews. Assignment
+        # grades use evidence feedback above so no workbook claim is invented.
+        if not grading_result.get('feedback'):
+            fb_gen = FeedbackGenerator(
+                grading_result=grading_result,
+                workbook_analysis=wb_analysis,
+                formula_analysis=formula_analysis,
+                chart_analysis=chart_analysis,
+                pivot_analysis=pivot_analysis,
+                vba_analysis=vba_analysis,
+                pq_analysis=pq_analysis,
+                formatting_analysis=fmt_analysis,
+                assignment_title=requirements.get('_assignment_title', file_name),
+                module_title=requirements.get('_module_title', ''),
+                assignment_instructions=requirements.get('_assignment_instructions', ''),
+                mastery_level=mastery_level,
+            )
+            grading_result['feedback'] = fb_gen.generate()
 
         # Include raw analysis data for debugging / detailed view
         grading_result['analysis_data'] = {
@@ -1100,6 +1286,11 @@ class ExcelGradingService:
                 'queries': pq_analysis.get('query_count', 0),
                 'transformations': pq_analysis.get('all_transformations', []),
             },
+            'dax': {
+                'has_dax': dax_analysis.get('has_dax', False),
+                'measure_count': dax_analysis.get('measure_count', 0),
+                'functions_used': dax_analysis.get('functions_used', []),
+            },
             'formatting': {
                 'score': fmt_analysis.get('score', 0),
                 'has_cf': fmt_analysis.get('has_conditional_formatting', False),
@@ -1116,9 +1307,31 @@ class ExcelGradingService:
             },
             'strengths': grading_result.get('strengths', []),
             'weaknesses': grading_result.get('weaknesses', []),
+            'assessment_spec': assessment_spec,
+            'requirement_results': grading_result.get('requirement_results', []),
+            'evidence_graph': grading_result.get('evidence_graph', []),
+            'status_counts': grading_result.get('status_counts', {}),
+            'analyzers_used': grading_result.get('analyzers_used', []),
+            'critical_failures': grading_result.get('critical_failures', []),
         }
 
         return grading_result
+
+    @staticmethod
+    def _compute_grade_letter(percentage: float) -> str:
+        if percentage >= 90:
+            return 'A'
+        if percentage >= 80:
+            return 'B'
+        if percentage >= 70:
+            return 'C'
+        if percentage >= 60:
+            return 'D'
+        return 'F'
+
+    @staticmethod
+    def _confidence_label(value: float) -> str:
+        return 'high' if value >= 0.85 else 'medium' if value >= 0.65 else 'low'
 
     # ------------------------------------------------------------------
     # Internal: DB persistence
@@ -1188,7 +1401,14 @@ class ExcelGradingService:
                 strict_breakdown[key] = {
                     'score': data.get('score', 0),
                     'max': data.get('max', 0),
+                    'status': data.get('status'),
+                    'confidence': data.get('confidence'),
                     'comment': data.get('comment', ''),
+                    'evidence': data.get('evidence', []),
+                    'missing': data.get('missing', []),
+                    'fix': data.get('fix', ''),
+                    'requirement': data.get('requirement', ''),
+                    'criticality': data.get('criticality'),
                 }
 
             # NEW: Extract full rubric_data (includes rubric_metadata with
@@ -1216,6 +1436,16 @@ class ExcelGradingService:
                 flagged_issues=grading_result.get('flagged_issues'),
                 graded_at=datetime.utcnow(),
                 processing_time_seconds=processing_time,
+                assessment_spec_version=(grading_result.get('analysis_data', {}).get('assessment_spec') or {}).get('engine_version'),
+                assessment_spec_hash=(grading_result.get('analysis_data', {}).get('assessment_spec') or {}).get('source_hash'),
+                rubric_version=(rubric_data or {}).get('version') if isinstance(rubric_data, dict) else None,
+                requirements_count=len(grading_result.get('requirement_results', [])),
+                requirements_satisfied=(grading_result.get('status_counts') or {}).get('SATISFIED', 0),
+                requirements_partial=(grading_result.get('status_counts') or {}).get('PARTIAL', 0),
+                requirements_failed=(grading_result.get('status_counts') or {}).get('FAILED', 0) + (grading_result.get('status_counts') or {}).get('NOT_FOUND', 0),
+                analyzers_used=grading_result.get('analyzers_used', []),
+                analyzer_errors=[],
+                overall_confidence=grading_result.get('overall_confidence'),
                 status='completed',
             )
 
@@ -1232,3 +1462,39 @@ class ExcelGradingService:
             logger.error(f"Failed to save grading result: {e}")
             db.session.rollback()
             return None
+
+    def _persist_assessment_spec(self, assignment_or_project, course, module, spec):
+        """Persist a versioned spec snapshot without making grading fragile."""
+        if not spec or not spec.get('source_hash'):
+            return
+        try:
+            from src.models.user_models import db
+            from src.models.excel_grading_models import AssignmentAssessmentSpec
+            existing = AssignmentAssessmentSpec.query.filter_by(
+                assignment_id=getattr(assignment_or_project, 'id', 0),
+                source_hash=spec.get('source_hash'),
+            ).first()
+            if existing:
+                return
+            record = AssignmentAssessmentSpec(
+                assignment_id=getattr(assignment_or_project, 'id', 0),
+                course_id=getattr(course, 'id', None),
+                module_id=getattr(module, 'id', None) if module else None,
+                source_hash=spec.get('source_hash'),
+                engine_version=spec.get('engine_version', '2.0.0'),
+                rubric_version=(spec.get('rubric') or {}).get('version'),
+                spec_data=spec,
+                approved=False,
+                created_at=datetime.utcnow(),
+            )
+            db.session.add(record)
+            db.session.commit()
+        except Exception as exc:
+            # Deployments that have not run the additive migration should
+            # still be able to grade; observability records the reason.
+            logger.warning("Assessment spec snapshot was not persisted: %s", exc)
+            try:
+                from src.models.user_models import db
+                db.session.rollback()
+            except Exception:
+                pass

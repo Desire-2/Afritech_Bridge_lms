@@ -10,6 +10,7 @@ Uses openpyxl for .xlsx/.xlsm, pandas for .csv/.xls fallback.
 import logging
 import json
 import re
+import zipfile
 from io import BytesIO
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -129,6 +130,21 @@ class ExcelAnalyzer:
         hidden_sheets = [ws.title for ws in wb.worksheets
                          if ws.sheet_state != 'visible']
 
+        # OOXML feature presence that openpyxl does not expose as a normal
+        # worksheet object.  Names are evidence only; configuration remains
+        # the responsibility of the relevant evaluator.
+        activex_count = 0
+        form_control_count = 0
+        try:
+            with zipfile.ZipFile(BytesIO(self.file_bytes), 'r') as archive:
+                total_size = sum(info.file_size for info in archive.infolist())
+                if total_size <= 200 * 1024 * 1024:
+                    names = archive.namelist()
+                    activex_count = sum(1 for name in names if '/activeX/' in name or name.startswith('xl/activeX/'))
+                    form_control_count = sum(1 for name in names if 'ctrlProps' in name or 'formulas' in name.lower() and 'control' in name.lower())
+        except Exception:
+            pass
+
         self.analysis = {
             'file_name': self.file_name,
             'file_type': self.ext,
@@ -142,6 +158,9 @@ class ExcelAnalyzer:
             'total_charts': total_charts,
             'pivot_cache_count': pivot_cache_count,
             'has_vba': wb.vba_archive is not None,
+            'activex_count': activex_count,
+            'has_activex': activex_count > 0,
+            'form_control_count': form_control_count,
             'sheets': sheets_info,
         }
         return self.analysis
@@ -149,6 +168,7 @@ class ExcelAnalyzer:
     def _analyze_sheet(self, ws) -> Dict[str, Any]:
         """Analyze a single worksheet."""
         formulas = []
+        values = []
         data_cell_count = 0
         cell_errors = []
         data_types_found = set()
@@ -161,7 +181,9 @@ class ExcelAnalyzer:
             for dv in ws.data_validations.dataValidation:
                 data_validations.append({
                     'type': dv.type,
+                    'operator': getattr(dv, 'operator', None),
                     'formula1': str(dv.formula1) if dv.formula1 else None,
+                    'formula2': str(getattr(dv, 'formula2', None)) if getattr(dv, 'formula2', None) else None,
                     'ranges': str(dv.sqref),
                 })
 
@@ -170,6 +192,12 @@ class ExcelAnalyzer:
 
         # Protection
         is_protected = ws.protection.sheet if ws.protection else False
+        tab_color = None
+        try:
+            color = getattr(getattr(ws, 'sheet_properties', None), 'tabColor', None)
+            tab_color = getattr(color, 'rgb', None) or getattr(color, 'indexed', None) or getattr(color, 'theme', None)
+        except Exception:
+            tab_color = None
 
         # Scan cells (limit scan for very large sheets)
         MAX_SCAN_ROWS = 500
@@ -186,6 +214,16 @@ class ExcelAnalyzer:
                 if cell.value is not None:
                     data_cell_count += 1
                     data_types_found.add(type(cell.value).__name__)
+
+                    # Keep a bounded, auditable value index for requirement
+                    # checks (exact headers, labels, and cell contracts).  Do
+                    # not dump every value from very large workbooks.
+                    if len(values) < 2000:
+                        values.append({
+                            'cell': cell.coordinate,
+                            'value': cell.value,
+                            'sheet': ws.title,
+                        })
 
                     # Check for formulas
                     if isinstance(cell.value, str) and cell.value.startswith('='):
@@ -213,6 +251,13 @@ class ExcelAnalyzer:
                 'type': chart.__class__.__name__,
                 'title': str(chart.title) if chart.title else None,
                 'style': getattr(chart, 'style', None),
+                'rotation': getattr(chart, 'firstSliceAng', None),
+                'hole_size': getattr(chart, 'holeSize', None),
+                'series_count': len(getattr(chart, 'ser', []) or []),
+                # A normal chart always has separate x/y axes.  Do not infer
+                # a secondary axis from that fact; only a parser that has
+                # explicit secondary-axis metadata may set this true.
+                'secondary_axis': bool(getattr(chart, 'secondary_axis', False)),
             })
 
         # Pivot tables
@@ -232,6 +277,7 @@ class ExcelAnalyzer:
             'data_cell_count': data_cell_count,
             'formula_count': len(formulas),
             'formulas': formulas[:100],  # cap for large files
+            'values': values,
             'cell_errors': cell_errors,
             'charts': charts_info,
             'chart_count': len(charts_info),
@@ -243,6 +289,7 @@ class ExcelAnalyzer:
             'merged_cells': merged_ranges[:30],
             'merged_cell_count': len(merged_ranges),
             'is_protected': is_protected,
+            'tab_color': tab_color,
             'data_types_found': list(data_types_found),
             'scan_truncated': scan_truncated,
         }

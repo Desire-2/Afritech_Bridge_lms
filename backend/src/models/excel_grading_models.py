@@ -56,6 +56,19 @@ class ExcelGradingResult(db.Model):
     ai_provider = Column(String(50), nullable=True)  # e.g. 'openrouter', 'gemini'
     processing_time_seconds = Column(Float, nullable=True)
 
+    # Assignment-aware assessment metadata.  These fields are additive so
+    # existing result consumers can continue using the legacy JSON fields.
+    assessment_spec_version = Column(String(30), nullable=True)
+    assessment_spec_hash = Column(String(64), nullable=True, index=True)
+    rubric_version = Column(String(30), nullable=True)
+    requirements_count = Column(Integer, nullable=True)
+    requirements_satisfied = Column(Integer, nullable=True)
+    requirements_partial = Column(Integer, nullable=True)
+    requirements_failed = Column(Integer, nullable=True)
+    analyzers_used = Column(JSON, nullable=True)
+    analyzer_errors = Column(JSON, nullable=True)
+    overall_confidence = Column(Float, nullable=True)
+
     # Instructor review
     instructor_reviewed = Column(Boolean, default=False)
     instructor_id = Column(Integer, ForeignKey('users.id'), nullable=True)
@@ -100,6 +113,18 @@ class ExcelGradingResult(db.Model):
             'graded_at': self.graded_at.isoformat() if self.graded_at else None,
             'ai_provider': self.ai_provider,
             'processing_time_seconds': self.processing_time_seconds,
+            'assessment_spec_version': self.assessment_spec_version,
+            'assessment_spec_hash': self.assessment_spec_hash,
+            'rubric_version': self.rubric_version,
+            'requirements_count': self.requirements_count,
+            'requirements_satisfied': self.requirements_satisfied,
+            'requirements_partial': self.requirements_partial,
+            'requirements_failed': self.requirements_failed,
+            'analyzers_used': self.analyzers_used,
+            'analyzer_errors': self.analyzer_errors,
+            'overall_confidence': self.overall_confidence,
+            'status_counts': (self.analysis_data or {}).get('status_counts', {}),
+            'critical_failures': (self.analysis_data or {}).get('critical_failures', []),
             'instructor_reviewed': self.instructor_reviewed,
             'instructor_id': self.instructor_id,
             'instructor_reviewed_at': self.instructor_reviewed_at.isoformat() if self.instructor_reviewed_at else None,
@@ -123,6 +148,11 @@ class ExcelGradingResult(db.Model):
             'overall_feedback': self.overall_feedback or '',
             'confidence': self.confidence,
             'manual_review_required': self.manual_review_required,
+            'overall_confidence': self.overall_confidence,
+            'requirement_results': (self.analysis_data or {}).get('requirement_results', []),
+            'evidence_graph': (self.analysis_data or {}).get('evidence_graph', []),
+            'status_counts': (self.analysis_data or {}).get('status_counts', {}),
+            'critical_failures': (self.analysis_data or {}).get('critical_failures', []),
         }
 
 
@@ -233,6 +263,53 @@ class GeneratedRubric(db.Model):
             'generation_method': self.generation_method,
             'times_used': self.times_used,
             'approved': self.approved,
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class AssignmentAssessmentSpec(db.Model):
+    """Versioned, database-backed assignment assessment contract.
+
+    The current assignment row remains authoritative.  This table is an
+    immutable-ish snapshot for auditability, preview, and reproducible
+    regrading; a changed source hash creates a new version instead of
+    mutating the contract used by older results.
+    """
+    __tablename__ = 'assignment_assessment_specs'
+
+    id = Column(Integer, primary_key=True)
+    assignment_id = Column(Integer, nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey('courses.id'), nullable=True, index=True)
+    module_id = Column(Integer, nullable=True, index=True)
+    source_hash = Column(String(64), nullable=False, index=True)
+    engine_version = Column(String(30), nullable=False)
+    rubric_version = Column(String(30), nullable=True)
+    spec_data = Column(JSON, nullable=False)
+    approved = Column(Boolean, default=False)
+    approved_by = Column(Integer, ForeignKey('users.id'), nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    course = relationship('Course', foreign_keys=[course_id])
+    approver = relationship('User', foreign_keys=[approved_by])
+
+    __table_args__ = (
+        db.UniqueConstraint('assignment_id', 'source_hash', name='uq_assignment_assessment_source'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'assignment_id': self.assignment_id,
+            'course_id': self.course_id,
+            'module_id': self.module_id,
+            'source_hash': self.source_hash,
+            'engine_version': self.engine_version,
+            'rubric_version': self.rubric_version,
+            'spec_data': self.spec_data,
+            'approved': self.approved,
+            'approved_by': self.approved_by,
             'approved_at': self.approved_at.isoformat() if self.approved_at else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }

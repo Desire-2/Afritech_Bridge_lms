@@ -54,6 +54,10 @@ class ChartAnalyzer:
                     'title': chart.get('title'),
                     'has_title': chart.get('title') is not None,
                     'style': chart.get('style'),
+                    'rotation': chart.get('rotation'),
+                    'hole_size': chart.get('hole_size'),
+                    'series_count': chart.get('series_count', 0),
+                    'secondary_axis': chart.get('secondary_axis', False),
                 })
 
         issues = []

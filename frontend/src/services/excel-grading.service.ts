@@ -15,6 +15,14 @@ export interface RubricItem {
   score: number;
   max: number;
   comment: string;
+  // NEW: requirement-level assessment fields (assignment-aware engine)
+  status?: "SATISFIED" | "PARTIAL" | "FAILED" | "NOT_FOUND" | "MANUAL_REVIEW" | "EXCEEDED" | "NOT_APPLICABLE";
+  confidence?: number;
+  evidence?: string[];
+  missing?: string[];
+  fix?: string;
+  requirement?: string;
+  criticality?: "critical" | "major" | "normal" | "minor";
 }
 
 export interface FlaggedIssue {
@@ -222,6 +230,58 @@ export interface PreviewResult {
   formatting: Record<string, any>;
 }
 
+// ─── NEW: Assignment analysis (dry-run) types ─────────────────
+
+export interface AssessmentRequirement {
+  id: string;
+  requirement: string;
+  type: string;
+  category: string;
+  evidence_source: string;
+  verification: {
+    type: string;
+    expected_functions: string[];
+    target_cells: Array<{ sheet: string | null; cell: string }>;
+    required_sheets: string[];
+    expected?: any;
+  };
+  method_constraint: "strict" | "preferred" | "flexible";
+  criticality: "critical" | "major" | "normal" | "minor";
+  depends_on: string[];
+  manual_review?: boolean;
+  max_points?: number;
+}
+
+export interface AssessmentRubricCriterion {
+  id: string;
+  name: string;
+  max_points: number;
+  criticality: string;
+  method_constraint: string;
+  type: string;
+}
+
+export interface AssignmentAnalysis {
+  dry_run: boolean;
+  assignment: { id: number; title: string; description: string; instructions: string };
+  assignment_interpretation: Record<string, any>;
+  requirements_detected: AssessmentRequirement[];
+  rubric_generated: {
+    rubric_type: string;
+    total_points: number;
+    requirement_count: number;
+    requirement_level: boolean;
+    approved: boolean;
+    criteria: AssessmentRubricCriterion[];
+    rubric_metadata: Record<string, any>;
+  };
+  analyzers_selected: string[];
+  evidence_strategies: string[];
+  potential_ambiguities: string[];
+  difficulty: { level: string; confidence: number; signals: Record<string, number> };
+  source_hash: string;
+}
+
 // ─── Service ─────────────────────────────────────────────────
 
 const BASE = '/excel-grading';
@@ -392,6 +452,33 @@ export class ExcelGradingService {
       const response = await apiClient.get(`${BASE}/learning/stats`, {
         params: { course_id: courseId },
       });
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Dry-run assignment interpretation: shows the generated assessment
+   * contract (requirements, rubric, analyzers, ambiguities) without
+   * grading any submission. (spec 36-37)
+   */
+  static async analyzeAssignment(assignmentId: number): Promise<AssignmentAnalysis> {
+    try {
+      const response = await apiClient.get(`${BASE}/analyze-assignment/${assignmentId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /**
+   * Explicitly approve a generated rubric so it is reused with higher
+   * confidence in future grading runs. (spec 37)
+   */
+  static async approveRubric(assignmentId: number): Promise<{ message: string }> {
+    try {
+      const response = await apiClient.post(`${BASE}/learning/rubric/${assignmentId}/approve`);
       return response.data;
     } catch (error) {
       throw ApiErrorHandler.handleError(error);

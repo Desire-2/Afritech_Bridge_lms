@@ -129,22 +129,25 @@ def grade_submission(submission_id):
                     raise ValueError("Student not found for submission")
                 app = current_app._get_current_object()
 
-                _auto_approve_grading_result(
+                eligible_for_auto_approval = _auto_approve_grading_result(
                     app, submission_id, submission_type, grade_data,
                 )
-                _auto_apply_grade(
-                    app, submission_id, submission_type, student_id,
-                    total_score, max_score, grade_data,
-                )
-                mod_requested = _auto_request_modification_if_needed(
-                    app, submission_id, submission_type, student_id,
-                    total_score, max_score, grade_data,
-                )
-                if not mod_requested:
-                    _update_learning_progress(
+                if eligible_for_auto_approval:
+                    _auto_apply_grade(
                         app, submission_id, submission_type, student_id,
-                        total_score, max_score,
+                        total_score, max_score, grade_data,
                     )
+                    mod_requested = _auto_request_modification_if_needed(
+                        app, submission_id, submission_type, student_id,
+                        total_score, max_score, grade_data,
+                    )
+                    if not mod_requested:
+                        _update_learning_progress(
+                            app, submission_id, submission_type, student_id,
+                            total_score, max_score,
+                        )
+                else:
+                    mod_requested = False
 
                 logger.info(
                     f"✅ Grade pipeline completed for {submission_type} "
@@ -273,9 +276,10 @@ def review_result(result_id):
     instructor_id = int(get_jwt_identity())
 
     try:
+        ai_score_before_review = result.total_score
         result.instructor_reviewed = True
         result.instructor_id = instructor_id
-        result.reviewed_at = datetime.utcnow()
+        result.instructor_reviewed_at = datetime.utcnow()
 
         if action == 'override':
             new_score = data.get('adjusted_score')
@@ -316,12 +320,13 @@ def review_result(result_id):
                     assignment_id=assignment_id,
                     course_id=result.course_id,
                     module_id=module_id,
-                    ai_score=result.total_score,
+                    ai_score=ai_score_before_review,
                     ai_max_score=result.max_score,
                     instructor_action=action,
                     instructor_score=final_score if action == 'override' else None,
                     instructor_notes=data.get('instructor_notes', ''),
-                    rubric_used=result.rubric_breakdown,
+                    rubric_used=result.rubric_data or result.rubric_breakdown,
+                    requirements_used=(result.analysis_data or {}).get('assessment_spec'),
                     analysis_summary=result.analysis_data,
                 )
 
@@ -834,6 +839,62 @@ def my_result_by_submission(submission_id):
         'instructor_reviewed': result.instructor_reviewed,
         'status': result.status,
     }), 200
+
+
+# ==============================================================
+# GET /analyze-assignment/<assignment_id> — dry-run interpretation
+# ==============================================================
+@excel_grading_bp.route("/analyze-assignment/<int:assignment_id>", methods=["GET", "POST"])
+@instructor_or_admin_required
+def analyze_assignment(assignment_id):
+    """Show the generated assessment contract without grading a submission."""
+    try:
+        assignment = Assignment.query.get(assignment_id)
+        if not assignment:
+            return jsonify({"error": "Assignment not found"}), 404
+        from ..services.excel_grading.excel_grading_service import ExcelGradingService
+        service = ExcelGradingService()
+        module = service._load_module(assignment)
+        requirements = service._parse_requirements(assignment, module, assignment.course)
+        spec = requirements.get('assessment_spec', {})
+        scope = spec.get('scope', {})
+        analyzers = []
+        if scope.get('scope_formulas'):
+            analyzers.append('FormulaAnalyzer')
+        if scope.get('scope_charts'):
+            analyzers.append('ChartAnalyzer')
+        if scope.get('scope_pivots'):
+            analyzers.append('PivotAnalyzer')
+        if scope.get('scope_power_query'):
+            analyzers.append('PowerQueryAnalyzer')
+        if scope.get('scope_vba'):
+            analyzers.append('VBAAnalyzer')
+        if scope.get('scope_formatting'):
+            analyzers.append('FormattingAnalyzer')
+        ambiguities = [
+            r['requirement'] for r in spec.get('requirements', [])
+            if r.get('method_constraint') == 'flexible' or r.get('manual_review')
+        ]
+        return jsonify({
+            'dry_run': True,
+            'assignment': {
+                'id': assignment.id,
+                'title': assignment.title,
+                'description': assignment.description,
+                'instructions': assignment.instructions,
+            },
+            'assignment_interpretation': spec.get('identity', {}),
+            'requirements_detected': spec.get('requirements', []),
+            'rubric_generated': spec.get('rubric', {}),
+            'analyzers_selected': analyzers,
+            'evidence_strategies': sorted({r.get('evidence_source') for r in spec.get('requirements', [])}),
+            'potential_ambiguities': ambiguities[:30],
+            'difficulty': spec.get('difficulty', {}),
+            'source_hash': spec.get('source_hash'),
+        }), 200
+    except Exception as exc:
+        logger.exception("Assignment analysis error: %s", exc)
+        return jsonify({"error": str(exc)}), 500
 
 
 # ==============================================================

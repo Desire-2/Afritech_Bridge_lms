@@ -36,11 +36,16 @@ import {
   BookOpen,
   GraduationCap,
   Filter,
+  ScanSearch,
+  BadgeCheck,
+  ListChecks,
 } from "lucide-react";
 import ExcelGradingService, {
   ExcelGradingResult,
   GradingStats,
   LearningStats,
+  AssignmentAnalysis,
+  AssessmentRequirement,
 } from "@/services/excel-grading.service";
 import InstructorService from "@/services/instructor.service";
 import { Course } from "@/types/api";
@@ -138,6 +143,29 @@ function SkeletonBar({ className = "" }: { className?: string }) {
   );
 }
 
+const REQ_TYPE_COLORS: Record<string, string> = {
+  FUNCTION_REQUIREMENT: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  FORMULA_REQUIREMENT: "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
+  VBA_REQUIREMENT: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  CODE_STRUCTURE_REQUIREMENT: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+  POWER_QUERY_REQUIREMENT: "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
+  DAX_REQUIREMENT: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
+  CHART_REQUIREMENT: "bg-pink-100 text-pink-800 dark:bg-pink-900/30 dark:text-pink-300",
+  PIVOT_REQUIREMENT: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  SHEET_REQUIREMENT: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  CELL_REQUIREMENT: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  VALUE_REQUIREMENT: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  DATA_VALIDATION_REQUIREMENT: "bg-lime-100 text-lime-800 dark:bg-lime-900/30 dark:text-lime-300",
+  THEORY_REQUIREMENT: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  REFLECTION_REQUIREMENT: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  BUSINESS_LOGIC_REQUIREMENT: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+  WORKBOOK_BEHAVIOR_REQUIREMENT: "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
+  STRUCTURE_REQUIREMENT: "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300",
+  FORMAT_REQUIREMENT: "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-900/30 dark:text-fuchsia-300",
+  DELIVERABLE_REQUIREMENT: "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300",
+  DOCUMENTATION_REQUIREMENT: "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300",
+};
+
 // ─── Main Component ───────────────────────────────────────────
 
 export default function AIGradingDashboardPage() {
@@ -151,6 +179,56 @@ export default function AIGradingDashboardPage() {
   const [page, setPage] = useState(1);
   const [expandedResult, setExpandedResult] = useState<number | null>(null);
   const perPage = 10;
+
+  // ── Assessment Contract Preview state ─────────────────────────
+  const [assignmentIdInput, setAssignmentIdInput] = useState("");
+  const [analysis, setAnalysis] = useState<AssignmentAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [approveMsg, setApproveMsg] = useState<string | null>(null);
+
+  const handleAnalyze = async () => {
+    const id = parseInt(assignmentIdInput.trim(), 10);
+    if (!id || Number.isNaN(id)) {
+      setAnalyzeError("Enter a valid assignment ID.");
+      return;
+    }
+    setAnalysisLoading(true);
+    setAnalyzeError(null);
+    setApproveMsg(null);
+    setAnalysis(null);
+    try {
+      const data = await ExcelGradingService.analyzeAssignment(id);
+      setAnalysis(data);
+    } catch (err: any) {
+      setAnalyzeError(err.message || "Failed to analyze assignment.");
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
+  const handleApproveRubric = async () => {
+    // Prefer the analyzed assignment id so an edited input can never approve
+    // a different assignment than the one being previewed.
+    const id = analysis?.assignment?.id || parseInt(assignmentIdInput.trim(), 10);
+    if (!id) return;
+    setApproving(true);
+    setApproveMsg(null);
+    try {
+      const res = await ExcelGradingService.approveRubric(id);
+      setApproveMsg(res.message || "Rubric approved successfully.");
+      setAnalysis((prev) =>
+        prev
+          ? { ...prev, rubric_generated: { ...prev.rubric_generated, approved: true } }
+          : prev,
+      );
+    } catch (err: any) {
+      setApproveMsg(err.message || "Rubric approval failed.");
+    } finally {
+      setApproving(false);
+    }
+  };
 
   // ── Fetch courses on mount ──────────────────────────────────
   useEffect(() => {
@@ -220,6 +298,13 @@ export default function AIGradingDashboardPage() {
     }
     return count;
   }, [recentResults]);
+
+  // Points per requirement id from the generated rubric (hoisted out of the row map).
+  const rubricPointsById = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const c of analysis?.rubric_generated?.criteria || []) map[c.id] = c.max_points;
+    return map;
+  }, [analysis]);
 
   // ── Render ──────────────────────────────────────────────────
   return (
@@ -733,6 +818,221 @@ export default function AIGradingDashboardPage() {
           )}
         </div>
       )}
+
+      {/* ── Assessment Contract Preview (dry-run, spec 36-37) ──── */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="p-5 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <ScanSearch className="h-5 w-5 text-purple-500" />
+            <h3 className="font-semibold text-gray-900 dark:text-white text-sm">
+              Assessment Contract Preview
+            </h3>
+            <span className="text-[10px] text-gray-400 ml-1">
+              Dry-run interpretation — no submission is graded
+            </span>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5">
+            See how the engine reads an assignment&apos;s instructions: detected requirements, generated rubric, selected analyzers, and ambiguities — then approve the rubric for reuse.
+          </p>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Controls */}
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <input
+              type="number"
+              min="1"
+              value={assignmentIdInput}
+              onChange={(e) => setAssignmentIdInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAnalyze()}
+              placeholder="Assignment ID (e.g. 6)"
+              className="flex-1 max-w-[220px] rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-slate-900 text-gray-900 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            <button
+              onClick={handleAnalyze}
+              disabled={analysisLoading}
+              className="flex items-center justify-center gap-2 px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <ScanSearch className="h-4 w-4" />
+              {analysisLoading ? "Analyzing..." : "Analyze"}
+            </button>
+            {analysis?.rubric_generated && (
+              <button
+                onClick={handleApproveRubric}
+                disabled={approving || analysis.rubric_generated.approved}
+                className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors disabled:opacity-50 ${
+                  analysis.rubric_generated.approved
+                    ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 cursor-default"
+                    : "bg-green-600 hover:bg-green-700 text-white"
+                }`}
+              >
+                <BadgeCheck className="h-4 w-4" />
+                {analysis.rubric_generated.approved
+                  ? "Rubric Approved"
+                  : approving
+                  ? "Approving..."
+                  : "Approve Rubric"}
+              </button>
+            )}
+          </div>
+
+          {analyzeError && (
+            <p className="text-sm text-red-600 dark:text-red-400">{analyzeError}</p>
+          )}
+          {approveMsg && (
+            <p className="text-sm text-green-600 dark:text-green-400">{approveMsg}</p>
+          )}
+
+          {/* Analysis result */}
+          {analysis && (
+            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+              {/* Header: title + difficulty */}
+              <div className="flex flex-wrap items-center gap-2.5 p-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-slate-900/50">
+                <BookOpen className="h-4 w-4 text-purple-500" />
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                  {analysis.assignment.title || `Assignment #${analysis.assignment.id}`}
+                </p>
+                <span className="px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 text-[11px] font-bold">
+                  {analysis.difficulty.level} · {Math.round(analysis.difficulty.confidence * 100)}% confidence
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] font-mono">
+                  {analysis.source_hash.slice(0, 12)}…
+                </span>
+              </div>
+
+              {/* Scope chips from requirement categories */}
+              {analysis.requirements_detected.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {Array.from(new Set(analysis.requirements_detected.map((r) => r.category))).map((cat) => (
+                    <span key={cat} className="px-2 py-0.5 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 text-[11px] rounded-full font-medium">
+                      {cat}
+                    </span>
+                  ))}
+                  <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[11px] rounded-full font-medium">
+                    {analysis.requirements_detected.length} requirements
+                  </span>
+                </div>
+              )}
+
+              {/* Analyzers selected */}
+              {analysis.analyzers_selected.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 items-center">
+                  <span className="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase">Analyzers:</span>
+                  {analysis.analyzers_selected.map((a) => (
+                    <span key={a} className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-[11px] rounded-full font-medium">
+                      {a}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Requirements table */}
+              {analysis.requirements_detected.length > 0 && (
+                <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-slate-800/80">
+                        <th className="px-3 py-2.5 font-semibold">ID</th>
+                        <th className="px-3 py-2.5 font-semibold">Type</th>
+                        <th className="px-3 py-2.5 font-semibold">Requirement</th>
+                        <th className="px-3 py-2.5 font-semibold">Criticality</th>
+                        <th className="px-3 py-2.5 font-semibold">Method</th>
+                        <th className="px-3 py-2.5 font-semibold text-right">Points</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                      {analysis.requirements_detected.map((req: AssessmentRequirement) => {
+                        return (
+                          <tr key={req.id} className="align-top">
+                            <td className="px-3 py-2.5 font-mono text-gray-500 dark:text-gray-400">{req.id}</td>
+                            <td className="px-3 py-2.5">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${REQ_TYPE_COLORS[req.type] || "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"}`}>
+                                {req.type.replace(/_/g, " ")}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-gray-700 dark:text-gray-300">
+                              {req.requirement}
+                              {req.verification?.target_cells?.length > 0 && (
+                                <span className="block text-[10px] font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
+                                  {req.verification.expected_functions?.join(", ") || ""}
+                                  {req.verification.expected_functions?.length ? " → " : ""}
+                                  {req.verification.target_cells.map((t) => t.cell).join(", ")}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${
+                                req.criticality === "critical"
+                                  ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+                                  : req.criticality === "major"
+                                  ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300"
+                                  : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                              }`}>
+                                {req.criticality}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                                req.method_constraint === "strict"
+                                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                                  : req.method_constraint === "preferred"
+                                  ? "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300"
+                                  : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+                              }`}>
+                                {req.method_constraint}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-bold text-gray-800 dark:text-gray-200 tabular-nums">
+                              {rubricPointsById[req.id] != null ? rubricPointsById[req.id] : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Ambiguities + evidence strategies */}
+              {(analysis.potential_ambiguities.length > 0 || analysis.evidence_strategies.length > 0) && (
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {analysis.potential_ambiguities.length > 0 && (
+                    <div className="rounded-xl border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/10 p-3">
+                      <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300 mb-1.5 flex items-center gap-1">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Potential Ambiguities ({analysis.potential_ambiguities.length})
+                      </p>
+                      <ul className="space-y-1">
+                        {analysis.potential_ambiguities.slice(0, 8).map((a, i) => (
+                          <li key={i} className="text-[11px] text-amber-700 dark:text-amber-300">• {a}</li>
+                        ))}
+                        {analysis.potential_ambiguities.length > 8 && (
+                          <li className="text-[11px] text-amber-600 dark:text-amber-400">+{analysis.potential_ambiguities.length - 8} more</li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                  {analysis.evidence_strategies.length > 0 && (
+                    <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                      <p className="text-[11px] font-bold text-gray-600 dark:text-gray-300 mb-1.5 flex items-center gap-1">
+                        <ListChecks className="h-3.5 w-3.5" />
+                        Evidence Strategies ({analysis.evidence_strategies.length})
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {analysis.evidence_strategies.map((s) => (
+                          <span key={s} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded font-mono">
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

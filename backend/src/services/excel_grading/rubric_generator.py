@@ -409,6 +409,40 @@ class RubricGenerator:
         """
         self.max_points = points_possible or 100.0
 
+        # Requirement-level generation is now the default public behavior.
+        # Keep the original structural implementation below as a fallback
+        # reference for legacy callers, but make sure the rubric used by the
+        # grading service preserves exact methods, locations, dependencies,
+        # criticality, and evidence strategies.
+        try:
+            from .assignment_intelligence import AssignmentKnowledge
+            knowledge = AssignmentKnowledge().build({
+                'title': assignment_title,
+                'description': assignment_description,
+                'instructions': assignment_instructions,
+                'module_title': module_title,
+                'points_possible': self.max_points,
+            })
+            assignment_rubric = knowledge.get('rubric')
+            if assignment_rubric and assignment_rubric.get('criteria'):
+                assignment_rubric['generation_method'] = 'assignment_knowledge_instruction_analysis'
+                assignment_rubric['scope'] = knowledge.get('scope', {})
+                assignment_rubric['assignment_knowledge'] = {
+                    'source_hash': knowledge.get('source_hash'),
+                    'engine_version': knowledge.get('engine_version'),
+                    'difficulty': knowledge.get('difficulty'),
+                    'requirement_count': len(knowledge.get('requirements', [])),
+                }
+                assignment_rubric['task_count'] = knowledge.get('_task_steps', 0)
+                assignment_rubric['concept_count'] = len(knowledge.get('requirements', []))
+                logger.info(
+                    "Generated assignment-aware rubric for '%s': %s requirement criteria",
+                    assignment_title, len(assignment_rubric['criteria']),
+                )
+                return assignment_rubric
+        except Exception as exc:
+            logger.warning("Assignment-aware rubric generation failed; using legacy fallback: %s", exc)
+
         # Combine all text sources
         all_text = '\n'.join(filter(None, [
             assignment_title or '',

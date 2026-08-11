@@ -130,9 +130,19 @@ def _run_grading_in_background(
                         f"({grade_data.get('grade_letter', '?')})"
                     )
 
-                    _auto_approve_grading_result(
+                    eligible_for_auto_approval = _auto_approve_grading_result(
                         app, submission_id, submission_type, grade_data,
                     )
+                    if not eligible_for_auto_approval:
+                        # Keep the result visible as a preliminary assessment,
+                        # but do not write an authoritative grade, open a
+                        # resubmission cycle, or advance learning progress.
+                        logger.info(
+                            "⏸️ Assignment remains pending instructor review: %s #%s",
+                            submission_type, submission_id,
+                        )
+                        return
+
                     _apply_grade_to_submission(
                         app, submission_id, submission_type, student_id,
                         total_score, max_score, grade_data,
@@ -221,6 +231,19 @@ def _auto_approve_grading_result(
             ).order_by(ExcelGradingResult.graded_at.desc()).first()
 
         if not result:
+            return False
+
+        # AI may only approve a result when every critical path is sufficiently
+        # evidenced.  Theory, low confidence, analyzer failures, and critical
+        # requirement anomalies remain preliminary until an instructor acts.
+        confidence = str(grade_data.get('confidence', 'low')).lower()
+        if grade_data.get('manual_review_required') or confidence == 'low' or grade_data.get('critical_failures'):
+            result.instructor_reviewed = False
+            result.manual_review_required = True
+            result.instructor_reviewed_at = None
+            result.instructor_notes = 'Preliminary AI assessment — instructor review required'
+            result.status = 'completed'
+            db.session.commit()
             return False
 
         result.instructor_reviewed = True

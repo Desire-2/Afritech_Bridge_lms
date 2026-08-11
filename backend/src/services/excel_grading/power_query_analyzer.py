@@ -145,6 +145,9 @@ class PowerQueryAnalyzer:
                 'has_merge': q.get('analysis', {}).get('has_merge', False),
                 'has_group_by': q.get('analysis', {}).get('has_group_by', False),
                 'has_filter': q.get('analysis', {}).get('has_filter', False),
+                'has_error_handling': q.get('analysis', {}).get('has_error_handling', False),
+                'has_parameters': q.get('analysis', {}).get('has_parameters', False),
+                'has_record_field_or_default': q.get('analysis', {}).get('has_record_field_or_default', False),
                 'complexity_score': q.get('analysis', {}).get('complexity_score', 0),
                 'm_code_preview': (q.get('m_code', '') or '')[:400],
             } for q in self.queries],
@@ -301,6 +304,9 @@ class PowerQueryAnalyzer:
                 'has_merge': False,
                 'has_group_by': False,
                 'has_filter': False,
+                'has_error_handling': False,
+                'has_parameters': False,
+                'has_record_field_or_default': False,
                 'complexity_score': 0,
             }
 
@@ -324,6 +330,9 @@ class PowerQueryAnalyzer:
         has_merge = 'NestedJoin' in m_code or 'Table.Join' in m_code
         has_group_by = 'Table.Group' in m_code
         has_filter = 'Table.SelectRows' in m_code or 'List.Select' in m_code
+        has_error_handling = bool(re.search(r'\btry\b|\botherwise\b', m_code, re.I))
+        has_parameters = bool(re.search(r'parameter|CurrentEnvironment|Path_Test|Path_Prod', m_code, re.I))
+        has_record_field_or_default = bool(re.search(r'Record\.FieldOrDefault', m_code, re.I))
 
         # Complexity scoring
         complexity = self._compute_m_complexity(
@@ -337,6 +346,9 @@ class PowerQueryAnalyzer:
             'has_merge': has_merge,
             'has_group_by': has_group_by,
             'has_filter': has_filter,
+            'has_error_handling': has_error_handling,
+            'has_parameters': has_parameters,
+            'has_record_field_or_default': has_record_field_or_default,
             'complexity_score': complexity,
         }
 

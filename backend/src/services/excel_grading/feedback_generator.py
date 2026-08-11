@@ -147,11 +147,12 @@ class FeedbackGenerator:
         # Level badge
         level_name = self.mastery_level.get('level_name', 'Intermediate')
         level_badge = f"📊 **Assessment Level: {level_name}**\n\n" if self.mastery_level else ''
+        title_note = f' "{self.title}"' if self.title else ''
 
         return (
             f"{greeting}\n\n"
             f"Thank you for submitting your assignment"
-            f"{f' \"{self.title}\"' if self.title else ''}"
+            f"{title_note}"
             f"{module_note}.\n\n"
             f"{level_badge}"
             f"**Overall Score: {total}/{max_score} ({pct}%) — Grade: {grade}**\n\n"
