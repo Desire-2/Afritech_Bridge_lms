@@ -879,6 +879,18 @@ class WaitlistService:
                     # Store old window ID
                     old_window_id = enrollment.application_window_id
 
+                    # Idempotency guard: if this enrollment was already moved
+                    # to the target cohort by a previous run (e.g. the daily
+                    # scheduler retried after a partial failure), skip it.
+                    # Re-processing would re-flip payment_verified/payment_status
+                    # and could wipe a student's confirmed payment state.
+                    if enrollment.application_window_id == next_cohort.id:
+                        logger.info(
+                            f"⏭️  Enrollment {enrollment.id} already in target cohort "
+                            f"{next_cohort.id} — skipping (idempotent migration)"
+                        )
+                        continue
+
                     # Update enrollment to new cohort
                     enrollment.application_window_id = next_cohort.id
                     enrollment.migrated_from_window_id = old_window_id

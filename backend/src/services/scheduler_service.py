@@ -119,7 +119,19 @@ class BackgroundTaskScheduler:
     def _weekly_cleanup(self):
         """Weekly comprehensive cleanup"""
         logger.info("Running weekly comprehensive cleanup...")
-        
+
+        # ⚠️ DATA SAFETY: automatic user deletion removes accounts (and their
+        # enrollments, progress, certificates, etc.) without human review.
+        # This is DISABLED unless explicitly enabled via the
+        # AUTO_DELETE_INACTIVE_USERS=true configuration flag.
+        app_config = getattr(self.app, 'config', {}) if self.app else {}
+        if not app_config.get('AUTO_DELETE_INACTIVE_USERS', False):
+            logger.info(
+                "Weekly cleanup: automatic user deletion is disabled "
+                "(set AUTO_DELETE_INACTIVE_USERS=true to enable)"
+            )
+            return
+
         try:
             with self.app.app_context():
                 # Auto-delete users inactive for 30+ days (safety threshold)

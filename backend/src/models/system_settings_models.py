@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 import json
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 # Assuming db is initialized elsewhere
 from .user_models import db, User
@@ -609,20 +610,56 @@ def initialize_default_settings():
     created_count = 0
     for setting_data in default_settings:
         existing = SystemSetting.query.filter_by(key=setting_data['key']).first()
-        if not existing:
-            setting = SystemSetting(**setting_data)
-            db.session.add(setting)
-            created_count += 1
-    
-    if created_count > 0:
+        if existing:
+            continue
         try:
+            # Commit each row independently. When the UNIQUE(key) constraint
+            # exists, this is safe under concurrency: if another gunicorn
+            # worker seeded the same key between our SELECT and INSERT, the
+            # commit raises IntegrityError and we simply skip — instead of
+            # silently writing a duplicate (which previously produced two
+            # full default sets in the production database).
+            db.session.add(SystemSetting(**setting_data))
             db.session.commit()
-            print(f"✅ Created {created_count} default system settings")
+            created_count += 1
+        except IntegrityError:
+            db.session.rollback()  # another worker already created this key
         except Exception as e:
             db.session.rollback()
-            print(f"❌ Error creating default settings: {str(e)}")
+            print(f"❌ Error creating default setting '{setting_data['key']}': {str(e)}")
+
+    if created_count > 0:
+        print(f"✅ Created {created_count} default system settings")
     else:
         print("ℹ️  All default system settings already exist")
+
+    # Safety net: even with per-row commits, two workers can still race the
+    # SELECT-then-INSERT window when the UNIQUE(key) constraint has not been
+    # applied yet (e.g. before migration c6a713393185 runs). Remove any
+    # duplicate rows, keeping the highest-id row per key. This is idempotent
+    # and a no-op on a clean table.
+    try:
+        duplicate_count = db.session.execute(text(
+            """
+            SELECT count(*) FROM (
+                SELECT key FROM system_settings GROUP BY key HAVING count(*) > 1
+            ) AS dup
+            """
+        )).scalar()
+        if duplicate_count:
+            db.session.execute(text(
+                """
+                DELETE FROM system_settings
+                WHERE id NOT IN (
+                    SELECT max(id) FROM system_settings GROUP BY key
+                )
+                """
+            ))
+            db.session.commit()
+            print(f"🧹 Removed {duplicate_count} duplicated system setting key(s)")
+    except Exception as e:
+        db.session.rollback()
+        print(f"ℹ️  Duplicate settings cleanup skipped (non-fatal): {e}")
     
     return created_count
 

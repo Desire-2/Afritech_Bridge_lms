@@ -400,8 +400,20 @@ def _auto_migrate_missing_columns():
     # (Add more table checks here as needed in the future)
 
 with app.app_context():
+    # db.create_all() only CREATES missing tables — it never alters existing
+    # ones, so it is safe to keep as a bootstrap for environments where the
+    # schema was never fully migrated. It does NOT modify existing data.
     db.create_all()
-    _auto_migrate_missing_columns()
+
+    # _auto_migrate_missing_columns() issues raw ALTER TABLE statements.
+    # Running it against the production (PostgreSQL) database from every
+    # gunicorn worker on every restart caused concurrent-DDL races
+    # (duplicate-column / lock errors) and unrequested schema changes.
+    # Those columns are managed by Alembic migrations in production, so this
+    # is limited to local SQLite development only.
+    if not is_postgresql:
+        _auto_migrate_missing_columns()
+
     if not Role.query.filter_by(name='student').first():
         db.session.add(Role(name='student'))
     if not Role.query.filter_by(name='instructor').first():
@@ -437,15 +449,20 @@ def shutdown_session(exception=None):
 @app.after_request
 def after_request(response):
     """
-    Cleanup after each request to prevent connection leaks
-    CRITICAL: Always remove session to return connection to pool
+    Cleanup after each request to prevent connection leaks.
+    CRITICAL: Always remove session to return connection to pool.
+
+    NOTE: The commit stays UNCONDITIONAL on success responses. Many routes
+    in this codebase rely on the implicit commit after 2xx, and SQLAlchemy's
+    session.dirty/new/deleted collections are only accurate after a flush —
+    gating the commit on them would silently drop legitimate writes.
     """
     try:
-        # Only commit if response is successful (2xx status)
+        # Commit only successful responses (2xx). Roll back on errors to
+        # avoid persisting partial work from a failed request.
         if 200 <= response.status_code < 300:
             db.session.commit()
         else:
-            # Rollback on error to prevent partial commits
             db.session.rollback()
     except Exception as e:
         logger.error(f"Error in after_request commit: {e}")
