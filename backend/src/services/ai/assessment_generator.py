@@ -448,7 +448,19 @@ Format as JSON:
             "max_points": 200,
             "due_date_days": 14,
             "grading_rubric": "• Technical quality (40%)\n• Documentation (30%)\n• Presentation (30%)",
-            "resources": "Use course materials and approved external resources"
+            "rubric_criteria": [
+                {"name": "Technical Quality", "description": "Correctness, efficiency, and implementation quality", "max_points": 80, "performance_levels": [{"level": "Excellent", "points": 80, "description": "Outstanding technical implementation"}, {"level": "Good", "points": 64, "description": "Solid implementation with minor issues"}, {"level": "Satisfactory", "points": 48, "description": "Adequate implementation"}, {"level": "Needs Improvement", "points": 16, "description": "Poor implementation"}]},
+                {"name": "Documentation", "description": "Quality and thoroughness of supporting documentation", "max_points": 60, "performance_levels": [{"level": "Excellent", "points": 60, "description": "Comprehensive documentation"}, {"level": "Good", "points": 48, "description": "Good documentation with gaps"}, {"level": "Satisfactory", "points": 36, "description": "Basic documentation"}, {"level": "Needs Improvement", "points": 12, "description": "Insufficient documentation"}]},
+                {"name": "Presentation", "description": "Organization, clarity, and professional presentation", "max_points": 60, "performance_levels": [{"level": "Excellent", "points": 60, "description": "Professional and engaging"}, {"level": "Good", "points": 48, "description": "Well presented with minor issues"}, {"level": "Satisfactory", "points": 36, "description": "Adequate presentation"}, {"level": "Needs Improvement", "points": 12, "description": "Poor presentation"}]}
+            ],
+            "resources": "Use course materials and approved external resources",
+            "tasks": [
+                {"text": "Research and plan your approach", "description": "Review the course materials and outline your project plan", "is_optional": False},
+                {"text": "Design the solution architecture", "description": "Plan the structure and components of your project", "is_optional": False},
+                {"text": "Implement core features", "description": "Build the main functionality of your project", "is_optional": False},
+                {"text": "Test and debug", "description": "Test your implementation thoroughly and fix issues", "is_optional": False},
+                {"text": "Prepare final submission", "description": "Compile all deliverables and submit", "is_optional": False}
+            ]
         }
     
     def generate_project_from_content(self, module_contents: List[Dict[str, str]],
@@ -740,6 +752,39 @@ Format as JSON:
         # If rubric_criteria was removed (invalid), restore from defaults
         if "rubric_criteria" not in parsed_data or not parsed_data["rubric_criteria"]:
             parsed_data["rubric_criteria"] = defaults["rubric_criteria"]
+
+        # Normalize tasks: accept a list of dicts or a list of strings, and
+        # coerce each task into the {text, description, is_optional} shape used
+        # by the frontend checklist and grading.
+        tasks = parsed_data.get("tasks", [])
+        if isinstance(tasks, str):
+            # JSON-encoded string of tasks
+            try:
+                tasks = json.loads(tasks)
+            except (ValueError, TypeError):
+                tasks = []
+        if isinstance(tasks, list):
+            normalized_tasks = []
+            for t in tasks:
+                if isinstance(t, dict):
+                    text = str(t.get("text") or t.get("title") or "").strip()
+                    if not text:
+                        continue
+                    normalized_tasks.append({
+                        "text": text,
+                        "description": str(t.get("description") or ""),
+                        "is_optional": bool(t.get("is_optional", False)),
+                    })
+                elif isinstance(t, str) and t.strip():
+                    normalized_tasks.append({
+                        "text": t.strip(),
+                        "description": "",
+                        "is_optional": False,
+                    })
+            parsed_data["tasks"] = normalized_tasks
+        else:
+            # Non-list, non-str tasks (e.g. a bare dict or other type) — reset to defaults
+            parsed_data["tasks"] = defaults["tasks"]
         
         return parsed_data
 

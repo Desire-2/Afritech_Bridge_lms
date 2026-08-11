@@ -431,6 +431,7 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   const handleOpenAIModal = () => {
     setShowAIModal(true);
     setSelectedModuleId(null);
+    setSelectedModuleIds([]);
     setSelectedLessonId(null);
     setAIContentType('lesson');
     setAiTaskStatus(null);
@@ -777,7 +778,24 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           }
         }
 
-        // Parse array fields if they're strings
+        // Parse list fields (arrays, JSON strings, or newline/bullet-delimited text)
+        const parseListField = (field: any): string[] => {
+          if (Array.isArray(field)) return field.map(String).filter(Boolean);
+          if (typeof field === 'string' && field) {
+            try {
+              const parsed = JSON.parse(field);
+              if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+            } catch (e) { /* not JSON */ }
+            // Fall back to newline/bullet-delimited text
+            return field
+              .split('\n')
+              .map((line: string) => line.replace(/^[-•*▪◦]\s*/, '').replace(/^\d+[.)]\s*/, '').trim())
+              .filter(Boolean);
+          }
+          return [];
+        };
+
+        // Parse array fields (JSON arrays or JSON-encoded strings)
         const parseArrayField = (field: any) => {
           if (Array.isArray(field)) return field;
           if (typeof field === 'string' && field) {
@@ -795,12 +813,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           projectForm: {
             title: contextualTitle,
             description: contextualDescription,
-            objectives: parseArrayField(projectData.objectives || projectData.requirements),
-            requirements: parseArrayField(projectData.requirements),
+            objectives: parseListField(projectData.objectives),
+            requirements: parseListField(projectData.requirements),
+            deliverables: parseListField(projectData.deliverables),
             rubric_criteria: parseArrayField(projectData.rubric_criteria || projectData.grading_rubric),
-            resources: parseArrayField(projectData.resources),
+            resources: parseListField(projectData.resources),
             points_possible: projectData.max_points || projectData.points_possible || 150,
             timeline_weeks: Math.ceil((projectData.due_date_days || 14) / 7) || 4,
+            due_date_days: projectData.due_date_days || 14,
             submission_format: projectData.submission_format || 'file_upload',
             passing_score: projectData.passing_score || 60,
             collaboration_allowed: projectData.collaboration_allowed || false,
@@ -949,7 +969,24 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           throw new Error('AI generated incomplete project data.');
         }
 
-        // Parse array fields if they're strings
+        // Parse list fields (arrays, JSON strings, or newline/bullet-delimited text)
+        const parseListField = (field: any): string[] => {
+          if (Array.isArray(field)) return field.map(String).filter(Boolean);
+          if (typeof field === 'string' && field) {
+            try {
+              const parsed = JSON.parse(field);
+              if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
+            } catch (e) { /* not JSON */ }
+            // Fall back to newline/bullet-delimited text
+            return field
+              .split('\n')
+              .map((line: string) => line.replace(/^[-•*▪◦]\s*/, '').replace(/^\d+[.)]\s*/, '').trim())
+              .filter(Boolean);
+          }
+          return [];
+        };
+
+        // Parse array fields (JSON arrays or JSON-encoded strings)
         const parseArrayField = (field: any) => {
           if (Array.isArray(field)) return field;
           if (typeof field === 'string' && field) {
@@ -995,12 +1032,14 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
           projectForm: {
             title: contextualTitle,
             description: contextualDescription,
-            objectives: parseArrayField(projectData.objectives || projectData.requirements),
-            requirements: parseArrayField(projectData.requirements),
+            objectives: parseListField(projectData.objectives),
+            requirements: parseListField(projectData.requirements),
+            deliverables: parseListField(projectData.deliverables),
             rubric_criteria: parseArrayField(projectData.rubric_criteria || projectData.grading_rubric),
-            resources: parseArrayField(projectData.resources),
+            resources: parseListField(projectData.resources),
             points_possible: projectData.max_points || projectData.points_possible || 150,
             timeline_weeks: Math.ceil((projectData.due_date_days || 14) / 7) || 4,
+            due_date_days: projectData.due_date_days || 14,
             submission_format: projectData.submission_format || 'file_upload',
             passing_score: projectData.passing_score || 60,
             collaboration_allowed: projectData.collaboration_allowed || false,
@@ -1163,10 +1202,13 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
         const validFormats = ['file_upload', 'text_response', 'both', 'presentation'];
         const rawFormat = aiPreviewData.projectForm?.submission_format || aiPreviewData.submission_format || 'file_upload';
         const sanitizedFormat = validFormats.includes(rawFormat) ? rawFormat : 'file_upload';
-        
-        // Default due_date to 30 days from now if not provided
-        const defaultDueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-        
+
+        // Use the AI-suggested timeline for the due date (fall back to 30 days)
+        const dueDateDays = aiPreviewData.projectForm?.due_date_days
+          || (aiPreviewData.projectForm?.timeline_weeks ? aiPreviewData.projectForm.timeline_weeks * 7 : 0)
+          || 30;
+        const dueDate = new Date(Date.now() + dueDateDays * 24 * 60 * 60 * 1000).toISOString();
+
         const projectData = {
           title: aiPreviewData.projectForm?.title || aiPreviewData.title || 'Project',
           description: fullDescription,
@@ -1177,13 +1219,15 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
             : lastAIGeneration.params.module_id
               ? [lastAIGeneration.params.module_id]
               : course.modules?.map(m => m.id) || [],
-          points_possible: aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 100,
+          points_possible: aiPreviewData.projectForm?.points_possible || aiPreviewData.points_possible || 150,
           is_published: false, // Save as draft
           submission_format: sanitizedFormat,
           passing_score: aiPreviewData.projectForm?.passing_score || aiPreviewData.passing_score || 60,
           collaboration_allowed: aiPreviewData.projectForm?.collaboration_allowed || aiPreviewData.collaboration_allowed || false,
           max_team_size: aiPreviewData.projectForm?.max_team_size || aiPreviewData.max_team_size || 1,
-          due_date: defaultDueDate,
+          max_file_size_mb: aiPreviewData.projectForm?.max_file_size_mb || aiPreviewData.max_file_size_mb || 50,
+          allowed_file_types: aiPreviewData.projectForm?.allowed_file_types || aiPreviewData.allowed_file_types || '',
+          due_date: dueDate,
           tasks: aiPreviewData.projectForm?.tasks || []
         };
 
@@ -1323,6 +1367,24 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
   };
 
   const handleCreateProject = async () => {
+    // Validate required fields
+    if (!projectForm.title || !projectForm.title.trim()) {
+      setErrorMessage('Project title is required');
+      return;
+    }
+    if (!projectForm.description || !projectForm.description.trim()) {
+      setErrorMessage('Project description is required');
+      return;
+    }
+    if (!projectForm.due_date) {
+      setErrorMessage('Project due date is required');
+      return;
+    }
+    if (projectForm.module_ids.length === 0) {
+      setErrorMessage('Please select at least one module for this project');
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
     try {
@@ -1742,6 +1804,20 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
 
   const handleUpdateProject = async () => {
     if (!editingItem) return;
+
+    // Validate required fields
+    if (!projectForm.title || !projectForm.title.trim()) {
+      setErrorMessage('Project title is required');
+      return;
+    }
+    if (!projectForm.description || !projectForm.description.trim()) {
+      setErrorMessage('Project description is required');
+      return;
+    }
+    if (projectForm.module_ids.length === 0) {
+      setErrorMessage('Please select at least one module for this project');
+      return;
+    }
     
     setIsLoading(true);
     setErrorMessage(null);
@@ -2937,6 +3013,19 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  Learning Objectives
+                </label>
+                <textarea
+                  value={projectForm.objectives}
+                  onChange={(e) => setProjectForm({ ...projectForm, objectives: e.target.value })}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                  placeholder="What will students learn or demonstrate by completing this project? (one per line or a short paragraph)"
+                />
+              </div>
+
               {/* Tasks / Checklist */}
               <div>
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -3171,6 +3260,63 @@ const AssessmentManagement: React.FC<AssessmentManagementProps> = ({
                     />
                   </div>
                 )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Submission Format
+                  </label>
+                  <select
+                    value={projectForm.submission_format}
+                    onChange={(e) => setProjectForm({ ...projectForm, submission_format: e.target.value as any })}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                  >
+                    <option value="file_upload">File Upload</option>
+                    <option value="text_response">Text Response</option>
+                    <option value="both">File Upload + Text Response</option>
+                    <option value="presentation">Presentation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Max File Size (MB)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={projectForm.max_file_size_mb}
+                    onChange={(e) => setProjectForm({ ...projectForm, max_file_size_mb: parseInt(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Allowed File Types (comma-separated extensions)
+                  </label>
+                  <input
+                    type="text"
+                    value={projectForm.allowed_file_types}
+                    onChange={(e) => setProjectForm({ ...projectForm, allowed_file_types: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-700 dark:text-white"
+                    placeholder="e.g. .pdf,.docx,.zip,.ppt,.mp4 (leave blank to allow all)"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="project-published"
+                  checked={projectForm.is_published}
+                  onChange={(e) => setProjectForm({ ...projectForm, is_published: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-slate-300 rounded"
+                />
+                <label htmlFor="project-published" className="ml-2 block text-sm text-slate-900 dark:text-white">
+                  Publish project immediately
+                </label>
               </div>
 
               <div className="flex justify-end space-x-3">

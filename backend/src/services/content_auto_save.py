@@ -120,7 +120,26 @@ def _auto_save_content(db, Course, Module, Lesson,
         # Course outlines are informational — no direct DB save needed
         return {'saved': False, 'reason': 'course_outline is advisory only',
                 'title': data.get('title', 'Course Outline')}
-    
+
+    elif task_type in ('generate-quiz-from-content', 'generate-assignment-from-content',
+                       'generate-project-from-content', 'generate-final-project'):
+        # Assessments are persisted through the instructor preview/accept flow in
+        # the course editor (createQuiz/createAssignment/createProject). Auto-saving
+        # here would create duplicate records, so we only report that the preview is
+        # ready for the instructor to review and save.
+        content_label = {
+            'generate-quiz-from-content': 'quiz',
+            'generate-assignment-from-content': 'assignment',
+            'generate-project-from-content': 'project',
+            'generate-final-project': 'project',
+        }.get(task_type, 'assessment')
+        return {
+            'saved': False,
+            'type': content_label,
+            'reason': f'{content_label} preview is ready — review it in the course editor and save',
+            'title': data.get('title', f'AI-generated {content_label}'),
+        }
+
     else:
         logger.info(f"No auto-save handler for task type: {task_type}")
         return {'saved': False, 'reason': f'unhandled task_type: {task_type}'}

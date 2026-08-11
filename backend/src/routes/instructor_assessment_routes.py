@@ -1278,9 +1278,20 @@ def create_project():
             # Default: 30 days from now (project column is NOT NULL)
             due_date = datetime.utcnow() + timedelta(days=30)
         
-        # Handle module_ids as JSON string
+        # Handle module_ids as JSON string (accept list or pre-serialized JSON string)
         import json
-        module_ids = json.dumps(data.get('module_ids', []))
+        raw_module_ids = data.get('module_ids', [])
+        if isinstance(raw_module_ids, str):
+            # Already serialized — validate it parses to a list, else fall back to empty
+            try:
+                parsed_ids = json.loads(raw_module_ids)
+                module_ids = json.dumps(parsed_ids) if isinstance(parsed_ids, list) else '[]'
+            except (ValueError, TypeError):
+                module_ids = '[]'
+        elif isinstance(raw_module_ids, list):
+            module_ids = json.dumps(raw_module_ids)
+        else:
+            module_ids = '[]'
         
         # Handle tasks as JSON string
         tasks = data.get('tasks', [])
@@ -1369,12 +1380,33 @@ def update_project(project_id):
         if 'passing_score' in data:
             project.passing_score = data['passing_score']
         if 'due_date' in data:
-            project.due_date = datetime.fromisoformat(data['due_date']) if data['due_date'] else None
+            due_date_value = data['due_date']
+            if due_date_value:
+                try:
+                    date_str = str(due_date_value)
+                    if 'T' in date_str and not date_str.endswith('Z') and '+' not in date_str:
+                        project.due_date = datetime.fromisoformat(date_str)
+                    else:
+                        project.due_date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                except ValueError as e:
+                    return jsonify({"message": f"Invalid due_date format: {str(e)}"}), 400
+            # Empty/None due_date keeps the existing value (column is NOT NULL)
         if 'objectives' in data:
             project.objectives = data['objectives']
         if 'module_ids' in data:
             import json
-            project.module_ids = json.dumps(data['module_ids']) if isinstance(data['module_ids'], list) else data['module_ids']
+            raw_module_ids = data['module_ids']
+            if isinstance(raw_module_ids, list):
+                project.module_ids = json.dumps(raw_module_ids)
+            elif isinstance(raw_module_ids, str):
+                # Accept pre-serialized JSON string; validate it's a list
+                try:
+                    parsed_ids = json.loads(raw_module_ids)
+                    project.module_ids = json.dumps(parsed_ids) if isinstance(parsed_ids, list) else '[]'
+                except (ValueError, TypeError):
+                    project.module_ids = '[]'
+            else:
+                project.module_ids = '[]'
         if 'submission_format' in data:
             project.submission_format = data['submission_format']
         if 'max_file_size_mb' in data:
