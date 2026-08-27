@@ -36,7 +36,7 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BookingCard } from '@/components/booking/BookingCard';
+import { NativeBookingCard } from '@/components/booking/NativeBookingCard';
 import StudentAnnouncements from '@/components/student/StudentAnnouncements';
 
 const StudentDashboardOverviewPage = () => {
@@ -646,7 +646,7 @@ const StudentDashboardOverviewPage = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.45 }}
             >
-              <BookingCard variant="compact" />
+              <NativeBookingCard variant="compact" />
             </motion.div>
 
             {/* Announcements */}

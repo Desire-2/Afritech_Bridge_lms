@@ -661,6 +661,231 @@ def notify_ai_task_completed(
 
 
 # ══════════════════════════════════════════════════════════════════
+#  BOOKING NOTIFICATIONS
+# ══════════════════════════════════════════════════════════════════
+
+def notify_booking_created(student_id, instructor_id, booking):
+    """Notify both student and instructor when a booking is created (pending confirmation)."""
+    from ..models.user_models import User
+    student = User.query.get(student_id)
+    instructor = User.query.get(instructor_id)
+
+    student_name = f"{student.first_name} {student.last_name}" if student else "Student"
+    instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Instructor"
+    topic = booking.session_topic or "Session"
+    date_str = booking.start_datetime.strftime('%B %d, %Y at %I:%M %p') if booking.start_datetime else ""
+
+    # Notify student - booking request received
+    _create_notification(
+        user_id=student_id,
+        notification_type=NotificationType.BOOKING_CREATED,
+        title="Booking Request Received",
+        message=f"Your session request with {instructor_name} on {date_str} has been received. Awaiting instructor confirmation. Topic: {topic}",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/student/bookings/{booking.id}",
+        actor_id=instructor_id,
+        metadata={'booking_id': booking.id},
+    )
+
+    # Notify instructor - new booking request
+    _create_notification(
+        user_id=instructor_id,
+        notification_type=NotificationType.BOOKING_CREATED,
+        title="New Session Request",
+        message=f"{student_name} has requested a session with you on {date_str}. Topic: {topic}. Please review and confirm.",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/instructor/sessions",
+        actor_id=student_id,
+        metadata={'booking_id': booking.id},
+    )
+
+    _bulk_commit()
+
+
+def notify_booking_confirmed(booking):
+    """Notify student when instructor confirms the booking."""
+    from ..models.user_models import User
+    instructor = User.query.get(booking.instructor_id)
+    instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Instructor"
+    date_str = booking.start_datetime.strftime('%B %d, %Y at %I:%M %p') if booking.start_datetime else ""
+    topic = booking.session_topic or "Session"
+
+    has_link = bool(booking.meeting_url)
+    link_msg = " The meeting link will appear in your dashboard once added." if not has_link else ""
+
+    _create_notification(
+        user_id=booking.student_id,
+        notification_type=NotificationType.BOOKING_CONFIRMED,
+        title="Session Confirmed",
+        message=f"Your session with {instructor_name} on {date_str} has been confirmed! Topic: {topic}.{link_msg}",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/student/bookings/{booking.id}",
+        actor_id=booking.instructor_id,
+        metadata={'booking_id': booking.id},
+    )
+
+    _bulk_commit()
+
+
+def notify_booking_declined(booking):
+    """Notify student when instructor declines the booking."""
+    from ..models.user_models import User
+    instructor = User.query.get(booking.instructor_id)
+    instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Instructor"
+    date_str = booking.start_datetime.strftime('%B %d, %Y at %I:%M %p') if booking.start_datetime else ""
+    reason_text = f" Reason: {booking.cancellation_reason}" if booking.cancellation_reason else ""
+
+    _create_notification(
+        user_id=booking.student_id,
+        notification_type=NotificationType.BOOKING_DECLINED,
+        title="Session Request Declined",
+        message=f"Your session request with {instructor_name} on {date_str} has been declined.{reason_text} Please try a different time.",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/student/bookings",
+        actor_id=booking.instructor_id,
+        metadata={'booking_id': booking.id},
+    )
+
+    _bulk_commit()
+
+
+def notify_booking_cancelled(booking, cancelled_by_id):
+    """Notify relevant party when a booking is cancelled."""
+    from ..models.user_models import User
+    canceller = User.query.get(cancelled_by_id)
+    canceller_name = f"{canceller.first_name} {canceller.last_name}" if canceller else "User"
+    date_str = booking.start_datetime.strftime('%B %d, %Y at %I:%M %p') if booking.start_datetime else ""
+    reason_text = f" Reason: {booking.cancellation_reason}" if booking.cancellation_reason else ""
+
+    # Notify the other party
+    if cancelled_by_id == booking.student_id:
+        # Student cancelled → notify instructor
+        _create_notification(
+            user_id=booking.instructor_id,
+            notification_type=NotificationType.BOOKING_CANCELLED,
+            title="Session Cancelled",
+            message=f"{canceller_name} has cancelled the session on {date_str}.{reason_text}",
+            priority=NotificationPriority.NORMAL,
+            action_url=f"/instructor/sessions",
+            actor_id=cancelled_by_id,
+            metadata={'booking_id': booking.id},
+        )
+    else:
+        # Instructor/admin cancelled → notify student
+        _create_notification(
+            user_id=booking.student_id,
+            notification_type=NotificationType.BOOKING_CANCELLED,
+            title="Session Cancelled",
+            message=f"Your session on {date_str} has been cancelled by {canceller_name}.{reason_text}",
+            priority=NotificationPriority.HIGH,
+            action_url=f"/student/bookings",
+            actor_id=cancelled_by_id,
+            metadata={'booking_id': booking.id},
+        )
+
+    _bulk_commit()
+
+
+def notify_booking_rescheduled(booking, new_booking):
+    """Notify relevant party when a booking is rescheduled."""
+    from ..models.user_models import User
+    student = User.query.get(booking.student_id)
+    student_name = f"{student.first_name} {student.last_name}" if student else "Student"
+    new_date_str = new_booking.start_datetime.strftime('%B %d, %Y at %I:%M %p') if new_booking.start_datetime else ""
+
+    # Notify instructor
+    _create_notification(
+        user_id=booking.instructor_id,
+        notification_type=NotificationType.BOOKING_RESCHEDULED,
+        title="Session Rescheduled",
+        message=f"{student_name} has rescheduled the session to {new_date_str}.",
+        priority=NotificationPriority.NORMAL,
+        action_url=f"/instructor/sessions/{new_booking.id}",
+        actor_id=booking.student_id,
+        metadata={'old_booking_id': booking.id, 'new_booking_id': new_booking.id},
+    )
+
+    _bulk_commit()
+
+
+def notify_booking_completed(booking):
+    """Notify student when instructor marks session as completed."""
+    _create_notification(
+        user_id=booking.student_id,
+        notification_type=NotificationType.BOOKING_COMPLETED,
+        title="Session Completed",
+        message=f"Your session '{booking.session_topic}' has been marked as completed.",
+        priority=NotificationPriority.NORMAL,
+        action_url=f"/student/bookings/{booking.id}",
+        actor_id=booking.instructor_id,
+        metadata={'booking_id': booking.id},
+    )
+
+    _bulk_commit()
+
+
+def notify_booking_no_show(booking):
+    """Notify student when marked as no-show."""
+    _create_notification(
+        user_id=booking.student_id,
+        notification_type=NotificationType.BOOKING_NO_SHOW,
+        title="Session Marked as No-Show",
+        message=f"You were marked as absent for the session '{booking.session_topic}'.",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/student/bookings/{booking.id}",
+        actor_id=booking.instructor_id,
+        metadata={'booking_id': booking.id},
+    )
+
+    _bulk_commit()
+
+
+def notify_booking_reminder(booking, hours_before):
+    """Send reminder notification to both student and instructor for an upcoming session."""
+    from ..models.user_models import User
+    student = User.query.get(booking.student_id)
+    instructor = User.query.get(booking.instructor_id)
+
+    student_name = f"{student.first_name} {student.last_name}" if student else "Student"
+    instructor_name = f"{instructor.first_name} {instructor.last_name}" if instructor else "Instructor"
+    date_str = booking.start_datetime.strftime('%B %d, %Y at %I:%M %p') if booking.start_datetime else ""
+    topic = booking.session_topic or "Session"
+
+    time_label = f"{hours_before} hour{'s' if hours_before != 1 else ''}" if hours_before < 24 else "24 hours"
+    title = f"Session Reminder - Starts in {time_label}"
+    message = f"Reminder: Your session '{topic}' with "
+
+    has_link = bool(booking.meeting_url)
+    link_msg = f" Join here: {booking.meeting_url}" if has_link else ""
+
+    # Notify student
+    _create_notification(
+        user_id=booking.student_id,
+        notification_type=NotificationType.BOOKING_REMINDER,
+        title=title,
+        message=f"{message}{instructor_name} on {date_str}.{link_msg}",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/student/bookings/{booking.id}",
+        actor_id=booking.instructor_id,
+        metadata={'booking_id': booking.id, 'hours_before': hours_before},
+    )
+
+    # Notify instructor
+    _create_notification(
+        user_id=booking.instructor_id,
+        notification_type=NotificationType.BOOKING_REMINDER,
+        title=title,
+        message=f"{message}{student_name} on {date_str}.{link_msg}",
+        priority=NotificationPriority.HIGH,
+        action_url=f"/instructor/sessions/{booking.id}",
+        actor_id=booking.student_id,
+        metadata={'booking_id': booking.id, 'hours_before': hours_before},
+    )
+
+    _bulk_commit()
+
+
+# ══════════════════════════════════════════════════════════════════
 #  CLEANUP UTILITY
 # ══════════════════════════════════════════════════════════════════
 

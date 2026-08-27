@@ -38,6 +38,7 @@ const AdminSidebar = () => {
         { href: '/admin/users', label: 'User Management', icon: '👥', description: 'Manage users' },
         { href: '/admin/students', label: 'Student Management', icon: '🎓', description: 'Manage students & enrollments' },
         { href: '/admin/courses', label: 'Course Management', icon: '📚', description: 'Manage courses' },
+        { href: '/admin/bookings', label: 'Bookings', icon: '📅', description: 'Session bookings & reports' },
         { href: '/admin/forums', label: 'Forum Management', icon: '💬', description: 'Manage forums & moderation' },
         { href: '/admin/applications', label: 'Applications', icon: '📝', description: 'Review applications' },
         { href: '/admin/payments', label: 'Payments', icon: '💰', description: 'Track & manage payments' },

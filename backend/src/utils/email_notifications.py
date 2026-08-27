@@ -1344,3 +1344,126 @@ def send_cohort_start_notification(enrollment):
     except Exception as e:
         logger.error(f"❌ Failed to send cohort start notification: {str(e)}")
         return False
+
+
+# ══════════════════════════════════════════════════════════════════
+#  BOOKING EMAIL NOTIFICATIONS
+# ══════════════════════════════════════════════════════════════════
+
+from .booking_email_templates import (
+    booking_request_student_email,
+    booking_request_instructor_email,
+    booking_confirmed_student_email,
+    booking_declined_student_email,
+    booking_cancelled_email,
+    booking_reminder_email,
+)
+
+BOOKING_EMAIL_CATEGORY = 'booking'
+
+
+def _send_booking_email(user, subject, html_content):
+    """Helper to send a booking email respecting user preferences.
+
+    Booking emails are transactional and use the 'booking' category.
+    Returns True on success or if user opted out, False on failure.
+    """
+    if not BREVO_AVAILABLE:
+        logger.warning("Brevo not available - skipping booking email")
+        return False
+
+    try:
+        if not user or not user.email:
+            return False
+
+        if not _should_send_email(user, BOOKING_EMAIL_CATEGORY):
+            logger.info(f"Skipping booking email to user {user.id}: category disabled")
+            return True
+
+        unsub_token = _get_unsub_token(user)
+
+        return brevo_service.send_email(
+            to_emails=[user.email],
+            subject=subject,
+            html_content=html_content,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send booking email to user {getattr(user, 'id', '?')}: {e}")
+        return False
+
+
+def send_booking_request_student_email(booking):
+    """Send booking request received email to student."""
+    from ..models.user_models import User
+    user = User.query.get(booking.student_id)
+    unsub = _get_unsub_token(user) if user else None
+    subject = "Your One-to-One Session Request Has Been Received"
+    html = booking_request_student_email(booking, unsub_token=unsub)
+    return _send_booking_email(user, subject, html)
+
+
+def send_booking_request_instructor_email(booking):
+    """Send new booking request email to instructor."""
+    from ..models.user_models import User
+    user = User.query.get(booking.instructor_id)
+    unsub = _get_unsub_token(user) if user else None
+    subject = "New One-to-One Session Request"
+    html = booking_request_instructor_email(booking, unsub_token=unsub)
+    return _send_booking_email(user, subject, html)
+
+
+def send_booking_confirmed_student_email(booking):
+    """Send booking confirmed email to student."""
+    from ..models.user_models import User
+    user = User.query.get(booking.student_id)
+    unsub = _get_unsub_token(user) if user else None
+    subject = "Your One-to-One Session Has Been Confirmed"
+    html = booking_confirmed_student_email(booking, unsub_token=unsub)
+    return _send_booking_email(user, subject, html)
+
+
+def send_booking_declined_student_email(booking):
+    """Send booking declined email to student."""
+    from ..models.user_models import User
+    user = User.query.get(booking.student_id)
+    unsub = _get_unsub_token(user) if user else None
+    subject = "Session Request Update"
+    html = booking_declined_student_email(booking, unsub_token=unsub)
+    return _send_booking_email(user, subject, html)
+
+
+def send_booking_cancelled_student_email(booking, cancelled_by_name):
+    """Send cancellation email to student."""
+    from ..models.user_models import User
+    user = User.query.get(booking.student_id)
+    unsub = _get_unsub_token(user) if user else None
+    subject = "Your One-to-One Session Has Been Cancelled"
+    html = booking_cancelled_email(booking, cancelled_by_name, 'student', unsub_token=unsub)
+    return _send_booking_email(user, subject, html)
+
+
+def send_booking_cancelled_instructor_email(booking, cancelled_by_name):
+    """Send cancellation email to instructor."""
+    from ..models.user_models import User
+    user = User.query.get(booking.instructor_id)
+    unsub = _get_unsub_token(user) if user else None
+    subject = "Session Cancelled"
+    html = booking_cancelled_email(booking, cancelled_by_name, 'instructor', unsub_token=unsub)
+    return _send_booking_email(user, subject, html)
+
+
+def send_booking_reminder_email(booking, hours_before):
+    """Send session reminder email to both student and instructor."""
+    from ..models.user_models import User
+    time_label = f"{hours_before} hour{'s' if hours_before != 1 else ''}" if hours_before < 24 else "24 hours"
+
+    for uid, recipient_type in [(booking.student_id, 'student'), (booking.instructor_id, 'instructor')]:
+        user = User.query.get(uid)
+        if not user:
+            continue
+        unsub = _get_unsub_token(user)
+        subject = f"Reminder: Your Session Starts in {time_label}"
+        html = booking_reminder_email(booking, hours_before, recipient_type=recipient_type, unsub_token=unsub)
+        _send_booking_email(user, subject, html)
+
+    return True

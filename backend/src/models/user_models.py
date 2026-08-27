@@ -60,6 +60,9 @@ class User(db.Model):
     website_url = db.Column(db.String(255), nullable=True)
     location = db.Column(db.String(100), nullable=True)
     timezone = db.Column(db.String(50), nullable=True, default='UTC')
+
+    # Booking settings (instructors)
+    buffer_minutes = db.Column(db.Integer, nullable=False, default=0)
     
     # Career & Skills
     job_title = db.Column(db.String(100), nullable=True)
@@ -208,6 +211,7 @@ class User(db.Model):
             'website_url': self.website_url,
             'location': self.location,
             'timezone': self.timezone,
+            'buffer_minutes': self.buffer_minutes,
             # Career & Skills
             'job_title': self.job_title,
             'company': self.company,

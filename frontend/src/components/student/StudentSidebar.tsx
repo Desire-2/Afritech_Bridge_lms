@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle, Bell } from 'lucide-react';
+import { BookOpen, GraduationCap, LayoutDashboard, UserCircle, Briefcase, Award, HelpCircle, MessageSquare, Menu, X, LogOut, FileText, AlertTriangle, Bell, Calendar } from 'lucide-react';
 
 const StudentSidebar = () => {
   const pathname = usePathname();
@@ -93,6 +93,23 @@ const StudentSidebar = () => {
           label: 'Opportunities', 
           description: 'Career paths',
           icon: <Briefcase size={iconSize} /> 
+        },
+      ]
+    },
+    {
+      title: 'SESSIONS',
+      items: [
+        { 
+          href: '/student/bookings', 
+          label: 'My Sessions', 
+          description: 'View & manage bookings',
+          icon: <Calendar size={iconSize} /> 
+        },
+        { 
+          href: '/student/bookings/new', 
+          label: 'Book Session', 
+          description: 'Schedule 1-on-1',
+          icon: <Calendar size={iconSize} /> 
         },
       ]
     },

@@ -53,6 +53,16 @@ class NotificationType:
     AI_TASK_FAILED = 'ai_task_failed'
     CONTENT_SAVED = 'content_saved'
 
+    # Booking
+    BOOKING_CREATED = 'booking_created'
+    BOOKING_CONFIRMED = 'booking_confirmed'
+    BOOKING_DECLINED = 'booking_declined'
+    BOOKING_CANCELLED = 'booking_cancelled'
+    BOOKING_RESCHEDULED = 'booking_rescheduled'
+    BOOKING_COMPLETED = 'booking_completed'
+    BOOKING_REMINDER = 'booking_reminder'
+    BOOKING_NO_SHOW = 'booking_no_show'
+
     # System
     SYSTEM = 'system'
     COURSE_UPDATE = 'course_update'
@@ -83,6 +93,12 @@ NOTIFICATION_CATEGORIES = {
         NotificationType.FORUM_NEW_THREAD,
     ],
     'enrollment': [NotificationType.ENROLLMENT_CONFIRMED, NotificationType.ENROLLMENT_APPLICATION_STATUS],
+    'booking': [
+        NotificationType.BOOKING_CREATED, NotificationType.BOOKING_CONFIRMED,
+        NotificationType.BOOKING_DECLINED, NotificationType.BOOKING_CANCELLED,
+        NotificationType.BOOKING_RESCHEDULED, NotificationType.BOOKING_COMPLETED,
+        NotificationType.BOOKING_REMINDER, NotificationType.BOOKING_NO_SHOW,
+    ],
     'achievement': [NotificationType.ACHIEVEMENT_UNLOCKED, NotificationType.STREAK_MILESTONE, NotificationType.BADGE_EARNED],
     'ai': [NotificationType.AI_TASK_COMPLETED, NotificationType.AI_TASK_FAILED, NotificationType.CONTENT_SAVED],
     'system': [NotificationType.SYSTEM, NotificationType.COURSE_UPDATE, NotificationType.MODULE_RELEASED],

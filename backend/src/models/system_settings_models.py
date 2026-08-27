@@ -604,7 +604,48 @@ def initialize_default_settings():
             'is_public': False,
             'is_editable': True,
             'default_value': 'nvidia/nemotron-3-super-120b-a12b:free'
-        }
+        },
+        # ── Booking Settings ──
+        {
+            'key': 'booking_slot_duration_minutes',
+            'value': '60',
+            'data_type': 'integer',
+            'category': 'general',
+            'description': 'Default duration of booking slots in minutes',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': '60'
+        },
+        {
+            'key': 'booking_min_notice_minutes',
+            'value': '60',
+            'data_type': 'integer',
+            'category': 'general',
+            'description': 'Minimum notice required before booking (minutes)',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': '60'
+        },
+        {
+            'key': 'booking_max_horizon_days',
+            'value': '90',
+            'data_type': 'integer',
+            'category': 'general',
+            'description': 'Maximum number of days in advance a booking can be made',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': '90'
+        },
+        {
+            'key': 'booking_cancellation_notice_hours',
+            'value': '24',
+            'data_type': 'integer',
+            'category': 'general',
+            'description': 'Minimum hours notice required for student cancellation',
+            'is_public': True,
+            'is_editable': True,
+            'default_value': '24'
+        },
     ]
     
     created_count = 0

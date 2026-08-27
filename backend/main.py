@@ -12,6 +12,7 @@ from flask import Flask, send_from_directory, jsonify, request
 from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
 from datetime import timedelta
 import logging
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from src.models.user_models import db, User, Role
 from src.models.course_models import (
@@ -36,6 +37,7 @@ from src.models.grading_models import (
 from src.models.internship_models import (
     InternshipTrack, InternshipCohort, InternshipApplication, ApplicationStatusLog, InternshipOfferLetter
 ) # Import internship models
+from src.models.booking_models import InstructorAvailability, AvailabilityException, Booking # Import booking models
 from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
 from src.utils.brevo_email_service import brevo_service # Import Brevo service
 
@@ -72,11 +74,13 @@ from src.routes.excel_grading_routes import excel_grading_bp # Import Excel AI g
 from src.routes.email_routes import email_bp # Import email preference/unsubscribe routes
 from src.routes.payment_verification_routes import payment_verify_bp # Import payment verification routes
 from src.blueprints.internships.routes import internships_bp # Import internship application blueprint
+from src.routes.booking_routes import booking_bp # Import booking blueprint
 from src.middleware.maintenance_mode import MaintenanceMode # Import maintenance middleware
 from src.utils.db_health import get_pool_status, force_pool_cleanup, check_database_health  # Import DB health utilities
 from src.services.background_service import background_service # Import background service for initialization
 from src.services.cohort_migration_scheduler import start_cohort_migration_scheduler # Import cohort migration scheduler
 from src.services.cohort_start_notification_scheduler import start_cohort_start_notification_scheduler  # Cohort start email notifications
+from src.services.booking_reminder_scheduler import start_booking_reminder_scheduler  # Booking reminder scheduler
 from flask_migrate import Migrate
 from flask_cors import CORS
 
@@ -359,6 +363,7 @@ app.register_blueprint(email_bp) # Register email preference/unsubscribe routes
 app.register_blueprint(payment_verify_bp) # Register payment verification routes
 app.register_blueprint(internships_bp) # Register internship application blueprint
 app.register_blueprint(instructor_settings_bp) # Register instructor settings blueprint
+app.register_blueprint(booking_bp) # Register booking blueprint
 
 # Initialize maintenance mode middleware - MUST BE AFTER BLUEPRINT REGISTRATION
 maintenance_mode = MaintenanceMode(app)
@@ -399,20 +404,59 @@ def _auto_migrate_missing_columns():
 
     # (Add more table checks here as needed in the future)
 
-with app.app_context():
-    # db.create_all() only CREATES missing tables — it never alters existing
-    # ones, so it is safe to keep as a bootstrap for environments where the
-    # schema was never fully migrated. It does NOT modify existing data.
-    db.create_all()
+def _bootstrap_schema():
+    """
+    Create any missing tables (checkfirst — never alters existing tables).
 
-    # _auto_migrate_missing_columns() issues raw ALTER TABLE statements.
-    # Running it against the production (PostgreSQL) database from every
-    # gunicorn worker on every restart caused concurrent-DDL races
-    # (duplicate-column / lock errors) and unrequested schema changes.
-    # Those columns are managed by Alembic migrations in production, so this
-    # is limited to local SQLite development only.
-    if not is_postgresql:
-        _auto_migrate_missing_columns()
+    Two guards keep this from ever breaking a boot or a deployment:
+      * On PostgreSQL, workers serialize behind a session advisory lock so
+        concurrent boots (e.g. several gunicorn workers restarting at the
+        same time, or a deploy overlapping a running instance) cannot race
+        CREATE TABLE and die with "relation ... already exists". The DDL is
+        executed on the locked connection so the lock and the writes share
+        one session. If the lock is ever contended past the 30s statement
+        timeout, that is treated as "another worker is already doing it".
+      * DDL races / transient schema errors are logged and swallowed — a
+        missing table is Alembic's job (`flask db upgrade`), never a reason
+        to refuse to boot. (A genuinely unreachable database still fails
+        fast moments later when the first real query runs.)
+    """
+    try:
+        if is_postgresql:
+            from sqlalchemy import text as _text
+            with db.engine.connect() as conn:
+                conn.execute(_text("SELECT pg_advisory_lock(7412345)"))
+                try:
+                    db.metadata.create_all(bind=conn, checkfirst=True)
+                finally:
+                    conn.execute(_text("SELECT pg_advisory_unlock(7412345)"))
+        else:
+            db.create_all()
+    except (ProgrammingError, OperationalError) as e:
+        logger.warning(
+            f"⚠️ Schema bootstrap skipped (non-fatal): {type(e).__name__}: {e}"
+        )
+
+
+with app.app_context():
+    # ── Schema bootstrap ──────────────────────────────────────────────────
+    # Skip DDL entirely while running `flask db ...` migration commands
+    # (covers `flask db ...`, `python -m flask db ...` and
+    # `flask --app main db ...`): Alembic owns the schema then, and
+    # create_all() racing the migrations is exactly what produced the
+    # "relation ... already exists" crash you saw with `flask db upgrade`.
+    running_flask_db_cli = 'db' in sys.argv[1:]
+    if not running_flask_db_cli:
+        _bootstrap_schema()
+
+        # _auto_migrate_missing_columns() issues raw ALTER TABLE statements.
+        # Running it against the production (PostgreSQL) database from every
+        # gunicorn worker on every restart caused concurrent-DDL races
+        # (duplicate-column / lock errors) and unrequested schema changes.
+        # Those columns are managed by Alembic migrations in production, so
+        # this is limited to local SQLite development only.
+        if not is_postgresql:
+            _auto_migrate_missing_columns()
 
     if not Role.query.filter_by(name='student').first():
         db.session.add(Role(name='student'))
@@ -436,6 +480,9 @@ start_cohort_migration_scheduler(app)
 
 # Start cohort-start email notification scheduler (notifies students when their cohort begins)
 start_cohort_start_notification_scheduler(app)
+
+# Start booking reminder scheduler (24h + 1h reminders for confirmed sessions)
+start_booking_reminder_scheduler(app)
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext
