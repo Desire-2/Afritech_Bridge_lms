@@ -101,14 +101,8 @@ const StudentSidebar = () => {
       items: [
         { 
           href: '/student/bookings', 
-          label: 'My Sessions', 
-          description: 'View & manage bookings',
-          icon: <Calendar size={iconSize} /> 
-        },
-        { 
-          href: '/student/bookings/new', 
-          label: 'Book Session', 
-          description: 'Schedule 1-on-1',
+          label: 'Sessions', 
+          description: 'Book & manage 1-on-1 sessions',
           icon: <Calendar size={iconSize} /> 
         },
       ]

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { BookingService } from '@/services/booking.service';
 import type { Booking } from '@/types/booking';
+import NewBookingPage from './new/page';
 
 const statusColors: Record<string, string> = {
   confirmed: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
@@ -39,6 +40,7 @@ const statusIcons: Record<string, React.ReactNode> = {
 
 export default function StudentBookingsPage() {
   const { user } = useAuth();
+  const [pageTab, setPageTab] = useState<'sessions' | 'book'>('sessions');
   const [upcoming, setUpcoming] = useState<Booking[]>([]);
   const [past, setPast] = useState<Booking[]>([]);
   const [activeTab, setActiveTab] = useState<'upcoming' | 'past'>('upcoming');
@@ -77,17 +79,42 @@ export default function StudentBookingsPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
+      {/* Top-level tabs: My Sessions | Book Session */}
+      <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg mb-8 w-fit">
+        {([
+          { id: 'sessions', label: 'My Sessions' },
+          { id: 'book', label: 'Book Session' },
+        ] as const).map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setPageTab(tab.id)}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              pageTab === tab.id
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-400'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {pageTab === 'book' ? (
+        <NewBookingPage />
+      ) : (
+      <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-8 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">My Sessions</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">View and manage your one-to-one sessions</p>
         </div>
-        <Link href="/student/bookings/new">
-          <Button className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700">
-            <Calendar className="w-4 h-4 mr-2" />
-            Book New Session
-          </Button>
-        </Link>
+        <Button
+          onClick={() => setPageTab('book')}
+          className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+        >
+          <Calendar className="w-4 h-4 mr-2" />
+          Book New Session
+        </Button>
       </div>
 
       {/* Tabs */}
@@ -231,6 +258,8 @@ export default function StudentBookingsPage() {
             </motion.div>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );
