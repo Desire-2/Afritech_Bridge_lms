@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # File Upload Routes for Assignment Submissions
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -147,7 +148,7 @@ def submit_assignment_with_files(assignment_id):
             content=data.get('content'),
             file_url=json.dumps(files_data) if files_data else None,  # Store file metadata as JSON
             external_url=data.get('external_url'),
-            submitted_at=datetime.utcnow()
+            submitted_at=now_local()
         )
         
         db.session.add(submission)
@@ -263,7 +264,7 @@ def resubmit_assignment_with_files(assignment_id):
         existing.content = data.get('content')
         existing.file_url = json.dumps(files_data) if files_data else None
         existing.external_url = data.get('external_url')
-        existing.submitted_at = datetime.utcnow()
+        existing.submitted_at = now_local()
         existing.grade = None  # Reset grade since this is a resubmission
         existing.feedback = None  # Reset feedback
         existing.graded_at = None
@@ -286,7 +287,7 @@ def resubmit_assignment_with_files(assignment_id):
             if lesson_completion:
                 lesson_completion.assignment_needs_resubmission = False
                 lesson_completion.is_resubmission = True
-                lesson_completion.completed_at = datetime.utcnow()
+                lesson_completion.completed_at = now_local()
         
         db.session.commit()
         
@@ -396,7 +397,7 @@ def submit_project_with_files(project_id):
             student_id=current_user_id,
             text_content=data.get('text_content'),
             file_path=json.dumps(files_data) if files_data else None,  # Store file metadata as JSON
-            submitted_at=datetime.utcnow()
+            submitted_at=now_local()
         )
         
         # Handle team members if collaboration is allowed

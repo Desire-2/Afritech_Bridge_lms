@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Certificate Service - Handle certificates, badges, and transcripts
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -224,7 +225,7 @@ class CertificateService:
             
             # FIX: Auto-mark enrollment as completed if progress is 100% but not marked
             if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                enrollment.completed_at = datetime.utcnow()
+                enrollment.completed_at = now_local()
                 enrollment.status = 'completed'
                 db.session.flush()  # Flush to database before eligibility check
             
@@ -255,7 +256,7 @@ class CertificateService:
                 existing_cert.overall_score = overall_score
                 existing_cert.skills_acquired = json.dumps(skills_acquired)
                 existing_cert.portfolio_items = json.dumps(portfolio_items)
-                existing_cert.issued_at = datetime.utcnow()  # Update issue date
+                existing_cert.issued_at = now_local()  # Update issue date
                 
                 message = "Certificate updated successfully"
                 certificate = existing_cert
@@ -279,7 +280,7 @@ class CertificateService:
             
             # Mark enrollment as completed (use correct field names)
             if not enrollment.completed_at:
-                enrollment.completed_at = datetime.utcnow()
+                enrollment.completed_at = now_local()
             if enrollment.status != 'completed':
                 enrollment.status = 'completed'
             enrollment.progress = 1.0  # 100% completion
@@ -424,7 +425,7 @@ class CertificateService:
                 if enrollment:
                     # FIX: Auto-mark enrollment as completed if progress is 100% but not marked
                     if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                        enrollment.completed_at = datetime.utcnow()
+                        enrollment.completed_at = now_local()
                         enrollment.status = 'completed'
                         db.session.commit()
                     

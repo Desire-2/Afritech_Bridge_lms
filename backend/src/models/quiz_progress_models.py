@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # quiz_progress_models.py
 # CONSOLIDATED: Quiz and Question models have been moved to course_models.py
 # This file now contains ONLY progress tracking and analytics models
@@ -59,7 +60,7 @@ class QuizAttempt(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
     quiz_id = db.Column(db.Integer, db.ForeignKey("quizzes.id"), nullable=False)  # ✅ Fixed: quizzes (not quiz)
     attempt_number = db.Column(db.Integer, nullable=False)
-    start_time = db.Column(db.DateTime, default=datetime.utcnow)
+    start_time = db.Column(db.DateTime, default=now_local)
     end_time = db.Column(db.DateTime, nullable=True)
     score = db.Column(db.Float, nullable=True)
     score_percentage = db.Column(db.Float, nullable=True)  # ✅ Added for compatibility with progression_service
@@ -67,7 +68,7 @@ class QuizAttempt(db.Model):
     security_violation = db.Column(db.Boolean, default=False, nullable=False)  # ✅ Security violation flag
     violation_reason = db.Column(db.String(500), nullable=True)  # ✅ Reason for violation (tab switch, fullscreen exit, etc.)
     feedback_viewed_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
 
     # Relationships - Fixed to reference consolidated Quiz model
     quiz = db.relationship("Quiz", backref=db.backref("quiz_attempts", lazy="dynamic", cascade="all, delete-orphan"))
@@ -83,7 +84,7 @@ class UserAnswer(db.Model):
     points_awarded = db.Column(db.Float, nullable=True)
     instructor_feedback = db.Column(db.Text, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
 
     # Relationships - Fixed to reference consolidated models
     question = db.relationship("Question", backref=db.backref("user_answers", lazy="dynamic"))
@@ -96,7 +97,7 @@ class ModuleCompletion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
     module_id = db.Column(db.Integer, db.ForeignKey("modules.id"), nullable=False)  # ✅ Fixed: modules (not module)
-    completed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime, default=now_local)
     __table_args__ = (db.UniqueConstraint("user_id", "module_id", name="uq_user_module_completion"),)
 
 # NOTE: Badge and UserBadge consolidated to student_models.py (Lines 98-135)
@@ -107,7 +108,7 @@ class Certificate(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # ✅ Fixed: users (not user)
     course_id = db.Column(db.Integer, db.ForeignKey("courses.id"), nullable=False)  # ✅ Fixed: courses (not course)
-    issue_date = db.Column(db.DateTime, default=datetime.utcnow)
+    issue_date = db.Column(db.DateTime, default=now_local)
     certificate_uid = db.Column(db.String(255), nullable=False, unique=True)
     certificate_url = db.Column(db.String(255), nullable=True)
     template_used = db.Column(db.String(255), nullable=True)

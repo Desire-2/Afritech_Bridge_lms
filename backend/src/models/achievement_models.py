@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enhanced Achievement System Models for Afritec Bridge LMS
 # Creative gamification with streaks, milestones, leaderboards, and dynamic achievements
 
@@ -57,8 +58,8 @@ class Achievement(db.Model):
     
     # Metadata
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Add validation
     @validates('name')
@@ -148,7 +149,7 @@ class UserAchievement(db.Model):
     achievement_id = db.Column(db.Integer, db.ForeignKey('achievements.id'), nullable=False)
     
     # Progress tracking
-    earned_at = db.Column(db.DateTime, default=datetime.utcnow)
+    earned_at = db.Column(db.DateTime, default=now_local)
     progress = db.Column(db.Float, default=100.0)  # For progressive achievements
     times_earned = db.Column(db.Integer, default=1)  # For repeatable achievements
     
@@ -218,8 +219,8 @@ class LearningStreak(db.Model):
     last_freeze_used = db.Column(db.Date, nullable=True)
     
     # Metadata
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Relationships
     user = db.relationship('User', backref=db.backref('streak', uselist=False))
@@ -331,7 +332,7 @@ class Milestone(db.Model):
     
     # Metadata
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     
     # Relationships
     course = db.relationship('Course')
@@ -364,7 +365,7 @@ class UserMilestone(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     milestone_id = db.Column(db.Integer, db.ForeignKey('milestones.id'), nullable=False)
     
-    reached_at = db.Column(db.DateTime, default=datetime.utcnow)
+    reached_at = db.Column(db.DateTime, default=now_local)
     context_data = db.Column(db.Text, nullable=True)  # JSON context
     
     # Relationships
@@ -410,8 +411,8 @@ class Leaderboard(db.Model):
     
     # Metadata
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    last_updated = db.Column(db.DateTime, default=now_local)
     
     # Relationships
     course = db.relationship('Course')
@@ -470,8 +471,8 @@ class StudentPoints(db.Model):
     
     # Metadata
     last_points_earned_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Relationships
     user = db.relationship('User', backref=db.backref('points', uselist=False))
@@ -533,7 +534,7 @@ class StudentPoints(db.Model):
             self.total_points = (self.total_points or 0) + points
             self.points_this_week = (self.points_this_week or 0) + points
             self.points_this_month = (self.points_this_month or 0) + points
-            self.last_points_earned_at = datetime.utcnow()
+            self.last_points_earned_at = now_local()
             
             # Check for level up
             self._check_level_up()
@@ -568,12 +569,12 @@ class StudentPoints(db.Model):
     def reset_weekly_points(self):
         """Reset weekly points counter"""
         self.points_this_week = 0
-        self.week_reset_date = datetime.utcnow().date()
+        self.week_reset_date = now_local().date()
     
     def reset_monthly_points(self):
         """Reset monthly points counter"""
         self.points_this_month = 0
-        self.month_reset_date = datetime.utcnow().date()
+        self.month_reset_date = now_local().date()
     
     def to_dict(self):
         return {
@@ -637,7 +638,7 @@ class QuestChallenge(db.Model):
     
     # Metadata
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     
     def is_available(self):
         """Check if challenge is currently available"""
@@ -682,7 +683,7 @@ class UserQuestProgress(db.Model):
     quest_id = db.Column(db.Integer, db.ForeignKey('quest_challenges.id'), nullable=False)
     
     # Progress tracking
-    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, default=now_local)
     completed_at = db.Column(db.DateTime, nullable=True)
     progress_data = db.Column(db.Text, default='{}')  # JSON tracking individual objectives
     completion_percentage = db.Column(db.Float, default=0.0)
@@ -713,7 +714,7 @@ class UserQuestProgress(db.Model):
             
             if self.completion_percentage >= 100:
                 self.status = 'completed'
-                self.completed_at = datetime.utcnow()
+                self.completed_at = now_local()
     
     def to_dict(self):
         return {

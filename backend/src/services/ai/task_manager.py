@@ -1,3 +1,4 @@
+from ...utils.time_utils import now_local
 """
 Background Task Manager for AI Generation
 
@@ -201,7 +202,7 @@ class BackgroundTaskManager:
             return
 
         task.status = TaskStatus.IN_PROGRESS
-        task.started_at = datetime.utcnow().isoformat()
+        task.started_at = now_local().isoformat()
 
         # Activate the user's personal AI provider settings for this background task.
         # This ensures that multi-step AI generation uses the correct user's API keys
@@ -222,12 +223,12 @@ class BackgroundTaskManager:
             # Check if cancelled during execution
             if self.cancel_flags.get(task_id, threading.Event()).is_set():
                 task.status = TaskStatus.CANCELLED
-                task.completed_at = datetime.utcnow().isoformat()
+                task.completed_at = now_local().isoformat()
                 logger.info(f"Task {task_id[:8]}... was cancelled")
                 return
 
             task.status = TaskStatus.COMPLETED
-            task.completed_at = datetime.utcnow().isoformat()
+            task.completed_at = now_local().isoformat()
             task.progress = 100.0
             task.current_step_description = "Completed"
             task.result = result
@@ -244,7 +245,7 @@ class BackgroundTaskManager:
 
         except Exception as e:
             task.status = TaskStatus.FAILED
-            task.completed_at = datetime.utcnow().isoformat()
+            task.completed_at = now_local().isoformat()
             task.error = str(e)
             logger.error(f"Task {task_id[:8]}... failed: {e}")
 
@@ -328,7 +329,7 @@ class BackgroundTaskManager:
             task = self.tasks.get(task_id)
             if task and task.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
                 task.status = TaskStatus.CANCELLED
-                task.completed_at = datetime.utcnow().isoformat()
+                task.completed_at = now_local().isoformat()
                 task.current_step_description = "Cancelled"
             logger.info(f"Task {task_id[:8]}... cancelled")
             return True

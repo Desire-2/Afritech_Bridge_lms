@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Booking Routes for AfriTech Bridge LMS
 
@@ -844,7 +845,7 @@ def admin_cancel_booking(current_user_id, booking_id):
         booking.status = BookingStatus.CANCELLED
         booking.cancellation_reason = reason
         booking.cancelled_by = current_user_id
-        booking.cancelled_at = datetime.utcnow()
+        booking.cancelled_at = now_local()
         db.session.commit()
 
         try:

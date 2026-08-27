@@ -42,6 +42,7 @@ import pandas as pd
 import io
 import os
 from flask import current_app
+from ..utils.time_utils import now_local
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ class _PersistentTaskData(dict):
             'pending': TaskStatus.PENDING,
         }.get(status, TaskStatus.RUNNING)
         if status in ('completed', 'failed') and not task.completed_at:
-            task.completed_at = datetime.utcnow()
+            task.completed_at = now_local()
         db.session.commit()
 
     def _set_value(self, key, value):
@@ -223,7 +224,7 @@ class _PersistentTaskStore:
             task_name=payload.get('task_type') or payload.get('action') or 'application_task',
             user_id=int(owner_id) if owner_id is not None else None,
             status=TaskStatus.PENDING,
-            started_at=datetime.utcnow(),
+            started_at=now_local(),
         )
         task.set_result(payload)
         db.session.add(task)
@@ -1354,7 +1355,7 @@ def remind_draft_applicant(app_id):
                 logger.warning(f'Failed to send custom follow-up to draft {app_id}: {custom_err}')
 
         # Update reminder tracking
-        application.last_payment_reminder_sent = datetime.utcnow()
+        application.last_payment_reminder_sent = now_local()
         application.payment_reminder_count = (application.payment_reminder_count or 0) + 1
         db.session.commit()
     except Exception as e:
@@ -1440,7 +1441,7 @@ def bulk_remind_draft_applicants():
             )
             if email_sent:
                 sent_count += 1
-                draft.last_payment_reminder_sent = datetime.utcnow()
+                draft.last_payment_reminder_sent = now_local()
                 draft.payment_reminder_count = (draft.payment_reminder_count or 0) + 1
             else:
                 failed_count += 1
@@ -2335,14 +2336,14 @@ def change_application_status(app_id):
         course = Course.query.get(application.course_id)
         
         application.status = new_status
-        application.reviewed_at = datetime.utcnow()
+        application.reviewed_at = now_local()
         application.approved_by = current_user_id
         
         if reason:
             if new_status == "rejected":
                 application.rejection_reason = reason
             else:
-                application.admin_notes = f"{application.admin_notes or ''}\n[{datetime.utcnow().isoformat()}] Status changed to {new_status}: {reason}".strip()
+                application.admin_notes = f"{application.admin_notes or ''}\n[{now_local().isoformat()}] Status changed to {new_status}: {reason}".strip()
         
         db.session.commit()
         logger.info(f"Application {app_id} status changed from {old_status} to {new_status} by user {current_user_id}")
@@ -2616,7 +2617,7 @@ def approve_application(app_id):
         # Update application status
         application.status = "approved"
         application.approved_by = get_jwt_identity()
-        application.reviewed_at = datetime.utcnow()
+        application.reviewed_at = now_local()
         
         db.session.flush()
 
@@ -2630,7 +2631,7 @@ def approve_application(app_id):
             if app_payment in ('completed', 'confirmed'):
                 enrollment.payment_status = 'completed'
                 enrollment.payment_verified = True
-                enrollment.payment_verified_at = datetime.utcnow()
+                enrollment.payment_verified_at = now_local()
                 # Copy actual amount_paid from the application to the enrollment
                 # (the CourseApplication stores what the student actually paid)
                 app_amount = getattr(application, 'amount_paid', None)
@@ -2785,7 +2786,7 @@ def reject_application(app_id):
     
     application.status = "rejected"
     application.approved_by = get_jwt_identity()
-    application.reviewed_at = datetime.utcnow()
+    application.reviewed_at = now_local()
     application.rejection_reason = data.get("reason")
     application.admin_notes = data.get("admin_notes")
     
@@ -2837,7 +2838,7 @@ def waitlist_application(app_id):
     
     application.status = "waitlisted"
     application.admin_notes = data.get("admin_notes")
-    application.reviewed_at = datetime.utcnow()
+    application.reviewed_at = now_local()
     
     db.session.commit()
     
@@ -2958,7 +2959,7 @@ def update_application_notes(app_id):
     data = request.get_json() or {}
     
     application.admin_notes = data.get("admin_notes")
-    application.updated_at = datetime.utcnow()
+    application.updated_at = now_local()
     
     db.session.commit()
     
@@ -3735,7 +3736,7 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
         # Update application status
         application.status = "approved"
         application.approved_by = admin_id
-        application.reviewed_at = datetime.utcnow()
+        application.reviewed_at = now_local()
         
         db.session.flush()
         
@@ -3815,7 +3816,7 @@ def _bulk_reject_application(application, rejection_reason, admin_id, send_email
         # Update application status
         application.status = "rejected"
         application.rejection_reason = rejection_reason
-        application.reviewed_at = datetime.utcnow()
+        application.reviewed_at = now_local()
         application.approved_by = admin_id  # Track who rejected it
         
         # Send rejection email (non-blocking)
@@ -3857,7 +3858,7 @@ def _bulk_waitlist_application(application, custom_message, admin_id, send_email
         
         # Update application status
         application.status = "waitlisted"
-        application.reviewed_at = datetime.utcnow()
+        application.reviewed_at = now_local()
         application.approved_by = admin_id  # Track who waitlisted it
         
         # Send waitlist email (non-blocking)

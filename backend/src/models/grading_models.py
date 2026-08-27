@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Grading Enhancement Models - Rubrics, Feedback Templates, Grading History
 """
@@ -19,8 +20,8 @@ class Rubric(db.Model):
     course_id = Column(Integer, ForeignKey('courses.id'))  # Optional: course-specific
     is_template = Column(Boolean, default=False)  # Global template vs personal
     total_points = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
+    updated_at = Column(DateTime, default=now_local, onupdate=now_local)
     
     # Relationships
     criteria = relationship('RubricCriterion', backref='rubric', cascade='all, delete-orphan', lazy='dynamic')
@@ -55,7 +56,7 @@ class RubricCriterion(db.Model):
     # Performance levels (JSON array of {level, points, description})
     performance_levels = Column(JSON)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
     
     def to_dict(self):
         return {
@@ -82,8 +83,8 @@ class FeedbackTemplate(db.Model):
     is_public = Column(Boolean, default=False)  # Shared with all instructors
     usage_count = Column(Integer, default=0)
     tags = Column(JSON)  # Array of tags for filtering
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
+    updated_at = Column(DateTime, default=now_local, onupdate=now_local)
     
     # Relationships
     instructor = relationship('User', foreign_keys=[instructor_id])
@@ -121,7 +122,7 @@ class GradingHistory(db.Model):
     change_reason = Column(Text)  # Optional: why the change was made
     rubric_data = Column(JSON)  # Rubric scores if applicable
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
     
     # Relationships
     instructor = relationship('User', foreign_keys=[instructor_id])
@@ -150,7 +151,7 @@ class GradingSession(db.Model):
     
     id = Column(Integer, primary_key=True)
     instructor_id = Column(Integer, ForeignKey('users.id'), nullable=False)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=now_local)
     ended_at = Column(DateTime)
     
     submissions_graded = Column(Integer, default=0)

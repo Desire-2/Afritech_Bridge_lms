@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enhanced Student Progress and Learning Models for Afritec Bridge LMS
 
 from datetime import datetime
@@ -11,7 +12,7 @@ class LessonCompletion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=False)
-    completed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime, default=now_local)
     time_spent = db.Column(db.Integer, default=0)  # in seconds
     
     # Enhanced progress tracking fields
@@ -54,8 +55,8 @@ class LessonCompletion(db.Model):
     is_resubmission = db.Column(db.Boolean, default=False)  # Is this a resubmission?
     resubmission_reason = db.Column(db.Text)  # Reason for resubmission
     
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
+    last_accessed = db.Column(db.DateTime, default=now_local)
     
     student = db.relationship('User', backref=db.backref('lesson_completions', lazy='dynamic'))
     lesson = db.relationship('Lesson', backref=db.backref('completions', lazy='dynamic'))
@@ -491,10 +492,10 @@ class LessonCompletion(db.Model):
         self.quiz_component_score = quiz_component
         self.assignment_component_score = assignment_component
         self.lesson_score = lesson_score
-        self.score_last_updated = datetime.utcnow()
+        self.score_last_updated = now_local()
         
         # Update the completion status
-        self.updated_at = datetime.utcnow()
+        self.updated_at = now_local()
         
         try:
             db.session.commit()
@@ -521,7 +522,7 @@ class UserProgress(db.Model):
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
     completion_percentage = db.Column(db.Float, default=0.0)
     total_time_spent = db.Column(db.Integer, default=0)  # in seconds
-    last_accessed = db.Column(db.DateTime, default=datetime.utcnow)
+    last_accessed = db.Column(db.DateTime, default=now_local)
     current_lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=True)
     
     user = db.relationship('User', backref=db.backref('course_progress', lazy='dynamic'))
@@ -549,8 +550,8 @@ class StudentNote(db.Model):
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=False)
     content = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     student = db.relationship('User', backref=db.backref('notes', lazy='dynamic'))
     lesson = db.relationship('Lesson', backref=db.backref('student_notes', lazy='dynamic'))
@@ -576,7 +577,7 @@ class Badge(db.Model):
     criteria = db.Column(db.Text, nullable=True)  # JSON string describing criteria
     points = db.Column(db.Integer, default=0)
     is_active = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     
     def to_dict(self):
         return {
@@ -596,7 +597,7 @@ class UserBadge(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     badge_id = db.Column(db.Integer, db.ForeignKey('badges.id'), nullable=False)
-    earned_at = db.Column(db.DateTime, default=datetime.utcnow)
+    earned_at = db.Column(db.DateTime, default=now_local)
     
     user = db.relationship('User', backref=db.backref('user_badges', lazy='dynamic'))
     badge = db.relationship('Badge', backref=db.backref('awarded_to', lazy='dynamic'))
@@ -618,7 +619,7 @@ class StudentBookmark(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     
     student = db.relationship('User', backref=db.backref('bookmarks', lazy='dynamic'))
     course = db.relationship('Course', backref=db.backref('bookmarked_by', lazy='dynamic'))
@@ -642,8 +643,8 @@ class StudentForum(db.Model):
     title = db.Column(db.String(255), nullable=False)
     description = db.Column(db.Text, nullable=True)
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     is_active = db.Column(db.Boolean, default=True)
     
     # Enhanced forum features
@@ -688,8 +689,8 @@ class ForumPost(db.Model):
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
     parent_post_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=True)  # For replies
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     is_active = db.Column(db.Boolean, default=True)
     
     # Enhanced forum post features
@@ -754,7 +755,7 @@ class ForumPostLike(db.Model):
     post_id = db.Column(db.Integer, db.ForeignKey('forum_posts.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     is_like = db.Column(db.Boolean, nullable=False)  # True for like, False for dislike
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
 
     post = db.relationship('ForumPost', backref=db.backref('post_likes', lazy='dynamic'))
     user = db.relationship('User', backref=db.backref('forum_likes', lazy='dynamic'))
@@ -781,7 +782,7 @@ class ForumSubscription(db.Model):
     subscription_type = db.Column(db.String(20), nullable=False)  # 'forum', 'thread'
     notify_replies = db.Column(db.Boolean, default=True)
     notify_new_threads = db.Column(db.Boolean, default=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     is_active = db.Column(db.Boolean, default=True)
     
     user = db.relationship('User', backref=db.backref('forum_subscriptions', lazy='dynamic'))
@@ -817,7 +818,7 @@ class ForumNotification(db.Model):
     title = db.Column(db.String(255), nullable=False)
     message = db.Column(db.Text, nullable=False)
     is_read = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     
     user = db.relationship('User', backref=db.backref('forum_notifications', lazy='dynamic'))
     forum = db.relationship('StudentForum')
@@ -852,7 +853,7 @@ class CourseEnrollmentApplication(db.Model):
     payment_reference = db.Column(db.String(100), nullable=True)
     reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     review_notes = db.Column(db.Text, nullable=True)
-    applied_at = db.Column(db.DateTime, default=datetime.utcnow)
+    applied_at = db.Column(db.DateTime, default=now_local)
     reviewed_at = db.Column(db.DateTime, nullable=True)
     enrolled_at = db.Column(db.DateTime, nullable=True)
     
@@ -1204,7 +1205,7 @@ class AssessmentAttempt(db.Model):
     feedback = db.Column(db.Text, nullable=True)
     graded_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     
-    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, default=now_local)
     submitted_at = db.Column(db.DateTime, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
     
@@ -1256,7 +1257,7 @@ class Certificate(db.Model):
     skills_acquired = db.Column(db.Text, nullable=True)  # JSON list of skills
     portfolio_items = db.Column(db.Text, nullable=True)  # JSON list of portfolio work
     
-    issued_at = db.Column(db.DateTime, default=datetime.utcnow)
+    issued_at = db.Column(db.DateTime, default=now_local)
     expires_at = db.Column(db.DateTime, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     
@@ -1313,7 +1314,7 @@ class SkillBadge(db.Model):
     difficulty_level = db.Column(db.String(20), nullable=False)  # 'beginner', 'intermediate', 'advanced'
     points_value = db.Column(db.Integer, default=10)
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     is_active = db.Column(db.Boolean, default=True)
     
     def to_dict(self):
@@ -1339,7 +1340,7 @@ class StudentSkillBadge(db.Model):
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=True)  # Optional course context
     module_id = db.Column(db.Integer, db.ForeignKey('modules.id'), nullable=True)  # Optional module context
     
-    earned_at = db.Column(db.DateTime, default=datetime.utcnow)
+    earned_at = db.Column(db.DateTime, default=now_local)
     evidence_data = db.Column(db.Text, nullable=True)  # JSON evidence of achievement
     verified = db.Column(db.Boolean, default=False)
     verified_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
@@ -1385,7 +1386,7 @@ class StudentTranscript(db.Model):
     
     # Time tracking
     total_learning_hours = db.Column(db.Integer, default=0)  # in minutes
-    last_updated = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_updated = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Skills mapping
     skills_acquired = db.Column(db.Text, nullable=True)  # JSON skills array
@@ -1468,7 +1469,7 @@ class LearningAnalytics(db.Model):
     preferred_content_types = db.Column(db.Text, nullable=True)  # JSON content type preferences
     learning_velocity = db.Column(db.Float, default=0.0)  # Lessons per week
     
-    last_calculated = db.Column(db.DateTime, default=datetime.utcnow)
+    last_calculated = db.Column(db.DateTime, default=now_local)
     
     student = db.relationship('User', backref=db.backref('learning_analytics', lazy='dynamic'))
     course = db.relationship('Course', backref=db.backref('student_analytics', lazy='dynamic'))
@@ -1503,7 +1504,7 @@ class StudentSuspension(db.Model):
     enrollment_id = db.Column(db.Integer, db.ForeignKey('enrollments.id'), nullable=False)
     
     # Suspension details
-    suspended_at = db.Column(db.DateTime, default=datetime.utcnow)
+    suspended_at = db.Column(db.DateTime, default=now_local)
     reason = db.Column(db.String(255), default='Maximum retake attempts exceeded')
     failed_module_id = db.Column(db.Integer, db.ForeignKey('modules.id'), nullable=False)
     total_attempts_made = db.Column(db.Integer, nullable=False)

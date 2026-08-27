@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enhanced Student API Routes for Afritec Bridge LMS
 
 from flask import Blueprint, request, jsonify, current_app
@@ -352,7 +353,7 @@ def update_lesson_progress(lesson_id):
         # Increment watch count when video completes for the first time or rewatches
         if data['video_completed'] and (not old_completed or lesson_completion.video_watch_count > 0):
             lesson_completion.video_watch_count = (lesson_completion.video_watch_count or 0) + 1
-            lesson_completion.video_last_watched = datetime.utcnow()
+            lesson_completion.video_last_watched = now_local()
     if 'playback_speed' in data:
         lesson_completion.playback_speed = data['playback_speed']
     if 'mixed_video_progress' in data:
@@ -360,9 +361,9 @@ def update_lesson_progress(lesson_id):
         lesson_completion.mixed_video_progress = json.dumps(data['mixed_video_progress'])
     
     # Update timestamps
-    lesson_completion.updated_at = datetime.utcnow()
+    lesson_completion.updated_at = now_local()
     if data.get('auto_saved'):
-        lesson_completion.last_accessed = datetime.utcnow()
+        lesson_completion.last_accessed = now_local()
     
     # Calculate lesson score and auto-complete if >= 80%
     lesson_score = lesson_completion.calculate_lesson_score()
@@ -374,7 +375,7 @@ def update_lesson_progress(lesson_id):
     COMPLETION_THRESHOLD = 80.0
     if lesson_score >= COMPLETION_THRESHOLD and not was_already_completed:
         lesson_completion.completed = True
-        lesson_completion.completed_at = datetime.utcnow()
+        lesson_completion.completed_at = now_local()
         auto_completed = True
         
         # Update user progress
@@ -385,7 +386,7 @@ def update_lesson_progress(lesson_id):
         
         if user_progress:
             # Update last accessed time (lessons_completed is tracked via LessonCompletion table)
-            user_progress.last_accessed = datetime.utcnow()
+            user_progress.last_accessed = now_local()
         
         # Update enrollment progress
         total_lessons = db.session.query(Lesson).join(Module).filter(
@@ -401,7 +402,7 @@ def update_lesson_progress(lesson_id):
         if total_lessons > 0:
             enrollment.progress = completed_lessons / total_lessons
             if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                enrollment.completed_at = datetime.utcnow()
+                enrollment.completed_at = now_local()
                 enrollment.status = 'completed'
         
         # Unlock next lesson in the module
@@ -415,7 +416,7 @@ def update_lesson_progress(lesson_id):
             from ..services.lesson_completion_service import LessonCompletionService
             
             # Update stored lesson scores when reading/engagement changes
-            lesson_completion.updated_at = datetime.utcnow()
+            lesson_completion.updated_at = now_local()
             db.session.commit()  # Commit first to save the progress updates
             
             # Now update the component scores
@@ -654,7 +655,7 @@ def complete_lesson(lesson_id):
             scroll_progress=data.get('scroll_progress', 0.0),
             time_spent=data.get('time_spent', 0),
             completed_at=None,  # Will be set when actually completed
-            updated_at=datetime.utcnow(),
+            updated_at=now_local(),
             last_accessed=datetime.utcnow()
         )
         db.session.add(existing_completion)
@@ -681,8 +682,8 @@ def complete_lesson(lesson_id):
             updated = True
         
         if updated:
-            existing_completion.updated_at = datetime.utcnow()
-        existing_completion.last_accessed = datetime.utcnow()
+            existing_completion.updated_at = now_local()
+        existing_completion.last_accessed = now_local()
     
     try:
         # Commit progress updates first
@@ -730,7 +731,7 @@ def complete_lesson(lesson_id):
                     db.session.add(user_progress)
                 else:
                     user_progress.total_time_spent += data.get('time_spent', 0)
-                    user_progress.last_accessed = datetime.utcnow()
+                    user_progress.last_accessed = now_local()
                 
                 # Calculate overall course progress
                 total_lessons = db.session.query(Lesson).join(Module).filter(
@@ -748,7 +749,7 @@ def complete_lesson(lesson_id):
                 # Update enrollment progress
                 enrollment.progress = progress_percentage
                 if progress_percentage >= 1.0 and not enrollment.completed_at:
-                    enrollment.completed_at = datetime.utcnow()
+                    enrollment.completed_at = now_local()
                     enrollment.status = 'completed'
                 
                 user_progress.completion_percentage = progress_percentage * 100
@@ -912,7 +913,7 @@ def update_note(note_id):
     
     try:
         note.content = data.get('content', note.content)
-        note.updated_at = datetime.utcnow()
+        note.updated_at = now_local()
         db.session.commit()
         
         return jsonify(note.to_dict()), 200
@@ -1470,7 +1471,7 @@ def enroll_in_course(course_id):
         enrollment = Enrollment(
             student_id=current_user_id,
             course_id=course_id,
-            enrollment_date=datetime.utcnow(),
+            enrollment_date=now_local(),
             progress=0.0
         )
         
@@ -1526,7 +1527,7 @@ def complete_module(module_id):
         score = data.get('score', 0)
         if score >= 80:  # Required passing score
             progress.modules_completed += 1
-            progress.last_accessed = datetime.utcnow()
+            progress.last_accessed = now_local()
             
             # Update enrollment progress
             total_modules = len(module.course.modules) if module.course.modules else 1
@@ -1534,7 +1535,7 @@ def complete_module(module_id):
             
             # Mark enrollment as completed when progress reaches 100%
             if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                enrollment.completed_at = datetime.utcnow()
+                enrollment.completed_at = now_local()
                 enrollment.status = 'completed'
             
             if score > (enrollment.grade or 0):
@@ -1737,7 +1738,7 @@ def generate_certificate():
         db.session.add(certificate)
         
         # Update enrollment completion
-        enrollment.completion_date = datetime.utcnow()
+        enrollment.completion_date = now_local()
         enrollment.grade = overall_score
         enrollment.progress = 1.0
         
@@ -2003,7 +2004,7 @@ def report_quiz_violation(quiz_id):
         if latest_attempt:
             latest_attempt.security_violation = True
             latest_attempt.violation_reason = f"{violation_reason} (violations: {violation_count})"
-            latest_attempt.end_time = datetime.utcnow()
+            latest_attempt.end_time = now_local()
             # Mark score as 0 if not already graded
             if latest_attempt.score is None or latest_attempt.score_percentage is None:
                 latest_attempt.score = 0
@@ -2121,8 +2122,8 @@ def submit_quiz(quiz_id):
             attempt_number=attempt_number,
             score=earned_points,
             score_percentage=score_percentage,
-            start_time=datetime.utcnow(),
-            end_time=datetime.utcnow(),
+            start_time=now_local(),
+            end_time=now_local(),
             security_violation=is_violation_submission,
             violation_reason=data.get('violation_reason') if is_violation_submission else None
         )

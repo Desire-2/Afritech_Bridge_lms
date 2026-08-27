@@ -18,6 +18,7 @@ from ..models.notification_models import (
     NotificationPriority,
     NOTIFICATION_CATEGORIES,
 )
+from ..utils.time_utils import now_local
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ def _create_notification(
         achievement_id=achievement_id,
         task_id=task_id,
         task_type=task_type,
-        expires_at=datetime.utcnow() + timedelta(days=expires_days) if expires_days else None,
+        expires_at=now_local() + timedelta(days=expires_days) if expires_days else None,
     )
     if metadata:
         n.meta = metadata

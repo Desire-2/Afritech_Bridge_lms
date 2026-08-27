@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Waitlist Migration Service – Afritec Bridge LMS
 
@@ -175,7 +176,7 @@ class WaitlistService:
             application.original_window_id = original_window_id
             application.migrated_to_window_id = target_window_id
             application.application_window_id = target_window_id
-            application.migrated_at = datetime.utcnow()
+            application.migrated_at = now_local()
             application.migration_notes = notes
             application.status = 'pending'  # Reset to pending for new cohort review
 
@@ -371,7 +372,7 @@ class WaitlistService:
                 enrollment.payment_currency = payment_currency
             
             if enrollment.payment_verified:
-                enrollment.payment_verified_at = datetime.utcnow()
+                enrollment.payment_verified_at = now_local()
                 enrollment.payment_verified_by = admin_id
                 # Generate a unique verification hash for public QR code verification
                 if not enrollment.payment_verification_hash:
@@ -906,7 +907,7 @@ class WaitlistService:
                     if not effective_price or effective_price <= 0:
                         enrollment.payment_status = 'waived'
                         enrollment.payment_verified = True
-                        enrollment.payment_verified_at = datetime.utcnow()
+                        enrollment.payment_verified_at = now_local()
                     else:
                         enrollment.payment_status = 'pending'
                         enrollment.payment_verified = False

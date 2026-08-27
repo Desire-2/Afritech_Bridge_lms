@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Enhanced file handling routes for instructor file review system
 """
@@ -109,7 +110,7 @@ def update_file_comment(comment_id):
             return jsonify({"message": "Comment text is required"}), 400
         
         comment.comment_text = comment_text
-        comment.updated_at = datetime.utcnow()
+        comment.updated_at = now_local()
         
         db.session.commit()
         
@@ -388,7 +389,7 @@ def analyze_submission_files(submission_id):
                     mime_type=mimetypes.guess_type(filename)[0],
                     file_category=file_category,
                     is_viewable=is_viewable,
-                    analyzed_at=datetime.utcnow()
+                    analyzed_at=now_local()
                 )
                 
                 db.session.add(analysis)

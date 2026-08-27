@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Enhanced modification request service for better workflow management
 """
@@ -238,7 +239,7 @@ class ModificationRequestService:
                 # Update assignment and related records
                 assignment.modification_requested = True
                 assignment.modification_request_reason = reason
-                assignment.modification_requested_at = datetime.utcnow()
+                assignment.modification_requested_at = now_local()
                 assignment.modification_requested_by = instructor_id
                 assignment.resubmission_count = (assignment.resubmission_count or 0) + 1
                 

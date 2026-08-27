@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # quiz_progress_routes.py
 
 from flask import Blueprint, request, jsonify
@@ -317,7 +318,7 @@ def submit_quiz_answer(attempt_id):
         user_answer = UserAnswer.query.filter_by(quiz_attempt_id=attempt.id, question_id=question_id).first()
         if user_answer:
             user_answer.answer_data = answer_content
-            user_answer.updated_at = datetime.utcnow() # if you add updated_at to UserAnswer
+            user_answer.updated_at = now_local() # if you add updated_at to UserAnswer
         else:
             user_answer = UserAnswer(
                 quiz_attempt_id=attempt.id,
@@ -337,7 +338,7 @@ def submit_quiz_attempt(attempt_id):
     if attempt.status != QuizAttemptStatus.IN_PROGRESS:
         return jsonify({"error": "Attempt is not in progress or already submitted"}), 403
 
-    attempt.end_time = datetime.utcnow()
+    attempt.end_time = now_local()
     attempt.status = QuizAttemptStatus.SUBMITTED # Will be changed after grading
 
     # --- Auto-Grading Logic --- #
@@ -386,7 +387,7 @@ def submit_quiz_attempt(attempt_id):
 
             ua.points_awarded = awarded_for_q
             total_points_awarded += awarded_for_q
-            ua.graded_at = datetime.utcnow()
+            ua.graded_at = now_local()
         else:
             all_auto_graded = False # Requires manual grading
             ua.points_awarded = None # To be filled by instructor
@@ -577,11 +578,11 @@ def update_course_progress(user_id, course_id):
     
     user_progress.completion_percentage = completion_percentage
     if completion_percentage >= 100.0 and not user_progress.completed_at:
-        user_progress.completed_at = datetime.utcnow()
+        user_progress.completed_at = now_local()
         # Potentially issue certificate here
         # issue_certificate_if_eligible(user_id, course_id)
     
-    user_progress.updated_at = datetime.utcnow()
+    user_progress.updated_at = now_local()
     db.session.commit()
 
     # Update module completions (can be more complex if modules have own criteria)

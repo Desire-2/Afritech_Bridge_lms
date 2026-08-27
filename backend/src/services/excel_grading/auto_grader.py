@@ -1,3 +1,4 @@
+from ...utils.time_utils import now_local
 """
 Auto-Grading Trigger
 
@@ -248,7 +249,7 @@ def _auto_approve_grading_result(
 
         result.instructor_reviewed = True
         result.manual_review_required = False
-        result.instructor_reviewed_at = datetime.utcnow()
+        result.instructor_reviewed_at = now_local()
         result.instructor_notes = 'Auto-approved by AI grading system'
         result.status = 'completed'
 
@@ -336,7 +337,7 @@ def _apply_grade_to_submission(
 
         submission.grade = scaled_grade
         submission.feedback = full_feedback
-        submission.graded_at = datetime.utcnow()
+        submission.graded_at = now_local()
         submission.graded_by = None  # System/AI — no instructor yet
 
         db.session.commit()
@@ -484,7 +485,7 @@ def _update_learning_progress(
                     if lc:
                         lc.assignment_graded = True
                         lc.assignment_grade = percentage_score
-                        lc.assignment_graded_at = datetime.utcnow()
+                        lc.assignment_graded_at = now_local()
                         lc.assignment_needs_resubmission = False
                         lc.modification_request_reason = None
                         db.session.commit()
@@ -662,7 +663,7 @@ def _auto_request_modification_if_needed(
         # Set modification request flags on the parent (assignment/project)
         parent.modification_requested = True
         parent.modification_request_reason = reason
-        parent.modification_requested_at = datetime.utcnow()
+        parent.modification_requested_at = now_local()
         parent.modification_requested_by = None  # System/AI initiated
         parent.can_resubmit = True
 

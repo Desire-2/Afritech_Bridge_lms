@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # User Models for Afritec Bridge LMS
 
 from flask_sqlalchemy import SQLAlchemy
@@ -33,7 +34,7 @@ class RevokedToken(db.Model):
     __tablename__ = 'revoked_tokens'
 
     jti = db.Column(db.String(36), primary_key=True)
-    revoked_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    revoked_at = db.Column(db.DateTime, nullable=False, default=now_local)
     expires_at = db.Column(db.DateTime, nullable=True, index=True)
 
 class User(db.Model):
@@ -49,8 +50,8 @@ class User(db.Model):
     phone_number = db.Column(db.String(20), nullable=True)
     role_id = db.Column(db.Integer, db.ForeignKey('roles.id'), nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Enhanced profile fields
     portfolio_url = db.Column(db.String(255), nullable=True)
@@ -127,7 +128,7 @@ class User(db.Model):
         """Generate a secure token for password reset"""
         self.reset_token = secrets.token_urlsafe(32)
         # Token expires in 3 days
-        self.reset_token_expires_at = datetime.utcnow() + timedelta(days=3)
+        self.reset_token_expires_at = now_local() + timedelta(days=3)
         return self.reset_token
         
     def verify_reset_token(self, token):
@@ -151,12 +152,12 @@ class User(db.Model):
     
     def update_last_login(self):
         """Update last login timestamp"""
-        self.last_login = datetime.utcnow()
-        self.last_activity = datetime.utcnow()
+        self.last_login = now_local()
+        self.last_activity = now_local()
     
     def update_last_activity(self):
         """Update last activity timestamp"""
-        self.last_activity = datetime.utcnow()
+        self.last_activity = now_local()
         
     def get_days_since_last_activity(self):
         """Get number of days since last activity"""

@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Internship Offer Letter Service
 # Generates tamper-proof PDF offer letters, auto-creates user accounts,
 # and provides social sharing capabilities.
@@ -732,7 +733,7 @@ class InternshipOfferService:
             old_offer.share_token = share_token
             old_offer.status = "sent"
             old_offer.created_by_id = admin_user.id
-            old_offer.sent_at = datetime.utcnow()
+            old_offer.sent_at = now_local()
             old_offer.accepted_at = None
             old_offer.accepted_by_user_id = None
             old_offer.social_shares = 0

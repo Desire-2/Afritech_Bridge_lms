@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Task tracking models for background operations
 Allows task state to be shared across multiple Gunicorn workers via database
@@ -26,7 +27,7 @@ class BackgroundTask(db.Model):
     id = db.Column(db.String(36), primary_key=True)  # UUID
     status = db.Column(SQLEnum(TaskStatus), nullable=False, default=TaskStatus.PENDING)
     task_name = db.Column(db.String(255), nullable=False)  # Name of the task function
-    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, nullable=False, default=now_local)
     started_at = db.Column(db.DateTime, nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
     

@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Course Management Models for Afritec Bridge LMS
 
 from datetime import datetime, timezone
@@ -13,8 +14,8 @@ class Course(db.Model):
     target_audience = db.Column(db.String(255), nullable=True)
     estimated_duration = db.Column(db.String(100), nullable=True)
     instructor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     is_published = db.Column(db.Boolean, default=False, nullable=False)
 
     # Payment & Enrollment Settings
@@ -440,8 +441,8 @@ class ApplicationWindow(db.Model):
     community_link = db.Column(db.String(500), nullable=True)  # URL to community group (WhatsApp, Discord, etc.)
     community_link_label = db.Column(db.String(100), nullable=True)  # Display label (e.g. 'WhatsApp Community', 'Discord Server')
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     def __repr__(self):
         return f'<ApplicationWindow {self.cohort_label} for course {self.course_id}>'
@@ -781,8 +782,8 @@ class Module(db.Model):
     is_published = db.Column(db.Boolean, default=False)
     is_released = db.Column(db.Boolean, default=False)  # Manual release override by instructor
     released_at = db.Column(db.DateTime, nullable=True)  # When the module was manually released
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     lessons = db.relationship('Lesson', backref='module', lazy='dynamic', cascade="all, delete-orphan")
 
@@ -823,8 +824,8 @@ class CohortModuleRelease(db.Model):
     is_released = db.Column(db.Boolean, default=True, nullable=False)
     released_at = db.Column(db.DateTime, nullable=True)
     released_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     cohort = db.relationship('ApplicationWindow', backref=db.backref('module_releases', lazy='dynamic'))
     module = db.relationship('Module', backref=db.backref('cohort_releases', lazy='dynamic'))
@@ -862,8 +863,8 @@ class Lesson(db.Model):
     order = db.Column(db.Integer, nullable=False, default=0) # For sequencing
     duration_minutes = db.Column(db.Integer, nullable=True)  # Estimated duration
     is_published = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     def __repr__(self):
         return f'<Lesson {self.title}>'
@@ -889,7 +890,7 @@ class Enrollment(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     course_id = db.Column(db.Integer, db.ForeignKey('courses.id'), nullable=False)
-    enrollment_date = db.Column(db.DateTime, default=datetime.utcnow)
+    enrollment_date = db.Column(db.DateTime, default=now_local)
     progress = db.Column(db.Float, default=0.0) # Percentage completion, 0.0 to 1.0
     completed_at = db.Column(db.DateTime, nullable=True)
     
@@ -1035,7 +1036,7 @@ class Quiz(db.Model):
     module_id = db.Column(db.Integer, db.ForeignKey('modules.id'), nullable=True)
     lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=True) # Quiz can be linked to a lesson
     is_published = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     
     # Quiz settings fields
     time_limit = db.Column(db.Integer, nullable=True)  # Time limit in minutes
@@ -1142,7 +1143,7 @@ class Submission(db.Model):
     quiz_id = db.Column(db.Integer, db.ForeignKey('quizzes.id'), nullable=True)
     lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=True) # For general assignment submissions
     submission_content = db.Column(db.Text, nullable=True) # e.g., JSON of answers for quiz, link to project for assignment
-    submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    submitted_at = db.Column(db.DateTime, default=now_local)
     grade = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
 
@@ -1186,8 +1187,8 @@ class Assignment(db.Model):
     passing_score = db.Column(db.Float, nullable=True, default=60.0)  # Passing percentage threshold set during creation
     is_published = db.Column(db.Boolean, default=False)
     rubric_id = db.Column(db.Integer, db.ForeignKey('rubrics.id'), nullable=True)  # Linked AI-generated rubric
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Modification request fields
     modification_requested = db.Column(db.Boolean, default=False, nullable=False)
@@ -1248,7 +1249,7 @@ class AssignmentSubmission(db.Model):
     content = db.Column(db.Text, nullable=True)  # For text responses (matches DB schema)
     file_url = db.Column(db.Text, nullable=True)  # JSON metadata for uploaded files
     external_url = db.Column(db.String(255), nullable=True)  # External URL submission
-    submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    submitted_at = db.Column(db.DateTime, default=now_local)
     grade = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
@@ -1419,8 +1420,8 @@ class Project(db.Model):
     allowed_file_types = db.Column(db.String(255), nullable=True)  # JSON string of allowed extensions
     collaboration_allowed = db.Column(db.Boolean, default=False)
     max_team_size = db.Column(db.Integer, default=1)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
     # Modification request fields
     modification_requested = db.Column(db.Boolean, default=False, nullable=False)
@@ -1513,7 +1514,7 @@ class ProjectSubmission(db.Model):
     text_content = db.Column(db.Text, nullable=True)  # For text responses or project descriptions
     file_path = db.Column(db.String(500), nullable=True)  # Path to uploaded file
     file_name = db.Column(db.String(255), nullable=True)  # Original filename
-    submitted_at = db.Column(db.DateTime, default=datetime.utcnow)
+    submitted_at = db.Column(db.DateTime, default=now_local)
     grade = db.Column(db.Float, nullable=True)
     feedback = db.Column(db.Text, nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
@@ -1598,8 +1599,8 @@ class Announcement(db.Model):
     cohort_id = db.Column(db.Integer, db.ForeignKey('application_windows.id'), nullable=True)  # NULL = all cohorts
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     course = db.relationship('Course', backref=db.backref('announcements', lazy='dynamic', cascade="all, delete-orphan"))
     instructor = db.relationship('User', backref=db.backref('announcements', lazy='dynamic'))

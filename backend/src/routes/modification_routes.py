@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 import logging
 from datetime import datetime, timedelta
 from functools import wraps
+from ..utils.time_utils import now_local
 
 # Import models
 from ..models import db
@@ -176,7 +177,7 @@ def request_assignment_modification(assignment_id):
         # Update assignment with modification request
         assignment.modification_requested = True
         assignment.modification_request_reason = reason
-        assignment.modification_requested_at = datetime.utcnow()
+        assignment.modification_requested_at = now_local()
         assignment.modification_requested_by = user_id
         assignment.can_resubmit = True
         
@@ -327,7 +328,7 @@ def request_project_modification(project_id):
         # Update project with modification request
         project.modification_requested = True
         project.modification_request_reason = reason
-        project.modification_requested_at = datetime.utcnow()
+        project.modification_requested_at = now_local()
         project.modification_requested_by = user_id
         project.can_resubmit = True
         
@@ -452,7 +453,7 @@ def resubmit_assignment(assignment_id):
         # Update lesson completion with resubmission
         lesson_completion.assignment_submission = submission_text or lesson_completion.assignment_submission
         lesson_completion.assignment_file_url = file_url or lesson_completion.assignment_file_url
-        lesson_completion.assignment_submitted_at = datetime.utcnow()
+        lesson_completion.assignment_submitted_at = now_local()
         lesson_completion.assignment_graded = False  # Reset graded status
         lesson_completion.assignment_needs_resubmission = False
         lesson_completion.is_resubmission = True

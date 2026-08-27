@@ -19,6 +19,7 @@ import re
 from copy import deepcopy
 from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
+from src.utils.time_utils import now_local
 
 logger = logging.getLogger(__name__)
 
@@ -1434,7 +1435,7 @@ class ExcelGradingService:
                 confidence=grading_result.get('confidence', 'medium'),
                 manual_review_required=grading_result.get('manual_review_required', True),
                 flagged_issues=grading_result.get('flagged_issues'),
-                graded_at=datetime.utcnow(),
+                graded_at=now_local(),
                 processing_time_seconds=processing_time,
                 assessment_spec_version=(grading_result.get('analysis_data', {}).get('assessment_spec') or {}).get('engine_version'),
                 assessment_spec_hash=(grading_result.get('analysis_data', {}).get('assessment_spec') or {}).get('source_hash'),
@@ -1485,7 +1486,7 @@ class ExcelGradingService:
                 rubric_version=(spec.get('rubric') or {}).get('version'),
                 spec_data=spec,
                 approved=False,
-                created_at=datetime.utcnow(),
+                created_at=now_local(),
             )
             db.session.add(record)
             db.session.commit()

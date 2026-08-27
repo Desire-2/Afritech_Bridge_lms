@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Excel AI Grading Models
 Tracks AI-generated grades, analysis results, and audit trail for MS Excel submissions.
@@ -52,7 +53,7 @@ class ExcelGradingResult(db.Model):
     flagged_issues = Column(JSON, nullable=True)  # list of {type, description}
 
     # Audit
-    graded_at = Column(DateTime, default=datetime.utcnow)
+    graded_at = Column(DateTime, default=now_local)
     ai_provider = Column(String(50), nullable=True)  # e.g. 'openrouter', 'gemini'
     processing_time_seconds = Column(Float, nullable=True)
 
@@ -188,7 +189,7 @@ class GradingExperience(db.Model):
     requirements_snapshot = Column(JSON, nullable=True)
     analysis_summary = Column(JSON, nullable=True)
 
-    recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
+    recorded_at = Column(DateTime, default=now_local, index=True)
 
     # Relationships
     grading_result = relationship('ExcelGradingResult', backref=db.backref('experiences', lazy='dynamic'))
@@ -244,7 +245,7 @@ class GeneratedRubric(db.Model):
     approved = Column(Boolean, default=False)
     approved_at = Column(DateTime, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=now_local)
     updated_at = Column(DateTime, nullable=True)
 
     course = relationship('Course', foreign_keys=[course_id])
@@ -289,7 +290,7 @@ class AssignmentAssessmentSpec(db.Model):
     approved = Column(Boolean, default=False)
     approved_by = Column(Integer, ForeignKey('users.id'), nullable=True)
     approved_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=now_local, index=True)
 
     course = relationship('Course', foreign_keys=[course_id])
     approver = relationship('User', foreign_keys=[approved_by])

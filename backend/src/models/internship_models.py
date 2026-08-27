@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Internship Application System Models for Afritec Bridge LMS
 
 from datetime import datetime
@@ -16,8 +17,8 @@ class InternshipTrack(db.Model):
     description = db.Column(db.Text, nullable=True)
     icon_key = db.Column(db.String(50), nullable=True)  # e.g., "mobile", "web", "data" for icon mapping
     is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local, nullable=False)
     
     # Relationships
     cohorts = db.relationship('InternshipCohort', backref='track', lazy='dynamic', cascade='all, delete-orphan')
@@ -55,8 +56,8 @@ class InternshipCohort(db.Model):
     capacity = db.Column(db.Integer, nullable=True)  # Max number of interns, None = unlimited
     is_accepting = db.Column(db.Boolean, default=True, nullable=False, index=True)
     description = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local, nullable=False)
     
     # Relationships
     applications = db.relationship('InternshipApplication', backref='cohort', lazy='dynamic', foreign_keys='InternshipApplication.cohort_id')
@@ -160,8 +161,8 @@ class InternshipApplication(db.Model):
     reference_code = db.Column(db.String(20), nullable=False, unique=True, index=True)
     
     # Timestamps
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local, nullable=False)
     
     # Relationships
     reviewer = db.relationship('User', foreign_keys=[reviewer_id], backref='applications_reviewed')
@@ -252,8 +253,8 @@ class InternshipTask(db.Model):
     due_date = db.Column(db.DateTime, nullable=True)
     max_score = db.Column(db.Integer, nullable=True, default=100)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local, nullable=False)
 
     # Relationships
     cohort = db.relationship('InternshipCohort', backref='tasks')
@@ -315,8 +316,8 @@ class InternshipTaskAssignment(db.Model):
     graded_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     graded_at = db.Column(db.DateTime, nullable=True)
     submitted_at = db.Column(db.DateTime, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local, nullable=False)
 
     # Relationships
     intern = db.relationship('InternshipApplication', backref='task_assignments')
@@ -374,7 +375,7 @@ class InternshipOfferLetter(db.Model):
 
     # Status tracking
     status = db.Column(db.String(20), default='sent', nullable=False)  # sent | accepted | declined | revoked
-    sent_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    sent_at = db.Column(db.DateTime, default=now_local, nullable=False)
     accepted_at = db.Column(db.DateTime, nullable=True)
     accepted_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
 
@@ -384,8 +385,8 @@ class InternshipOfferLetter(db.Model):
 
     # Metadata
     created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local, nullable=False)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local, nullable=False)
 
     # Relationships
     application = db.relationship('InternshipApplication', backref='offer_letter', uselist=False)
@@ -429,7 +430,7 @@ class ApplicationStatusLog(db.Model):
     old_status = db.Column(db.Enum(ApplicationStatusEnum), nullable=True)
     new_status = db.Column(db.Enum(ApplicationStatusEnum), nullable=False)
     note = db.Column(db.Text, nullable=True)
-    changed_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    changed_at = db.Column(db.DateTime, default=now_local, nullable=False, index=True)
     
     # Relationships
     changed_by = db.relationship('User', backref='status_changes_made')

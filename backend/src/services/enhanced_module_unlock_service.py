@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enhanced Module Unlock Service - Comprehensive Module Progression System
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
@@ -857,7 +858,7 @@ class EnhancedModuleUnlockService:
             
             # Update completion status
             module_progress.status = 'completed'
-            module_progress.completed_at = datetime.utcnow()
+            module_progress.completed_at = now_local()
             module_progress.cumulative_score = final_score
             
             db.session.commit()
@@ -890,14 +891,14 @@ class EnhancedModuleUnlockService:
                     module_id=next_module_id,
                     enrollment_id=enrollment_id,
                     status='unlocked',
-                    unlocked_at=datetime.utcnow(),
+                    unlocked_at=now_local(),
                     prerequisites_met=True
                 )
                 db.session.add(next_progress)
             else:
                 # Update existing record
                 next_progress.status = 'unlocked'
-                next_progress.unlocked_at = datetime.utcnow()
+                next_progress.unlocked_at = now_local()
                 next_progress.prerequisites_met = True
             
             db.session.commit()
@@ -939,7 +940,7 @@ class EnhancedModuleUnlockService:
                 # Update enrollment
                 enrollment = Enrollment.query.get(enrollment_id)
                 if not enrollment.completed_at:
-                    enrollment.completed_at = datetime.utcnow()
+                    enrollment.completed_at = now_local()
                 enrollment.status = 'completed'
                 enrollment.progress = 1.0
                 

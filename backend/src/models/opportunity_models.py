@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Opportunity Connection Models for Afritec Bridge LMS
 
 from datetime import datetime
@@ -14,7 +15,7 @@ class Opportunity(db.Model):
     application_link = db.Column(db.String(500), nullable=False)
     application_deadline = db.Column(db.DateTime, nullable=True)
     posted_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
 
     posted_by = db.relationship("User", backref=db.backref("opportunities_posted", lazy="dynamic"))

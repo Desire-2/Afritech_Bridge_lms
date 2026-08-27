@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 General-purpose Notification Model for Afritec Bridge LMS
 
@@ -149,8 +150,8 @@ class Notification(db.Model):
     # Flexible JSON blob for extra data
     _metadata = db.Column('metadata', db.Text, nullable=True)
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     expires_at = db.Column(db.DateTime, nullable=True)  # Auto-cleanup old notifications
 
     # Relationships
@@ -231,8 +232,8 @@ class NotificationPreference(db.Model):
     quiet_start_hour = db.Column(db.Integer, nullable=True)  # 0-23
     quiet_end_hour = db.Column(db.Integer, nullable=True)
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     user = db.relationship('User', backref=db.backref('notification_preferences', uselist=False))
 

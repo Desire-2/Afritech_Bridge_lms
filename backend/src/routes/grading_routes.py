@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Comprehensive Grading Routes for Afritec Bridge LMS
 # Handles grading for assignments, projects, and quiz review
 
@@ -402,7 +403,7 @@ def grade_assignment_submission(submission_id):
         # Update submission with validated data
         submission.grade = grade
         submission.feedback = data.get('feedback', '').strip()
-        submission.graded_at = datetime.utcnow()
+        submission.graded_at = now_local()
         submission.graded_by = current_user_id
         
         # Update max_resubmissions on the assignment if provided
@@ -591,7 +592,7 @@ def grade_assignment_submission(submission_id):
                     # Set modification request fields on the assignment
                     assignment.modification_requested = True
                     assignment.modification_request_reason = modification_reason
-                    assignment.modification_requested_at = datetime.utcnow()
+                    assignment.modification_requested_at = now_local()
                     assignment.modification_requested_by = current_user_id
                     assignment.can_resubmit = True
                     assignment.resubmission_count = current_resubs + 1
@@ -776,7 +777,7 @@ def bulk_grade_assignments():
                 # Update submission
                 submission.grade = grade
                 submission.feedback = feedback
-                submission.graded_at = datetime.utcnow()
+                submission.graded_at = now_local()
                 submission.graded_by = current_user_id
                 
                 # Create/Update LessonCompletion for this assignment
@@ -807,8 +808,8 @@ def bulk_grade_assignments():
                                 engagement_score=default_engagement,
                                 scroll_progress=default_reading,
                                 time_spent=300,
-                                completed_at=datetime.utcnow(),
-                                updated_at=datetime.utcnow(),
+                                completed_at=now_local(),
+                                updated_at=now_local(),
                                 last_accessed=datetime.utcnow()
                             )
                             db.session.add(lesson_completion)
@@ -826,7 +827,7 @@ def bulk_grade_assignments():
                                 if new_engagement > lesson_completion.engagement_score:
                                     lesson_completion.engagement_score = new_engagement
                             
-                            lesson_completion.updated_at = datetime.utcnow()
+                            lesson_completion.updated_at = now_local()
                 except Exception as lc_error:
                     logger.warning(f"Error creating LessonCompletion for submission {submission_id}: {str(lc_error)}")
                 
@@ -854,7 +855,7 @@ def bulk_grade_assignments():
                             
                             assignment.modification_requested = True
                             assignment.modification_request_reason = mod_reason
-                            assignment.modification_requested_at = datetime.utcnow()
+                            assignment.modification_requested_at = now_local()
                             assignment.modification_requested_by = current_user_id
                             assignment.can_resubmit = True
                             assignment.resubmission_count = current_resubs + 1
@@ -1212,7 +1213,7 @@ def grade_project_submission(submission_id):
         # Update submission with validated data
         submission.grade = grade
         submission.feedback = data.get('feedback', '').strip()
-        submission.graded_at = datetime.utcnow()
+        submission.graded_at = now_local()
         submission.graded_by = current_user_id
         
         # Update max_resubmissions on the project if provided
@@ -1401,7 +1402,7 @@ def grade_project_submission(submission_id):
                     
                     project.modification_requested = True
                     project.modification_request_reason = modification_reason
-                    project.modification_requested_at = datetime.utcnow()
+                    project.modification_requested_at = now_local()
                     project.modification_requested_by = current_user_id
                     project.can_resubmit = True
                     project.resubmission_count = current_resubs + 1
@@ -1578,7 +1579,7 @@ def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_
                 team_members=None,  # Will be set below
                 text_content=None,
                 file_path=None,
-                submitted_at=datetime.utcnow(),
+                submitted_at=now_local(),
             )
             # Copy team members from an existing submission
             existing_sub = ProjectSubmission.query.filter_by(
@@ -2097,7 +2098,7 @@ def update_rubric(rubric_id):
         rubric.description = data.get('description', rubric.description)
         rubric.total_points = data.get('total_points', rubric.total_points)
         rubric.is_template = data.get('is_template', rubric.is_template)
-        rubric.updated_at = datetime.utcnow()
+        rubric.updated_at = now_local()
         
         # Update criteria if provided
         if 'criteria' in data:
@@ -2244,7 +2245,7 @@ def update_feedback_template(template_id):
         template.content = data.get('content', template.content)
         template.is_public = data.get('is_public', template.is_public)
         template.tags = data.get('tags', template.tags)
-        template.updated_at = datetime.utcnow()
+        template.updated_at = now_local()
         
         db.session.commit()
         
@@ -2365,7 +2366,7 @@ def quick_grade():
             
             submission.grade = grade
             submission.feedback = feedback
-            submission.graded_at = datetime.utcnow()
+            submission.graded_at = now_local()
             submission.graded_by = current_user_id
             
         elif submission_type == 'project':
@@ -2390,7 +2391,7 @@ def quick_grade():
             
             submission.grade = grade
             submission.feedback = feedback
-            submission.graded_at = datetime.utcnow()
+            submission.graded_at = now_local()
             submission.graded_by = current_user_id
         
         # Update max_resubmissions if provided

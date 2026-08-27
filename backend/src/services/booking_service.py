@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Booking Service for AfriTech Bridge LMS
 
@@ -291,7 +292,7 @@ def complete_booking(
         return False, "Only confirmed bookings can be marked as completed."
 
     booking.status = BookingStatus.COMPLETED
-    booking.completed_at = datetime.utcnow()
+    booking.completed_at = now_local()
     if notes:
         booking.instructor_notes = notes
 
@@ -318,7 +319,7 @@ def confirm_booking(
         return False, "Cannot confirm a booking that has already passed."
 
     booking.status = BookingStatus.CONFIRMED
-    booking.confirmed_at = datetime.utcnow()
+    booking.confirmed_at = now_local()
     booking.confirmed_by = instructor_id
 
     db.session.commit()
@@ -343,7 +344,7 @@ def decline_booking(
         return False, "Only pending bookings can be declined."
 
     booking.status = BookingStatus.DECLINED
-    booking.declined_at = datetime.utcnow()
+    booking.declined_at = now_local()
     booking.declined_by = instructor_id
     if reason:
         booking.cancellation_reason = reason
@@ -420,7 +421,7 @@ def mark_no_show(
         return False, "Only confirmed bookings can be marked as no-show."
 
     booking.status = BookingStatus.NO_SHOW
-    booking.no_show_marked_at = datetime.utcnow()
+    booking.no_show_marked_at = now_local()
 
     db.session.commit()
     return True, ""

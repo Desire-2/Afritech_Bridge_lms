@@ -6,6 +6,7 @@ import base64
 from flask import render_template_string, current_app
 from datetime import datetime
 from src.utils.brevo_email_service import brevo_service
+from src.utils.time_utils import now_local
 from src.services.internship_offer_service import InternshipOfferService
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ class InternshipMailer:
                 track_name=application.track.name if application.track else 'Unknown',
                 applicant_type=application.applicant_type.value.replace('_', ' ').title() if application.applicant_type else 'N/A',
                 application_date=application.created_at.strftime('%d %B %Y'),
-                accepted_date=application.reviewed_at.strftime('%d %B %Y %H:%M') if application.reviewed_at else datetime.utcnow().strftime('%d %B %Y %H:%M'),
+                accepted_date=application.reviewed_at.strftime('%d %B %Y %H:%M') if application.reviewed_at else now_local().strftime('%d %B %Y %H:%M'),
                 changed_by_name=changed_by_name,
                 admin_link=f'{current_app.config.get("FRONTEND_URL", "")}/admin/internships/applications/{application.id}',
             )
@@ -2205,7 +2206,7 @@ class InternshipMailer:
                 meeting_platform=meeting_platform or 'Not specified',
                 meeting_link=meeting_link or 'Not provided',
                 updated_by_name=updated_by_name,
-                updated_at=datetime.utcnow().strftime('%d %B %Y %H:%M'),
+                updated_at=now_local().strftime('%d %B %Y %H:%M'),
                 admin_link=f'{current_app.config.get("FRONTEND_URL", "")}/admin/internships/applications/{application.id}',
             )
 
@@ -2244,7 +2245,7 @@ class InternshipMailer:
                 interview_notes=application.interview_notes or 'No notes recorded',
                 interview_date=application.interview_date.strftime('%d %B %Y at %I:%M %p') if application.interview_date else 'Not scheduled',
                 updated_by_name=updated_by_name,
-                updated_at=datetime.utcnow().strftime('%d %B %Y %H:%M'),
+                updated_at=now_local().strftime('%d %B %Y %H:%M'),
                 admin_link=f'{current_app.config.get("FRONTEND_URL", "")}/admin/internships/applications/{application.id}',
             )
 

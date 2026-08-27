@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Learning Routes - My Learning page API endpoints
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -628,7 +629,7 @@ def get_course_modules(course_id):
                     # Set all modules as unlocked for instructor preview
                     if module_progress.status == 'locked':
                         module_progress.status = 'unlocked'
-                        module_progress.unlocked_at = datetime.utcnow()
+                        module_progress.unlocked_at = now_local()
                         # Don't commit to database - this is just for preview
                 
                 # Get assessment attempts for this module

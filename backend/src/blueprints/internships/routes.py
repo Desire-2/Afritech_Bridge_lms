@@ -1,3 +1,4 @@
+from ...utils.time_utils import now_local
 # Internship Application API Routes
 
 from flask import Blueprint, request, jsonify, send_file, current_app
@@ -630,7 +631,7 @@ def update_application_status(app_id):
         # Update application
         application.status = new_status
         application.reviewer_id = user_id
-        application.reviewed_at = datetime.utcnow()
+        application.reviewed_at = now_local()
         application.reviewer_notes = data.get('note')
         
         if data.get('interview_date'):
@@ -1295,7 +1296,7 @@ def batch_update_status():
                 # Update application
                 application.status = new_status
                 application.reviewer_id = user_id
-                application.reviewed_at = datetime.utcnow()
+                application.reviewed_at = now_local()
                 application.reviewer_notes = note
 
                 # Create status log
@@ -2155,7 +2156,7 @@ def grade_assignment(assignment_id):
         
         if data.get('status') in ('approved', 'rejected'):
             assignment.graded_by_id = user_id
-            assignment.graded_at = datetime.utcnow()
+            assignment.graded_at = now_local()
         
         db.session.commit()
         
@@ -3088,7 +3089,7 @@ def submit_intern_task(assignment_id):
         if submission_file_path:
             asgn.submission_file_path = submission_file_path
         asgn.status = 'submitted'
-        asgn.submitted_at = datetime.utcnow()
+        asgn.submitted_at = now_local()
 
         db.session.commit()
 

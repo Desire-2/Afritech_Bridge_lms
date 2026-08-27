@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Progression Service - Handle strict course progression logic
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -279,7 +280,7 @@ class ProgressionService:
             # Update module progress if needed
             if module_progress.status == 'unlocked':
                 module_progress.status = 'in_progress'
-                module_progress.started_at = datetime.utcnow()
+                module_progress.started_at = now_local()
             
             # Update course contribution score (10% of total) - now uses lesson scores
             ProgressionService._update_course_contribution_score(
@@ -390,7 +391,7 @@ class ProgressionService:
                 
                 # Mark module as completed and save cumulative score
                 module_progress.status = 'completed'
-                module_progress.completed_at = datetime.utcnow()
+                module_progress.completed_at = now_local()
                 module_progress.cumulative_score = cumulative_score
                 
                 current_app.logger.info(f"🎯 Setting module {module_id} status='completed', completed_at={module_progress.completed_at}, cumulative_score={cumulative_score}")
@@ -420,7 +421,7 @@ class ProgressionService:
                 else:
                     # Mark as failed but allow retake
                     module_progress.status = 'failed'
-                    module_progress.failed_at = datetime.utcnow()
+                    module_progress.failed_at = now_local()
                     db.session.commit()
                     remaining_attempts = module_progress.max_attempts - module_progress.attempts_count
                     return False, f"All lessons satisfied but module score {cumulative_score:.1f}% < 70% required. {remaining_attempts} attempts remaining."
@@ -555,7 +556,7 @@ class ProgressionService:
             module_id=module_id,
             enrollment_id=enrollment_id,
             status=initial_status,
-            unlocked_at=datetime.utcnow() if is_unlocked else None,
+            unlocked_at=now_local() if is_unlocked else None,
             prerequisites_met=is_unlocked
         )
         
@@ -616,7 +617,7 @@ class ProgressionService:
                     module_id=next_module.id,
                     enrollment_id=enrollment_id,
                     status='unlocked',
-                    unlocked_at=datetime.utcnow(),
+                    unlocked_at=now_local(),
                     prerequisites_met=True
                 )
                 db.session.add(next_progress)
@@ -624,7 +625,7 @@ class ProgressionService:
                 # Unlock if currently locked or not started
                 current_app.logger.info(f"Unlocking existing ModuleProgress for module {next_module.id} (was: {next_progress.status})")
                 next_progress.status = 'unlocked'
-                next_progress.unlocked_at = datetime.utcnow()
+                next_progress.unlocked_at = now_local()
                 next_progress.prerequisites_met = True
             else:
                 current_app.logger.info(f"Module {next_module.id} already has status: {next_progress.status}, not changing")
@@ -778,7 +779,7 @@ class ProgressionService:
             # Submit appeal
             suspension.appeal_submitted = True
             suspension.appeal_text = appeal_text
-            suspension.appeal_submitted_at = datetime.utcnow()
+            suspension.appeal_submitted_at = now_local()
             suspension.review_status = 'pending'
             
             db.session.commit()

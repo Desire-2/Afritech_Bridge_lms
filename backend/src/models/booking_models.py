@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Booking Models for AfriTech Bridge LMS
 
@@ -36,8 +37,8 @@ class InstructorAvailability(db.Model):
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     effective_from = db.Column(db.Date, nullable=True)
     effective_until = db.Column(db.Date, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     instructor = db.relationship('User', backref=db.backref('availability_slots', lazy='dynamic'))
 
@@ -75,8 +76,8 @@ class AvailabilityException(db.Model):
     end_time = db.Column(db.Time, nullable=True)
     reason = db.Column(db.String(255), nullable=True)
     timezone = db.Column(db.String(50), nullable=False, default='UTC')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     instructor = db.relationship('User', backref=db.backref('availability_exceptions', lazy='dynamic'))
 
@@ -134,8 +135,8 @@ class Booking(db.Model):
     reminder_24h_sent = db.Column(db.Boolean, nullable=False, default=False)
     reminder_1h_sent = db.Column(db.Boolean, nullable=False, default=False)
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     student = db.relationship('User', foreign_keys=[student_id], backref=db.backref('bookings_as_student', lazy='dynamic'))
     instructor = db.relationship('User', foreign_keys=[instructor_id], backref=db.backref('bookings_as_instructor', lazy='dynamic'))

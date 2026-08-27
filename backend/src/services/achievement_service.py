@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Achievement Service - Gamification Logic for Afritec Bridge LMS
 # Handles achievement unlocking, streak tracking, points, and milestone detection
 
@@ -255,7 +256,7 @@ class AchievementService:
                 
                 if existing:
                     existing.times_earned = (existing.times_earned or 0) + 1
-                    existing.earned_at = datetime.utcnow()
+                    existing.earned_at = now_local()
                     user_achievement = existing
                 else:
                     user_achievement = UserAchievement(

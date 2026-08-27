@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enrollment Service - Handle course enrollment workflows
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -191,7 +192,7 @@ class EnrollmentService:
                 # Instant enrollment for free courses
                 application.status = 'approved'
                 enrollment = EnrollmentService._create_enrollment(student_id, course_id)
-                application.enrolled_at = datetime.utcnow()
+                application.enrolled_at = now_local()
                 message = "Successfully enrolled in free course"
                 
             elif application_type == 'paid':
@@ -248,7 +249,7 @@ class EnrollmentService:
                 enrollment = EnrollmentService._create_enrollment(
                     application.student_id, application.course_id
                 )
-                application.enrolled_at = datetime.utcnow()
+                application.enrolled_at = now_local()
                 
                 db.session.commit()
                 return True, "Payment successful. Enrolled in course", enrollment.to_dict()
@@ -290,7 +291,7 @@ class EnrollmentService:
             
             application.reviewed_by = reviewer_id
             application.review_notes = notes
-            application.reviewed_at = datetime.utcnow()
+            application.reviewed_at = now_local()
             
             if decision == 'approve':
                 # Check scholarship spots
@@ -305,7 +306,7 @@ class EnrollmentService:
                 enrollment = EnrollmentService._create_enrollment(
                     application.student_id, application.course_id
                 )
-                application.enrolled_at = datetime.utcnow()
+                application.enrolled_at = now_local()
                 
                 message = "Scholarship application approved and student enrolled"
             else:
@@ -341,7 +342,7 @@ class EnrollmentService:
             student_id=student_id,
             course_id=course_id,
             application_window_id=application_window_id,
-            enrollment_date=datetime.utcnow()
+            enrollment_date=now_local()
         )
         db.session.add(enrollment)
         db.session.flush()  # Get the enrollment ID
@@ -356,7 +357,7 @@ class EnrollmentService:
                 module_id=module.id,
                 enrollment_id=enrollment.id,
                 status='locked' if i > 0 else 'unlocked',  # First module unlocked
-                unlocked_at=datetime.utcnow() if i == 0 else None,
+                unlocked_at=now_local() if i == 0 else None,
                 prerequisites_met=i == 0
             )
             db.session.add(progress)

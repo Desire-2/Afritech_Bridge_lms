@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # System Settings Models for Afritec Bridge LMS
 
 from flask_sqlalchemy import SQLAlchemy
@@ -27,8 +28,8 @@ class SystemSetting(db.Model):
     requires_restart = db.Column(db.Boolean, default=False)  # Requires system restart
     validation_rule = db.Column(db.String(255), nullable=True)  # JSON validation rules
     default_value = db.Column(db.Text, nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     updated_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
     
     def __repr__(self):
@@ -63,7 +64,7 @@ class SystemSetting(db.Model):
             self.value = json.dumps(value)
         else:
             self.value = str(value)
-        self.updated_at = datetime.utcnow()
+        self.updated_at = now_local()
     
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -94,7 +95,7 @@ class SettingAuditLog(db.Model):
     old_value = db.Column(db.Text, nullable=True)
     new_value = db.Column(db.Text, nullable=False)
     changed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    changed_at = db.Column(db.DateTime, default=datetime.utcnow)
+    changed_at = db.Column(db.DateTime, default=now_local)
     change_reason = db.Column(db.String(255), nullable=True)
     ip_address = db.Column(db.String(45), nullable=True)
     user_agent = db.Column(db.Text, nullable=True)
@@ -227,7 +228,7 @@ class SystemSettingsManager:
         for setting in settings:
             cls._cache[setting.key] = setting.typed_value
         
-        cls._cache_time = datetime.utcnow()
+        cls._cache_time = now_local()
     
     @classmethod
     def clear_cache(cls):
@@ -721,8 +722,8 @@ class UserAISetting(db.Model):
     gemini_model_name = db.Column(db.String(200), nullable=True, default='')
     ai_agent_enabled = db.Column(db.Boolean, nullable=True, default=True)
     ai_max_requests_per_day = db.Column(db.Integer, nullable=True, default=100)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
 
     user = db.relationship('User', backref=db.backref('ai_settings', uselist=False))
 
@@ -765,5 +766,5 @@ class UserAISetting(db.Model):
             setattr(self, key, value)
             updated.append(key)
 
-        self.updated_at = datetime.utcnow()
+        self.updated_at = now_local()
         return updated

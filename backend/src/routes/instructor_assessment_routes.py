@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Instructor Assessment API Routes for Afritec Bridge LMS
 # CODE UPDATED: 2025-11-02 09:56:00
 
@@ -1633,7 +1634,7 @@ def assign_project_teams(project_id):
             submission = ProjectSubmission(
                 project_id=project_id,
                 student_id=primary_student.id,
-                submitted_at=datetime.utcnow()
+                submitted_at=now_local()
             )
             submission.set_team_members(team_ids)
             db.session.add(submission)
@@ -1829,7 +1830,7 @@ def reassign_team_member(project_id, submission_id):
             if member_id not in target_members and member_id != target_sub.student_id:
                 target_members.append(member_id)
                 target_sub.set_team_members(target_members)
-                target_sub.submitted_at = datetime.utcnow()  # Update timestamp to reflect change
+                target_sub.submitted_at = now_local()  # Update timestamp to reflect change
                 message = f"Added {member_user.first_name or ''} {member_user.last_name or ''} to team"
             else:
                 return jsonify({"message": "Student is already in this team"}), 400

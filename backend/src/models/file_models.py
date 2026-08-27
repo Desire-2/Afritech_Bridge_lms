@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Enhanced file comment system for instructor feedback on submitted files
 """
@@ -16,8 +17,8 @@ class FileComment(db.Model):
     project_submission_id = db.Column(db.Integer, db.ForeignKey('project_submissions.id'), nullable=True)
     instructor_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     comment_text = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     is_private = db.Column(db.Boolean, default=False)  # If True, only instructor can see
     
     # Relationships
@@ -64,7 +65,7 @@ class FileAnalysis(db.Model):
     virus_scan_clean = db.Column(db.Boolean, default=True)
     
     # Metadata
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
     analyzed_at = db.Column(db.DateTime, nullable=True)
     
     def to_dict(self):

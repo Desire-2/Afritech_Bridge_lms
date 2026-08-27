@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enhanced Student API Routes for Afritec Bridge LMS
 
 from flask import Blueprint, request, jsonify
@@ -266,7 +267,7 @@ def complete_lesson(lesson_id):
             db.session.add(user_progress)
         else:
             user_progress.total_time_spent += data.get('time_spent', 0)
-            user_progress.last_accessed = datetime.utcnow()
+            user_progress.last_accessed = now_local()
         
         # Calculate overall course progress
         total_lessons = db.session.query(Lesson).join(Module).filter(
@@ -283,7 +284,7 @@ def complete_lesson(lesson_id):
         # Update enrollment progress
         enrollment.progress = progress_percentage
         if progress_percentage >= 1.0:
-            enrollment.completed_at = datetime.utcnow()
+            enrollment.completed_at = now_local()
         
         user_progress.completion_percentage = progress_percentage * 100
         
@@ -353,7 +354,7 @@ def update_note(note_id):
     
     try:
         note.content = data.get('content', note.content)
-        note.updated_at = datetime.utcnow()
+        note.updated_at = now_local()
         db.session.commit()
         
         return jsonify(note.to_dict()), 200

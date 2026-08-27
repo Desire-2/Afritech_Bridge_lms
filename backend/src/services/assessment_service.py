@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Assessment Service - Handle quizzes, assignments, and projects
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -171,7 +172,7 @@ class AssessmentService:
                 "detailed_results": detailed_results,
                 "timestamp": datetime.utcnow().isoformat()
             })
-            attempt.submitted_at = datetime.utcnow()
+            attempt.submitted_at = now_local()
             attempt.status = 'submitted'
             
             # Update module progress quiz score (30% of total)
@@ -324,7 +325,7 @@ class AssessmentService:
             
             # Update attempt with submission
             attempt.submission_data = json.dumps(submission_data)
-            attempt.submitted_at = datetime.utcnow()
+            attempt.submitted_at = now_local()
             attempt.status = 'submitted'
             
             db.session.commit()
@@ -363,7 +364,7 @@ class AssessmentService:
             attempt.percentage = (score / attempt.max_score * 100) if attempt.max_score > 0 else 0
             attempt.feedback = feedback
             attempt.graded_by = grader_id
-            attempt.graded_at = datetime.utcnow()
+            attempt.graded_at = now_local()
             attempt.status = 'graded'
             
             # Update module progress assignment score (40% of total)
@@ -464,7 +465,7 @@ class AssessmentService:
             auto_score = AssessmentService._auto_grade_final_assessment(submission_data)
             
             attempt.submission_data = json.dumps(submission_data)
-            attempt.submitted_at = datetime.utcnow()
+            attempt.submitted_at = now_local()
             
             if auto_score is not None:
                 attempt.score = auto_score

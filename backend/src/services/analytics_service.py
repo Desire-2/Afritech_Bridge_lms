@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Analytics Service - Learning analytics and performance tracking
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -948,7 +949,7 @@ class AnalyticsService:
         
         analytics.learning_velocity = total_lessons / weeks_enrolled if weeks_enrolled > 0 else 0
         
-        analytics.last_calculated = datetime.utcnow()
+        analytics.last_calculated = now_local()
         db.session.commit()
     
     @staticmethod

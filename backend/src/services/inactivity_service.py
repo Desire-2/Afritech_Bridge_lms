@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Inactivity Service for Afritec Bridge LMS
 Handles tracking and managing inactive students and users
@@ -207,7 +208,7 @@ class InactivityService:
             for enrollment in enrollments:
                 # Update enrollment status
                 enrollment.status = 'terminated'
-                enrollment.terminated_at = datetime.utcnow()
+                enrollment.terminated_at = now_local()
                 enrollment.termination_reason = reason
                 
                 terminated_courses.append({
@@ -284,7 +285,7 @@ class InactivityService:
             
             # Soft delete approach - mark as deleted instead of hard delete
             user.is_active = False
-            user.deleted_at = datetime.utcnow()
+            user.deleted_at = now_local()
             user.deleted_by = admin_id
             user.deletion_reason = 'Auto-deleted due to prolonged inactivity'
             

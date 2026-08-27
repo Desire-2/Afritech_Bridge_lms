@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 ⏰ Automated Payment Reminder Scheduler for Afritech Bridge LMS
 Sends scheduled payment reminders to ALL applicants who have not completed payment:
@@ -427,7 +428,7 @@ class PaymentReminderScheduler:
                 )
 
                 if email_sent:
-                    application.last_payment_reminder_sent = datetime.utcnow()
+                    application.last_payment_reminder_sent = now_local()
                     application.last_payment_reminder_type = reminder_type
                     application.payment_reminder_count = (
                         getattr(application, 'payment_reminder_count', 0) + 1
@@ -500,7 +501,7 @@ class PaymentReminderScheduler:
                 )
 
                 if email_sent:
-                    application.last_payment_reminder_sent = datetime.utcnow()
+                    application.last_payment_reminder_sent = now_local()
                     application.payment_reminder_count = (
                         getattr(application, 'payment_reminder_count', 0) + 1
                     )
@@ -619,7 +620,7 @@ class PaymentReminderScheduler:
 
                 if email_sent:
                     # Track reminder on enrollment
-                    enrollment.last_payment_reminder_sent = datetime.utcnow()
+                    enrollment.last_payment_reminder_sent = now_local()
                     enrollment.payment_reminder_count = (getattr(enrollment, 'payment_reminder_count', 0) or 0) + 1
                     db.session.commit()
                     results['sent'] += 1
@@ -890,7 +891,7 @@ class PaymentReminderScheduler:
                 )
 
             if email_sent:
-                application.last_payment_reminder_sent = datetime.utcnow()
+                application.last_payment_reminder_sent = now_local()
                 application.payment_reminder_count = (
                     getattr(application, 'payment_reminder_count', 0) + 1
                 )
@@ -988,7 +989,7 @@ class PaymentReminderScheduler:
             )
 
             if email_sent:
-                enrollment.last_payment_reminder_sent = datetime.utcnow()
+                enrollment.last_payment_reminder_sent = now_local()
                 enrollment.payment_reminder_count = (getattr(enrollment, 'payment_reminder_count', 0) or 0) + 1
                 db.session.commit()
 

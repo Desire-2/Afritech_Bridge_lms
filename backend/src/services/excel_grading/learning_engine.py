@@ -1,3 +1,4 @@
+from ...utils.time_utils import now_local
 """
 Experience Learning Engine
 
@@ -86,7 +87,7 @@ class LearningEngine:
                 rubric_snapshot=rubric_used,
                 requirements_snapshot=requirements_used,
                 analysis_summary=analysis_summary,
-                recorded_at=datetime.utcnow(),
+                recorded_at=now_local(),
             )
 
             db.session.add(experience)
@@ -132,7 +133,7 @@ class LearningEngine:
                 existing.rubric_data = rubric_data
                 existing.instructions_hash = instructions_hash
                 existing.times_used = (existing.times_used or 0) + 1
-                existing.updated_at = datetime.utcnow()
+                existing.updated_at = now_local()
                 db.session.commit()
                 return existing.id
 
@@ -145,7 +146,7 @@ class LearningEngine:
                 generation_method=rubric_data.get('generation_method', 'instruction_analysis'),
                 times_used=1,
                 approved=False,
-                created_at=datetime.utcnow(),
+                created_at=now_local(),
             )
 
             db.session.add(rubric_record)
@@ -174,7 +175,7 @@ class LearningEngine:
                 # Increment usage counter
                 from src.models.user_models import db
                 rubric_record.times_used = (rubric_record.times_used or 0) + 1
-                rubric_record.last_used_at = datetime.utcnow()
+                rubric_record.last_used_at = now_local()
                 db.session.commit()
 
                 logger.info(
@@ -200,7 +201,7 @@ class LearningEngine:
 
             if rubric_record and not rubric_record.approved:
                 rubric_record.approved = True
-                rubric_record.approved_at = datetime.utcnow()
+                rubric_record.approved_at = now_local()
                 db.session.commit()
                 logger.info(f"Learning: rubric for assignment #{assignment_id} marked as approved")
             # Keep the versioned assignment contract in sync with the legacy
@@ -212,7 +213,7 @@ class LearningEngine:
                 ).order_by(AssignmentAssessmentSpec.created_at.desc()).first()
                 if spec and not spec.approved:
                     spec.approved = True
-                    spec.approved_at = datetime.utcnow()
+                    spec.approved_at = now_local()
                     db.session.commit()
             except Exception as spec_error:
                 logger.debug(f"Could not mark assessment spec approved: {spec_error}")

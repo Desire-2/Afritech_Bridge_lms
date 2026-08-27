@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Enhanced Grading Routes - Advanced functionality for instructor grading
 # Includes AI-powered suggestions, bulk operations, analytics, and workflow automation
 
@@ -398,7 +399,7 @@ def bulk_grade_enhanced():
                 # Update submission
                 submission.grade = final_grade
                 submission.feedback = feedback
-                submission.graded_at = datetime.utcnow()
+                submission.graded_at = now_local()
                 submission.graded_by = current_user_id
                 
                 # Store rubric scores if provided
@@ -464,7 +465,7 @@ def bulk_grade_enhanced():
                         
                         assignment.modification_requested = True
                         assignment.modification_request_reason = mod_reason
-                        assignment.modification_requested_at = datetime.utcnow()
+                        assignment.modification_requested_at = now_local()
                         assignment.modification_requested_by = current_user_id
                         assignment.can_resubmit = True
                         assignment.resubmission_count = current_resubs + 1
@@ -561,7 +562,7 @@ def apply_grading_curve():
         # Update submissions
         for submission, new_grade in zip(submissions, adjusted_grades):
             submission.grade = new_grade
-            submission.graded_at = datetime.utcnow()
+            submission.graded_at = now_local()
             submission.graded_by = current_user_id
         
         db.session.commit()
@@ -610,7 +611,7 @@ def grade_with_rubric(submission_id):
         submission.grade = total_score
         submission.feedback = feedback
         submission.rubric_scores = json.dumps(rubric_scores)
-        submission.graded_at = datetime.utcnow()
+        submission.graded_at = now_local()
         submission.graded_by = current_user_id
         
         # Store private notes (instructor only)
@@ -881,7 +882,7 @@ def update_learning_progress(submission: AssignmentSubmission, grade: float):
                     engagement_score=min(100.0, max(60.0, 60.0 + (percentage_score * 0.4))),
                     scroll_progress=min(100.0, max(70.0, 70.0 + (percentage_score * 0.3))),
                     time_spent=300,
-                    completed_at=datetime.utcnow()
+                    completed_at=now_local()
                 )
                 db.session.add(lesson_completion)
             else:

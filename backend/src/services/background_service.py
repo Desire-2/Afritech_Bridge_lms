@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Background Task Service for Afritec Bridge LMS
 Handles long-running operations asynchronously to prevent timeouts
@@ -128,7 +129,7 @@ class BackgroundTaskService:
                 task = BackgroundTask.query.filter_by(id=task_id).first()
                 if task:
                     task.status = TaskStatus.RUNNING
-                    task.started_at = datetime.utcnow()
+                    task.started_at = now_local()
                     db.session.commit()
                     logger.info(f"Marked task {task_id} as running")
                 
@@ -140,7 +141,7 @@ class BackgroundTaskService:
                 task = BackgroundTask.query.filter_by(id=task_id).first()
                 if task:
                     task.status = TaskStatus.COMPLETED
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = now_local()
                     task.set_result(result)
                     task.progress = 100
                     db.session.commit()
@@ -154,7 +155,7 @@ class BackgroundTaskService:
                     task = BackgroundTask.query.filter_by(id=task_id).first()
                     if task:
                         task.status = TaskStatus.FAILED
-                        task.completed_at = datetime.utcnow()
+                        task.completed_at = now_local()
                         task.error_message = str(e)
                         db.session.commit()
             except Exception as db_error:

@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Full Credit Service - Award full credit to students for modules
 from datetime import datetime
 from typing import Dict, List
@@ -140,8 +141,8 @@ class FullCreditService:
                 completion.engagement_component_score = 100.0
                 completion.quiz_component_score = 100.0
                 completion.assignment_component_score = 100.0
-                completion.completed_at = datetime.utcnow()
-                completion.score_last_updated = datetime.utcnow()
+                completion.completed_at = now_local()
+                completion.score_last_updated = now_local()
                 completion.time_spent = max(completion.time_spent or 0, 3600)  # At least 1 hour
             else:
                 # Create new completion
@@ -159,7 +160,7 @@ class FullCreditService:
                     engagement_component_score=100.0,
                     quiz_component_score=100.0,
                     assignment_component_score=100.0,
-                    completed_at=datetime.utcnow(),
+                    completed_at=now_local(),
                     score_last_updated=datetime.utcnow(),
                     time_spent=3600  # 1 hour
                 )
@@ -188,7 +189,7 @@ class FullCreditService:
                 attempt.score = 100.0
                 attempt.score_percentage = 100.0
                 attempt.status = QuizAttemptStatus.AUTO_GRADED
-                attempt.end_time = datetime.utcnow()
+                attempt.end_time = now_local()
             else:
                 # Create new attempt with full score
                 attempt = QuizAttempt(
@@ -198,8 +199,8 @@ class FullCreditService:
                     score=100.0,
                     score_percentage=100.0,
                     status=QuizAttemptStatus.AUTO_GRADED,
-                    start_time=datetime.utcnow(),
-                    end_time=datetime.utcnow()
+                    start_time=now_local(),
+                    end_time=now_local()
                 )
                 db.session.add(attempt)
             
@@ -230,8 +231,8 @@ class FullCreditService:
             if submission:
                 # Update existing submission with full grade
                 submission.grade = max_points
-                submission.feedback = f"Full credit awarded by instructor on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
-                submission.graded_at = datetime.utcnow()
+                submission.feedback = f"Full credit awarded by instructor on {now_local().strftime('%Y-%m-%d %H:%M')}"
+                submission.graded_at = now_local()
                 submission.graded_by = instructor_id
             else:
                 # Create new submission with full grade
@@ -239,10 +240,10 @@ class FullCreditService:
                     student_id=student_id,
                     assignment_id=assignment_id,
                     content="Full credit awarded by instructor - no submission required",
-                    submitted_at=datetime.utcnow(),
+                    submitted_at=now_local(),
                     grade=max_points,
                     feedback=f"Full credit awarded by instructor on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
-                    graded_at=datetime.utcnow(),
+                    graded_at=now_local(),
                     graded_by=instructor_id
                 )
                 db.session.add(submission)
@@ -269,7 +270,7 @@ class FullCreditService:
             if progress:
                 # Update existing progress
                 progress.status = 'completed'
-                progress.completed_at = datetime.utcnow()
+                progress.completed_at = now_local()
                 progress.cumulative_score = 100.0
                 progress.course_contribution_score = 10.0  # Full course contribution
                 progress.quiz_score = 100.0
@@ -283,9 +284,9 @@ class FullCreditService:
                     module_id=module_id,
                     enrollment_id=enrollment_id,
                     status='completed',
-                    completed_at=datetime.utcnow(),
-                    started_at=datetime.utcnow(),
-                    unlocked_at=datetime.utcnow(),
+                    completed_at=now_local(),
+                    started_at=now_local(),
+                    unlocked_at=now_local(),
                     cumulative_score=100.0,
                     course_contribution_score=10.0,
                     quiz_score=100.0,

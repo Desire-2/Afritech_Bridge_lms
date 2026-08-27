@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # admin_student_routes.py - Comprehensive Admin Student Management API
 
 from flask import Blueprint, request, jsonify
@@ -574,7 +575,7 @@ def update_enrollment(student_id, enrollment_id):
 
         if action == "terminate":
             enrollment.status = "terminated"
-            enrollment.terminated_at = datetime.utcnow()
+            enrollment.terminated_at = now_local()
             enrollment.terminated_by = current_user_id
             enrollment.termination_reason = data.get("reason", "Terminated by admin")
         elif action == "reactivate":
@@ -584,7 +585,7 @@ def update_enrollment(student_id, enrollment_id):
             enrollment.termination_reason = None
         elif action == "complete":
             enrollment.status = "completed"
-            enrollment.completed_at = datetime.utcnow()
+            enrollment.completed_at = now_local()
             enrollment.progress = 1.0
         elif action == "suspend":
             enrollment.status = "suspended"
@@ -612,7 +613,7 @@ def update_enrollment(student_id, enrollment_id):
                     enrollment.payment_currency = enrollment.course.currency or 'USD'
             
             if enrollment.payment_verified and not enrollment.payment_verified_at:
-                enrollment.payment_verified_at = datetime.utcnow()
+                enrollment.payment_verified_at = now_local()
                 enrollment.payment_verified_by = current_user_id
                 # Generate a unique verification hash for public QR code verification
                 if not enrollment.payment_verification_hash:
@@ -1178,7 +1179,7 @@ def bulk_student_action():
             ).all()
             for e in enrollments:
                 e.status = "terminated"
-                e.terminated_at = datetime.utcnow()
+                e.terminated_at = now_local()
                 e.terminated_by = current_user_id
                 e.termination_reason = "Bulk unenrolled by admin"
                 affected += 1
@@ -1767,7 +1768,7 @@ def validate_certificate_admin(student_id, course_id):
         # If force_override, mark enrollment as completed first
         if override_incomplete and enrollment.status != 'completed':
             enrollment.status = 'completed'
-            enrollment.completed_at = datetime.utcnow()
+            enrollment.completed_at = now_local()
             enrollment.progress = 1.0
             db.session.flush()
         
@@ -1849,7 +1850,7 @@ def grade_module_manual(student_id, module_id):
             
             for submission in submissions:
                 submission.score = score
-                submission.graded_at = datetime.utcnow()
+                submission.graded_at = now_local()
                 submission.graded_by = get_jwt_identity()  # Admin user ID
                 db.session.add(submission)
                 updated_count += 1
@@ -1866,7 +1867,7 @@ def grade_module_manual(student_id, module_id):
             
             for submission in submissions:
                 submission.grade = score
-                submission.graded_at = datetime.utcnow()
+                submission.graded_at = now_local()
                 submission.graded_by = get_jwt_identity()  # Admin user ID
                 db.session.add(submission)
                 updated_count += 1
@@ -1889,7 +1890,7 @@ def grade_module_manual(student_id, module_id):
             
             for submission in submissions:
                 submission.grade = score
-                submission.graded_at = datetime.utcnow()
+                submission.graded_at = now_local()
                 submission.graded_by = get_jwt_identity()  # Admin user ID
                 db.session.add(submission)
                 updated_count += 1
@@ -1922,7 +1923,7 @@ def grade_module_manual(student_id, module_id):
         # Update module progress with manual grade
         module_progress.cumulative_score = score
         module_progress.status = 'completed'
-        module_progress.completed_at = datetime.utcnow()
+        module_progress.completed_at = now_local()
         module_progress.is_manually_graded = True
         db.session.add(module_progress)
         

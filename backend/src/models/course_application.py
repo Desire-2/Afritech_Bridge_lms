@@ -1,5 +1,6 @@
 from datetime import datetime
 from .user_models import db
+from ..utils.time_utils import now_local
 
 
 class CourseApplication(db.Model):
@@ -131,8 +132,8 @@ class CourseApplication(db.Model):
     rejection_reason = db.Column(db.Text, nullable=True)
     admin_notes = db.Column(db.Text, nullable=True)
     
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=now_local)
+    updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     reviewed_at = db.Column(db.DateTime, nullable=True)
 
     # ========== Draft Flag ==========

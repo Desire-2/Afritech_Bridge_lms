@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Course Management API Routes for Afritec Bridge LMS
 
 from datetime import datetime
@@ -1068,14 +1069,14 @@ def toggle_cohort_module_release(course_id, cohort_id, module_id):
         if action == "release":
             if existing:
                 existing.is_released = True
-                existing.released_at = datetime.utcnow()
+                existing.released_at = now_local()
                 existing.released_by = current_user_id
             else:
                 cmr = CohortModuleRelease(
                     cohort_id=cohort_id,
                     module_id=module_id,
                     is_released=True,
-                    released_at=datetime.utcnow(),
+                    released_at=now_local(),
                     released_by=current_user_id
                 )
                 db.session.add(cmr)
@@ -1293,7 +1294,7 @@ def release_module(module_id):
 
     try:
         module.is_released = True
-        module.released_at = datetime.utcnow()
+        module.released_at = now_local()
         db.session.commit()
         logger.info(f"Module {module_id} manually released by user {current_user_id}")
 

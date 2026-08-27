@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """Forum routes for community discussions"""
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
@@ -431,7 +432,7 @@ def update_forum(current_user, forum_id):
         if 'is_pinned' in data and current_user.role.name == 'admin':
             forum.is_pinned = data['is_pinned']
         
-        forum.updated_at = datetime.utcnow()
+        forum.updated_at = now_local()
         db.session.commit()
         
         return jsonify({
@@ -464,7 +465,7 @@ def delete_forum(current_user, forum_id):
         
         # Soft delete - set is_active to False
         forum.is_active = False
-        forum.updated_at = datetime.utcnow()
+        forum.updated_at = now_local()
         
         # Also soft delete all posts in this forum
         ForumPost.query.filter_by(forum_id=forum_id).update({'is_active': False})
@@ -551,7 +552,7 @@ def create_thread(current_user, forum_id):
         db.session.add(subscription)
         
         # Update forum timestamp
-        forum.updated_at = datetime.utcnow()
+        forum.updated_at = now_local()
         
         db.session.commit()
 
@@ -768,8 +769,8 @@ def create_reply(current_user, thread_id):
         db.session.flush()
         
         # Update thread and forum timestamps
-        thread.updated_at = datetime.utcnow()
-        thread.forum.updated_at = datetime.utcnow()
+        thread.updated_at = now_local()
+        thread.forum.updated_at = now_local()
         
         db.session.commit()
 
@@ -852,7 +853,7 @@ def edit_post(current_user, post_id):
         if 'content' in data:
             post.content = data['content'].strip()
             post.is_edited = True
-            post.updated_at = datetime.utcnow()
+            post.updated_at = now_local()
         
         if 'title' in data and post.parent_post_id is None:  # Only threads can have title edited
             post.title = data['title'].strip()
@@ -896,7 +897,7 @@ def delete_post(current_user, post_id):
         
         # Soft delete
         post.is_active = False
-        post.updated_at = datetime.utcnow()
+        post.updated_at = now_local()
         
         # If it's a thread, also soft delete all replies
         if post.parent_post_id is None:
@@ -935,7 +936,7 @@ def pin_post(current_user, post_id):
         is_pinned = data.get('pinned', not post.is_pinned)
         
         post.is_pinned = is_pinned
-        post.updated_at = datetime.utcnow()
+        post.updated_at = now_local()
         
         db.session.commit()
         
@@ -971,7 +972,7 @@ def lock_post(current_user, post_id):
         is_locked = data.get('locked', not post.is_locked)
         
         post.is_locked = is_locked
-        post.updated_at = datetime.utcnow()
+        post.updated_at = now_local()
         
         db.session.commit()
         
@@ -1106,7 +1107,7 @@ def flag_post(current_user, post_id):
         
         post.is_flagged = True
         post.flag_reason = reason
-        post.updated_at = datetime.utcnow()
+        post.updated_at = now_local()
         
         db.session.commit()
 
@@ -1499,12 +1500,12 @@ def approve_post(current_user, post_id):
         if approve:
             post.is_approved = True
             post.moderated_by = current_user.id
-            post.moderated_at = datetime.utcnow()
+            post.moderated_at = now_local()
             message = 'Post approved successfully'
         else:
             post.is_active = False
             post.moderated_by = current_user.id
-            post.moderated_at = datetime.utcnow()
+            post.moderated_at = now_local()
             message = 'Post rejected successfully'
         
         db.session.commit()

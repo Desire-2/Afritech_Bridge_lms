@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 """
 Excel Grading Routes — AI-powered Excel assignment grading endpoints.
 
@@ -279,7 +280,7 @@ def review_result(result_id):
         ai_score_before_review = result.total_score
         result.instructor_reviewed = True
         result.instructor_id = instructor_id
-        result.instructor_reviewed_at = datetime.utcnow()
+        result.instructor_reviewed_at = now_local()
 
         if action == 'override':
             new_score = data.get('adjusted_score')
@@ -394,7 +395,7 @@ def review_result(result_id):
                         
                         target.modification_requested = True
                         target.modification_request_reason = modification_reason
-                        target.modification_requested_at = datetime.utcnow()
+                        target.modification_requested_at = now_local()
                         target.modification_requested_by = instructor_id
                         target.can_resubmit = True
                         # Increment the submission-level count, not the assignment-level count
@@ -1075,7 +1076,7 @@ def _apply_grade_to_submission(result: ExcelGradingResult):
 
         sub.grade = scaled
         sub.feedback = result.overall_feedback
-        sub.graded_at = datetime.utcnow()
+        sub.graded_at = now_local()
         sub.graded_by = result.instructor_id
         logger.info(
             f"Applied AI grade to {result.submission_type} submission "

@@ -1,3 +1,4 @@
+from ..utils.time_utils import now_local
 # Lesson Completion Service - Handle lesson completion requirements and validation
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
@@ -233,8 +234,8 @@ class LessonCompletionService:
             
             # Mark as completed and update timestamp
             lesson_completion.completed = True
-            lesson_completion.completed_at = datetime.utcnow()
-            lesson_completion.updated_at = datetime.utcnow()
+            lesson_completion.completed_at = now_local()
+            lesson_completion.updated_at = now_local()
             
             # Ensure minimum scores if forced completion
             if force_complete and lesson_completion.reading_progress < 90.0:
@@ -282,7 +283,7 @@ class LessonCompletionService:
                 return True  # No completion to update
             
             # Update timestamp to trigger score recalculation
-            lesson_completion.updated_at = datetime.utcnow()
+            lesson_completion.updated_at = now_local()
             
             # Check if lesson should now be considered complete
             can_complete, reason, requirements = LessonCompletionService.check_lesson_completion_requirements(
@@ -291,7 +292,7 @@ class LessonCompletionService:
             
             if can_complete and not lesson_completion.completed:
                 lesson_completion.completed = True
-                lesson_completion.completed_at = datetime.utcnow()
+                lesson_completion.completed_at = now_local()
                 current_app.logger.info(f"Lesson {lesson_id} auto-completed for student {student_id} after grading")
             
             db.session.commit()
