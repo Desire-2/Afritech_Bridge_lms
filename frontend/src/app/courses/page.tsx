@@ -134,9 +134,6 @@ const PublicCoursesPage: React.FC = () => {
             <Link href="/courses" className="font-medium text-white">
               Courses
             </Link>
-            <Link href="/opportunities" className="text-slate-400 transition-colors hover:text-white">
-              Opportunities
-            </Link>
           </nav>
 
           <Link
@@ -165,8 +162,7 @@ const PublicCoursesPage: React.FC = () => {
         <div className="catalog-container relative grid gap-12 py-16 sm:py-20 lg:grid-cols-[1.12fr_0.88fr] lg:items-center lg:gap-16 lg:py-24">
           <div className="max-w-3xl">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/[0.07] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-cyan-200" aria-hidden="true" />
-              Afritech Bridge learning
+              
             </div>
             <h1 className="max-w-4xl text-4xl font-semibold leading-[0.98] tracking-[-0.065em] text-white sm:text-6xl lg:text-[5.35rem]">
               Build skills that move you forward.
