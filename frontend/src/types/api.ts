@@ -18,7 +18,23 @@ export interface ApplicationWindowData {
   id?: number | string;
   course_id?: number;
   status: CohortStatus;
+  effective_enrollment_type?: string | null;
+  enrollment_type?: string | null;
+  scholarship_type?: string | null;
+  payment_mode?: string | null;
+  effective_price?: number | null;
+  price?: number | null;
+  currency?: string | null;
+  effective_currency?: string | null;
+  partial_payment_amount?: number | null;
+  partial_payment_percentage?: number | null;
+  scholarship_percentage?: number | null;
+  payment_methods?: string[];
+  payment_summary?: any;
+  max_students?: number | null;
+  enrollment_count?: number;
   reason?: string | null;
+  description?: string | null;
   cohort_label?: string | null;
   opens_at?: string | null;
   closes_at?: string | null;
@@ -27,16 +43,6 @@ export interface ApplicationWindowData {
   status_override?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
-}
-
-export interface CohortStatus {
-  status: 'open' | 'closed' | 'upcoming';
-  reason?: string | null;
-  opens_at?: string | null;
-  closes_at?: string | null;
-  cohort_start?: string | null;
-  cohort_end?: string | null;
-  cohort_label?: string | null;
 }
 
 export type CohortStatus = 'open' | 'closed' | 'upcoming';
@@ -71,6 +77,7 @@ export interface Course {
   bank_transfer_enabled?: boolean;
   require_payment_before_application?: boolean;
   payment_summary?: any;
+  skill_assessment_config?: SkillAssessmentConfig;
   // Application / cohort fields
   application_start_date?: string | null;
   application_end_date?: string | null;

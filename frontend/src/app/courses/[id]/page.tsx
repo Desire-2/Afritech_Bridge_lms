@@ -97,7 +97,7 @@ interface Course {
   learning_outcomes?: string[];
   prerequisites?: string[];
   category?: string;
-  price?: number;
+  price?: number | null;
   rating?: number;
   total_students?: number;
   is_published?: boolean;
@@ -1565,4 +1565,3 @@ export default function CourseDetailPage({ params }: { params: Promise<{ id: str
     </div>
   );
 }
-

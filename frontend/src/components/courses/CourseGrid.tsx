@@ -1,6 +1,8 @@
 'use client';
+
 import React from 'react';
 import Link from 'next/link';
+import { AlertTriangle, ArrowRight, BookOpen, SearchX } from 'lucide-react';
 import { Course } from '@/types/api';
 import { CourseCard } from './CourseCard';
 
@@ -13,6 +15,20 @@ interface CourseGridProps {
   onRetry: () => void;
 }
 
+const CourseSkeleton = () => (
+  <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0d131e]">
+    <div className="aspect-[16/10] animate-pulse bg-white/[0.06]" />
+    <div className="space-y-4 p-5">
+      <div className="h-3 w-24 animate-pulse rounded bg-white/[0.08]" />
+      <div className="h-6 w-4/5 animate-pulse rounded bg-white/[0.08]" />
+      <div className="h-10 w-full animate-pulse rounded bg-white/[0.06]" />
+      <div className="h-10 w-full animate-pulse rounded bg-white/[0.06]" />
+      <div className="h-14 w-full animate-pulse rounded-xl bg-white/[0.06]" />
+      <div className="h-11 w-full animate-pulse rounded-xl bg-white/[0.08]" />
+    </div>
+  </div>
+);
+
 export const CourseGrid: React.FC<CourseGridProps> = ({
   courses,
   totalCourses = 0,
@@ -21,110 +37,84 @@ export const CourseGrid: React.FC<CourseGridProps> = ({
   onClearFilters,
   onRetry,
 }) => {
-  // Loading state
   if (isLoading) {
     return (
-      <div className="py-12 sm:py-20 flex items-center justify-center">
-        <div className="text-center px-4">
-          <div className="animate-spin rounded-full h-8 w-8 sm:h-10 sm:w-10 border-b-2 border-sky-500 mx-auto mb-3"></div>
-          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">Loading courses...</p>
-        </div>
+      <div aria-label="Loading courses" className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => <CourseSkeleton key={index} />)}
       </div>
     );
   }
 
-  // Error state
   if (error) {
     return (
-      <div className="py-12 sm:py-16">
-        <div className="bg-red-50 border border-red-200 rounded-xl p-5 sm:p-6 max-w-sm mx-auto text-center dark:bg-red-900/20 dark:border-red-800">
-          <div className="text-2xl sm:text-4xl mb-3">⚠️</div>
-          <p className="text-xs sm:text-sm text-red-700 dark:text-red-300 mb-4">{error}</p>
-          <button
-            onClick={onRetry}
-            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors active:scale-[0.97]"
-          >
-            Try Again
-          </button>
-        </div>
+      <div className="mx-auto max-w-xl rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] px-6 py-12 text-center">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-300/20 bg-rose-300/10 text-rose-200">
+          <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <h3 className="mt-5 text-lg font-semibold text-white">Something went wrong while loading courses.</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-400">{error}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-6 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
+        >
+          Try again
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
     );
   }
 
-  // Empty state - no courses at all
   if (totalCourses === 0 && courses.length === 0) {
     return (
-      <div className="py-12 sm:py-16 px-4">
-        <div className="bg-white border border-zinc-200 rounded-xl p-6 sm:p-8 max-w-sm mx-auto text-center dark:bg-zinc-800/50 dark:border-zinc-700">
-          <div className="text-3xl sm:text-5xl mb-4">📚</div>
-          <h3 className="text-sm sm:text-lg font-bold text-zinc-900 dark:text-white mb-2">
-            No Courses Available
-          </h3>
-          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-            Check back soon or sign in to get notified!
-          </p>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <Link
-              href="/auth/login"
-              className="px-4 py-2.5 sm:py-2 bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-medium rounded-lg transition-colors active:scale-[0.97]"
-            >
-              Sign In
-            </Link>
-            <Link
-              href="/auth/register"
-              className="px-4 py-2.5 sm:py-2 border border-sky-300 hover:bg-sky-50 text-sky-600 text-xs sm:text-sm font-medium rounded-lg transition-colors dark:border-sky-700 dark:hover:bg-sky-900/20 dark:text-sky-400 active:scale-[0.97]"
-            >
-              Create Account
-            </Link>
-          </div>
-        </div>
+      <div className="mx-auto max-w-xl rounded-2xl border border-white/[0.09] bg-white/[0.03] px-6 py-12 text-center">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-300/20 bg-cyan-300/10 text-cyan-200">
+          <BookOpen className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <h3 className="mt-5 text-lg font-semibold text-white">No courses available yet.</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-400">Check back soon or sign in to get notified about new learning paths.</p>
+        <Link
+          href="/auth/login"
+          className="mt-6 inline-flex items-center gap-2 rounded-xl bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition-colors hover:bg-cyan-200 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
+        >
+          Sign in
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
       </div>
     );
   }
 
-  // Empty search/filter results
   if (courses.length === 0) {
     return (
-      <div className="py-12 sm:py-16 px-4">
-        <div className="bg-white border border-zinc-200 rounded-xl p-6 sm:p-8 max-w-sm mx-auto text-center dark:bg-zinc-800/50 dark:border-zinc-700">
-          <div className="text-2xl sm:text-4xl mb-3">🔍</div>
-          <h3 className="text-sm sm:text-base font-bold text-zinc-900 dark:text-white mb-2">
-            No matching courses
-          </h3>
-          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-            Try adjusting your search or filters.
-          </p>
-          <button
-            onClick={onClearFilters}
-            className="w-full sm:w-auto px-4 py-2.5 sm:py-2 bg-sky-100 text-sky-700 text-xs sm:text-sm font-medium rounded-lg hover:bg-sky-200 transition-colors dark:bg-sky-900/30 dark:text-sky-300 dark:hover:bg-sky-900/50 active:scale-[0.97]"
-          >
-            Clear all filters
-          </button>
-        </div>
+      <div className="mx-auto max-w-xl rounded-2xl border border-white/[0.09] bg-white/[0.03] px-6 py-12 text-center">
+        <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05] text-slate-300">
+          <SearchX className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <h3 className="mt-5 text-lg font-semibold text-white">No courses match your search.</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-400">Try a different skill, topic, or availability filter.</p>
+        <button
+          type="button"
+          onClick={onClearFilters}
+          className="mt-6 inline-flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-4 py-2.5 text-sm font-semibold text-cyan-100 transition-colors hover:bg-cyan-300/15 focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
+        >
+          Clear filters
+          <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
     );
   }
 
-  // Course grid
   return (
     <div>
-      {/* Header row */}
-      <div className="flex items-center justify-between mb-3 sm:mb-5">
-        <h2 className="text-sm sm:text-lg font-bold text-zinc-900 dark:text-white">
-          Courses
-          <span className="ml-1.5 sm:ml-2 text-xs sm:text-sm font-normal text-zinc-500 dark:text-zinc-400">
-            ({courses.length})
-          </span>
-        </h2>
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-white">Available courses</p>
+          <p className="mt-1 text-xs text-slate-500">{courses.length} {courses.length === 1 ? 'result' : 'results'} in the library</p>
+        </div>
+        <span className="hidden h-1.5 w-1.5 rounded-full bg-cyan-300/70 shadow-[0_0_10px_rgba(103,232,249,0.75)] sm:block" aria-hidden="true" />
       </div>
-
-      {/* Responsive grid: 1 col mobile, 2 cols sm, 3 cols lg, 4 cols xl */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {courses.map((course) => (
-          <div key={course.id} className="flex flex-col">
-            <CourseCard course={course} />
-          </div>
-        ))}
+      <div className="grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {courses.map((course) => <CourseCard key={course.id} course={course} />)}
       </div>
     </div>
   );

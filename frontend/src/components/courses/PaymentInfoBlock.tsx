@@ -1,10 +1,11 @@
 import React from 'react';
+import { Check, CreditCard, GraduationCap } from 'lucide-react';
 import { Course, ApplicationWindowData } from '@/types/api';
-import { 
-  getCohortPaymentTier, 
-  getCohortAmountDue, 
-  getCohortScholarshipCover, 
-  getCohortCurrency 
+import {
+  getCohortAmountDue,
+  getCohortCurrency,
+  getCohortPaymentTier,
+  getCohortScholarshipCover,
 } from '@/types/course-tiers';
 
 interface PaymentInfoBlockProps {
@@ -13,68 +14,89 @@ interface PaymentInfoBlockProps {
   className?: string;
 }
 
+const formatAmount = (currency: string, amount?: number | null): string => {
+  if (amount == null || amount <= 0) return 'Price on request';
+  return `${currency} ${amount.toLocaleString()}`;
+};
+
 export const PaymentInfoBlock: React.FC<PaymentInfoBlockProps> = ({ course, window: win, className = '' }) => {
   const tier = getCohortPaymentTier(win, course);
   const currency = getCohortCurrency(win, course);
+  const paymentSummary = win?.payment_summary ?? course.payment_summary;
+  const originalPrice = paymentSummary?.original_price ?? win?.price ?? course.price;
+  const enrollmentType = win?.effective_enrollment_type ?? win?.enrollment_type ?? course.enrollment_type;
+  const isScholarshipBacked = enrollmentType === 'scholarship' || tier === 'scholarship';
 
   if (tier === 'free') {
     return (
-      <div className={`flex items-center gap-2 px-2.5 py-1.5 bg-emerald-50/80 border border-emerald-200/60 rounded-lg text-xs dark:bg-emerald-900/15 dark:border-emerald-800/40 ${className}`}>
-        <span className="text-emerald-700 dark:text-emerald-300 font-semibold">Free</span>
-        <span className="text-emerald-600/70 dark:text-emerald-400/70">· No payment</span>
+      <div className={`rounded-xl border border-emerald-300/20 bg-emerald-300/[0.07] p-3.5 ${className}`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-200">
+            <Check className="h-4 w-4" aria-hidden="true" />
+            Free access
+          </span>
+          <span className="text-sm font-semibold text-emerald-100">No payment</span>
+        </div>
       </div>
     );
   }
 
   if (tier === 'scholarship') {
     return (
-      <div className={`px-2.5 py-1.5 bg-amber-50/80 border border-amber-200/60 rounded-lg dark:bg-amber-900/15 dark:border-amber-800/40 ${className}`}>
-        <div className="flex items-center gap-1.5">
-          <span className="text-amber-700 dark:text-amber-300 font-semibold text-xs">Fully Covered</span>
-          <span className="text-amber-600/70 dark:text-amber-400/70 text-[10px]">· Competitive</span>
+      <div className={`rounded-xl border border-cyan-300/20 bg-cyan-300/[0.07] p-3.5 ${className}`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-cyan-200">
+            <GraduationCap className="h-4 w-4" aria-hidden="true" />
+            Scholarship supported
+          </span>
+          <span className="text-sm font-semibold text-white">Fully covered</span>
         </div>
+        {originalPrice != null && originalPrice > 0 && (
+          <p className="mt-2 text-xs text-slate-400">Course value {formatAmount(currency, originalPrice)}</p>
+        )}
       </div>
     );
   }
 
   if (tier === 'partial_scholarship') {
     const amountDue = getCohortAmountDue(win, course);
-    const scholarshipCover = getCohortScholarshipCover(win, course);
+    const scholarshipCover = isScholarshipBacked ? getCohortScholarshipCover(win, course) : null;
+
     return (
-      <div className={`px-2.5 py-1.5 bg-violet-50/80 border border-violet-200/60 rounded-lg dark:bg-violet-900/15 dark:border-violet-800/40 ${className}`}>
-        <div className="flex items-center justify-between text-xs">
-          <div>
-            <span className="text-violet-600 dark:text-violet-400 font-semibold">You pay </span>
-            <span className="text-violet-700 dark:text-violet-300 font-bold">
-              {amountDue > 0 ? `${currency} ${amountDue.toLocaleString()}` : 'TBD'}
-            </span>
-          </div>
+      <div className={`rounded-xl border border-violet-300/20 bg-violet-300/[0.07] p-3.5 ${className}`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-violet-200">
+            {isScholarshipBacked ? <GraduationCap className="h-4 w-4" aria-hidden="true" /> : <CreditCard className="h-4 w-4" aria-hidden="true" />}
+            {isScholarshipBacked ? 'Scholarship supported' : 'Flexible payment'}
+          </span>
           {scholarshipCover != null && scholarshipCover > 0 && (
-            <div>
-              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">Covers </span>
-              <span className="text-emerald-700 dark:text-emerald-300 font-bold">
-                {currency} {scholarshipCover.toLocaleString()}
-              </span>
-            </div>
+            <span className="text-[11px] font-semibold text-emerald-300">Save {formatAmount(currency, scholarshipCover)}</span>
+          )}
+        </div>
+        <div className="mt-3 flex items-end justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Pay now</p>
+            <p className="mt-1 text-lg font-semibold tracking-[-0.03em] text-white">{formatAmount(currency, amountDue)}</p>
+          </div>
+          {originalPrice != null && originalPrice > amountDue && (
+            <p className="text-right text-xs text-slate-500">Original value<br /><span className="text-slate-400">{formatAmount(currency, originalPrice)}</span></p>
           )}
         </div>
       </div>
     );
   }
 
-  // full_tuition
-  const fullPrice = win?.payment_summary?.amount_due_now ?? win?.effective_price ?? course?.payment_summary?.amount_due_now ?? course?.price;
+  const amountDue = getCohortAmountDue(win, course);
   return (
-    <div className={`flex items-center justify-between px-2.5 py-1.5 bg-sky-50/80 border border-sky-200/60 rounded-lg dark:bg-sky-900/15 dark:border-sky-800/40 ${className}`}>
-      <div className="flex items-center gap-1.5 text-xs">
-        <span className="text-sky-600 dark:text-sky-400 font-semibold">Tuition</span>
-        <span className="text-sky-700 dark:text-sky-300 font-bold">
-          {fullPrice != null && fullPrice > 0
-            ? `${currency} ${fullPrice.toLocaleString()}`
-            : 'Price on request'}
+    <div className={`rounded-xl border border-blue-300/20 bg-blue-300/[0.07] p-3.5 ${className}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-blue-200">
+          <CreditCard className="h-4 w-4" aria-hidden="true" />
+          Tuition
         </span>
+        <span className="text-[11px] text-slate-500">One-time</span>
       </div>
-      <span className="text-[10px] text-zinc-500 dark:text-zinc-400">One-time</span>
+      <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-white">{formatAmount(currency, amountDue)}</p>
     </div>
   );
 };

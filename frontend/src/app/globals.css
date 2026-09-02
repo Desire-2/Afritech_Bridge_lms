@@ -3,7 +3,30 @@
 @tailwind utilities;
 
 body {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+.catalog-container {
+  width: calc(100% - 2rem);
+  max-width: 1440px;
+  margin-inline: auto;
+}
+
+@media (min-width: 640px) {
+  .catalog-container {
+    width: calc(100% - 3rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalog-page *,
+  .catalog-page *::before,
+  .catalog-page *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @layer base {
