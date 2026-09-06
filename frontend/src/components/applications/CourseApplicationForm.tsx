@@ -1444,14 +1444,14 @@ export default function CourseApplicationForm({
     <div className="space-y-6">
       {/* Duplicate Application Warning */}
       {existingApplication && (
-        <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 shadow-lg rounded-xl">
-          <AlertTriangle className="h-6 w-6 text-amber-600" />
+        <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 text-amber-950 shadow-lg rounded-xl">
+          <AlertTriangle className="h-6 w-6 !text-amber-600" />
           <AlertDescription className="ml-2">
             <div className="space-y-3">
-              <p className="font-bold text-amber-900 dark:text-amber-200 text-lg">
+              <p className="font-bold text-amber-950 text-lg">
                 You have already applied for this course!
               </p>
-              <p className="text-sm text-amber-700 dark:text-amber-400 pt-2 bg-white/50 p-3 rounded-lg">
+              <p className="text-sm text-amber-800 pt-2 bg-white/70 p-3 rounded-lg">
                 Please check your email ({formData.email}) for updates on your application status.
                 You cannot submit multiple applications for the same course.
               </p>
@@ -3167,6 +3167,7 @@ export default function CourseApplicationForm({
               onRestore={handleRestoreDraft}
               onDiscard={handleDiscardDraft}
               className="mb-6"
+              lightTheme
               message={`✅ Your previous progress was restored${draftSavedAt ? ` (saved ${draftSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ''}. You are on section ${currentSection} of ${totalSections}.`}
               restoreLabel="Keep Progress"
               discardLabel="Start Over"

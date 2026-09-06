@@ -237,6 +237,8 @@ interface DraftRestoreBannerProps {
   message?: string;
   restoreLabel?: string;
   discardLabel?: string;
+  /** Keep the banner readable when it is rendered inside a light form surface. */
+  lightTheme?: boolean;
 }
 
 export const DraftRestoreBanner: React.FC<DraftRestoreBannerProps> = ({
@@ -246,15 +248,19 @@ export const DraftRestoreBanner: React.FC<DraftRestoreBannerProps> = ({
   message = 'You have an unsaved draft. Would you like to restore it?',
   restoreLabel = 'Restore',
   discardLabel = 'Discard',
+  lightTheme = false,
 }) => (
   <div
     className={cn(
-      'flex items-center justify-between gap-4 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 px-4 py-3',
+      'flex items-center justify-between gap-4 rounded-lg border px-4 py-3',
+      lightTheme
+        ? 'border-blue-200 bg-blue-50'
+        : 'border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20',
       className
     )}
     role="alert"
   >
-    <p className="text-sm text-blue-800 dark:text-blue-200">
+    <p className={cn('text-sm', lightTheme ? 'text-blue-900' : 'text-blue-800 dark:text-blue-200')}>
       {message}
     </p>
     <div className="flex shrink-0 gap-2">
@@ -268,7 +274,12 @@ export const DraftRestoreBanner: React.FC<DraftRestoreBannerProps> = ({
       <button
         type="button"
         onClick={onDiscard}
-        className="rounded px-3 py-1 text-xs font-medium border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors"
+        className={cn(
+          'rounded px-3 py-1 text-xs font-medium border transition-colors',
+          lightTheme
+            ? 'border-blue-300 text-blue-700 hover:bg-blue-100'
+            : 'border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900'
+        )}
       >
         {discardLabel}
       </button>

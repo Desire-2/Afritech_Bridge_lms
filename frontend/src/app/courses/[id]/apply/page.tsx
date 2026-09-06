@@ -371,7 +371,7 @@ export default function CourseApplicationPage() {
               </aside>
             </div>
 
-            <section className="mt-8 overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0d131e]" aria-labelledby="application-form-heading">
+            <section className="mt-12 overflow-hidden rounded-2xl border border-white/[0.1] bg-[#0d131e] lg:mt-16" aria-labelledby="application-form-heading">
               <div className="flex flex-col gap-3 border-b border-white/[0.08] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300/70">Application</p>
@@ -383,24 +383,26 @@ export default function CourseApplicationPage() {
                 </Badge>
               </div>
 
-              <div className="bg-white p-3 text-slate-900 sm:p-6">
-                {/* PROTECTED APPLICATION FORM: keep this component and its props/functionality unchanged. */}
-                <CourseApplicationForm
-                  courseId={courseId}
-                  courseTitle={course.title}
-                  courseData={course}
-                  selectedWindow={selectedWindow}
-                  skillAssessmentConfig={(course as any).skill_assessment_config}
-                  onSuccess={(applicationId) => {
-                    console.log('Application submitted:', applicationId);
-                    setTimeout(() => {
-                      router.push('/courses');
-                    }, 5000);
-                  }}
-                  onCancel={() => {
-                    router.back();
-                  }}
-                />
+              <div className="bg-white px-4 py-8 text-slate-900 sm:px-8 sm:py-10 lg:px-12 lg:py-12">
+                <div className="mx-auto w-full max-w-5xl">
+                  {/* PROTECTED APPLICATION FORM: keep this component and its props/functionality unchanged. */}
+                  <CourseApplicationForm
+                    courseId={courseId}
+                    courseTitle={course.title}
+                    courseData={course}
+                    selectedWindow={selectedWindow}
+                    skillAssessmentConfig={(course as any).skill_assessment_config}
+                    onSuccess={(applicationId) => {
+                      console.log('Application submitted:', applicationId);
+                      setTimeout(() => {
+                        router.push('/courses');
+                      }, 5000);
+                    }}
+                    onCancel={() => {
+                      router.back();
+                    }}
+                  />
+                </div>
               </div>
             </section>
           </>
