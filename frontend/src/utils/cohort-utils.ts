@@ -26,7 +26,9 @@ export function computeWindowStatus(window?: ApplicationWindowData | null): Coho
   if (opens && !Number.isNaN(opens.getTime()) && now < opens) return 'upcoming';
   if (closes && !Number.isNaN(closes.getTime()) && now > closes) return 'closed';
   if (cohortEnd && !Number.isNaN(cohortEnd.getTime()) && now > cohortEnd) return 'closed';
-  return 'open';
+  // Keep the backend status when there are no dates to derive a live status
+  // from. This prevents a backend-closed cohort from being treated as open.
+  return window.status || 'closed';
 }
 
 // ---------------------------------------------------------------------------
