@@ -1,0 +1,55 @@
+services:
+  backend:
+    build:
+      context: ../backend
+    container_name: afritech-ops-backend
+    environment:
+      FLASK_CONFIG: production
+      DATABASE_URL: postgresql://afritech:afritech@db:5432/afritech_operations
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:-change-me-too}
+      CORS_ORIGINS: http://localhost:3001
+      BUSINESS_NAME: ${BUSINESS_NAME:-AfriTech Bridge Operations}
+      CURRENCY: ${CURRENCY:-RWF}
+      DEFAULT_COMMISSION_RATE: ${DEFAULT_COMMISSION_RATE:-0.20}
+      LMS_API_URL: ${LMS_API_URL:-}
+      LMS_API_KEY: ${LMS_API_KEY:-}
+    ports:
+      - "5000:5000"
+    volumes:
+      - uploads-data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:5000
+    container_name: afritech-ops-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:5000
+    ports:
+      - "3001:3001"
+    depends_on:
+      - backend
+
+  db:
+    image: postgres:16-alpine
+    container_name: afritech-ops-db
+    environment:
+      POSTGRES_USER: afritech
+      POSTGRES_PASSWORD: afritech
+      POSTGRES_DB: afritech_operations
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U afritech -d afritech_operations"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pg-data:
+  uploads-data:

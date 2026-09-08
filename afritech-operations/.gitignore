@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.pytest_cache/
+.venv/
+
+# Databases
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# Logs & uploads
+*.log
+uploads/*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
