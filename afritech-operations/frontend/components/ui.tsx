@@ -169,10 +169,14 @@ export function Modal({
   size?: 'sm' | 'lg' | 'xl';
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
   useEffect(() => {
     if (!show) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
@@ -181,7 +185,8 @@ export function Modal({
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
     };
-  }, [show, onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show]);
 
   if (!show) return null;
   const cls = size === 'sm' ? 'modal-sm' : size === 'xl' ? 'modal-xl' : 'modal-lg';

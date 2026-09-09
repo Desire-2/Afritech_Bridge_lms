@@ -67,6 +67,7 @@ python app.py                # API on http://localhost:5000
 ```bash
 cd frontend
 npm install
+cp .env.example .env        # NEXT_PUBLIC_API_URL (defaults to http://localhost:5000)
 npm run dev                  # http://localhost:3001  (proxies /api → :5000)
 ```
 
@@ -81,6 +82,37 @@ npm run dev                  # http://localhost:3001  (proxies /api → :5000)
 | `instructor@afritech.dev` | instructor |
 
 ---
+
+## Environment configuration (secrets in `.env`)
+
+Configuration and secrets are loaded from `.env` files, so nothing secret is
+hard-coded. Both files are gitignored.
+
+| File                     | Loader                                                                  |
+|--------------------------|-------------------------------------------------------------------------|
+| `afritech-operations/.env`  | Backend (`backend/config.py` → `python-dotenv`), copied from `.env.example` |
+| `frontend/.env`             | Next.js (native, at build/run time), copied from `frontend/.env.example`    |
+
+- **Backend** loads `.env` from the project root at import time. Real
+  OS-level variables (Docker, Heroku, CI) always take precedence over the file.
+  Key settings: `SECRET_KEY`, `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`,
+  `LMS_API_KEY`.
+- **Frontend** only exposes `NEXT_PUBLIC_*` values to the browser/clients.
+  `NEXT_PUBLIC_API_URL` drives the dev/prod rewrites for `/api` and `/uploads`.
+  In Docker builds, pass it as a build arg (compose reads it from `.env`).
+
+```bash
+# first-time setup — never commit the real .env files
+cp .env.example .env
+cp frontend/.env.example frontend/.env
+```
+
+Secrets reference for the stack: `docker/docker-compose.yml` interpolates
+`SECRET_KEY`, `JWT_SECRET`, `LMS_API_URL`, `LMS_API_KEY`, `BUSINESS_NAME`,
+`CURRENCY`, `DEFAULT_COMMISSION_RATE`, and `NEXT_PUBLIC_API_URL` from the
+project `.env`. The compose stack also ships a `redis` service backing the
+rate limiter (production defaults to `redis://localhost:6379/0` unless
+`RATELIMIT_STORAGE_URI` is overridden; dev/test use `memory://`).
 
 ## Tests
 

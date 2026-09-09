@@ -1,9 +1,27 @@
 import os
+from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 
-basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
-load_dotenv(os.path.join(os.path.dirname(basedir), '.env'))
+
+def _env_file() -> Path:
+    """Resolve the project `.env` (…/afritech-operations/.env).
+
+    OS-level environment variables (Docker, Heroku, CI) always win:
+    `load_dotenv` only fills in values that are not already set.
+    """
+    here = Path(__file__).resolve().parent  # backend/
+    root = here.parent                      # project root
+    for candidate in (root / '.env', Path.cwd() / '.env'):
+        if candidate.is_file():
+            return candidate
+    return root / '.env'
+
+
+load_dotenv(_env_file())
+
+# Project root (…/afritech-operations) — used for uploads and SQLite defaults.
+basedir = Path(__file__).resolve().parent.parent
 
 
 class Config:
@@ -13,15 +31,18 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=int(os.environ.get('JWT_ACCESS_HOURS', '12')))
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=int(os.environ.get('JWT_REFRESH_DAYS', '14')))
     UPLOAD_FOLDER = os.path.join(basedir, 'uploads')
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024
+    MAX_CONTENT_LENGTH = int(os.environ.get('MAX_CONTENT_LENGTH', str(16 * 1024 * 1024)))
     RATE_LIMIT_DEFAULT = os.environ.get('RATE_LIMIT_DEFAULT', '200 per hour;1000 per day')
     RATE_LIMIT_AUTH = os.environ.get('RATE_LIMIT_AUTH', '10 per minute')
+    # Rate-limit storage backend URI. `memory://` is single-process only;
+    # production should use Redis (see ProductionConfig / docker-compose).
+    RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI', 'memory://')
     BUSINESS_NAME = os.environ.get('BUSINESS_NAME', 'AfriTech Bridge Operations')
     CURRENCY = os.environ.get('CURRENCY', 'RWF')
     TIMEZONE = os.environ.get('TIMEZONE', 'Africa/Kigali')
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*')
     DEFAULT_COMMISSION_RATE = float(os.environ.get('DEFAULT_COMMISSION_RATE', '0.20'))
-    PASSWORD_RESET_TOKEN_MINUTES = 30
+    PASSWORD_RESET_TOKEN_MINUTES = int(os.environ.get('PASSWORD_RESET_TOKEN_MINUTES', '30'))
 
     # LMS integration
     LMS_API_URL = os.environ.get('LMS_API_URL', '')
@@ -49,6 +70,8 @@ class ProductionConfig(Config):
     DEBUG = False
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'postgresql://localhost/afritech_operations')
     RATE_LIMIT_DEFAULT = os.environ.get('RATE_LIMIT_DEFAULT', '200 per hour;1000 per day')
+    # Multi-process production needs a shared rate-limit store (Redis).
+    RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI', 'redis://localhost:6379/0')
 
     @staticmethod
     def init_app(app):

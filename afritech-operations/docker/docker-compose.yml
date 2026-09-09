@@ -14,6 +14,7 @@ services:
       DEFAULT_COMMISSION_RATE: ${DEFAULT_COMMISSION_RATE:-0.20}
       LMS_API_URL: ${LMS_API_URL:-}
       LMS_API_KEY: ${LMS_API_KEY:-}
+      RATELIMIT_STORAGE_URI: redis://redis:6379/0
     ports:
       - "5000:5000"
     volumes:
@@ -21,15 +22,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
 
   frontend:
     build:
       context: ../frontend
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:5000
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000}
     container_name: afritech-ops-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:5000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:5000}
     ports:
       - "3001:3001"
     depends_on:
@@ -48,6 +51,16 @@ services:
       test: ["CMD-SHELL", "pg_isready -U afritech -d afritech_operations"]
       interval: 5s
       timeout: 5s
+      retries: 10
+
+redis:
+    image: redis:7-alpine
+    container_name: afritech-ops-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 10
 
 volumes:
