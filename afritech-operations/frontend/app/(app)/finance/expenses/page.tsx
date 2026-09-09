@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { useFetch, todayIso, yearAgoIso } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate } from '@/lib/api';
+import { api, fmtMoney, fmtDate, can } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge, Modal } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea, DateRange } from '@/components/form';
 
 export default function ExpensesPage() {
+  const { user } = useAuth();
+  const canApprove = can(user, 'expenses.approve');
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
   const [start, setStart] = useState(yearAgoIso());
@@ -110,7 +113,7 @@ export default function ExpensesPage() {
                       <td className="text-end money fw-semibold">{fmtMoney(x.amount)}</td>
                       <td><Badge status={x.status} /></td>
                       <td className="text-end">
-                        {x.status === 'pending' && (
+                        {x.status === 'pending' && canApprove && (
                           <button className="btn btn-sm btn-outline-primary" onClick={() => setReviewing(x)}>Approve / reject</button>
                         )}
                       </td>
@@ -169,7 +172,7 @@ export default function ExpensesPage() {
         </form>
       </Modal>
 
-      <Modal show={!!reviewing} title={`Review expense — ${fmtMoney(reviewing?.amount)}`} onClose={() => setReviewing(null)}
+      <Modal show={canApprove && !!reviewing} title={`Review expense — ${fmtMoney(reviewing?.amount)}`} onClose={() => setReviewing(null)}
         footer={
           <>
             <button className="btn btn-outline-secondary" onClick={() => setReviewing(null)}>Close</button>
