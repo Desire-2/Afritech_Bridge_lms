@@ -6,6 +6,7 @@ from sqlalchemy import func, and_
 from datetime import datetime
 import logging
 import threading
+from typing import Optional
 
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role
@@ -917,9 +918,14 @@ def get_student_analysis():
     
     # Create new background task
     try:
+        course_id = request.args.get('course_id', type=int)
+        application_window_id = request.args.get('application_window_id', type=int)
+        
         task_id = background_service.create_task(
             _perform_student_analysis,
-            current_user_id
+            current_user_id,
+            course_id,
+            application_window_id
         )
         
         return jsonify({
@@ -972,11 +978,15 @@ def get_inactive_students():
     # Create new background task
     try:
         threshold_days = request.args.get('threshold_days', 7, type=int)
+        course_id = request.args.get('course_id', type=int)
+        application_window_id = request.args.get('application_window_id', type=int)
         
         task_id = background_service.create_task(
             _fetch_inactive_students,
             current_user_id,
-            threshold_days
+            threshold_days,
+            course_id,
+            application_window_id
         )
         
         return jsonify({
@@ -1075,68 +1085,63 @@ def get_inactive_students_status(task_id):
         }), 500
 
 
-def _perform_student_analysis(instructor_id: int):
-    """Background task function for student analysis"""
+def _perform_student_analysis(instructor_id: int, course_id: Optional[int] = None,
+                              application_window_id: Optional[int] = None):
+    """Background task function for student analysis (optionally cohort-scoped)"""
     from ..services.inactivity_service import InactivityService
     from ..services.analytics_service import AnalyticsService
-    
-    # Get all students in instructor's courses
-    courses = Course.query.filter_by(instructor_id=instructor_id).all()
-    course_ids = [c.id for c in courses]
-    
-    if not course_ids:
-        return {
-            "total_students": 0,
-            "active_students": 0,
-            "inactive_students": 0,
-            "at_risk_students": 0,
-            "students_by_course": {},
-            "activity_trends": [],
-            "recommendations": []
-        }
-    
-    # Get enrollments for instructor's courses
-    enrollments = Enrollment.query.filter(
-        Enrollment.course_id.in_(course_ids),
-        Enrollment.status == 'active'
-    ).all()
-    
-    total_students = len(enrollments)
-    
-    # Get inactive students (7+ days)
+
+    # Build the enrollment scope matching InactivityService
+    enrollment_query = Enrollment.query.filter(Enrollment.status == 'active')
+    if course_id:
+        enrollment_query = enrollment_query.filter(Enrollment.course_id == course_id)
+    if application_window_id:
+        enrollment_query = enrollment_query.filter(
+            Enrollment.application_window_id == application_window_id
+        )
+
+    enrollments = enrollment_query.all()
+    total_enrollments = len(enrollments)
+
+    # Get inactive students (7+ days) scoped to the same cohort/course
     inactive_students = InactivityService.get_inactive_students(
         instructor_id=instructor_id,
-        threshold_days=7
+        threshold_days=7,
+        course_id=course_id,
+        application_window_id=application_window_id
     )
-    
-    # Get at-risk students (5-6 days inactive)
+    inactive_ids = {s['student_id'] for s in inactive_students}
+
+    # Get at-risk students (5-6 days inactive), same scope, excluding already-inactive
     at_risk_students = InactivityService.get_inactive_students(
         instructor_id=instructor_id,
-        threshold_days=5
+        threshold_days=5,
+        course_id=course_id,
+        application_window_id=application_window_id
     )
-    # Filter out already inactive students by student_id
-    inactive_student_ids = {s['student_id'] for s in inactive_students}
-    at_risk_students = [s for s in at_risk_students if s['student_id'] not in inactive_student_ids]
-    
-    # Calculate active students
-    active_students = total_students - len(inactive_students)
-    
+    at_risk_students = [s for s in at_risk_students if s['student_id'] not in inactive_ids]
+
+    # Count active enrollments = scoped enrollments whose student is not inactive
+    active_enrollments = [e for e in enrollments if e.student_id not in inactive_ids]
+    active_students = len(active_enrollments)
+    unique_students = len({e.student_id for e in enrollments})
+
     # Group students by course
+    courses_in_scope = Course.query.filter_by(instructor_id=instructor_id).all()
     students_by_course = {}
-    for course in courses:
+    for course in courses_in_scope:
         course_enrollments = [e for e in enrollments if e.course_id == course.id]
-        course_inactive = [s for s in inactive_students if any(
-            c['course_id'] == course.id for c in s['enrolled_courses']
-        )]
-        
+        course_inactive = [e for e in course_enrollments if e.student_id in inactive_ids]
+
         students_by_course[course.title] = {
             'course_id': course.id,
+            'application_window_id': application_window_id,
             'total': len(course_enrollments),
             'active': len(course_enrollments) - len(course_inactive),
             'inactive': len(course_inactive),
             'inactive_rate': (len(course_inactive) / len(course_enrollments) * 100) if course_enrollments else 0
         }
-    
+
     # Generate recommendations
     recommendations = []
     if len(inactive_students) > 0:
@@ -1146,7 +1151,7 @@ def _perform_student_analysis(instructor_id: int):
             'message': f'{len(inactive_students)} students have been inactive for 7+ days',
             'action': 'Consider sending reminders or checking in with these students'
         })
-    
+
     if len(at_risk_students) > 0:
         recommendations.append({
             'type': 'info',
@@ -1154,34 +1159,39 @@ def _perform_student_analysis(instructor_id: int):
             'message': f'{len(at_risk_students)} students are showing decreased activity',
             'action': 'Proactive engagement may prevent these students from becoming inactive'
         })
-    
-    if len(inactive_students) / total_students > 0.2 if total_students > 0 else False:
+
+    if total_enrollments > 0 and len(inactive_students) / unique_students > 0.2:
         recommendations.append({
             'type': 'urgent',
             'title': 'High Inactivity Rate',
             'message': 'More than 20% of students are inactive',
             'action': 'Review course content and engagement strategies'
         })
-    
+
     return {
-        "total_students": total_students,
+        "total_students": total_enrollments,
+        "unique_students": unique_students,
         "active_students": active_students,
         "inactive_students": len(inactive_students),
         "at_risk_students": len(at_risk_students),
-        "activity_rate": (active_students / total_students * 100) if total_students > 0 else 0,
+        "activity_rate": (active_students / total_enrollments * 100) if total_enrollments > 0 else 0,
         "students_by_course": students_by_course,
         "recommendations": recommendations,
         "last_updated": datetime.utcnow().isoformat()
     }
 
-def _fetch_inactive_students(instructor_id: int, threshold_days: int):
+def _fetch_inactive_students(instructor_id: int, threshold_days: int,
+                             course_id: Optional[int] = None,
+                             application_window_id: Optional[int] = None):
     """Background task function for fetching inactive students"""
     from ..services.inactivity_service import InactivityService
     
-    # Get inactive students for this instructor
+    # Get inactive students for this instructor (optionally scoped to course/cohort)
     inactive_students = InactivityService.get_inactive_students(
         instructor_id=instructor_id,
-        threshold_days=threshold_days
+        threshold_days=threshold_days,
+        course_id=course_id,
+        application_window_id=application_window_id
     )
     
     return {
@@ -1191,7 +1201,9 @@ def _fetch_inactive_students(instructor_id: int, threshold_days: int):
     }
 
 
-def _send_warnings_task(instructor_id: int, threshold_days: int):
+def _send_warnings_task(instructor_id: int, threshold_days: int,
+                        course_id: Optional[int] = None,
+                        application_window_id: Optional[int] = None):
     """Background task function for sending inactivity warnings"""
     import time
     import logging
@@ -1200,13 +1212,15 @@ def _send_warnings_task(instructor_id: int, threshold_days: int):
     
     # Create logger for this task
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting _send_warnings_task for instructor {instructor_id}, threshold {threshold_days}")
+    logger.info(f"Starting _send_warnings_task for instructor {instructor_id}, threshold {threshold_days}, course {course_id}, cohort {application_window_id}")
     
     try:
-        # Get at-risk students for this instructor
+        # Get at-risk students for this instructor (optionally scoped to course/cohort)
         at_risk_students = InactivityService.get_inactive_students(
             instructor_id=instructor_id,
-            threshold_days=threshold_days
+            threshold_days=threshold_days,
+            course_id=course_id,
+            application_window_id=application_window_id
         )
         
         warnings_sent = 0
@@ -1258,12 +1272,16 @@ def terminate_student(student_id):
         
         data = request.get_json() or {}
         reason = data.get('reason', 'Inactivity')
+        course_id = data.get('course_id')
+        application_window_id = data.get('application_window_id')
         
         # Terminate student
         result = InactivityService.terminate_inactive_student(
             student_id=student_id,
             instructor_id=current_user_id,
-            reason=reason
+            reason=reason,
+            course_id=course_id,
+            application_window_id=application_window_id
         )
         
         if result['success']:
@@ -1297,6 +1315,8 @@ def bulk_terminate_students():
         data = request.get_json() or {}
         student_ids = data.get('student_ids', [])
         reason = data.get('reason', 'Bulk inactivity termination')
+        course_id = data.get('course_id')
+        application_window_id = data.get('application_window_id')
         
         if not student_ids:
             return jsonify({
@@ -1314,7 +1334,9 @@ def bulk_terminate_students():
             result = InactivityService.terminate_inactive_student(
                 student_id=student_id,
                 instructor_id=current_user_id,
-                reason=reason
+                reason=reason,
+                course_id=course_id,
+                application_window_id=application_window_id
             )
             
             if result['success']:
@@ -1350,14 +1372,18 @@ def send_inactivity_warnings():
     try:
         data = request.get_json() or {}
         threshold_days = data.get('threshold_days', 5)  # Warn students inactive for 5+ days
+        course_id = data.get('course_id')
+        application_window_id = data.get('application_window_id')
         
-        logger.info(f"Starting warning email task for instructor {current_user_id}, threshold: {threshold_days} days")
+        logger.info(f"Starting warning email task for instructor {current_user_id}, threshold: {threshold_days} days, course: {course_id}, cohort: {application_window_id}")
         
         # Start background task
         task_id = background_service.create_task(
             _send_warnings_task,
             current_user_id,
-            threshold_days
+            threshold_days,
+            course_id,
+            application_window_id
         )
         
         logger.info(f"Created warning email task with ID: {task_id}")

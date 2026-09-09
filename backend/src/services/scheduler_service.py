@@ -73,6 +73,9 @@ class BackgroundTaskScheduler:
         # Send inactivity warnings every 3 days at 10 AM
         schedule.every(3).days.at("10:00").do(self._send_inactivity_warnings)
         
+        # Send account deactivation (pre-deletion) warnings weekly on Mondays at 9 AM
+        schedule.every().monday.at("09:00").do(self._send_deletion_warnings)
+        
         # Update user activity stats every 6 hours
         schedule.every(6).hours.do(self._update_activity_stats)
         
@@ -102,8 +105,8 @@ class BackgroundTaskScheduler:
                 
                 # Log summary
                 logger.info(f"Daily cleanup check completed:")
-                logger.info(f"  - {len(inactive_users)} users ready for deletion (14+ days inactive)")
-                logger.info(f"  - {len(approaching_termination)} students at risk of termination (5+ days inactive)")
+                logger.info(f"  - {len(inactive_users)} users inactive for 14+ days (deletion candidates)")
+                logger.info(f"  - {len(approaching_termination)} students inactive for 5+ days (at risk of termination)")
                 
                 # Send admin notification if there are many inactive users
                 if len(inactive_users) > 50:
@@ -193,6 +196,18 @@ class BackgroundTaskScheduler:
         except Exception as e:
             logger.error(f"Failed to send inactivity warnings: {str(e)}")
     
+    def _send_deletion_warnings(self):
+        """Send advance account deactivation warnings to inactive users"""
+        logger.info("Sending account deactivation warnings...")
+        
+        try:
+            with self.app.app_context():
+                warnings_sent = InactivityService.send_deletion_warnings()
+                logger.info(f"Sent {warnings_sent} account deactivation warnings")
+                
+        except Exception as e:
+            logger.error(f"Failed to send account deactivation warnings: {str(e)}")
+    
     def _update_activity_stats(self):
         """Update user activity statistics"""
         logger.info("Updating activity statistics...")
@@ -260,6 +275,7 @@ class BackgroundTaskScheduler:
             'daily_cleanup': self._daily_cleanup_check,
             'weekly_cleanup': self._weekly_cleanup,
             'send_warnings': self._send_inactivity_warnings,
+            'send_deletion_warnings': self._send_deletion_warnings,
             'update_stats': self._update_activity_stats
         }
         

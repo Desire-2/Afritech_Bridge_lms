@@ -433,6 +433,12 @@ def update_lesson_progress(lesson_id):
         except Exception as e:
             current_app.logger.warning(f"❌ Error updating lesson scores after reading/engagement: {str(e)}")
     
+    # Heartbeat: record that this student actively engaged with content so the
+    # inactivity/account-deletion system can see real study activity.
+    active_user = User.query.get(current_user_id)
+    if active_user:
+        active_user.update_last_activity()
+    
     try:
         db.session.commit()
         

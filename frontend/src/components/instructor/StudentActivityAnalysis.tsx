@@ -64,11 +64,15 @@ interface StudentAnalysis {
 interface StudentActivityAnalysisProps {
   onTerminateStudent?: (studentId: number, reason: string) => void;
   onSendWarnings?: () => void;
+  courseId?: number | null;
+  applicationWindowId?: number | null;
 }
 
 const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({ 
   onTerminateStudent,
-  onSendWarnings 
+  onSendWarnings,
+  courseId,
+  applicationWindowId
 }) => {
   const [analysis, setAnalysis] = useState<StudentAnalysis | null>(null);
   const [inactiveStudents, setInactiveStudents] = useState<InactiveStudent[]>([]);
@@ -91,8 +95,8 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
 
       // Start both tasks
       const [analysisResponse, inactiveResponse] = await Promise.all([
-        InstructorApiService.getStudentAnalysis(),
-        InstructorApiService.getInactiveStudents()
+        InstructorApiService.getStudentAnalysis(courseId ?? undefined, applicationWindowId ?? undefined),
+        InstructorApiService.getInactiveStudents(courseId ?? undefined, applicationWindowId ?? undefined)
       ]);
 
       // Handle analysis response
@@ -168,7 +172,12 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
     try {
       setTerminating(studentId);
       
-      await InstructorApiService.terminateStudent(studentId, reason);
+      await InstructorApiService.terminateStudent(
+        studentId,
+        reason,
+        courseId ?? undefined,
+        applicationWindowId ?? undefined
+      );
 
       // Refresh data
       await fetchData();
@@ -195,7 +204,9 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
       
       await InstructorApiService.bulkTerminateStudents(
         Array.from(selectedStudents),
-        'Bulk inactivity termination'
+        'Bulk inactivity termination',
+        courseId ?? undefined,
+        applicationWindowId ?? undefined
       );
 
       // Refresh data
@@ -215,7 +226,11 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
     try {
       setSendingWarnings(true);
       
-      const response = await InstructorApiService.sendInactivityWarnings(5);
+      const response = await InstructorApiService.sendInactivityWarnings(
+        5,
+        courseId ?? undefined,
+        applicationWindowId ?? undefined
+      );
       
       if (response.task_id) {
         setPollTasks(prev => ({ ...prev, warnings: response.task_id }));

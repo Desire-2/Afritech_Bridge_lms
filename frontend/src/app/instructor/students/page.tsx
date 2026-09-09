@@ -664,7 +664,10 @@ const StudentsPage = () => {
           </TabsContent>
 
           <TabsContent value="activity" className="space-y-6">
-            <StudentActivityAnalysis />
+            <StudentActivityAnalysis
+              courseId={selectedCourseId}
+              applicationWindowId={selectedCohortId}
+            />
           </TabsContent>
         </Tabs>
       )}

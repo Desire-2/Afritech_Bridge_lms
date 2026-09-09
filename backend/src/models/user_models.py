@@ -163,7 +163,7 @@ class User(db.Model):
         """Get number of days since last activity"""
         if not self.last_activity:
             return None
-        return (datetime.utcnow() - self.last_activity).days
+        return (now_local() - self.last_activity).days
     
     def is_inactive(self, days_threshold=7):
         """Check if user is inactive based on threshold"""

@@ -1,4 +1,3 @@
-from ..utils.time_utils import now_local
 """
 Inactivity Service for Afritec Bridge LMS
 Handles tracking and managing inactive students and users
@@ -8,9 +7,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import logging
 
+from ..utils.time_utils import now_local
 from ..models.user_models import db, User, Role
-from ..models.course_models import Enrollment, Course
-from ..models.student_models import LessonCompletion, UserProgress
+from ..models.course_models import Enrollment, Course, Submission
+from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
 from ..models.achievement_models import LearningStreak
 from ..utils.brevo_email_service import brevo_service
 
@@ -25,86 +25,112 @@ class InactivityService:
     WARNING_BEFORE_TERMINATION = 2    # days before termination to send warning
     
     @staticmethod
-    def get_inactive_students(instructor_id: Optional[int] = None, 
-                            threshold_days: int = STUDENT_INACTIVITY_THRESHOLD) -> List[Dict]:
+    def get_inactive_students(instructor_id: Optional[int] = None,
+                            threshold_days: int = STUDENT_INACTIVITY_THRESHOLD,
+                            course_id: Optional[int] = None,
+                            application_window_id: Optional[int] = None) -> List[Dict]:
         """
-        Get students who haven't studied for the specified number of days
-        
+        Get students who haven't studied for the specified number of days.
+        Results are scoped to the given instructor / course / cohort (window).
+
         Args:
             instructor_id: If provided, only check students in this instructor's courses
             threshold_days: Number of days without activity to consider inactive
-            
+            course_id: If provided, only consider enrollments in this course
+            application_window_id: If provided, only consider enrollments in this cohort
+
         Returns:
-            List of inactive student data
+            List of inactive student data (unique per student, sorted most inactive first)
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=threshold_days)
-        
-        # Base query for students
-        query = db.session.query(User).join(Role).filter(Role.name == 'student')
-        
+        cutoff_date = now_local() - timedelta(days=threshold_days)
+
+        # Scope enrollments first (single-row-per-enrollment, avoids duplicate students)
+        enrollment_query = Enrollment.query.filter(Enrollment.status == 'active')
         if instructor_id:
-            # Filter students enrolled in instructor's courses with explicit join condition
-            query = query.join(
-                Enrollment, 
-                User.id == Enrollment.student_id
-            ).join(Course).filter(
-                Course.instructor_id == instructor_id
+            enrollment_query = enrollment_query.join(
+                Course, Enrollment.course_id == Course.id
+            ).filter(Course.instructor_id == instructor_id)
+        if course_id is not None:
+            enrollment_query = enrollment_query.filter(Enrollment.course_id == course_id)
+        if application_window_id is not None:
+            enrollment_query = enrollment_query.filter(
+                Enrollment.application_window_id == application_window_id
             )
-        
-        students = query.all()
-        inactive_students = []
-        
-        for student in students:
-            last_study_activity = InactivityService._get_last_study_activity(student.id)
-            
+
+        scoped_enrollments = enrollment_query.all()
+        if not scoped_enrollments:
+            return []
+
+        students_by_id: Dict[int, User] = {
+            s.id: s for s in User.query.filter(
+                User.id.in_({e.student_id for e in scoped_enrollments}),
+                User.is_active == True
+            ).all()
+        }
+        inactive_students: List[Dict] = []
+
+        for student_id, student in students_by_id.items():
+            last_study_activity = InactivityService._get_last_study_activity(student_id)
+
             # Check if student is inactive
-            if not last_study_activity or last_study_activity < cutoff_date:
-                # Get enrolled courses
-                enrollments = Enrollment.query.filter_by(
-                    student_id=student.id,
-                    status='active'
-                ).all()
-                
-                # Filter by instructor if specified
-                if instructor_id:
-                    enrollments = [e for e in enrollments if e.course.instructor_id == instructor_id]
-                
-                if enrollments:  # Only include if student has active enrollments
-                    days_inactive = None
-                    if last_study_activity:
-                        days_inactive = (datetime.utcnow() - last_study_activity).days
-                    elif student.last_activity:
-                        days_inactive = (datetime.utcnow() - student.last_activity).days
-                    elif student.created_at:
-                        # Fallback to account creation date if no other activity recorded
-                        days_inactive = (datetime.utcnow() - student.created_at).days
-                    else:
-                        # Last resort - set to a high number if no dates available
-                        days_inactive = 365  # Consider as very inactive
-                    
-                    inactive_students.append({
-                        'student_id': student.id,
-                        'username': student.username,
-                        'email': student.email,
-                        'first_name': student.first_name,
-                        'last_name': student.last_name,
-                        'last_study_activity': last_study_activity.isoformat() if last_study_activity else None,
-                        'last_general_activity': student.last_activity.isoformat() if student.last_activity else None,
-                        'days_inactive': days_inactive,
-                        'enrolled_courses': [
-                            {
-                                'course_id': e.course.id,
-                                'course_title': e.course.title,
-                                'enrollment_id': e.id,
-                                'enrollment_date': e.enrollment_date.isoformat(),
-                                'progress': e.progress
-                            } for e in enrollments
-                        ]
-                    })
-        
+            if last_study_activity and last_study_activity >= cutoff_date:
+                continue
+
+            # Only include if the student has scoped (active) enrollments
+            enrollments = [e for e in scoped_enrollments if e.student_id == student_id]
+            if not enrollments:
+                continue
+
+            days_inactive = InactivityService._compute_days_inactive(
+                student, last_study_activity
+            )
+
+            inactive_students.append({
+                'student_id': student.id,
+                'username': student.username,
+                'email': student.email,
+                'first_name': student.first_name,
+                'last_name': student.last_name,
+                'last_study_activity': last_study_activity.isoformat() if last_study_activity else None,
+                'last_general_activity': student.last_activity.isoformat() if student.last_activity else None,
+                'days_inactive': days_inactive,
+                'enrolled_courses': [
+                    {
+                        'course_id': e.course.id,
+                        'course_title': e.course.title,
+                        'enrollment_id': e.id,
+                        'enrollment_date': e.enrollment_date.isoformat(),
+                        'progress': e.progress,
+                        'status': e.status,
+                        'application_window_id': e.application_window_id,
+                        'cohort_label': e.cohort_label or (e.application_window.cohort_label if e.application_window else None),
+                        'cohort_start_date': e.cohort_start_date.isoformat() if e.cohort_start_date else None,
+                        'cohort_end_date': e.cohort_end_date.isoformat() if e.cohort_end_date else None,
+                    } for e in enrollments
+                ]
+            })
+
         # Sort by days inactive (most inactive first)
         inactive_students.sort(key=lambda x: x['days_inactive'] or 999, reverse=True)
         return inactive_students
+
+    @staticmethod
+    def _compute_days_inactive(student: User, last_study_activity: Optional[datetime]) -> int:
+        """Best-effort number of days since the student last engaged with the platform."""
+        candidates = []
+        if last_study_activity:
+            candidates.append(last_study_activity)
+        if student.last_activity:
+            candidates.append(student.last_activity)
+        if student.last_login:
+            candidates.append(student.last_login)
+        if student.created_at:
+            candidates.append(student.created_at)
+
+        if not candidates:
+            return 365  # No timestamps at all - consider very inactive
+        latest = max(candidates)
+        return (now_local() - latest).days if latest else 365
     
     @staticmethod
     def get_inactive_users(threshold_days: int = USER_DELETION_THRESHOLD) -> List[Dict]:
@@ -117,7 +143,7 @@ class InactivityService:
         Returns:
             List of inactive user data
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=threshold_days)
+        cutoff_date = now_local() - timedelta(days=threshold_days)
         
         # Get users with no recent activity
         users = User.query.filter(
@@ -134,9 +160,9 @@ class InactivityService:
             # Calculate days inactive
             days_inactive = None
             if user.last_activity:
-                days_inactive = (datetime.utcnow() - user.last_activity).days
+                days_inactive = (now_local() - user.last_activity).days
             else:
-                days_inactive = (datetime.utcnow() - user.created_at).days
+                days_inactive = (now_local() - user.created_at).days
             
             # Get role-specific data
             role_data = {}
@@ -174,28 +200,40 @@ class InactivityService:
         return inactive_users
     
     @staticmethod
-    def terminate_inactive_student(student_id: int, instructor_id: int, 
-                                 reason: str = "Inactivity") -> Dict:
+    def terminate_inactive_student(student_id: int, instructor_id: int,
+                                 reason: str = "Inactivity",
+                                 course_id: Optional[int] = None,
+                                 application_window_id: Optional[int] = None) -> Dict:
         """
-        Terminate a student from instructor's courses due to inactivity
-        
+        Terminate a student from instructor's courses due to inactivity.
+
         Args:
             student_id: ID of the student to terminate
             instructor_id: ID of the instructor performing termination
             reason: Reason for termination
-            
+            course_id: Restrict termination to a specific course
+            application_window_id: Restrict termination to a specific cohort
+
         Returns:
             Result dictionary with success status and details
         """
         try:
             student = User.query.get_or_404(student_id)
             
-            # Get enrollments in instructor's courses
-            enrollments = Enrollment.query.join(Course).filter(
+            # Get enrollments in instructor's courses (optionally scoped to a
+            # specific course / cohort so terminating one cohort doesn't touch others)
+            query = Enrollment.query.join(Course).filter(
                 Enrollment.student_id == student_id,
                 Course.instructor_id == instructor_id,
                 Enrollment.status == 'active'
-            ).all()
+            )
+            if course_id is not None:
+                query = query.filter(Enrollment.course_id == course_id)
+            if application_window_id is not None:
+                query = query.filter(
+                    Enrollment.application_window_id == application_window_id
+                )
+            enrollments = query.all()
             
             if not enrollments:
                 return {
@@ -308,16 +346,27 @@ class InactivityService:
             }
     
     @staticmethod
-    def send_inactivity_warnings(threshold_days: int = STUDENT_INACTIVITY_THRESHOLD - WARNING_BEFORE_TERMINATION):
+    def send_inactivity_warnings(threshold_days: int = STUDENT_INACTIVITY_THRESHOLD - WARNING_BEFORE_TERMINATION,
+                                instructor_id: Optional[int] = None,
+                                application_window_id: Optional[int] = None) -> int:
         """
         Send warning emails to students approaching inactivity termination
-        
+
         Args:
             threshold_days: Days of inactivity before sending warning
+            instructor_id: Restrict warnings to students in this instructor's courses
+            application_window_id: Restrict warnings to students in this cohort
+
+        Returns:
+            Number of warnings sent
         """
         import time
         
-        warning_students = InactivityService.get_inactive_students(threshold_days=threshold_days)
+        warning_students = InactivityService.get_inactive_students(
+            threshold_days=threshold_days,
+            instructor_id=instructor_id,
+            application_window_id=application_window_id
+        )
         
         warnings_sent = 0
         total_students = len(warning_students)
@@ -339,28 +388,168 @@ class InactivityService:
         
         logger.info(f"Sent {warnings_sent} inactivity warnings")
         return warnings_sent
-    
+
+    @staticmethod
+    def send_deletion_warnings(min_days: int = USER_DELETION_THRESHOLD,
+                              max_days: int = 28) -> int:
+        """
+        Send advance warnings to users approaching account deactivation.
+        Users with `min_days` <= days_inactive <= `max_days` are notified once
+        (the window is one week wide) so they can log in before the deletion
+        threshold in the weekly cleanup job is reached.
+
+        Returns:
+            Number of warnings sent
+        """
+        inactive_users = InactivityService.get_inactive_users(threshold_days=min_days)
+        warnings_sent = 0
+
+        for user_data in inactive_users:
+            days_inactive = user_data.get('days_inactive')
+            if days_inactive is None or days_inactive >= max_days:
+                continue
+
+            try:
+                user = User.query.get(user_data['user_id'])
+                if not user:
+                    continue
+                days_remaining = max(30 - days_inactive, 1)
+                InactivityService._send_deletion_warning(user, days_inactive, days_remaining)
+                warnings_sent += 1
+                logger.info(
+                    f"Sent account deactivation warning to {user.email} "
+                    f"(inactive {days_inactive} days)"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to send deactivation warning to user "
+                    f"{user_data['user_id']}: {str(e)}"
+                )
+
+        return warnings_sent
+
+    @staticmethod
+    def _send_deletion_warning(user: User, days_inactive: int, days_remaining: int):
+        """Send an advance notice that the account will be deactivated unless active."""
+        from ..utils.email_templates import get_email_header, get_email_footer
+        unsub_token = user.get_or_create_unsubscribe_token()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            unsub_token = None
+
+        subject = "⚠️ Account Deactivation Warning - Log In to Keep Your Account"
+
+        html_body = f"""
+        {get_email_header()}
+
+            <!-- Main Content -->
+            <div class="email-content" style="padding: 50px 35px;">
+                <div style="text-align: center; margin-bottom: 35px;">
+                    <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(245, 158, 11, 0.4);">
+                        <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
+                            <tr>
+                                <td style="text-align: center; vertical-align: middle; font-size: 50px;">⚠️</td>
+                            </tr>
+                        </table>
+                    </div>
+                    <h2 style="color: #f59e0b; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
+                        Account Deactivation Warning
+                    </h2>
+                    <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
+                        Action required to keep your account active
+                    </p>
+                </div>
+
+                <div style="background: rgba(52, 73, 94, 0.3); border-radius: 15px; padding: 30px; margin: 30px 0; border-left: 5px solid #f59e0b;">
+                    <h3 style="color: #ffffff; margin: 0 0 15px 0; font-size: 20px; font-weight: 600;">Dear {user.first_name or user.username},</h3>
+                    <p style="color: #d1d5db; margin: 0; font-size: 16px; line-height: 1.6;">
+                        Your account has been inactive for <strong style="color: #f59e0b;">{days_inactive} days</strong>.
+                        If no activity is detected within the next <strong style="color: #f59e0b;">{days_remaining} days</strong>,
+                        your account will be deactivated and you may lose access to your courses and progress.
+                    </p>
+                </div>
+
+                <div style="background: rgba(16, 185, 129, 0.1); border-radius: 15px; padding: 25px; margin: 25px 0; border: 2px solid rgba(16, 185, 129, 0.3); text-align: center;">
+                    <h3 style="color: #10b981; margin: 0 0 20px 0; font-size: 18px; font-weight: 600;">✅ How to Keep Your Account Active</h3>
+                    <p style="color: #d1d5db; margin: 0; font-size: 16px; line-height: 1.6;">
+                        Simply <strong style="color: #10b981;">log in</strong> to the platform and continue your learning journey.
+                    </p>
+                </div>
+            </div>
+
+        {get_email_footer(unsubscribe_token=unsub_token, email_category='system')}
+        """
+
+        brevo_service.send_email(
+            to_emails=[user.email],
+            subject=subject,
+            html_content=html_body
+        )
+
     @staticmethod
     def _get_last_study_activity(student_id: int) -> Optional[datetime]:
-        """Get the last study activity for a student"""
-        
-        # Check lesson completions
-        last_lesson = LessonCompletion.query.filter_by(
+        """
+        Determine the most recent study/interaction timestamp for a student.
+
+        Covers in-progress reading, video watching, quiz attempts, assignment
+        submissions, notes and bookmarks - not just fully-completed lessons.
+        """
+        from sqlalchemy import func as sqlfunc
+
+        # Lesson completion record: any touch (completed, opened, saved,
+        # video watched, assignment submitted) counts as study activity.
+        last_completed = db.session.query(sqlfunc.max(LessonCompletion.completed_at)).filter_by(
             student_id=student_id
-        ).order_by(LessonCompletion.completed_at.desc()).first()
-        
-        last_activity = None
-        if last_lesson:
-            last_activity = last_lesson.completed_at
-        
-        # Check learning streak
+        ).scalar()
+        last_accessed = db.session.query(sqlfunc.max(LessonCompletion.last_accessed)).filter_by(
+            student_id=student_id
+        ).scalar()
+        last_updated = db.session.query(sqlfunc.max(LessonCompletion.updated_at)).filter_by(
+            student_id=student_id
+        ).scalar()
+        last_video = db.session.query(sqlfunc.max(LessonCompletion.video_last_watched)).filter_by(
+            student_id=student_id
+        ).scalar()
+        last_assignment = db.session.query(sqlfunc.max(LessonCompletion.assignment_submitted_at)).filter_by(
+            student_id=student_id
+        ).scalar()
+
+        # Quiz submissions
+        last_quiz = db.session.query(sqlfunc.max(Submission.submitted_at)).filter_by(
+            student_id=student_id
+        ).scalar()
+
+        # Course progress access
+        last_course_access = db.session.query(sqlfunc.max(UserProgress.last_accessed)).filter_by(
+            user_id=student_id
+        ).scalar()
+
+        # Notes / bookmarks
+        last_note = db.session.query(sqlfunc.max(StudentNote.updated_at)).filter_by(
+            student_id=student_id
+        ).scalar()
+        last_note_created = db.session.query(sqlfunc.max(StudentNote.created_at)).filter_by(
+            student_id=student_id
+        ).scalar()
+        last_bookmark = db.session.query(sqlfunc.max(StudentBookmark.created_at)).filter_by(
+            student_id=student_id
+        ).scalar()
+
+        candidates = [
+            last_completed, last_accessed, last_updated, last_video,
+            last_assignment, last_quiz, last_course_access,
+            last_note, last_note_created, last_bookmark,
+        ]
+
+        # Day-level streak activity (midnight of last active day)
         streak = LearningStreak.query.filter_by(user_id=student_id).first()
         if streak and streak.last_activity_date:
-            streak_datetime = datetime.combine(streak.last_activity_date, datetime.min.time())
-            if not last_activity or streak_datetime > last_activity:
-                last_activity = streak_datetime
-        
-        return last_activity
+            candidates.append(datetime.combine(streak.last_activity_date, datetime.min.time()))
+
+        datetimes = [c for c in candidates if c is not None]
+        return max(datetimes) if datetimes else None
     
     @staticmethod
     def _send_termination_notification(student: User, terminated_courses: List[Dict], reason: str):
@@ -471,7 +660,7 @@ class InactivityService:
             db.session.rollback()
             unsub_token = None
         
-        subject = "🚨 Urgent: Account Scheduled for Deletion - Immediate Action Required"
+        subject = "🚨 Account Deactivated - Prolonged Inactivity"
         
         html_body = f"""
         {get_email_header()}
@@ -480,7 +669,7 @@ class InactivityService:
             <div class="email-content" style="padding: 50px 35px;">
                 <!-- Deletion Warning Icon & Title -->
                 <div style="text-align: center; margin-bottom: 35px;">
-                    <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(220, 38, 38, 0.5); animation: pulse 2s infinite;">
+                    <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); width: 100px; height: 100px; border-radius: 50%; margin: 0 auto 25px; box-shadow: 0 10px 30px rgba(220, 38, 38, 0.5);">
                         <table width="100" height="100" cellpadding="0" cellspacing="0" border="0">
                             <tr>
                                 <td style="text-align: center; vertical-align: middle; font-size: 50px;">🚨</td>
@@ -488,18 +677,18 @@ class InactivityService:
                         </table>
                     </div>
                     <h2 style="color: #dc2626; margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px;">
-                        Account Deletion Notice
+                        Account Deactivated
                     </h2>
                     <p style="color: #bdc3c7; margin: 10px 0 0 0; font-size: 16px;">
-                        Immediate action required to prevent deletion
+                        Your account has been deactivated due to prolonged inactivity
                     </p>
                 </div>
                 
                 <!-- Urgent Alert -->
                 <div style="background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); border-radius: 15px; padding: 30px; margin: 30px 0; text-align: center; box-shadow: 0 10px 30px rgba(220, 38, 38, 0.4);">
-                    <h3 style="color: #ffffff; margin: 0 0 15px 0; font-size: 24px; font-weight: 700;">⏰ 24 HOURS REMAINING</h3>
+                    <h3 style="color: #ffffff; margin: 0 0 15px 0; font-size: 24px; font-weight: 700;">🛑 ACCOUNT DEACTIVATED</h3>
                     <p style="color: #ffffff; margin: 0; font-size: 16px; line-height: 1.6;">
-                        Your account will be permanently deleted unless you log in within the next 24 hours.
+                        Contact our support team to recover your account and resume your learning journey.
                     </p>
                 </div>
                 
@@ -507,7 +696,8 @@ class InactivityService:
                 <div style="background: rgba(52, 73, 94, 0.3); border-radius: 15px; padding: 30px; margin: 30px 0; border-left: 5px solid #dc2626;">
                     <h3 style="color: #ffffff; margin: 0 0 15px 0; font-size: 20px; font-weight: 600;">Dear {user.first_name or user.username},</h3>
                     <p style="color: #d1d5db; margin: 0; font-size: 16px; line-height: 1.6;">
-                        This is to notify you that your account on Afritec Bridge LMS has been scheduled for deletion due to prolonged inactivity.
+                        This is to notify you that your account on Afritec Bridge LMS has been deactivated due to prolonged inactivity.
+                        Your profile and learning progress are preserved, and you can regain access by reaching out to our support team.
                     </p>
                 </div>
                 
@@ -532,10 +722,10 @@ class InactivityService:
                 
                 <!-- Action Required -->
                 <div style="background: rgba(16, 185, 129, 0.1); border-radius: 15px; padding: 25px; margin: 25px 0; border: 2px solid rgba(16, 185, 129, 0.3);">
-                    <h3 style="color: #10b981; margin: 0 0 20px 0; font-size: 18px; font-weight: 600; text-align: center;">✅ How to Save Your Account</h3>
+                    <h3 style="color: #10b981; margin: 0 0 20px 0; font-size: 18px; font-weight: 600; text-align: center;">✅ How to Recover Your Account</h3>
                     <div style="background: rgba(16, 185, 129, 0.1); padding: 20px; border-radius: 10px; border-left: 4px solid #10b981; text-align: center;">
-                        <strong style="color: #10b981; font-size: 16px;">🔐 Simply Log In</strong>
-                        <p style="color: #d1d5db; margin: 10px 0 0 0; font-size: 14px;">Access the platform within the next 24 hours to keep your account active</p>
+                        <strong style="color: #10b981; font-size: 16px;">📧 Contact Support</strong>
+                        <p style="color: #d1d5db; margin: 10px 0 0 0; font-size: 14px;">Reach out to our support team to reactivate your account and continue learning</p>
                     </div>
                 </div>
                 
@@ -587,6 +777,12 @@ class InactivityService:
         
         subject = "⚠️ Activity Reminder - Stay Enrolled in Your Courses"
         
+        urgency_message = (
+            f"Your enrollment is at risk and may be terminated by your instructor "
+            f"in as little as <strong style='color: #ef4444;'>{max(days_until_termination, 0)} days</strong> "
+            f"if no activity is detected."
+        )
+        
         html_body = f"""
         {get_email_header()}
             
@@ -633,7 +829,7 @@ class InactivityService:
                 <div style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); border-radius: 15px; padding: 25px; margin: 30px 0; text-align: center; box-shadow: 0 10px 30px rgba(239, 68, 68, 0.3);">
                     <h3 style="color: #ffffff; margin: 0 0 10px 0; font-size: 20px; font-weight: 700;">⏰ Urgent Notice</h3>
                     <p style="color: #ffffff; margin: 0; font-size: 16px; line-height: 1.6;">
-                        Your enrollment may be <strong>terminated in {days_until_termination} days</strong> if no activity is detected.
+                        {urgency_message}
                     </p>
                 </div>
                 

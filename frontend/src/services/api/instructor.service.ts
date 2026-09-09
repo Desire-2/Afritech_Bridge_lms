@@ -58,10 +58,14 @@ class InstructorApiService extends BaseApiService {
   }
 
   /**
-   * Get student activity analysis
+   * Get student activity analysis (optionally scoped to a course / cohort)
    */
-  async getStudentAnalysis(): Promise<any> {
-    return this.get('/instructor/students/analysis');
+  async getStudentAnalysis(courseId?: number, applicationWindowId?: number): Promise<any> {
+    const params = new URLSearchParams();
+    if (courseId) params.set('course_id', String(courseId));
+    if (applicationWindowId) params.set('application_window_id', String(applicationWindowId));
+    const qs = params.toString();
+    return this.get(`/instructor/students/analysis${qs ? `?${qs}` : ''}`);
   }
 
   /**
@@ -72,10 +76,14 @@ class InstructorApiService extends BaseApiService {
   }
 
   /**
-   * Get inactive students
+   * Get inactive students (optionally scoped to a course / cohort)
    */
-  async getInactiveStudents(): Promise<any> {
-    return this.get('/instructor/students/inactive');
+  async getInactiveStudents(courseId?: number, applicationWindowId?: number): Promise<any> {
+    const params = new URLSearchParams();
+    if (courseId) params.set('course_id', String(courseId));
+    if (applicationWindowId) params.set('application_window_id', String(applicationWindowId));
+    const qs = params.toString();
+    return this.get(`/instructor/students/inactive${qs ? `?${qs}` : ''}`);
   }
 
   /**
@@ -86,24 +94,24 @@ class InstructorApiService extends BaseApiService {
   }
 
   /**
-   * Terminate a student enrollment
+   * Terminate a student enrollment (optionally scoped to a course / cohort)
    */
-  async terminateStudent(studentId: number, reason: string): Promise<any> {
-    return this.post(`/instructor/students/${studentId}/terminate`, { reason });
+  async terminateStudent(studentId: number, reason: string, courseId?: number, applicationWindowId?: number): Promise<any> {
+    return this.post(`/instructor/students/${studentId}/terminate`, { reason, course_id: courseId, application_window_id: applicationWindowId });
   }
 
   /**
-   * Bulk terminate students
+   * Bulk terminate students (optionally scoped to a course / cohort)
    */
-  async bulkTerminateStudents(studentIds: number[], reason: string): Promise<any> {
-    return this.post('/instructor/bulk-terminate', { student_ids: studentIds, reason });
+  async bulkTerminateStudents(studentIds: number[], reason: string, courseId?: number, applicationWindowId?: number): Promise<any> {
+    return this.post('/instructor/bulk-terminate', { student_ids: studentIds, reason, course_id: courseId, application_window_id: applicationWindowId });
   }
 
   /**
-   * Send warning emails to inactive students
+   * Send warning emails to inactive students (optionally scoped to a course / cohort)
    */
-  async sendInactivityWarnings(thresholdDays: number = 5): Promise<any> {
-    return this.post('/instructor/students/send-warnings', { threshold_days: thresholdDays });
+  async sendInactivityWarnings(thresholdDays: number = 5, courseId?: number, applicationWindowId?: number): Promise<any> {
+    return this.post('/instructor/students/send-warnings', { threshold_days: thresholdDays, course_id: courseId, application_window_id: applicationWindowId });
   }
 
   /**
