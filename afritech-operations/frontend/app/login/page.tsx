@@ -9,6 +9,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -52,14 +53,25 @@ export default function LoginPage() {
             </div>
             <div className="mb-4">
               <label className="form-label small fw-semibold">Password</label>
-              <input
-                type="password"
-                className="form-control"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-              />
+              <div className="input-group">
+                <input
+                  type={showPw ? 'text' : 'password'}
+                  className="form-control"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                />
+                <button
+                  type="button"
+                  className={`btn btn-outline-secondary px-2 ${showPw ? 'active' : ''}`}
+                  tabIndex={-1}
+                  onClick={() => setShowPw((v) => !v)}
+                  title={showPw ? 'Hide password' : 'Show password'}
+                >
+                  <i className={`bi ${showPw ? 'bi-eye-slash' : 'bi-eye'}`} />
+                </button>
+              </div>
             </div>
             <button className="btn btn-primary w-100" disabled={busy}>
               {busy ? 'Signing in…' : 'Sign in'}
