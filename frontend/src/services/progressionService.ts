@@ -1,11 +1,12 @@
 import { ModuleData, ModuleProgress } from './studentApi';
+import { MODULE_PASSING_THRESHOLD } from '@/constants/learningRules';
 
 export interface ProgressionRequirements {
   courseContribution: number; // Default 10% (varies based on available assessments)
   quizzes: number; // Default 30% (varies based on available assessments)
   assignments: number; // Default 40% (varies based on available assessments)
   finalAssessment: number; // Default 20% (varies based on available assessments)
-  passingThreshold: number; // 80%
+  passingThreshold: number; // Backend module unlock threshold
 }
 
 export interface DynamicWeights {
@@ -59,7 +60,7 @@ export class ProgressionService {
     quizzes: 30,
     assignments: 40,
     finalAssessment: 20,
-    passingThreshold: 80
+    passingThreshold: MODULE_PASSING_THRESHOLD
   };
 
   // Alias for backwards compatibility
@@ -270,14 +271,14 @@ export class ProgressionService {
       recommendedActions.push('Improve assignment quality');
     }
     // Medium risk - borderline score or multiple failed attempts
-    else if (currentScore < 70 || progress.attempts_count > 1) {
+    else if (currentScore < MODULE_PASSING_THRESHOLD || progress.attempts_count > 1) {
       riskLevel = 'medium';
       reasons.push('Below optimal performance level');
       recommendedActions.push('Review weak areas identified in feedback');
       recommendedActions.push('Complete additional practice exercises');
     }
     // Low risk - good progress
-    else if (currentScore >= 70) {
+    else if (currentScore >= MODULE_PASSING_THRESHOLD) {
       riskLevel = 'low';
       recommendedActions.push('Continue current study approach');
       recommendedActions.push('Focus on maintaining quality in remaining assessments');
@@ -372,7 +373,7 @@ export class ProgressionService {
     
     if (currentScore < 50) {
       warnings.push('Current score is significantly below passing threshold');
-    } else if (currentScore < 70) {
+    } else if (currentScore < MODULE_PASSING_THRESHOLD) {
       warnings.push('Current score is below optimal level');
     }
     
@@ -403,19 +404,19 @@ export class ProgressionService {
     const recommendations: string[] = [];
     
     // Prioritize high-weight areas
-    if (breakdown.assignments.current < 70) {
+    if (breakdown.assignments.current < MODULE_PASSING_THRESHOLD) {
       recommendations.push('Focus on improving assignment quality (40% of total grade)');
     }
     
-    if (breakdown.quizzes.current < 70) {
+    if (breakdown.quizzes.current < MODULE_PASSING_THRESHOLD) {
       recommendations.push('Review quiz material and retake if possible (30% of total grade)');
     }
     
-    if (breakdown.finalAssessment.current < 70) {
+    if (breakdown.finalAssessment.current < MODULE_PASSING_THRESHOLD) {
       recommendations.push('Prepare thoroughly for final assessment (20% of total grade)');
     }
     
-    if (breakdown.courseContribution.current < 70) {
+    if (breakdown.courseContribution.current < MODULE_PASSING_THRESHOLD) {
       recommendations.push('Increase course participation and complete all lessons');
     }
     
@@ -476,3 +477,4 @@ export class ProgressionService {
 }
 
 export default ProgressionService;
+import { MODULE_PASSING_THRESHOLD } from '@/constants/learningRules';

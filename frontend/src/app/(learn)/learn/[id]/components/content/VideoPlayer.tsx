@@ -116,7 +116,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be");
   const isVimeo = videoUrl.includes("vimeo.com");
-  const isDirect = !isYouTube && !isVimeo && /\.(mp4|webm|ogg|mov)$/i.test(videoUrl);
+  const directExtension = videoUrl.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
+  const isDirect = !isYouTube && !isVimeo && ['mp4', 'webm', 'ogg', 'mov'].includes(directExtension || '');
+  const directMimeType = directExtension === 'webm'
+    ? 'video/webm'
+    : directExtension === 'ogg'
+      ? 'video/ogg'
+      : 'video/mp4';
 
   const markWatched = useCallback(() => {
     if (!videoWatched) {
@@ -129,15 +135,29 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const handleFullscreenToggle = useCallback(async (el: HTMLElement | null) => {
     if (!el) return;
     try {
-      if (!fullscreen) {
+      const currentFullscreenElement = document.fullscreenElement || (document as any).webkitFullscreenElement;
+      if (currentFullscreenElement !== el) {
         await (el.requestFullscreen?.() || (el as any).webkitRequestFullscreen?.());
-        setFullscreen(true);
       } else {
         await (document.exitFullscreen?.() || (document as any).webkitExitFullscreen?.());
-        setFullscreen(false);
       }
     } catch {}
-  }, [fullscreen]);
+  }, []);
+
+  // Keep the custom control in sync when the browser exits fullscreen via
+  // Escape or its native controls.
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      const activeElement = document.fullscreenElement || (document as any).webkitFullscreenElement;
+      setFullscreen(activeElement === containerRef.current);
+    };
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenState as EventListener);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreenState as EventListener);
+    };
+  }, []);
 
   // Sync progress to parent
   useEffect(() => { if (onProgress) onProgress(videoProgress, currentTime, videoDuration); }, [videoProgress, currentTime, videoDuration, onProgress]);
@@ -311,7 +331,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         onLoadStart={() => setVideoLoading(true)}
         onLoadedData={() => setVideoLoading(false)}
       >
-        <source src={videoUrl} type="video/mp4" />
+        <source src={videoUrl} type={directMimeType} />
         Your browser does not support the video tag.
       </video>
     );
@@ -329,7 +349,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         )}
         <button
           onClick={() => handleFullscreenToggle(containerRef.current)}
-          className="absolute bottom-4 right-4 bg-black/70 hover:bg-black/90 text-white p-2.5 rounded-lg opacity-0 group-hover:opacity-100 transition-all z-10"
+          className="absolute bottom-4 right-4 bg-black/70 hover:bg-black/90 text-white p-2.5 rounded-lg opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white transition-all z-10"
           aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
         >
           {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}

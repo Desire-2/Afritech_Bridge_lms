@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -6,11 +6,12 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { CheckCircle, Clock, Lock, ChevronDown, BookOpen, ClipboardList, FileText, FolderOpen, TrendingUp, BarChart3, AlertCircle, Target, Award } from 'lucide-react';
+import { CheckCircle, Clock, Lock, ChevronDown, BookOpen, ClipboardList, FileText, FolderOpen, TrendingUp, BarChart3, AlertCircle, Target, Award, X } from 'lucide-react';
 import { ModuleData, ModuleStatus } from '../types';
 import { ProgressApiService } from '@/services/api';
 import type { ModuleProgress as ModuleProgressType } from '@/services/api/types';
 import ModuleScoreBreakdown from '@/components/student/ModuleScoreBreakdown';
+import { MODULE_PASSING_THRESHOLD } from '../utils/learningRules';
 
 interface LessonAssessment {
   id: number;
@@ -90,9 +91,49 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   // State to hold real progress data from database
   const [moduleProgressData, setModuleProgressData] = useState<{ [moduleId: number]: ModuleProgressData }>({});
   const [loadingProgress, setLoadingProgress] = useState(true);
+  const [progressError, setProgressError] = useState<string | null>(null);
   
   // State to track which modules are expanded
   const [openModules, setOpenModules] = useState<Set<number>>(new Set());
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  // Mobile navigation behaves as a modal drawer: Escape closes it, focus is
+  // trapped while open, and focus returns to the control that opened it.
+  useEffect(() => {
+    if (!sidebarOpen || window.innerWidth >= 1024 || !sidebarRef.current) return;
+
+    previousFocusRef.current = document.activeElement as HTMLElement | null;
+    const focusable = sidebarRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+    );
+    focusable[0]?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setSidebarOpen?.(false);
+        return;
+      }
+      if (event.key !== 'Tab' || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocusRef.current?.focus();
+      previousFocusRef.current = null;
+    };
+  }, [sidebarOpen, setSidebarOpen]);
   
   // Initialize open modules - expand current module OR first accessible module
   useEffect(() => {
@@ -141,6 +182,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
       if (!modules || modules.length === 0) return;
       
       setLoadingProgress(true);
+      setProgressError(null);
       const progressMap: { [moduleId: number]: ModuleProgressData } = {};
       
       try {
@@ -196,6 +238,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         console.log('📊 Loaded module progress data:', progressMap);
       } catch (error) {
         console.error('Error fetching module progress:', error);
+        setProgressError('Module progress is temporarily unavailable.');
       } finally {
         setLoadingProgress(false);
       }
@@ -305,7 +348,8 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
       {/* Mobile overlay backdrop */}
       {sidebarOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className={`fixed inset-x-0 ${viewAsStudent ? 'top-[6.5rem] sm:top-24' : 'top-14 sm:top-16'} bottom-0 bg-black/60 z-40 lg:hidden`}
+          aria-hidden="true"
           onClick={() => setSidebarOpen?.(false)} 
         />
       )}
@@ -315,16 +359,32 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         transition-all duration-300 overflow-hidden 
         bg-gray-900/95 lg:bg-gray-900/50 
         border-r border-gray-800 shadow-sm
-        fixed lg:relative 
-        top-0 lg:top-auto
+        fixed lg:sticky
+        ${viewAsStudent ? 'top-[6.5rem] sm:top-24' : 'top-14 sm:top-16'} lg:top-0
         left-0 
-        h-screen lg:h-auto
+        h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)]
         z-50 lg:z-auto
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
-        <div className="h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)] overflow-y-auto">
+      `}
+        ref={sidebarRef}
+        role="dialog"
+        aria-modal={sidebarOpen ? true : undefined}
+        aria-label="Course navigation"
+      >
+        <div className="h-full overflow-y-auto overscroll-contain">
         <div className="p-3 sm:p-4 border-b border-gray-800">
-          <h3 className="text-base sm:text-lg font-semibold text-white">Course Navigation</h3>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-base sm:text-lg font-semibold text-white">Course Navigation</h3>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="lg:hidden h-8 w-8 p-0 text-gray-400 hover:text-white hover:bg-gray-800"
+              onClick={() => setSidebarOpen?.(false)}
+              aria-label="Close course navigation"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
           <p className="text-xs sm:text-sm text-gray-400 mt-1">
             {modules?.length || 0} modules • {allLessons} lessons
           </p>
@@ -337,7 +397,15 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
           )}
           {currentLessonId && (
             <div className="mt-2 text-xs text-blue-400 bg-blue-900/20 px-2 py-1 rounded border border-blue-700/30">
-              📍 Currently viewing lesson
+              Currently viewing lesson
+            </div>
+          )}
+          {loadingProgress && (
+            <p className="mt-2 text-xs text-gray-400" role="status">Loading progress…</p>
+          )}
+          {progressError && (
+            <div className="mt-2 text-xs text-amber-300 bg-amber-900/20 px-2 py-1 rounded border border-amber-700/30" role="status">
+              {progressError} Locked states may update after refresh.
             </div>
           )}
         </div>
@@ -348,9 +416,6 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
             const isCurrentModule = module.id === currentModuleId;
             const moduleProgress = moduleProgressData[module.id];
             const hasProgressData = moduleProgress !== undefined;
-            
-            // Debug logging for module status
-            console.log(`📊 Module ${module.id} (${module.title}): status from getModuleStatus = "${moduleStatus}", internal progress status = "${moduleProgress?.status}"`);
             
             // FIXED: First module (index 0) should ALWAYS be accessible
             // Also treat current module as accessible regardless of status
@@ -380,7 +445,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                   previousModuleScore: previousModuleProgress?.cumulativeScore || 0,
                   previousModuleLessonsCompleted: previousModuleProgress?.completedLessons || 0,
                   previousModuleTotalLessons: previousModuleProgress?.totalLessons || previousModule.lessons?.length || 0,
-                  requiredScore: 70
+                  requiredScore: MODULE_PASSING_THRESHOLD
                 });
               }
             };
@@ -589,17 +654,17 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     )}
                                     {!canAccessLesson && !isLessonCompleted && (
                                       <p className="text-xs text-orange-400 mt-1">
-                                        🔒 Complete previous lessons or unlock the module first
+                                        Complete previous lessons or unlock the module first
                                       </p>
                                     )}
                                     {canAccessLesson && !isLessonCompleted && (
                                       <p className="text-xs text-blue-400 mt-1">
-                                        📖 Ready to learn
+                                        Ready to learn
                                       </p>
                                     )}
                                     {lesson.duration_minutes && (
                                       <p className="text-xs text-gray-300 mt-2">
-                                        ⏱️ {lesson.duration_minutes} minutes
+                                        {lesson.duration_minutes} minutes
                                       </p>
                                     )}
                                     {lesson.description && (
@@ -643,13 +708,19 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                     }
                                   }
                                 };
+                                const assessmentDisabled = assessment.type === 'quiz'
+                                  ? !canAccessQuiz
+                                  : !canAccessLesson;
                                 
                                 return (
                                 <TooltipProvider key={`${assessment.type}-${assessment.id}`}>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
-                                      <div
+                                      <button
+                                        type="button"
                                         onClick={handleAssessmentClick}
+                                        disabled={assessmentDisabled}
+                                        aria-label={`${assessment.type}: ${assessment.title}`}
                                         className={`flex items-center space-x-1 sm:space-x-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded border text-[10px] sm:text-xs transition-all duration-200 ${getAssessmentColor(assessment.type)} ${
                                           assessment.type === 'quiz' && !canAccessQuiz ? 'opacity-50 cursor-not-allowed' : 
                                           assessment.type === 'quiz' && canAccessQuiz ? 'cursor-pointer hover:scale-105 hover:shadow-md' :
@@ -680,7 +751,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                         {!assessment.status && !isQuizCompleted && (
                                           <span className="text-[9px] sm:text-xs opacity-60">pending</span>
                                         )}
-                                      </div>
+                                      </button>
                                     </TooltipTrigger>
                                     <TooltipContent side="right" className="max-w-xs">
                                       <div className="space-y-2">
@@ -708,17 +779,17 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                           </p>
                                           {assessment.type === 'quiz' && canAccessQuiz && (
                                             <p className="text-xs text-blue-400 mt-2">
-                                              👆 Click to {isQuizCompleted ? 'review' : 'take'} quiz
+                                              Click to {isQuizCompleted ? 'review' : 'take'} quiz
                                             </p>
                                           )}
                                           {assessment.type === 'quiz' && !canAccessQuiz && (
                                             <p className="text-xs text-orange-400 mt-2">
-                                              🔒 Complete the lesson first
+                                              Complete the lesson first
                                             </p>
                                           )}
                                           {assessment.dueDate && (
                                             <p className="text-xs text-gray-300 mt-1">
-                                              📅 Due: {new Date(assessment.dueDate).toLocaleDateString()}
+                                              Due: {new Date(assessment.dueDate).toLocaleDateString()}
                                             </p>
                                           )}
                                         </div>

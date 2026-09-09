@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { StudentApiService } from '@/services/studentApi';
 import { ProgressData, InteractionEvent } from '../types';
+import { LESSON_PASSING_THRESHOLD } from '../utils/learningRules';
 
 interface UseProgressTrackingProps {
   currentLesson: any;
@@ -54,16 +55,20 @@ export const useProgressTracking = ({
   const maxReadingProgressRef = useRef<number>(0); // Track maximum reading progress reached
   const maxEngagementScoreRef = useRef<number>(0); // Track maximum engagement score reached
   const [progressLoaded, setProgressLoaded] = useState<boolean>(false);
+  const progressRequestRef = useRef(0);
   
   // Completion threshold (80%)
-  const COMPLETION_THRESHOLD = 80;
+  const COMPLETION_THRESHOLD = LESSON_PASSING_THRESHOLD;
 
   // Load existing progress from backend
   const loadExistingProgress = useCallback(async () => {
     if (!currentLesson) return;
+    const requestId = ++progressRequestRef.current;
+    const lessonId = currentLesson.id;
     
     try {
-      const response = await StudentApiService.getLessonProgress(currentLesson.id);
+      const response = await StudentApiService.getLessonProgress(lessonId);
+      if (requestId !== progressRequestRef.current) return;
       const existingProgress = response.progress;
       
       if (existingProgress) {
@@ -100,7 +105,7 @@ export const useProgressTracking = ({
       }
     } catch (error) {
       console.error('Failed to load existing progress:', error);
-      setProgressLoaded(true); // Continue even if load fails
+      if (requestId === progressRequestRef.current) setProgressLoaded(true); // Continue even if load fails
     }
   }, [currentLesson]);
 
@@ -658,4 +663,3 @@ export const useProgressTracking = ({
     setNextLessonInfo
   };
 };
-

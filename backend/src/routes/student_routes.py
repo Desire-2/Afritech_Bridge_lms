@@ -14,7 +14,7 @@ from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Sub
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..models.student_models import (
     LessonCompletion, UserProgress, StudentNote, Badge, UserBadge,
-    StudentBookmark, StudentForum, ForumPost, ModuleProgress,
+    StudentBookmark, StudentLessonBookmark, StudentForum, ForumPost, ModuleProgress,
     Certificate, SkillBadge, StudentSkillBadge
 )
 from ..models.achievement_models import UserAchievement, Achievement
@@ -1004,6 +1004,72 @@ def remove_bookmark(course_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"message": "Error removing bookmark", "error": str(e)}), 500
+
+# --- Lesson Bookmark Routes ---
+@student_bp.route("/bookmarks/lessons", methods=["GET"])
+@student_required
+def get_lesson_bookmarks():
+    """Get lesson bookmarks, optionally filtered to one lesson."""
+    current_user_id = int(get_jwt_identity())
+    lesson_id = request.args.get('lesson_id', type=int)
+    query = StudentLessonBookmark.query.filter_by(student_id=current_user_id)
+    if lesson_id:
+        query = query.filter_by(lesson_id=lesson_id)
+    bookmarks = query.order_by(StudentLessonBookmark.created_at.desc()).all()
+    return jsonify([bookmark.to_dict() for bookmark in bookmarks]), 200
+
+@student_bp.route("/bookmarks/lessons", methods=["POST"])
+@student_required
+def add_lesson_bookmark():
+    """Create a bookmark for one lesson."""
+    current_user_id = int(get_jwt_identity())
+    data = request.get_json() or {}
+    lesson_id = data.get('lesson_id')
+    if not lesson_id:
+        return jsonify({"message": "lesson_id is required"}), 400
+
+    lesson = Lesson.query.get(lesson_id)
+    if not lesson:
+        return jsonify({"message": "Lesson not found"}), 404
+
+    existing = StudentLessonBookmark.query.filter_by(
+        student_id=current_user_id,
+        lesson_id=lesson_id,
+    ).first()
+    if existing:
+        return jsonify(existing.to_dict()), 200
+
+    try:
+        bookmark = StudentLessonBookmark(
+            student_id=current_user_id,
+            lesson_id=lesson_id,
+        )
+        db.session.add(bookmark)
+        db.session.commit()
+        return jsonify(bookmark.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error adding lesson bookmark", "error": str(e)}), 500
+
+@student_bp.route("/bookmarks/lessons/<int:lesson_id>", methods=["DELETE"])
+@student_required
+def remove_lesson_bookmark(lesson_id):
+    """Remove a bookmark for one lesson."""
+    current_user_id = int(get_jwt_identity())
+    bookmark = StudentLessonBookmark.query.filter_by(
+        student_id=current_user_id,
+        lesson_id=lesson_id,
+    ).first()
+    if not bookmark:
+        return jsonify({"message": "Lesson bookmark not found"}), 404
+
+    try:
+        db.session.delete(bookmark)
+        db.session.commit()
+        return jsonify({"message": "Lesson bookmark removed successfully"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": "Error removing lesson bookmark", "error": str(e)}), 500
 
 # --- Achievements/Badges Routes ---
 @student_bp.route("/achievements", methods=["GET"])

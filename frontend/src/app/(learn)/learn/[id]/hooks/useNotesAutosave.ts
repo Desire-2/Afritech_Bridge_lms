@@ -1,106 +1,153 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StudentApiService } from "@/services/studentApi";
 
 export type NotesSaveStatus = "idle" | "saving" | "saved" | "error";
 
+/** One authoritative, stale-response-safe notes pipeline for the learning page. */
 export function useNotesAutosave(currentLessonId: number | undefined) {
-  const [lessonNotes, setLessonNotes] = useState("");
-  const [currentNoteId, setCurrentNoteId] = useState<number | null>(null);
+  const [lessonNotes, setLessonNotesState] = useState("");
+  const [currentNoteId, setCurrentNoteIdState] = useState<number | null>(null);
   const [notesSaveStatus, setNotesSaveStatus] = useState<NotesSaveStatus>("idle");
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isInitialLoadRef = useRef(true);
+  const statusResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const generationRef = useRef(0);
+  const lessonIdRef = useRef<number | undefined>(currentLessonId);
+  const notesRef = useRef("");
+  const noteIdRef = useRef<number | null>(null);
+  const loadingRef = useRef(false);
+  const saveInFlightRef = useRef<Promise<void> | null>(null);
 
-  // Fetch notes when lesson changes
-  useEffect(() => {
-    if (!currentLessonId) return;
+  const setLessonNotes = useCallback((value: string) => {
+    notesRef.current = value;
+    setLessonNotesState(value);
+  }, []);
 
-    isInitialLoadRef.current = true;
+  const setCurrentNoteId = useCallback((value: number | null) => {
+    noteIdRef.current = value;
+    setCurrentNoteIdState(value);
+  }, []);
 
-    const fetchNotes = async () => {
+  const saveCurrentNotes = useCallback(async () => {
+    const lessonId = lessonIdRef.current;
+    const content = notesRef.current;
+    const noteId = noteIdRef.current;
+    const generation = generationRef.current;
+
+    if (!lessonId || (!content.trim() && !noteId)) return;
+    if (saveInFlightRef.current) {
+      await saveInFlightRef.current;
+      // The next debounce/flush will use the note ID returned by the pending
+      // request, rather than creating a second note for the same lesson.
+      return;
+    }
+    setNotesSaveStatus("saving");
+
+    let savePromise: Promise<void>;
+    savePromise = (async () => {
       try {
-        setNotesSaveStatus("saving");
-        const notes = await StudentApiService.getNotes(currentLessonId);
-        if (notes && notes.length > 0) {
-          const latest = notes[0];
-          setLessonNotes(latest.content || "");
-          setCurrentNoteId(latest.id);
-        } else {
-          setLessonNotes("");
-          setCurrentNoteId(null);
-        }
-        setNotesSaveStatus("idle");
-      } catch (error) {
-        console.warn("⚠️ Failed to fetch lesson notes:", error);
-        setNotesSaveStatus("idle");
-      } finally {
-        isInitialLoadRef.current = false;
-      }
-    };
+        const saved = noteId
+          ? await StudentApiService.updateNote(noteId, content)
+          : await StudentApiService.createNote(lessonId, content);
 
-    fetchNotes();
+        // Ignore a late response from a previous lesson or an older request.
+        if (generation !== generationRef.current || lessonId !== lessonIdRef.current) return;
+        if (saved?.id) setCurrentNoteId(saved.id);
+        setNotesSaveStatus("saved");
+        if (statusResetRef.current) clearTimeout(statusResetRef.current);
+        statusResetRef.current = setTimeout(() => {
+          setNotesSaveStatus((status) => status === "saved" ? "idle" : status);
+        }, 3000);
+      } catch (error) {
+        if (generation === generationRef.current && lessonId === lessonIdRef.current) {
+          console.error("Failed to save lesson notes:", error);
+          setNotesSaveStatus("error");
+        }
+      } finally {
+        // Clear the shared in-flight slot even if the learner changed lessons
+        // while this request was pending. Otherwise the next lesson would
+        // permanently believe an unrelated request was still active.
+        if (saveInFlightRef.current === savePromise) saveInFlightRef.current = null;
+      }
+    })();
+
+    saveInFlightRef.current = savePromise;
+    await savePromise;
+  }, [setCurrentNoteId]);
+
+  useEffect(() => {
+    generationRef.current += 1;
+    const generation = generationRef.current;
+    lessonIdRef.current = currentLessonId;
+    loadingRef.current = true;
+    notesRef.current = "";
+    noteIdRef.current = null;
+    setLessonNotesState("");
+    setCurrentNoteIdState(null);
+    setNotesSaveStatus("idle");
+
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (statusResetRef.current) clearTimeout(statusResetRef.current);
+
+    if (!currentLessonId) {
+      loadingRef.current = false;
+      return;
+    }
+
+    setNotesSaveStatus("saving");
+    StudentApiService.getNotes(currentLessonId)
+      .then((notes) => {
+        if (generation !== generationRef.current) return;
+        const latest = notes?.[0];
+        const content = latest?.content || "";
+        notesRef.current = content;
+        noteIdRef.current = latest?.id ?? null;
+        setLessonNotesState(content);
+        setCurrentNoteIdState(latest?.id ?? null);
+        setNotesSaveStatus("idle");
+      })
+      .catch((error) => {
+        if (generation !== generationRef.current) return;
+        console.warn("Failed to load lesson notes:", error);
+        setNotesSaveStatus("error");
+      })
+      .finally(() => {
+        if (generation === generationRef.current) loadingRef.current = false;
+      });
 
     return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [currentLessonId]);
 
-  // Debounced autosave
   useEffect(() => {
-    if (!currentLessonId) return;
-    if (isInitialLoadRef.current) return;
+    if (!currentLessonId || loadingRef.current) return;
     if (!lessonNotes.trim() && !currentNoteId) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-
-    debounceRef.current = setTimeout(async () => {
-      try {
-        setNotesSaveStatus("saving");
-
-        if (currentNoteId) {
-          const updated = await StudentApiService.updateNote(
-            currentNoteId,
-            lessonNotes
-          );
-          if (updated?.id) {
-            setCurrentNoteId(updated.id);
-          }
-        } else {
-          const created = await StudentApiService.createNote(
-            currentLessonId,
-            lessonNotes
-          );
-          if (created?.id) {
-            setCurrentNoteId(created.id);
-          }
-        }
-
-        setNotesSaveStatus("saved");
-        setTimeout(() => {
-          setNotesSaveStatus((prev) => (prev === "saved" ? "idle" : prev));
-        }, 3000);
-      } catch (error) {
-        console.error("❌ Failed to save note:", error);
-        setNotesSaveStatus("error");
-      }
+    debounceRef.current = setTimeout(() => {
+      void saveCurrentNotes();
     }, 1500);
 
     return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
-      }
+      if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [lessonNotes, currentLessonId, currentNoteId]);
+  }, [lessonNotes, currentLessonId, currentNoteId, saveCurrentNotes]);
+
+  const flushNotes = useCallback(async () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (saveInFlightRef.current) await saveInFlightRef.current;
+    if (notesRef.current.trim() || noteIdRef.current) await saveCurrentNotes();
+  }, [saveCurrentNotes]);
 
   const clearNotes = useCallback(() => {
-    setLessonNotes("");
-    setCurrentNoteId(null);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    notesRef.current = "";
+    noteIdRef.current = null;
+    setLessonNotesState("");
+    setCurrentNoteIdState(null);
     setNotesSaveStatus("idle");
   }, []);
 
@@ -110,5 +157,6 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
     currentNoteId,
     notesSaveStatus,
     clearNotes,
+    flushNotes,
   };
 }

@@ -27,7 +27,13 @@ import { UnlockAnimation } from './components/UnlockAnimation';
 import { LessonScoreDisplay } from './components/LessonScoreDisplay';
 import { ModuleUnlockErrorDialog } from '@/components/ui/ModuleUnlockErrorDialog';
 import { useProgressTracking } from './hooks/useProgressTracking';
+import { useNotesAutosave } from './hooks/useNotesAutosave';
 import * as NavUtils from './utils/navigationUtils';
+import {
+  LESSON_PASSING_THRESHOLD,
+  MODULE_PASSING_THRESHOLD,
+  DEFAULT_QUIZ_PASSING_THRESHOLD,
+} from './utils/learningRules';
 import type { 
   CourseCompletion, 
   InteractionEvent, 
@@ -120,7 +126,7 @@ const LearningPage = () => {
     totalAssignments: 0,
     completedAssignments: 0,
     overallScore: 0,
-    passingThreshold: 70
+    passingThreshold: MODULE_PASSING_THRESHOLD
   });
   const [newBadgesEarned, setNewBadgesEarned] = useState<string[]>([]);
   const [showCertificateNotification, setShowCertificateNotification] = useState(false);
@@ -132,9 +138,6 @@ const LearningPage = () => {
   const [currentViewMode, setCurrentViewMode] = useState<ViewMode>('content');
   const [interactionHistory, setInteractionHistory] = useState<InteractionEvent[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [lessonNotes, setLessonNotes] = useState<string>('');
-  const [currentNoteId, setCurrentNoteId] = useState<number | null>(null);
-  const [notesSaveStatus, setNotesSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   
   // Auto-close sidebar on small screens when interface loads
   useEffect(() => {
@@ -218,12 +221,22 @@ const LearningPage = () => {
   const [lessonAssessments, setLessonAssessments] = useState<{ [lessonId: number]: any[] }>({});
   const [lessonCompletionStatus, setLessonCompletionStatus] = useState<{ [lessonId: number]: boolean }>({});
   const [quizLoadError, setQuizLoadError] = useState<string | null>(null);
+  const [assignmentLoadError, setAssignmentLoadError] = useState<string | null>(null);
   const [quizCompletionStatus, setQuizCompletionStatus] = useState<{ [quizId: number]: { completed: boolean; score: number; passed: boolean } }>({});
   const [currentLessonQuizScore, setCurrentLessonQuizScore] = useState(0);
   const [currentLessonAssignmentScore, setCurrentLessonAssignmentScore] = useState(0);
   const [lessonScore, setLessonScore] = useState(0);
   // Trigger to force sidebar to re-fetch module progress (incremented on score change)
   const [sidebarProgressTrigger, setSidebarProgressTrigger] = useState(0);
+  const activeLessonIdRef = useRef<number | null>(null);
+  activeLessonIdRef.current = currentLesson?.id ?? null;
+
+  const {
+    lessonNotes,
+    setLessonNotes,
+    notesSaveStatus,
+    flushNotes,
+  } = useNotesAutosave(currentLesson?.id);
   
   // Track completion attempts to prevent multiple simultaneous calls
   const completionAttemptRef = useRef<number | null>(null);
@@ -322,7 +335,9 @@ const LearningPage = () => {
   const autoAdvanceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const checkAndUnlockNextModuleRef = useRef<(() => Promise<void>) | null>(null);
   const unlockingRef = useRef<boolean>(false);
-  const notesDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentRequestRef = useRef(0);
+  const navigationIntentRef = useRef(0);
+  const bookmarkRequestRef = useRef(0);
   const assignmentPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastAssignmentStatusRef = useRef<string>('');
 
@@ -694,7 +709,7 @@ const LearningPage = () => {
             [currentLesson.id]: {
               score: lessonScore,
               completed: true,
-              passed: lessonScore >= 70
+              passed: lessonScore >= LESSON_PASSING_THRESHOLD
             }
           }));
 
@@ -744,7 +759,7 @@ const LearningPage = () => {
     if (!moduleScoring?.cumulativeScore || !checkAndUnlockNextModuleRef.current) return;
     if (!courseData?.course?.modules || !currentModuleId) return;
     
-    const passingThreshold = 70;
+    const passingThreshold = MODULE_PASSING_THRESHOLD;
     const currentScore = moduleScoring.cumulativeScore;
     
     // Check if passing
@@ -856,7 +871,7 @@ const LearningPage = () => {
         [currentLesson.id]: {
           score: lessonScore,
           completed: true,
-          passed: lessonScore >= 70
+          passed: lessonScore >= LESSON_PASSING_THRESHOLD
         }
       }));
       
@@ -956,13 +971,13 @@ const LearningPage = () => {
     // Already completed
     if (isLessonCompleted) return false;
     
-    // Check if lesson score meets threshold (80%)
-    if (lessonScore < 80) return false;
+    // The backend requires an overall lesson score of 80%.
+    if (lessonScore < LESSON_PASSING_THRESHOLD) return false;
     
     // Check quiz requirement if quiz exists
     if (lessonQuiz) {
       const quizScore = lessonQuiz.best_score ?? lessonQuiz.current_score ?? 0;
-      const passingScore = lessonQuiz.passing_score || 70;
+      const passingScore = lessonQuiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD;
       if (quizScore < passingScore) return false;
     }
     
@@ -998,25 +1013,40 @@ const LearningPage = () => {
   // Load lesson content including quizzes and assignments
   const loadLessonContent = useCallback(async (lessonId: number) => {
     if (!lessonId) return;
-    
+    const requestId = ++contentRequestRef.current;
     setContentLoading(true);
     setQuizLoadError(null);
+    setAssignmentLoadError(null);
     
     try {
       console.log(`🔄 Loading content for lesson ${lessonId}...`);
-      
-      const [quizResponse, assignmentsResponse] = await Promise.all([
-        ContentAssignmentService.getLessonQuiz(lessonId).catch((err) => {
-          console.error('❌ Failed to load lesson quiz:', err);
-          const errorMsg = err.response?.data?.message || err.message || 'Failed to load quiz';
-          setQuizLoadError(errorMsg);
-          return { lesson: null, quiz: null, quizzes: [] };
-        }),
-        ContentAssignmentService.getLessonAssignments(lessonId).catch((err) => {
-          console.error('❌ Failed to load lesson assignments:', err);
-          return { lesson: null, assignments: [] };
-        })
+
+      const [quizResult, assignmentsResult] = await Promise.allSettled([
+        ContentAssignmentService.getLessonQuiz(lessonId),
+        ContentAssignmentService.getLessonAssignments(lessonId),
       ]);
+
+      // A slower response from a lesson the learner left must not replace the
+      // current lesson's assessments.
+      if (requestId !== contentRequestRef.current) return;
+
+      const quizResponse = quizResult.status === 'fulfilled'
+        ? quizResult.value
+        : { lesson: null, quiz: null, quizzes: [] };
+      const assignmentsResponse = assignmentsResult.status === 'fulfilled'
+        ? assignmentsResult.value
+        : { lesson: null, assignments: [] };
+
+      if (quizResult.status === 'rejected') {
+        const errorMessage = quizResult.reason?.response?.data?.message || quizResult.reason?.message || 'Quiz could not be loaded.';
+        console.error('❌ Failed to load lesson quiz:', quizResult.reason);
+        setQuizLoadError(errorMessage);
+      }
+      if (assignmentsResult.status === 'rejected') {
+        const errorMessage = assignmentsResult.reason?.response?.data?.message || assignmentsResult.reason?.message || 'Assignments could not be loaded.';
+        console.error('❌ Failed to load lesson assignments:', assignmentsResult.reason);
+        setAssignmentLoadError(errorMessage);
+      }
       
       console.log('✅ Loaded lesson content:', { 
         quizAvailable: !!quizResponse.quiz, 
@@ -1073,10 +1103,12 @@ const LearningPage = () => {
       setContentLoadedForLesson(lessonId);
     } catch (error) {
       console.error('Error loading lesson content:', error);
-      // Still mark as loaded to prevent infinite retries
-      setContentLoadedForLesson(lessonId);
+      if (requestId === contentRequestRef.current) {
+        setQuizLoadError('Interactive content could not be loaded. Try again.');
+        setAssignmentLoadError('Interactive content could not be loaded. Try again.');
+      }
     } finally {
-      setContentLoading(false);
+      if (requestId === contentRequestRef.current) setContentLoading(false);
     }
   }, []);
 
@@ -1211,7 +1243,7 @@ const LearningPage = () => {
         totalAssignments: progressData.total_assignments || 0,
         completedAssignments: progressData.completed_assignments || 0,
         overallScore,
-        passingThreshold: 70
+        passingThreshold: MODULE_PASSING_THRESHOLD
       };
 
       setCourseCompletion(completion);
@@ -1314,96 +1346,6 @@ const LearningPage = () => {
     setMounted(true);
   }, []);
 
-  // Load lesson completion statuses for all lessons in the course
-  // This runs once on mount to initialize the sidebar completion status map
-  useEffect(() => {
-    const loadLessonCompletionStatuses = async () => {
-      if (!courseData?.course?.modules) return;
-      
-      try {
-        const allLessons = courseData.course.modules.flatMap((module: any) => module.lessons || []);
-        const completionStatuses: { [lessonId: number]: boolean } = {};
-        
-        // Fetch completion status for each lesson from backend
-        await Promise.all(
-          allLessons.map(async (lesson: any) => {
-            try {
-              const response = await StudentApiService.getLessonProgress(lesson.id);
-              // Mark as completed if explicitly marked as completed in DB
-              // The API returns { lesson_id, progress: { completed, reading_progress, ... } }
-              const isCompleted = response.progress?.completed === true;
-              completionStatuses[lesson.id] = isCompleted;
-              
-              if (isCompleted) {
-                console.log(`✅ Lesson ${lesson.id} is completed in DB`);
-              }
-            } catch (error) {
-              console.error(`Failed to load completion status for lesson ${lesson.id}:`, error);
-              completionStatuses[lesson.id] = false;
-            }
-          })
-        );
-        
-        setLessonCompletionStatus(prev => {
-          // Merge with existing state to preserve any recently completed lessons
-          // This prevents race conditions where a lesson is completed but API hasn't updated yet
-          const merged = { ...completionStatuses };
-          Object.keys(prev).forEach(lessonIdStr => {
-            const lessonId = Number(lessonIdStr);
-            if (prev[lessonId] === true && !merged[lessonId]) {
-              // Preserve local completion status if backend hasn't caught up yet
-              merged[lessonId] = true;
-              console.log(`⚠️ Preserving local completion for lesson ${lessonId} (backend not synced yet)`);
-            }
-          });
-          console.log('✅ Loaded lesson completion statuses from DB:', merged);
-          return merged;
-        });
-      } catch (error) {
-        console.error('Failed to load lesson completion statuses:', error);
-      }
-    };
-    
-    loadLessonCompletionStatuses();
-  }, [courseData?.course?.modules]);
-
-  // Handler to mark a lesson as completed (called when auto-completion happens)
-  const markLessonAsCompleted = useCallback((lessonId: number) => {
-    setLessonCompletionStatus(prev => {
-      if (prev[lessonId] === true) {
-        return prev; // Already completed, no update needed
-      }
-      
-      console.log(`✅ Marking lesson ${lessonId} as completed in UI`);
-      return {
-        ...prev,
-        [lessonId]: true
-      };
-    });
-  }, []);
-
-  // Refresh completion status for current lesson when it changes
-  useEffect(() => {
-    const refreshCurrentLessonCompletion = async () => {
-      if (!currentLesson?.id) return;
-      
-      try {
-        const response = await StudentApiService.getLessonProgress(currentLesson.id);
-        const isCompleted = response.progress?.completed === true;
-        
-        // Update completion status if it's different from current state
-        if (isCompleted !== lessonCompletionStatus[currentLesson.id]) {
-          console.log(`🔄 Updating completion status for lesson ${currentLesson.id}: ${isCompleted}`);
-          markLessonAsCompleted(currentLesson.id);
-        }
-      } catch (error) {
-        console.error(`Failed to refresh completion status for lesson ${currentLesson.id}:`, error);
-      }
-    };
-    
-    refreshCurrentLessonCompletion();
-  }, [currentLesson?.id, markLessonAsCompleted, lessonCompletionStatus]);
-
   // Load quiz attempt scores from database for sidebar display
   // This ensures lesson assessment scores are real data from the DB, not just defaults
   useEffect(() => {
@@ -1430,7 +1372,7 @@ const LearningPage = () => {
                   if (attempts.attempts && attempts.attempts.length > 0) {
                     // Sort by score descending to get best score
                     const bestAttempt = attempts.attempts.sort((a: any, b: any) => (b.score || 0) - (a.score || 0))[0];
-                    const passingScore = quiz.passing_score || 70;
+                    const passingScore = quiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD;
                     
                     quizStatusMap[quiz.id] = {
                       completed: true,
@@ -1495,87 +1437,6 @@ const LearningPage = () => {
     }
   }, [currentLesson?.id]);
 
-  // ── Fetch notes from backend when lesson changes ────────────────────────
-  useEffect(() => {
-    if (!currentLesson?.id) return;
-    
-    const fetchNotes = async () => {
-      try {
-        setNotesSaveStatus('saving');
-        const notes = await StudentApiService.getNotes(currentLesson.id);
-        if (notes && notes.length > 0) {
-          // Use the most recent note for this lesson
-          const latest = notes[0];
-          setLessonNotes(latest.content || '');
-          setCurrentNoteId(latest.id);
-          console.log(`📝 Loaded note ${latest.id} for lesson ${currentLesson.id}`);
-        } else {
-          setLessonNotes('');
-          setCurrentNoteId(null);
-        }
-        setNotesSaveStatus('idle');
-      } catch (error) {
-        console.warn('⚠️ Failed to fetch lesson notes:', error);
-        setNotesSaveStatus('idle');
-      }
-    };
-    
-    fetchNotes();
-  }, [currentLesson?.id]);
-
-  // ── Debounced auto-save notes ────────────────────────────────────────────
-  useEffect(() => {
-    if (!currentLesson?.id) return;
-    
-    // Skip on initial load before notes are fetched
-    if (notesSaveStatus === 'saving' && !currentNoteId && !lessonNotes) return;
-    
-    // Clear any pending save
-    if (notesDebounceRef.current) {
-      clearTimeout(notesDebounceRef.current);
-    }
-    
-    // Don't auto-save empty notes that have never been saved
-    if (!lessonNotes.trim() && !currentNoteId) return;
-    
-    // Debounce by 1.5s
-    notesDebounceRef.current = setTimeout(async () => {
-      try {
-        setNotesSaveStatus('saving');
-        
-        if (currentNoteId) {
-          // Update existing note
-          const updated = await StudentApiService.updateNote(currentNoteId, lessonNotes);
-          if (updated?.id) {
-            setCurrentNoteId(updated.id);
-          }
-          console.log('📝 Note updated:', currentNoteId);
-        } else {
-          // Create new note
-          const created = await StudentApiService.createNote(currentLesson.id, lessonNotes);
-          if (created?.id) {
-            setCurrentNoteId(created.id);
-          }
-          console.log('📝 Note created');
-        }
-        
-        setNotesSaveStatus('saved');
-        setTimeout(() => {
-          setNotesSaveStatus(prev => prev === 'saved' ? 'idle' : prev);
-        }, 3000);
-      } catch (error) {
-        console.error('❌ Failed to save note:', error);
-        setNotesSaveStatus('error');
-      }
-    }, 1500);
-    
-    return () => {
-      if (notesDebounceRef.current) {
-        clearTimeout(notesDebounceRef.current);
-      }
-    };
-  }, [lessonNotes, currentLesson?.id, currentNoteId]);
-
   // Load course data
   useEffect(() => {
     if (authLoading || !isAuthenticated || !courseId) return;
@@ -1585,7 +1446,7 @@ const LearningPage = () => {
         setLoading(true);
         setError(null);
         
-        const response = await StudentApiService.getCourseDetails(courseId);
+        const response = await StudentApiService.getCourseDetails(courseId, viewAsStudent);
         
         // ENHANCED: Extract both course data and progress data from response
         // Backend returns: { success, course, progress: { modules }, current_lesson, enrollment }
@@ -1609,9 +1470,40 @@ const LearningPage = () => {
         
         let lessonToSet = null;
         let moduleIdToSet = null;
+
+        // URL deep links are explicit and win over resume heuristics. This
+        // makes shared lesson/tab links deterministic after a reload.
+        const routeParams = new URLSearchParams(window.location.search);
+        const requestedLessonId = Number(routeParams.get('lesson') || routeParams.get('lesson_id'));
+        const requestedTab = routeParams.get('tab') as ViewMode | null;
+        // `assessment` is a legacy route value; the rendered UI now exposes
+        // quiz and assignment tabs separately, so never deep-link to a blank
+        // unrendered tab.
+        const allowedTabs: ViewMode[] = ['content', 'notes', 'quiz', 'assignments'];
+        if (requestedTab && allowedTabs.includes(requestedTab)) {
+          setCurrentViewMode(requestedTab);
+        } else if (requestedTab === 'assessment') {
+          setCurrentViewMode('content');
+        }
+        if (requestedLessonId && response.course?.modules) {
+          for (const module of response.course.modules) {
+            const requestedLesson = module.lessons?.find((lesson: any) => lesson.id === requestedLessonId);
+            if (requestedLesson) {
+              const progressModule = response.progress?.modules?.find(
+                (entry: any) => (entry.module?.id || entry.id) === module.id
+              );
+              const requestedStatus = progressModule?.progress?.status || progressModule?.status;
+              if (viewAsStudent || requestedStatus !== 'locked') {
+                lessonToSet = requestedLesson;
+                moduleIdToSet = module.id;
+              }
+              break;
+            }
+          }
+        }
         
         // 1. Try to find the first uncompleted lesson from backend progress modules data
-        if (response.progress?.modules && response.progress.modules.length > 0) {
+        if (!lessonToSet && response.progress?.modules && response.progress.modules.length > 0) {
           console.log('🔍 Searching for first uncompleted lesson in progress data...');
           
           for (const moduleData of response.progress.modules) {
@@ -1707,7 +1599,16 @@ const LearningPage = () => {
     };
 
     fetchCourseData();
-  }, [courseId, isAuthenticated, authLoading]);
+  }, [courseId, isAuthenticated, authLoading, viewAsStudent]);
+
+  // Keep the current route shareable without a full navigation.
+  useEffect(() => {
+    if (!currentLesson?.id || typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('lesson', String(currentLesson.id));
+    url.searchParams.set('tab', currentViewMode);
+    window.history.replaceState({}, '', url.toString());
+  }, [currentLesson?.id, currentViewMode]);
 
   // Fetch lesson completion status when course data is loaded
   useEffect(() => {
@@ -1794,29 +1695,12 @@ const LearningPage = () => {
     loadProjectsIntoSidebar();
   }, [courseData?.course?.modules, courseData?.course, courseId]);
 
-  // Load lesson content (quiz and assignments) when current lesson changes
-  useEffect(() => {
-    if (currentLesson?.id && contentLoadedForLesson !== currentLesson.id) {
-      loadLessonContent(currentLesson.id);
-    }
-  }, [currentLesson?.id, contentLoadedForLesson, loadLessonContent]);
-
-  // Reload content when switching to quiz or assignment tab (if not already loaded)
-  useEffect(() => {
-    if (currentLesson?.id && contentLoadedForLesson !== currentLesson.id) {
-      // Only reload if content hasn't been loaded for this lesson yet
-      if (currentViewMode === 'quiz' || currentViewMode === 'assignments') {
-        console.log(`🔄 Tab switched to ${currentViewMode}, loading content for lesson ${currentLesson.id}...`);
-        loadLessonContent(currentLesson.id);
-      }
-    }
-  }, [currentViewMode, currentLesson?.id, contentLoadedForLesson, loadLessonContent]);
-
   // Enhanced lesson selection with loading states, error handling, and accessibility
   const handleLessonSelect = async (lessonId: number, moduleId: number) => {
-    // Prevent navigation if lesson is already current or content is loading
-    if (currentLesson?.id === lessonId || contentLoading) {
-      console.warn('⚠️ Navigation blocked: Already on this lesson or content is loading');
+    // Prevent duplicate navigation only. Content requests are stale-safe, so
+    // learners can switch lessons while the previous request is still loading.
+    if (currentLesson?.id === lessonId) {
+      console.warn('⚠️ Navigation blocked: already on this lesson');
       return;
     }
 
@@ -1854,31 +1738,16 @@ const LearningPage = () => {
           }
         }
         
-        // Save current notes before switching
-        if (notesDebounceRef.current) {
-          clearTimeout(notesDebounceRef.current);
-        }
-        if (lessonNotes) {
-          try {
-            if (currentNoteId) {
-              await StudentApiService.updateNote(currentNoteId, lessonNotes);
-            } else {
-              const created = await StudentApiService.createNote(currentLesson.id, lessonNotes);
-              if (created?.id) {
-                setCurrentNoteId(created.id);
-              }
-            }
-            console.log('📝 Notes saved before navigation');
-          } catch (saveError) {
-            console.warn('⚠️ Failed to save notes before navigation:', saveError);
-          }
+        // Flush the single notes pipeline before switching lessons.
+        try {
+          await flushNotes();
+        } catch (saveError) {
+          console.warn('⚠️ Failed to save notes before navigation:', saveError);
         }
         
         // Update lesson and module state
         setCurrentLesson(lesson);
         setCurrentModuleId(moduleId);
-        setCurrentNoteId(null);
-        setLessonNotes('');
         setCurrentViewMode('content'); // Reset to content tab when navigating to a new lesson
         
         // Prefetch lesson progress immediately for faster load
@@ -1942,159 +1811,54 @@ const LearningPage = () => {
     }
   };
 
-  // Handle quiz selection from sidebar
+  // Assessment navigation uses the same lesson transition pipeline as the
+  // sidebar and lesson controls. This keeps progress/notes flushing and stale
+  // content protection in one place.
+  const navigateToLessonTab = async (lessonId: number, moduleId: number, tab: ViewMode) => {
+    const intentId = ++navigationIntentRef.current;
+    if (currentLesson?.id === lessonId) {
+      setCurrentViewMode(tab);
+      contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    await handleLessonSelect(lessonId, moduleId);
+    if (intentId === navigationIntentRef.current) {
+      setCurrentViewMode(tab);
+    }
+  };
+
   const handleQuizSelect = (lessonId: number, moduleId: number, quizId: number) => {
-    console.log('📝 Navigating to quiz:', quizId, 'for lesson:', lessonId);
-    
-    // First navigate to the lesson
-    const courseModules = courseData?.course?.modules || courseData?.modules || [];
-    if (courseModules) {
-      const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
-      const lesson = allLessons.find((l: any) => l.id === lessonId);
-      if (lesson) {
-        setCurrentLesson(lesson);
-        setCurrentModuleId(moduleId);
-        
-        // Auto-close sidebar on small screens (mobile/tablet)
-        if (window.innerWidth < 1024) { // lg breakpoint
-          setSidebarOpen(false);
-          console.log('📱 Auto-closing sidebar on small screen (quiz)');
-        }
-        
-        // Load lesson content (which includes the quiz)
-        loadLessonContent(lessonId).then(() => {
-          // Switch to quiz view after content is loaded
-          setCurrentViewMode('quiz');
-          console.log('✅ Switched to quiz view');
-          
-          // Scroll to top after content loads
-          setTimeout(() => {
-            if (contentRef.current) {
-              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }, 100);
-        });
-        
-        setInteractionHistory(prev => [...prev, {
-          type: 'quiz_select',
-          lessonId,
-          moduleId,
-          quizId,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-    }
+    void navigateToLessonTab(lessonId, moduleId, 'quiz');
+    setInteractionHistory(prev => [...prev, {
+      type: 'quiz_select',
+      lessonId,
+      moduleId,
+      quizId,
+      timestamp: new Date().toISOString()
+    }]);
   };
 
-  // Handle project selection from sidebar — navigates to lesson and shows content
-  const handleProjectSelect = (lessonId: number, moduleId: number, projectId: number) => {
-    console.log('🚀 Navigating to project:', projectId, 'for lesson:', lessonId);
-
-    const courseModules = courseData?.course?.modules || courseData?.modules || [];
-    if (courseModules) {
-      const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
-      const lesson = allLessons.find((l: any) => l.id === lessonId);
-      if (lesson) {
-        // If already on this lesson, just stay on content tab (projects shown there)
-        if (currentLesson?.id === lessonId) {
-          setCurrentViewMode('content');
-          console.log('✅ Already on lesson, switched to content view for project');
-          setTimeout(() => {
-            if (contentRef.current) {
-              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }, 100);
-          return;
-        }
-
-        setCurrentLesson(lesson);
-        setCurrentModuleId(moduleId);
-
-        // Auto-close sidebar on small screens (mobile/tablet)
-        if (window.innerWidth < 1024) {
-          setSidebarOpen(false);
-          console.log('📱 Auto-closing sidebar on small screen (project)');
-        }
-
-        // Load lesson content then show content tab
-        loadLessonContent(lessonId).then(() => {
-          setCurrentViewMode('content');
-          console.log('✅ Switched to content view for project');
-
-          setTimeout(() => {
-            if (contentRef.current) {
-              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }, 100);
-        });
-
-        setInteractionHistory(prev => [...prev, {
-          type: 'project_select',
-          lessonId,
-          moduleId,
-          projectId,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-    }
-  };
-
-  // Handle assignment selection from sidebar — navigates to lesson AND opens assignments tab
   const handleAssignmentSelect = (lessonId: number, moduleId: number, assignmentId: number) => {
-    console.log('📋 Navigating to assignment:', assignmentId, 'for lesson:', lessonId);
+    void navigateToLessonTab(lessonId, moduleId, 'assignments');
+    setInteractionHistory(prev => [...prev, {
+      type: 'assignment_select',
+      lessonId,
+      moduleId,
+      assignmentId,
+      timestamp: new Date().toISOString()
+    }]);
+  };
 
-    const courseModules = courseData?.course?.modules || courseData?.modules || [];
-    if (courseModules) {
-      const allLessons = courseModules.flatMap((module: any) => module.lessons || []);
-      const lesson = allLessons.find((l: any) => l.id === lessonId);
-      if (lesson) {
-        // If already on this lesson, just switch the tab
-        if (currentLesson?.id === lessonId) {
-          setCurrentViewMode('assignments');
-          console.log('✅ Already on lesson, switched to assignments view');
-          setTimeout(() => {
-            if (contentRef.current) {
-              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }, 100);
-          return;
-        }
-
-        setCurrentLesson(lesson);
-        setCurrentModuleId(moduleId);
-
-        // Auto-close sidebar on small screens (mobile/tablet)
-        if (window.innerWidth < 1024) {
-          setSidebarOpen(false);
-          console.log('📱 Auto-closing sidebar on small screen (assignment)');
-        }
-
-        // Load lesson content (which includes assignments) then switch tab
-        loadLessonContent(lessonId).then(() => {
-          setCurrentViewMode('assignments');
-          console.log('✅ Switched to assignments view');
-
-          setTimeout(() => {
-            if (contentRef.current) {
-              contentRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-            }
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-          }, 100);
-        });
-
-        setInteractionHistory(prev => [...prev, {
-          type: 'assignment_select',
-          lessonId,
-          moduleId,
-          assignmentId,
-          timestamp: new Date().toISOString()
-        }]);
-      }
-    }
+  const handleProjectSelect = (lessonId: number, moduleId: number, projectId: number) => {
+    void navigateToLessonTab(lessonId, moduleId, 'content');
+    setInteractionHistory(prev => [...prev, {
+      type: 'project_select',
+      lessonId,
+      moduleId,
+      projectId,
+      timestamp: new Date().toISOString()
+    }]);
   };
 
   // Handle module unlock
@@ -2188,7 +1952,7 @@ const LearningPage = () => {
       await moduleScoring.recalculate();
     }
     
-    const passingThreshold = 70;
+    const passingThreshold = MODULE_PASSING_THRESHOLD;
     const currentScore = moduleScoring?.cumulativeScore || 0;
     const isPassing = currentScore >= passingThreshold;
     
@@ -2255,17 +2019,17 @@ const LearningPage = () => {
         missingItems.push(...eligibility.recommendations);
       } else {
         // Check each component and suggest improvements (only for available components)
-        if (weights.courseContribution > 0 && breakdown.courseContribution < 70) {
-          missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for 70%+)`);
+        if (weights.courseContribution > 0 && breakdown.courseContribution < MODULE_PASSING_THRESHOLD) {
+          missingItems.push(`📖 Reading & Engagement: ${breakdown.courseContribution.toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
         }
-        if (weights.quizzes > 0 && breakdown.quizzes < 70) {
-          missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for 70%+)`);
+        if (weights.quizzes > 0 && breakdown.quizzes < MODULE_PASSING_THRESHOLD) {
+          missingItems.push(`📝 Quiz Score: ${breakdown.quizzes.toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
         }
-        if (weights.assignments > 0 && breakdown.assignments < 70) {
-          missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for 70%+)`);
+        if (weights.assignments > 0 && breakdown.assignments < MODULE_PASSING_THRESHOLD) {
+          missingItems.push(`📋 Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
         }
-        if (weights.finalAssessment > 0 && breakdown.finalAssessment < 70) {
-          missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for 70%+)`);
+        if (weights.finalAssessment > 0 && breakdown.finalAssessment < MODULE_PASSING_THRESHOLD) {
+          missingItems.push(`🎯 Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
         }
       }
       
@@ -2382,33 +2146,78 @@ const LearningPage = () => {
     checkAndUnlockNextModuleRef.current = checkAndUnlockNextModule;
   }, [checkAndUnlockNextModule]);
 
-  // Handle bookmark
-  const handleBookmark = () => {
-    setIsBookmarked(!isBookmarked);
-    setInteractionHistory(prev => [...prev, {
-      type: 'bookmark_toggle',
-      lessonId: currentLesson?.id,
-      bookmarked: !isBookmarked,
-      timestamp: new Date().toISOString()
-    }]);
-  };
+  // Load lesson-specific bookmark state from the backend whenever the lesson
+  // changes. Course-level bookmarks are a separate legacy resource.
+  useEffect(() => {
+    const lessonId = currentLesson?.id;
+    const requestId = ++bookmarkRequestRef.current;
+    if (!lessonId || !isAuthenticated) {
+      setIsBookmarked(false);
+      return;
+    }
+
+    StudentApiService.getLessonBookmarks(lessonId)
+      .then((bookmarks) => {
+        if (requestId === bookmarkRequestRef.current && activeLessonIdRef.current === lessonId) {
+          setIsBookmarked(bookmarks.some((bookmark: any) => bookmark.lesson_id === lessonId));
+        }
+      })
+      .catch((error) => {
+        if (requestId === bookmarkRequestRef.current) {
+          console.warn('Failed to load lesson bookmark state:', error);
+          setIsBookmarked(false);
+        }
+      });
+  }, [currentLesson?.id, isAuthenticated]);
+
+  // Persist the bookmark before reflecting it in the UI. This keeps the
+  // control aligned with the backend if a request fails.
+  const handleBookmark = useCallback(async () => {
+    const lessonId = activeLessonIdRef.current;
+    if (!lessonId) return;
+    const nextValue = !isBookmarked;
+    const requestId = ++bookmarkRequestRef.current;
+
+    try {
+      if (nextValue) {
+        await StudentApiService.addLessonBookmark(lessonId);
+      } else {
+        await StudentApiService.removeLessonBookmark(lessonId);
+      }
+      if (requestId !== bookmarkRequestRef.current || activeLessonIdRef.current !== lessonId) return;
+      setIsBookmarked(nextValue);
+      setInteractionHistory(prev => [...prev, {
+        type: 'bookmark_toggle',
+        lessonId,
+        bookmarked: nextValue,
+        timestamp: new Date().toISOString()
+      }]);
+    } catch (error) {
+      console.warn('Failed to update lesson bookmark:', error);
+    }
+  }, [isBookmarked]);
 
   // Handle share
-  const handleShare = () => {
+  const handleShare = async () => {
     setInteractionHistory(prev => [...prev, {
       type: 'share_lesson',
       lessonId: currentLesson?.id,
       timestamp: new Date().toISOString()
     }]);
     
-    if (navigator.share && currentLesson) {
-      navigator.share({
-        title: currentLesson.title,
-        text: `Check out this lesson: ${currentLesson.title}`,
-        url: window.location.href
-      });
-    } else {
-      navigator.clipboard.writeText(window.location.href);
+    try {
+      if (navigator.share && currentLesson) {
+        await navigator.share({
+          title: currentLesson.title,
+          text: `Check out this lesson: ${currentLesson.title}`,
+          url: window.location.href
+        });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(window.location.href);
+      }
+    } catch (error) {
+      // User cancellation and unavailable clipboard permissions are harmless.
+      console.warn('Lesson share was not completed:', error);
     }
   };
 
@@ -2577,11 +2386,11 @@ const LearningPage = () => {
     return isLast;
   }, [courseData?.course?.modules, currentModuleId]);
 
-  // Check if user can unlock next module (last lesson completed + score >= 70%)
+  // Check if user can unlock next module (lesson completion + backend module score)
   const canUnlockNextModule = useMemo(() => {
     if (!isLastLessonInModule || !nextModuleInfo) return false;
     const score = moduleScoring?.cumulativeScore ?? 0;
-    return isLessonCompleted && score >= 70;
+    return isLessonCompleted && score >= MODULE_PASSING_THRESHOLD;
   }, [isLastLessonInModule, nextModuleInfo, moduleScoring?.cumulativeScore, isLessonCompleted]);
 
   // Calculate hasNextLesson after canUnlockNextModule is defined
@@ -2670,11 +2479,6 @@ const LearningPage = () => {
       setIsUnlockingModule(false);
     }
   }, [currentModuleId, nextModuleInfo, progressiveLearning, forceSaveProgress, moduleScoring]);
-
-  // Prevent hydration issues by not rendering until mounted on client
-  if (!mounted) {
-    return null;
-  }
 
   // Authentication loading state - show while auth is being initialized
   if (authLoading) {
@@ -2969,8 +2773,8 @@ const LearningPage = () => {
     <div className="min-h-screen bg-[#0a0e1a]">
       {/* Instructor Preview Mode Indicator */}
       {viewAsStudent && (
-        <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-500/90 backdrop-blur-sm text-black px-4 py-2 text-center text-sm font-medium">
-          📚 Instructor Preview Mode - All modules are unlocked for preview
+        <div className="relative z-50 bg-yellow-500/95 text-black px-4 py-2 text-center text-sm font-medium">
+          Instructor preview mode — all modules are unlocked for preview
         </div>
       )}
       <LearningHeader
@@ -2987,13 +2791,18 @@ const LearningPage = () => {
         courseId={courseId}
         onBookmark={handleBookmark}
         onShare={handleShare}
-        onToggleFocus={() => setFocusMode(!focusMode)}
+        onToggleFocus={() => {
+          setFocusMode((enabled) => {
+            if (!enabled) setSidebarOpen(false);
+            return !enabled;
+          });
+        }}
         helpDialogOpen={helpDialogOpen}
         setHelpDialogOpen={setHelpDialogOpen}
       />
 
-      <div className={`flex ${viewAsStudent ? 'pt-10' : ''}`}>
-        <LearningSidebar
+      <div className={focusMode ? 'block' : 'flex'}>
+        {!focusMode && <LearningSidebar
           sidebarOpen={sidebarOpen}
           setSidebarOpen={setSidebarOpen}
           modules={courseModules}
@@ -3003,6 +2812,7 @@ const LearningPage = () => {
           onLessonSelect={handleLessonSelect}
           onQuizSelect={handleQuizSelect}
           onAssignmentSelect={handleAssignmentSelect}
+          onProjectSelect={handleProjectSelect}
           lessonAssessments={lessonAssessments}
           lessonCompletionStatus={lessonCompletionStatus}
           quizCompletionStatus={quizCompletionStatus}
@@ -3011,7 +2821,7 @@ const LearningPage = () => {
           totalModuleCount={courseData?.course?.total_module_count}
           releasedModuleCount={courseData?.course?.released_module_count}
           progressRefreshTrigger={sidebarProgressTrigger}
-        />
+        />}
 
         {currentLesson ? (
           <LessonContent
@@ -3020,6 +2830,7 @@ const LearningPage = () => {
             lessonAssignments={lessonAssignments}
             contentLoading={contentLoading}
             quizLoadError={quizLoadError}
+            contentLoadError={assignmentLoadError}
             readingProgress={readingProgress}
             engagementScore={engagementScore}
             timeSpent={timeSpent}
@@ -3062,6 +2873,7 @@ const LearningPage = () => {
             courseId={courseId}
             onManualComplete={handleManualCompletion}
             canManuallyComplete={canManuallyComplete()}
+            focusMode={focusMode}
             onSectionProgress={handleSectionProgress}
           />
         ) : (
@@ -3199,7 +3011,7 @@ const LearningPage = () => {
                           <span className="truncate">Reading & Engagement</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.courseContribution || 10}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.courseContribution >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.courseContribution >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.courseContribution.toFixed(0)}%
                         </span>
                       </div>
@@ -3213,7 +3025,7 @@ const LearningPage = () => {
                           <span className="truncate">Quiz Score</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.quizzes || 30}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.quizzes >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.quizzes >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.quizzes.toFixed(0)}%
                         </span>
                       </div>
@@ -3227,7 +3039,7 @@ const LearningPage = () => {
                           <span className="truncate">Assignments</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.assignments || 40}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.assignments >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.assignments >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.assignments.toFixed(0)}%
                         </span>
                       </div>
@@ -3241,7 +3053,7 @@ const LearningPage = () => {
                           <span className="truncate">Final Assessment</span>
                           <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.finalAssessment || 20}%)</span>
                         </span>
-                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.finalAssessment >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${moduleProgressInfo.breakdown.finalAssessment >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                           {moduleProgressInfo.breakdown.finalAssessment.toFixed(0)}%
                         </span>
                       </div>
@@ -3458,7 +3270,7 @@ const LearningPage = () => {
                               <span className="truncate">Reading &amp; Engagement</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.course_contribution.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.course_contribution.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.course_contribution.score >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.course_contribution.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3470,7 +3282,7 @@ const LearningPage = () => {
                               <span className="truncate">Quiz Score</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.quizzes.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.quizzes.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.quizzes.score >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.quizzes.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3482,7 +3294,7 @@ const LearningPage = () => {
                               <span className="truncate">Assignments</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.assignments.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.assignments.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.assignments.score >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.assignments.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3494,7 +3306,7 @@ const LearningPage = () => {
                               <span className="truncate">Final Assessment</span>
                               <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.final_assessment.weight}%)</span>
                             </span>
-                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.final_assessment.score >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.final_assessment.score >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.final_assessment.score.toFixed(0)}%
                             </span>
                           </div>
@@ -3580,7 +3392,7 @@ const LearningPage = () => {
                           {lockedModuleEligibility.eligible ? 'Eligible' : 'Not Eligible'}
                         </span>
                         <span className="px-2 py-1 text-xs rounded border bg-slate-700/40 text-slate-300 border-slate-600/40">
-                          Score: {Math.round(lockedModuleEligibility.total_score || 0)}% / {Math.round(lockedModuleEligibility.required_score || 70)}%
+                          Score: {Math.round(lockedModuleEligibility.total_score || 0)}% / {Math.round(lockedModuleEligibility.required_score || MODULE_PASSING_THRESHOLD)}%
                         </span>
                         {lockedModuleEligibility.can_preview && (
                           <span className="px-2 py-1 text-xs rounded border bg-blue-500/10 text-blue-300 border-blue-600/30">Preview Allowed</span>

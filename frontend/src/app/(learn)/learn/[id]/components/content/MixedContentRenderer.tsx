@@ -31,6 +31,7 @@ export interface MixedContentRendererProps {
   onSwitchToQuiz?: () => void;
   onSwitchToAssignment?: () => void;
   onGoToNextLesson?: () => void;
+  hasNextLesson?: boolean;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -126,7 +127,7 @@ function parseTextIntoSections(text: string): StepSection[] {
 export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
   lesson, onMixedContentVideoProgress, onMixedContentVideoComplete,
   onSectionProgress, isLessonCompleted, hasQuiz, hasAssignments,
-  onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson,
+  onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson,
 }) => {
   // Step sections derived from content
   const mixedStepSections = useMemo((): StepSection[] => {
@@ -187,13 +188,14 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
         </button >
       );
     }
+    if (!hasNextLesson || !onGoToNextLesson) return null;
     return (
-      <button onClick={onGoToNextLesson}
+      <button type="button" onClick={onGoToNextLesson}
         className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
         Next Lesson →
       </button >
     );
-  }, [hasQuiz, hasAssignments, isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson]);
+  }, [hasQuiz, hasAssignments, isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson]);
 
   const renderSection = useCallback(
     (section: StepSection, index: number, isActive: boolean) => {

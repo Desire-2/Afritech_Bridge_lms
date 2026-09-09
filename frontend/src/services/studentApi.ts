@@ -422,8 +422,10 @@ export class StudentApiService {
     }
   }
 
-  static async getCourseDetails(courseId: number): Promise<any> {
-    const response = await api.get(`/student/learning/courses/${courseId}`);
+  static async getCourseDetails(courseId: number, viewAsStudent = false): Promise<any> {
+    const response = await api.get(`/student/learning/courses/${courseId}`, {
+      params: viewAsStudent ? { view_as_student: 'true' } : undefined,
+    });
     return response.data;
   }
 
@@ -753,6 +755,24 @@ export class StudentApiService {
 
   static async deleteNote(noteId: number): Promise<any> {
     const response = await api.delete(`/student/notes/${noteId}`);
+    return response.data;
+  }
+
+  // Lesson bookmarks (course bookmarks use the legacy bookmark methods in
+  // student.service.ts; learning bookmarks must be lesson-specific.)
+  static async getLessonBookmarks(lessonId?: number): Promise<any[]> {
+    const params = lessonId ? { lesson_id: lessonId } : {};
+    const response = await api.get('/student/bookmarks/lessons', { params });
+    return response.data;
+  }
+
+  static async addLessonBookmark(lessonId: number): Promise<any> {
+    const response = await api.post('/student/bookmarks/lessons', { lesson_id: lessonId });
+    return response.data;
+  }
+
+  static async removeLessonBookmark(lessonId: number): Promise<any> {
+    const response = await api.delete(`/student/bookmarks/lessons/${lessonId}`);
     return response.data;
   }
 }

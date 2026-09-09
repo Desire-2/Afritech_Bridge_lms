@@ -20,7 +20,13 @@ from src.models.course_models import (
     Assignment, AssignmentSubmission, Project, ProjectSubmission, ApplicationWindow, CohortModuleRelease
 )
 from src.models.quiz_progress_models import QuizAttempt, UserAnswer # Import quiz progress models
-from src.models.student_models import LessonCompletion, UserProgress, ModuleProgress, Certificate # Import student tracking models
+from src.models.student_models import (
+    LessonCompletion,
+    UserProgress,
+    ModuleProgress,
+    Certificate,
+    StudentLessonBookmark,
+) # Import student tracking models
 from src.models.opportunity_models import Opportunity # Import Opportunity model
 from src.models.achievement_models import (
     Achievement, UserAchievement, LearningStreak, StudentPoints, 

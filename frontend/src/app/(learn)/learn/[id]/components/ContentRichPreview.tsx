@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CollapsibleCard } from "./CollapsibleCard";
@@ -35,10 +35,12 @@ export interface ContentRichPreviewProps {
   onSwitchToQuiz?: () => void;
   onSwitchToAssignment?: () => void;
   onGoToNextLesson?: () => void;
+  hasNextLesson?: boolean;
 }
 
 // ── PDF Viewer ────────────────────────────────────────────────────
-function renderPdfContent(url: string) {
+const PdfContent: React.FC<{ url: string }> = ({ url }) => {
+  const [pdfError, setPdfError] = useState(false);
   // Extract Google Drive file ID or use URL directly
   const driveMatch = url.match(/\/file\/d\/([^/]+)/);
   const pdfUrl = driveMatch
@@ -47,14 +49,25 @@ function renderPdfContent(url: string) {
 
   return (
     <div className="space-y-4">
-      <div className="relative w-full rounded-lg overflow-hidden bg-gray-900 shadow-xl" style={{ height: "75vh" }}>
-        <iframe
-          src={pdfUrl}
-          className="absolute inset-0 w-full h-full"
-          allow="autoplay"
-          title="PDF Viewer"
-        />
-      </div>
+      {pdfError ? (
+        <Alert className="bg-red-900/20 border-red-700">
+          <AlertCircle className="h-4 w-4 text-red-400" />
+          <AlertDescription className="text-red-200 text-sm">
+            The document preview could not be loaded.{' '}
+            <a href={url} target="_blank" rel="noreferrer" className="underline font-medium">Open the document in a new tab</a>.
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <div className="relative w-full rounded-lg overflow-hidden bg-gray-900 shadow-xl h-[min(75vh,48rem)]">
+          <iframe
+            src={pdfUrl}
+            className="absolute inset-0 w-full h-full"
+            allow="autoplay"
+            title="PDF Viewer"
+            onError={() => setPdfError(true)}
+          />
+        </div>
+      )}
       <Alert className="bg-blue-900/20 border-blue-700">
         <AlertCircle className="h-4 w-4 text-blue-400" />
         <AlertDescription className="text-blue-200 text-sm">
@@ -63,7 +76,7 @@ function renderPdfContent(url: string) {
       </Alert>
     </div>
   );
-}
+};
 
 // ── Content Type Badge ─────────────────────────────────────────────
 const typeConfig: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
@@ -77,13 +90,8 @@ const typeConfig: Record<string, { icon: React.ReactNode; label: string; color: 
 export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   lesson, onVideoComplete, onVideoProgress, onMixedContentVideoProgress,
   onMixedContentVideoComplete, onSectionProgress, hasQuiz, hasAssignments,
-  isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson,
+  isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson,
 }) => {
-  // Debug log lesson data
-  useEffect(() => {
-    console.log("📖 Lesson loaded:", lesson.title, "type:", lesson.content_type);
-  }, [lesson]);
-
   // Derived state
   const cfg = typeConfig[lesson.content_type] || typeConfig.text;
 
@@ -102,7 +110,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
         );
 
       case "pdf":
-        return renderPdfContent(lesson.content_data);
+        return <PdfContent url={lesson.content_data} />;
 
       case "text":
       case "mixed":
@@ -118,6 +126,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             onSwitchToQuiz={onSwitchToQuiz}
             onSwitchToAssignment={onSwitchToAssignment}
             onGoToNextLesson={onGoToNextLesson}
+            hasNextLesson={hasNextLesson}
           />
         );
 
@@ -154,7 +163,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
       )}
 
       {/* Collapsible lesson header */}
-      <CollapsibleCard defaultOpen={true} title={lesson.title}>
+      <CollapsibleCard defaultOpen={true} title="Lesson details">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <Badge className={`${cfg.color} text-white`}>
@@ -167,9 +176,6 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
                 {lesson.duration_minutes} min
               </span>
             )}
-            <Badge variant="outline" className="border-gray-700 text-gray-400 text-xs">
-              {lesson.content_type.toUpperCase()}
-            </Badge>
           </div>
 
           {lesson.description && (

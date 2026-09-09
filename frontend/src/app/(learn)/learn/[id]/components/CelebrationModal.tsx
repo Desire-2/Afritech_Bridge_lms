@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Trophy, Star, X, Medal } from 'lucide-react';
@@ -20,6 +20,25 @@ export const CelebrationModal: React.FC<CelebrationModalProps> = ({
   newBadgesEarned,
   onClose
 }) => {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showCelebration) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    modalRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [showCelebration, onClose]);
+
   return (
     <AnimatePresence>
       {showCelebration && (
@@ -27,19 +46,28 @@ export const CelebrationModal: React.FC<CelebrationModalProps> = ({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[70] p-4"
+          role="presentation"
+          onMouseDown={(event) => event.target === event.currentTarget && onClose()}
         >
           <motion.div
             initial={{ scale: 0.5, y: 50 }}
             animate={{ scale: 1, y: 0 }}
             exit={{ scale: 0.5, y: 50 }}
-            className="bg-white rounded-xl p-8 max-w-lg mx-4 text-center shadow-2xl relative"
+            className="bg-white rounded-xl p-5 sm:p-8 w-full max-w-lg text-center shadow-2xl relative"
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="lesson-completed-title"
+            tabIndex={-1}
+            onMouseDown={(event) => event.stopPropagation()}
           >
             {/* Close button */}
             <Button
               variant="ghost"
               size="sm"
               onClick={onClose}
+              aria-label="Close completion dialog"
               className="absolute top-4 right-4 h-8 w-8 p-0 hover:bg-gray-100"
             >
               <X className="h-4 w-4" />
@@ -61,8 +89,8 @@ export const CelebrationModal: React.FC<CelebrationModalProps> = ({
                 <Trophy className="h-10 w-10 text-white" />
               </motion.div>
               
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">
-                {newBadgesEarned.length > 0 ? '🎖️ New Badge Earned! 🏅' : '🎉 Lesson Completed! 🎉'}
+              <h3 id="lesson-completed-title" className="text-2xl font-bold text-gray-900 mb-3">
+                {newBadgesEarned.length > 0 ? 'New Badge Earned' : 'Lesson Completed'}
               </h3>
               
               {newBadgesEarned.length > 0 && (

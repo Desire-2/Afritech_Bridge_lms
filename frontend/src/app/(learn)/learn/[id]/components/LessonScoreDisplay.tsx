@@ -16,6 +16,7 @@ import {
   Medal,
   Gem,
 } from 'lucide-react';
+import { LESSON_PASSING_THRESHOLD, MODULE_PASSING_THRESHOLD } from '../utils/learningRules';
 
 /* ──────────────────────────────────────────────
    Tailwind Safelist
@@ -161,8 +162,8 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
   const displayScore = Math.round(lessonScore);
   const level = getLevel(displayScore);
   const stars = starRating(displayScore);
-  const isCompleted = displayScore >= 80;
-  const missing = Math.max(0, 80 - displayScore);
+  const isCompleted = displayScore >= LESSON_PASSING_THRESHOLD;
+  const missing = Math.max(0, LESSON_PASSING_THRESHOLD - displayScore);
 
   // Build component list (same data as before, displayed compactly)
   const components = useMemo(() => {
@@ -249,7 +250,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
             {/* Score color dot */}
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                comp.score >= 80
+                comp.score >= LESSON_PASSING_THRESHOLD
                   ? 'bg-green-500'
                   : comp.score >= 60
                   ? 'bg-yellow-500'
@@ -292,14 +293,14 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
         >
           <Target className="h-3 w-3 text-yellow-500" />
           <span>
-            Next level at <strong className="text-yellow-400">80%</strong>
-            {components.some((c) => c.score < 70) && (
+            Next level at <strong className="text-yellow-400">{LESSON_PASSING_THRESHOLD}%</strong>
+            {components.some((c) => c.score < MODULE_PASSING_THRESHOLD) && (
               <>
                 {' · '}
                 <span className="text-blue-400">
                   Focus on{' '}
                   {components
-                    .filter((c) => c.score < 70)
+                    .filter((c) => c.score < MODULE_PASSING_THRESHOLD)
                     .map((c) => c.label)
                     .join(', ')}
                 </span>

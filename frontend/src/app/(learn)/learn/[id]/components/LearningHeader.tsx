@@ -2,7 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { 
   Menu, X, BookOpen, Eye, Timer, Brain, HelpCircle, Bookmark, 
   Share2, Target, Zap, Trophy 
@@ -136,6 +136,8 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
                       variant="ghost" 
                       size="sm"
                       onClick={onBookmark}
+                      aria-label={isBookmarked ? 'Remove lesson bookmark' : 'Bookmark this lesson'}
+                      aria-pressed={isBookmarked}
                       className={`hover:bg-yellow-900/30 p-2 ${isBookmarked ? 'text-yellow-400' : 'text-gray-400'}`}
                     >
                       <Bookmark className={`h-4 w-4 ${isBookmarked ? 'fill-current' : ''}`} />
@@ -152,6 +154,7 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
                       variant="ghost" 
                       size="sm"
                       onClick={onShare}
+                      aria-label="Share this lesson"
                       className="hidden sm:flex hover:bg-blue-900/30 text-gray-300 p-2"
                     >
                       <Share2 className="h-4 w-4" />
@@ -168,7 +171,9 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
                       variant="ghost" 
                       size="sm"
                       onClick={onToggleFocus}
-                      className={`hover:bg-purple-900/30 ${focusMode ? 'text-purple-400' : 'text-gray-300'}`}
+                      aria-label={focusMode ? 'Exit focus mode' : 'Enter focus mode'}
+                      aria-pressed={focusMode}
+                      className={`hover:bg-purple-900/30 p-2 ${focusMode ? 'text-purple-400 bg-purple-900/20' : 'text-gray-300'}`}
                     >
                       <Target className={`h-4 w-4 ${focusMode ? 'text-purple-400' : ''}`} />
                     </Button>
@@ -180,7 +185,7 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
               {/* Help Dialog */}
               <Dialog open={helpDialogOpen} onOpenChange={setHelpDialogOpen}>
                 <DialogTrigger asChild>
-                  <Button variant="ghost" size="sm" className="hover:bg-gray-800 text-gray-300">
+                  <Button variant="ghost" size="sm" aria-label="Open learning help" className="hover:bg-gray-800 text-gray-300 p-2">
                     <HelpCircle className="h-4 w-4" />
                   </Button>
                 </DialogTrigger>
@@ -190,6 +195,9 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
                       <Brain className="h-5 w-5 text-blue-600" />
                       <span>Enhanced Learning Interface Guide</span>
                     </DialogTitle>
+                    <DialogDescription className="text-gray-500">
+                      Keyboard shortcuts and progress behavior for this learning interface.
+                    </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-6">
                     <div>

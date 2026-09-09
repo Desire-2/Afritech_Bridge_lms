@@ -21,6 +21,13 @@ import { QuizAttemptTracker } from './QuizAttemptTracker';
 import { AssignmentPanel } from './AssignmentPanel';
 import { LessonScoreDisplay, getLevel } from './LessonScoreDisplay';
 import { CollapsibleCard } from './CollapsibleCard';
+import {
+  LESSON_ENGAGEMENT_THRESHOLD,
+  LESSON_PASSING_THRESHOLD,
+  LESSON_READING_PROGRESS_THRESHOLD,
+  MODULE_PASSING_THRESHOLD,
+  DEFAULT_QUIZ_PASSING_THRESHOLD,
+} from '../utils/learningRules';
 
 // Helper function to format time in MM:SS format
 const formatTime = (seconds: number): string => {
@@ -36,6 +43,7 @@ interface LessonContentProps {
   lessonAssignments: ContentAssignment[];
   contentLoading: boolean;
   quizLoadError?: string | null;
+  contentLoadError?: string | null;
   readingProgress: number;
   engagementScore: number;
   timeSpent: number;
@@ -82,6 +90,7 @@ interface LessonContentProps {
   // Manual completion props
   onManualComplete?: () => Promise<void>;
   canManuallyComplete?: boolean;
+  focusMode?: boolean;
   // Section-based progress tracking
   onSectionProgress?: (viewedSections: number, totalSections: number) => void;
 }
@@ -92,6 +101,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   lessonAssignments,
   contentLoading,
   quizLoadError,
+  contentLoadError,
   readingProgress,
   engagementScore,
   timeSpent,
@@ -137,6 +147,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   // Manual completion props
   onManualComplete,
   canManuallyComplete = false,
+  focusMode = false,
   // Section-based progress tracking
   onSectionProgress
 }) => {
@@ -199,10 +210,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
       setIsGeneratingCertificate(false);
     }
   };
-  // Check if module score is passing (>= 80%)
+  // Module unlock uses the backend's 70% threshold; lesson completion uses 80%.
   // Handle cases where moduleScoring might be null/undefined or still loading
   const cumulativeScore = moduleScoring?.cumulativeScore ?? 0;
-  const isModulePassing = cumulativeScore >= 80;
+  const isModulePassing = cumulativeScore >= MODULE_PASSING_THRESHOLD;
   const isModuleScoringLoaded = moduleScoring !== null && moduleScoring !== undefined && !moduleScoring.loading;
   const canUnlockNextModule = isLastLessonInModule && isLessonCompleted && isModulePassing && nextModuleInfo && isModuleScoringLoaded;
   
@@ -213,8 +224,19 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   const hasQuiz = !!lessonQuiz;
   const hasAssignments = lessonAssignments && lessonAssignments.length > 0;
 
+  // A deep link must not leave Radix Tabs on a value that has no rendered
+  // trigger/content pair after the backend finishes loading this lesson.
+  useEffect(() => {
+    if (contentLoading) return;
+    if (currentViewMode === 'quiz' && !hasQuiz && !quizLoadError) {
+      setCurrentViewMode('content');
+    } else if (currentViewMode === 'assignments' && !hasAssignments && !contentLoadError) {
+      setCurrentViewMode('content');
+    }
+  }, [contentLoading, currentViewMode, hasQuiz, hasAssignments, quizLoadError, contentLoadError, setCurrentViewMode]);
+
   // Reading completion detection for quiz/assignment prompt
-  const readingComplete = readingProgress >= 80;
+  const readingComplete = readingProgress >= LESSON_READING_PROGRESS_THRESHOLD;
   const quizNotAttempted = hasQuiz && (!lessonQuiz?.best_score || lessonQuiz.best_score === 0);
   const assignmentsNotSubmitted = hasAssignments && lessonAssignments.some(
     (a: any) => !a.submission_status?.score
@@ -347,10 +369,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   return (
     <div 
       ref={contentRef}
-      className="flex-1 w-full h-[calc(100vh-4rem)] overflow-y-auto"
+      className={`flex-1 w-full h-[calc(100vh-4rem)] overflow-y-auto ${focusMode ? 'bg-[#0b1220]' : ''}`}
       onClick={() => onTrackInteraction('content_click')}
     >
-      <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 max-w-[1600px] mx-auto">
+      <div className={`w-full px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 mx-auto ${focusMode ? 'max-w-5xl' : 'max-w-[1600px]'}`}>
         <div className="space-y-6">
           {/* Completed Lesson Alert */}
           {isLessonCompleted && (
@@ -482,8 +504,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       {(() => {
                         if (!isLessonCompleted) {
                           const requirements = [];
-                          if (readingProgress < 80) {
-                            requirements.push(`Reading progress: ${Math.round(readingProgress)}% (need 80%)`);
+                          if (readingProgress < LESSON_READING_PROGRESS_THRESHOLD) {
+                            requirements.push(`Reading progress: ${Math.round(readingProgress)}% (need ${LESSON_READING_PROGRESS_THRESHOLD}%)`);
                           }
                           return (
                             <div className="space-y-1">
@@ -676,6 +698,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onSwitchToQuiz={() => setCurrentViewMode('quiz')}
                   onSwitchToAssignment={() => setCurrentViewMode('assignments')}
                   onGoToNextLesson={() => onNavigate('next')}
+                  hasNextLesson={hasNextLesson}
                 />
                 )}
                 </CollapsibleCard>
@@ -715,7 +738,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
                 {/* Progress Status */}
                 <CollapsibleCard
-                  title={isLessonCompleted ? "Lesson Complete! 🎉" : "Progress & Stats"}
+                    title={isLessonCompleted ? "Lesson Complete" : "Progress & Stats"}
                   icon={isLessonCompleted ? <Trophy className="h-4 w-4 text-emerald-400" /> : <Target className="h-4 w-4 text-blue-400" />}
                   expanded={expandedCards.progress}
                   onToggle={(open) => setExpandedCards(prev => ({ ...prev, progress: open }))}
@@ -841,7 +864,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <div className="space-y-3">
                               <div className="flex items-center justify-center space-x-2 text-yellow-400">
                                 <AlertCircle className="h-5 w-5" />
-                                <span className="font-medium">Module Score: {cumulativeScore.toFixed(1)}% (Need 80% to unlock next)</span>
+                                <span className="font-medium">Module Score: {cumulativeScore.toFixed(1)}% (Need {MODULE_PASSING_THRESHOLD}% to unlock next)</span>
                               </div>
                               <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-3">
                                 <p className="text-yellow-300 text-sm text-center">
@@ -871,7 +894,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <div className="space-y-4">
                               <div className="flex items-center justify-center space-x-2 text-yellow-300">
                                 <Trophy className="h-6 w-6 text-yellow-400" />
-                                <span className="font-bold text-lg">🎉 Course Complete!</span>
+                                <span className="font-bold text-lg">Course Complete</span>
                                 <Trophy className="h-6 w-6 text-yellow-400" />
                               </div>
                               <div className="text-center space-y-2">
@@ -939,7 +962,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <div className="space-y-3">
                               <div className="flex items-center justify-center space-x-2 text-yellow-400">
                                 <AlertCircle className="h-5 w-5" />
-                                <span className="font-medium">Final Module Score: {cumulativeScore.toFixed(1)}% (Need 80% to complete)</span>
+                                <span className="font-medium">Final Module Score: {cumulativeScore.toFixed(1)}% (Need {MODULE_PASSING_THRESHOLD}% to complete)</span>
                               </div>
                               <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-3">
                                 <p className="text-yellow-300 text-sm text-center">
@@ -1035,7 +1058,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             whileHover={{ scale: 1.05, y: -3 }}
                             className="group relative overflow-hidden rounded-xl border border-gray-700/50 bg-gray-900/50 p-3 text-center transition-all duration-200"
                             style={{
-                              boxShadow: readingProgress >= 80 ? `0 0 12px ${lessonLevel.cssColor}20` : 'none',
+                              boxShadow: readingProgress >= LESSON_READING_PROGRESS_THRESHOLD ? `0 0 12px ${lessonLevel.cssColor}20` : 'none',
                             }}
                           >
                             {/* Hover radial glow */}
@@ -1166,9 +1189,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               >
                                 {Math.round(lessonScore)}%
                               </motion.span>
-                              {lessonScore < 80 && (
+                              {lessonScore < LESSON_PASSING_THRESHOLD && (
                                 <span className="text-[10px] text-gray-500 font-mono">
-                                  ({80 - Math.round(lessonScore)}% left)
+                                  ({LESSON_PASSING_THRESHOLD - Math.round(lessonScore)}% left)
                                 </span>
                               )}
                             </div>
@@ -1200,12 +1223,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                             <span>0%</span>
                             <span>40%</span>
                             <span>60%</span>
-                            <span className="font-semibold text-emerald-600/70">80% ✓</span>
+                            <span className="font-semibold text-emerald-600/70">{LESSON_PASSING_THRESHOLD}% required</span>
                             <span>100%</span>
                           </div>
 
                           {/* Next level hint */}
-                          {lessonScore < 80 && (
+                          {lessonScore < LESSON_PASSING_THRESHOLD && (
                             <motion.div
                               initial={{ opacity: 0, y: 4 }}
                               animate={{ opacity: 1, y: 0 }}
@@ -1215,9 +1238,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                               <Star className="h-3 w-3 text-yellow-500/70" />
                               <span>
                                 Next:{' '}
-                                {(80 - Math.round(lessonScore)) <= 20
-                                  ? 'Almost there! Just ' + (80 - Math.round(lessonScore)) + '% more to complete!'
-                                  : 'Reach 80% score to complete this lesson'}
+                                {(LESSON_PASSING_THRESHOLD - Math.round(lessonScore)) <= 20
+                                  ? 'Almost there! Just ' + (LESSON_PASSING_THRESHOLD - Math.round(lessonScore)) + '% more to complete!'
+                                  : `Reach ${LESSON_PASSING_THRESHOLD}% score to complete this lesson`}
                               </span>
                             </motion.div>
                           )}
@@ -1318,12 +1341,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       )}
                       
                       {/* Requirements not met message */}
-                      {!canManuallyComplete && lessonScore >= 60 && (
+                      {!canManuallyComplete && lessonScore >= LESSON_ENGAGEMENT_THRESHOLD && (
                         <div className="mt-6 pt-4 border-t border-yellow-700/50">
                           <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-3">
                             <p className="text-yellow-300 text-sm text-center">
-                              {lessonScore < 80 ? `Keep learning! Current score: ${Math.round(lessonScore)}% (need 80%)` : ''}
-                              {lessonQuiz && (lessonQuiz.best_score ?? 0) < (lessonQuiz.passing_score || 70) ? ` • Complete the quiz with ${lessonQuiz.passing_score || 70}%+` : ''}
+                              {lessonScore < LESSON_PASSING_THRESHOLD ? `Keep learning! Current score: ${Math.round(lessonScore)}% (need ${LESSON_PASSING_THRESHOLD}%)` : ''}
+                              {lessonQuiz && (lessonQuiz.best_score ?? 0) < (lessonQuiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD) ? ` • Complete the quiz with ${lessonQuiz.passing_score || DEFAULT_QUIZ_PASSING_THRESHOLD}%+` : ''}
                               {lessonAssignments && lessonAssignments.length > 0 && lessonAssignments.some((a: any) => !a.submission_status?.score) ? ' • Submit and get graded on all assignments' : ''}
                             </p>
                           </div>
@@ -1412,6 +1435,19 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
                     <span className="ml-2 text-gray-300">Loading assignments...</span>
                   </div>
+                ) : contentLoadError ? (
+                  <Alert className="border-red-700 bg-red-900/30">
+                    <AlertCircle className="h-4 w-4 text-red-400" />
+                    <AlertTitle className="text-red-300">Failed to Load Assignments</AlertTitle>
+                    <AlertDescription className="text-red-200">
+                      <p className="mb-3">{contentLoadError}</p>
+                      {onReloadContent && (
+                        <Button onClick={onReloadContent} variant="outline" size="sm" className="border-red-600 text-red-300 hover:bg-red-900/50">
+                          Try Again
+                        </Button>
+                      )}
+                    </AlertDescription>
+                  </Alert>
                 ) : lessonAssignments && lessonAssignments.length > 0 ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between mb-6">
@@ -1524,12 +1560,12 @@ export const LessonContent: React.FC<LessonContentProps> = ({
               <AlertDescription className="text-yellow-200/90 space-y-2 mt-2">
                 <p>You need to complete the following before moving to the next lesson:</p>
                 <ul className="list-none space-y-1 mt-2">
-                  {readingProgress < 80 && (
+                  {readingProgress < LESSON_READING_PROGRESS_THRESHOLD && (
                     <li className="flex items-start space-x-2">
                       <Lock className="h-4 w-4 mt-0.5 flex-shrink-0 text-yellow-400" />
                       <span>
                         <strong>Reading Progress:</strong> {Math.round(readingProgress)}% complete
-                        <span className="text-yellow-300/70"> (minimum 80% required)</span>
+                        <span className="text-yellow-300/70"> (minimum {LESSON_READING_PROGRESS_THRESHOLD}% required)</span>
                       </span>
                     </li>
                   )}
@@ -1563,7 +1599,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   )}
                 </ul>
                 <p className="text-xs text-yellow-200/70 mt-3 italic">
-                  💡 Tip: Continue reading and interacting with the lesson content. Progress is tracked automatically.
+                  Continue reading and interacting with the lesson content. Progress is tracked automatically.
                 </p>
               </AlertDescription>
             </Alert>

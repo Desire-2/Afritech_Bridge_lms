@@ -635,6 +635,35 @@ class StudentBookmark(db.Model):
             'course': self.course.to_dict() if self.course else None
         }
 
+class StudentLessonBookmark(db.Model):
+    """Lesson bookmarks owned by a student.
+
+    Course bookmarks pre-date the learning interface and intentionally remain
+    separate. Keeping lesson bookmarks in their own table preserves the
+    existing course-bookmark contract for current users.
+    """
+    __tablename__ = 'student_lesson_bookmarks'
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=now_local)
+
+    student = db.relationship('User', backref=db.backref('lesson_bookmarks', lazy='dynamic'))
+    lesson = db.relationship('Lesson', backref=db.backref('bookmarked_by_students', lazy='dynamic'))
+
+    __table_args__ = (
+        db.UniqueConstraint('student_id', 'lesson_id', name='_student_lesson_bookmark_uc'),
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'student_id': self.student_id,
+            'lesson_id': self.lesson_id,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'lesson': self.lesson.to_dict() if self.lesson else None,
+        }
+
 class StudentForum(db.Model):
     """Discussion forums for courses and general discussions"""
     __tablename__ = 'student_forums'
