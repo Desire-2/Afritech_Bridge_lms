@@ -19,6 +19,70 @@ from .models import (
 from .auth.permissions import seed_permissions_and_roles
 from .services.performance import ensure_metrics
 
+SERVICE_CATEGORY_SEEDS = [
+    ('Government Services', 'GOV', 'Irembo and government document applications'),
+    ('Digital Services', 'DIG', 'Online account setup and digital assistance'),
+    ('Printing & Scanning', 'PRT', 'Printing, scanning, photocopying and lamination'),
+]
+
+SERVICE_SEEDS = [
+    # (name, code, category_code, official_cost, customer_price, commission_rate, description)
+    ('Birth Certificate', 'BC', 'GOV', 500, 900, 0.20, 'Apply for a birth certificate via Irembo'),
+    ('Land Document', 'LD', 'GOV', 2000, 4000, 0.20, 'Land title, plot and ownership document applications'),
+    ('Criminal Record', 'CR', 'GOV', 1000, 2500, 0.20, 'Police clearance / criminal record certificate'),
+    ('Civil Registration', 'CIV', 'GOV', 800, 1500, 0.20, 'Civil status and marriage registration services'),
+    ('Irembo Application', 'IRM', 'GOV', 500, 1500, 0.20, 'General Irembo application assistance'),
+    ('National ID', 'NID', 'GOV', 1000, 2500, 0.20, 'National ID application, renewal or replacement'),
+    ('Driving License', 'DL', 'GOV', 1000, 3000, 0.20, 'Driving permit application and renewal'),
+    ('Other Government Service', 'OTH-GOV', 'GOV', 500, 1500, 0.20, 'Other government-related application types'),
+    ('Account Creation', 'ACC', 'DIG', 0, 1000, 0.25, 'E-government account creation and activation'),
+    ('Email Setup', 'EML', 'DIG', 0, 750, 0.25, 'Email account creation and configuration'),
+    ('Document Upload', 'DUP', 'DIG', 0, 500, 0.20, 'Preparing and uploading documents online'),
+    ('Other Digital Service', 'OTH', 'DIG', 0, 500, 0.20, 'Other online / digital assistance'),
+    ('Printing', 'PRN', 'PRT', 50, 200, 0.15, 'Black & white or color printing per page'),
+    ('Scanning', 'SCN', 'PRT', 30, 100, 0.15, 'Document scanning to PDF or image'),
+    ('Photocopy', 'PHO', 'PRT', 25, 100, 0.15, 'Photocopying per page'),
+    ('Lamination', 'LAM', 'PRT', 200, 500, 0.20, 'Document lamination and binding'),
+]
+
+
+def seed_services():
+    """Idempotently seed service categories and services by unique code (safe to re-run)."""
+    print('[seed-services] Seeding service categories...')
+    cats = {}
+    for name, code, description in SERVICE_CATEGORY_SEEDS:
+        cat = ServiceCategory.query.filter_by(code=code).first()
+        if cat is None:
+            cat = ServiceCategory(name=name, code=code, description=description)
+            db.session.add(cat)
+        else:
+            cat.name = name
+            if description:
+                cat.description = description
+        cats[code] = cat
+    db.session.flush()
+
+    print('[seed-services] Seeding services...')
+    count = 0
+    for name, code, cat_code, cost, price, rate, description in SERVICE_SEEDS:
+        svc = Service.query.filter_by(code=code).first()
+        if svc is None:
+            svc = Service(name=name, code=code, category_id=cats[cat_code].id,
+                          official_cost=cost, customer_price=price, commission_rate=rate,
+                          description=description, is_active=True)
+            db.session.add(svc)
+        else:
+            svc.name = name
+            svc.category_id = cats[cat_code].id
+            svc.official_cost = cost
+            svc.customer_price = price
+            svc.commission_rate = rate
+            svc.description = description or svc.description
+            svc.is_active = True
+        count += 1
+    db.session.commit()
+    return count
+
 
 def _pwd():
     return 'Password123!'
@@ -51,27 +115,7 @@ def seed_dev():
     other = PaymentMethod(name='Other', code='other')
     db.session.add_all([cash, momo, bank, other])
 
-    print('[dev-seed] Seeding services...')
-    cat_gov = ServiceCategory(name='Government Services', code='GOV')
-    cat_dig = ServiceCategory(name='Digital Services', code='DIG')
-    cat_print = ServiceCategory(name='Printing & Scanning', code='PRT')
-    db.session.add_all([cat_gov, cat_dig, cat_print])
-    db.session.commit()
-
-    services_data = [
-        ('Birth Certificate', 'BC', cat_gov, 500, 900, 0.20),
-        ('Land Document', 'LD', cat_gov, 2000, 4000, 0.20),
-        ('Criminal Record', 'CR', cat_gov, 1000, 2500, 0.20),
-        ('Civil Registration', 'CIV', cat_gov, 800, 1500, 0.20),
-        ('Irembo Application', 'IRM', cat_gov, 500, 1500, 0.20),
-        ('Printing', 'PRN', cat_print, 50, 200, 0.15),
-        ('Scanning', 'SCN', cat_print, 30, 100, 0.15),
-        ('Photocopy', 'PHO', cat_print, 25, 100, 0.15),
-        ('Other Digital Service', 'OTH', cat_dig, 0, 500, 0.20),
-    ]
-    for name, code, cat, cost, price, rate in services_data:
-        db.session.add(Service(name=name, code=code, category_id=cat.id, official_cost=cost,
-                               customer_price=price, commission_rate=rate))
+    seed_services()
 
     print('[dev-seed] Seeding users and employees...')
     admin_user = User(email='admin@afritech.dev')
@@ -297,5 +341,13 @@ def seed_dev_command():
     print('Instructor: ', creds['instructor'])
 
 
+@click.command('seed-services')
+@with_appcontext
+def seed_services_command():
+    n = seed_services()
+    click.echo(f'Seeded {n} services across {ServiceCategory.query.count()} categories')
+
+
 def register_cli(app):
     app.cli.add_command(seed_dev_command)
+    app.cli.add_command(seed_services_command)

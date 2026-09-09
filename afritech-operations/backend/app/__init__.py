@@ -5,6 +5,25 @@ from .extensions import db, migrate, jwt, cors, bcrypt, limiter
 from .auth.auth import load_current_user
 
 
+def _rate_limit_storage_uri(app):
+    """Return a usable rate-limit storage URI, falling back to memory when the
+    configured Redis is unreachable (so a Redis outage never takes down requests).
+    """
+    uri = app.config.get('RATELIMIT_STORAGE_URI') or 'memory://'
+    if uri == 'memory://' or not uri.startswith('redis:'):
+        return uri
+    try:
+        from redis import Redis
+        Redis.from_url(uri).ping()
+        return uri
+    except Exception as exc:  # noqa: BLE001 - degrade gracefully on any failure
+        app.logger.warning(
+            'Rate-limit storage %s unavailable (%s); falling back to in-memory storage',
+            uri, exc,
+        )
+        return 'memory://'
+
+
 def create_app(config_name='default'):
     from config import config
 
@@ -19,6 +38,7 @@ def create_app(config_name='default'):
     migrate.init_app(app, db)
     jwt.init_app(app)
     bcrypt.init_app(app)
+    app.config['RATELIMIT_STORAGE_URI'] = _rate_limit_storage_uri(app)
     limiter.init_app(app)
 
     # JWT identity loader for load_user
