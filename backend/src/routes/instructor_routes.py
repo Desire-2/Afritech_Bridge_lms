@@ -425,28 +425,57 @@ def get_instructor_students():
             enrollment_query = enrollment_query.filter(Enrollment.cohort_label == cohort_label)
 
         enrollments = enrollment_query.join(User, Enrollment.student_id == User.id).all()
-        
+
         students_data = []
         for enrollment in enrollments:
             user = enrollment.student
             course = enrollment.course
-            
+            window = enrollment.application_window
+
+            # The linked ApplicationWindow is the authoritative cohort identity.
+            # Prefer its label and dates so a stale/differing value stored on the
+            # enrollment does not mislabel the student inside a cohort drill-down.
+            resolved_cohort_label = (
+                (window.cohort_label if window and window.cohort_label else None)
+                or enrollment.cohort_label
+            )
+            cohort_start_date = (
+                enrollment.cohort_start_date or (window.cohort_start if window else None)
+            )
+            cohort_end_date = (
+                enrollment.cohort_end_date or (window.cohort_end if window else None)
+            )
+
+            # Real progress, last-activity and average score (0-100) so the
+            # instructor view reports the same information as the admin view.
+            progress = round((enrollment.progress or 0) * 100, 1)
+            try:
+                average_score = round(enrollment.calculate_course_score(), 1)
+            except Exception:
+                average_score = 0.0
+
             student_data = user.to_dict()
             student_data.update({
                 "enrollment_id": enrollment.id,
                 "course_id": course.id,
                 "course_title": course.title,
                 "enrollment_date": enrollment.enrollment_date.isoformat(),
-                "progress": 0,  # Placeholder - would need progress tracking
-                "last_accessed": None,  # Placeholder - would need activity tracking
+                "progress": progress,
+                "last_accessed": user.last_activity.isoformat() if user.last_activity else None,
+                "last_login": user.last_login.isoformat() if user.last_login else None,
+                "average_score": average_score,
+                "status": enrollment.status,
+                "payment_status": enrollment.payment_status,
+                "payment_verified": enrollment.payment_verified,
                 # Cohort fields
-                "cohort_label": enrollment.cohort_label,
-                "cohort_start_date": enrollment.cohort_start_date.isoformat() if enrollment.cohort_start_date else None,
-                "cohort_end_date": enrollment.cohort_end_date.isoformat() if enrollment.cohort_end_date else None,
+                "cohort_label": resolved_cohort_label,
+                "cohort_start_date": cohort_start_date.isoformat() if cohort_start_date else None,
+                "cohort_end_date": cohort_end_date.isoformat() if cohort_end_date else None,
                 "application_window_id": enrollment.application_window_id,
+                "migrated_from_window_id": enrollment.migrated_from_window_id,
             })
             students_data.append(student_data)
-        
+
         return jsonify(students_data), 200
         
     except Exception as e:
@@ -495,7 +524,11 @@ def get_course_enrollments(course_id):
 @instructor_required
 def get_course_cohorts(course_id):
     """Return the distinct cohorts for a course with student counts.
-    Uses both the ApplicationWindow table and enrollment cohort_label data.
+
+    Counts are keyed by application_window_id (the authoritative cohort key),
+    which matches both the admin cohort view and the instructor /students
+    endpoint. This keeps the enrolled-student count on each cohort card equal
+    to the number of students actually listed for that cohort.
     """
     current_user_id = get_jwt_identity()
     course = Course.query.filter_by(id=course_id, instructor_id=current_user_id).first()
@@ -503,35 +536,58 @@ def get_course_cohorts(course_id):
         return jsonify({"message": "Course not found or access denied"}), 404
 
     try:
-        from ..models.course_models import ApplicationWindow
+        # Per-window enrollment counts (all statuses, same as the students list).
+        window_counts = dict(
+            db.session.query(
+                Enrollment.application_window_id, db.func.count(Enrollment.id)
+            )
+            .filter(
+                Enrollment.course_id == course_id,
+                Enrollment.application_window_id.isnot(None),
+            )
+            .group_by(Enrollment.application_window_id)
+            .all()
+        )
 
-        # 1) Cohorts from ApplicationWindow rows
-        windows = ApplicationWindow.query.filter_by(course_id=course_id).order_by(ApplicationWindow.opens_at.asc()).all()
-
-        # 2) Cohort labels from existing enrollments (may include legacy data)
-        enrollment_labels = (
+        # Legacy cohort labels: enrollments with a label but no linked window.
+        legacy_rows = (
             db.session.query(Enrollment.cohort_label, db.func.count(Enrollment.id))
             .filter(
                 Enrollment.course_id == course_id,
-                Enrollment.status.in_(["active", "completed"]),
+                Enrollment.application_window_id.is_(None),
+                Enrollment.cohort_label.isnot(None),
             )
             .group_by(Enrollment.cohort_label)
             .all()
         )
-        label_counts = {lbl: cnt for lbl, cnt in enrollment_labels}
+        legacy_counts = {lbl: cnt for lbl, cnt in legacy_rows}
+
+        # Unlabelled enrollments (no window and no label).
+        unlabelled_count = (
+            db.session.query(db.func.count(Enrollment.id))
+            .filter(
+                Enrollment.course_id == course_id,
+                Enrollment.application_window_id.is_(None),
+                Enrollment.cohort_label.is_(None),
+            )
+            .scalar()
+            or 0
+        )
+
+        windows = ApplicationWindow.query.filter_by(course_id=course_id).order_by(ApplicationWindow.opens_at.asc()).all()
 
         cohorts = []
         seen_labels = set()
 
         for w in windows:
             wd = w.to_dict()
-            wd["student_count"] = label_counts.get(w.cohort_label, 0)
+            wd["student_count"] = window_counts.get(w.id, 0)
             cohorts.append(wd)
             if w.cohort_label:
                 seen_labels.add(w.cohort_label)
 
         # Add cohort labels that exist only in enrollments (no matching window)
-        for lbl, cnt in label_counts.items():
+        for lbl, cnt in legacy_counts.items():
             if lbl and lbl not in seen_labels:
                 cohorts.append({
                     "id": None,
@@ -541,7 +597,6 @@ def get_course_cohorts(course_id):
                 })
 
         # Unlabelled count
-        unlabelled_count = label_counts.get(None, 0)
         if unlabelled_count > 0:
             cohorts.append({
                 "id": None,

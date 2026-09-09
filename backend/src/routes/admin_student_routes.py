@@ -192,7 +192,12 @@ def list_students():
             cohort_status = cohort_window.compute_status() if cohort_window else None
             cohort_label = None
             if cohort_enrollment:
-                cohort_label = cohort_enrollment.cohort_label or (cohort_window.cohort_label if cohort_window else None)
+                # The linked ApplicationWindow is the authoritative cohort identity;
+                # prefer its label over a possibly stale value stored on the enrollment.
+                cohort_label = (
+                    (cohort_window.cohort_label if cohort_window and cohort_window.cohort_label else None)
+                    or cohort_enrollment.cohort_label
+                )
             
             # Calculate average progress
             avg_progress = 0.0

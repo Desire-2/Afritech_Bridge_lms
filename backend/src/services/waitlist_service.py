@@ -545,7 +545,10 @@ class WaitlistService:
         if window:
             try:
                 enrollment.application_window_id = window.id
-                if not enrollment.cohort_label and window.cohort_label:
+                # The application window is the authoritative cohort identity.
+                # Correct missing OR stale labels that disagree with the window so
+                # cohort aggregations (instructor/admin) stay consistent.
+                if window.cohort_label and enrollment.cohort_label != window.cohort_label:
                     enrollment.cohort_label = window.cohort_label
                 if not enrollment.cohort_start_date and window.cohort_start:
                     enrollment.cohort_start_date = window.cohort_start
