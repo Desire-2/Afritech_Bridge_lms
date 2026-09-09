@@ -3,12 +3,31 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AdminService } from '@/services/admin.service';
 import { User } from '@/types/api';
-import { Eye, EyeOff, Check, X, AlertCircle, Loader2, Shield, Mail, UserIcon } from 'lucide-react';
+import { Eye, EyeOff, Check, X, AlertCircle, Loader2, Shield, Mail, UserIcon, BookOpen, Trash2 } from 'lucide-react';
 
 interface EditUserModalProps {
   user: User;
   onClose: () => void;
   onSuccess: () => void;
+}
+
+interface Enrollment {
+  id: number;
+  course_id: number;
+  course_title: string;
+  status: string;
+  progress: number;
+  enrollment_date: string | null;
+  payment_status: string | null;
+  cohort_label: string | null;
+}
+
+interface AvailableCourse {
+  id: number;
+  title: string;
+  instructor: string;
+  enrollment_type: string;
+  is_enrolled: boolean;
 }
 
 // Password validation rules
@@ -42,6 +61,13 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
   const [changePassword, setChangePassword] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const isDataReady = useRef(false);
+  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [availableCourses, setAvailableCourses] = useState<AvailableCourse[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<number | ''>('');
+  const [enrolling, setEnrolling] = useState(false);
+  const [unenrollingId, setUnenrollingId] = useState<number | null>(null);
+  const [enrollError, setEnrollError] = useState('');
+  const [enrollSuccess, setEnrollSuccess] = useState('');
 
   useEffect(() => {
     fetchUserAndRoles();
@@ -96,6 +122,8 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
       // Mark data as ready AFTER re-initializing form with fresh backend data
       isDataReady.current = true;
       setRoles(rolesData.roles || []);
+      setEnrollments(freshUser.enrollments || []);
+      setAvailableCourses(freshUser.available_courses || []);
     } catch (err) {
       console.error('Failed to fetch user details or roles');
       // Fallback: use the prop data and try roles separately
@@ -234,6 +262,61 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleEnroll = async () => {
+    if (!selectedCourseId) return;
+    setEnrollError('');
+    setEnrollSuccess('');
+    setEnrolling(true);
+    try {
+      const result = await AdminService.enrollUser(user.id, {
+        course_id: selectedCourseId as number,
+        payment_status: 'not_required',
+        payment_verified: true,
+      });
+      setEnrollSuccess(result.message);
+      // Update available courses to mark as enrolled
+      setAvailableCourses(prev =>
+        prev.map(c => c.id === selectedCourseId ? { ...c, is_enrolled: true } : c)
+      );
+      // Add new enrollment to list
+      if (result.enrollment) {
+        setEnrollments(prev => [...prev, result.enrollment]);
+      }
+      setSelectedCourseId('');
+      setTimeout(() => setEnrollSuccess(''), 3000);
+    } catch (err: any) {
+      setEnrollError(err.message || 'Failed to enroll user');
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
+  const handleUnenroll = async (enrollmentId: number) => {
+    if (!confirm('Are you sure you want to remove this enrollment?')) return;
+    setUnenrollingId(enrollmentId);
+    setEnrollError('');
+    setEnrollSuccess('');
+    try {
+      await AdminService.unenrollUser(user.id, enrollmentId);
+      // Find the course_id from the enrollment being removed
+      const removedEnrollment = enrollments.find(e => e.id === enrollmentId);
+      // Remove from enrollments list
+      setEnrollments(prev => prev.filter(e => e.id !== enrollmentId));
+      // Mark course as not enrolled in available courses
+      if (removedEnrollment) {
+        setAvailableCourses(prev =>
+          prev.map(c => c.id === removedEnrollment.course_id ? { ...c, is_enrolled: false } : c)
+        );
+      }
+      setEnrollSuccess('Enrollment removed successfully');
+      setTimeout(() => setEnrollSuccess(''), 3000);
+    } catch (err: any) {
+      setEnrollError(err.message || 'Failed to remove enrollment');
+    } finally {
+      setUnenrollingId(null);
     }
   };
 
@@ -533,6 +616,115 @@ const EditUserModal: React.FC<EditUserModalProps> = ({ user, onClose, onSuccess 
               </div>
             )}
           </div>
+
+          {/* Course Enrollment Section (for students) */}
+          {formData.role_name === 'student' && (
+            <div className="space-y-4 pt-4 border-t">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white uppercase tracking-wider">
+                <BookOpen className="w-4 h-4" />
+                Course Enrollment
+              </div>
+
+              {/* Enroll in new course */}
+              <div className="bg-[#0a1628] rounded-lg p-4 space-y-3">
+                <label className="block text-sm font-medium text-gray-200">
+                  Enroll in a Course
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={selectedCourseId}
+                    onChange={(e) => setSelectedCourseId(e.target.value ? Number(e.target.value) : '')}
+                    className="flex-1 px-4 py-2 bg-[#162844] text-white border border-white/15 rounded-lg focus:ring-2 focus:ring-white/30 focus:border-white/30"
+                  >
+                    <option value="">Select a course...</option>
+                    {availableCourses
+                      .filter(c => !c.is_enrolled)
+                      .map(c => (
+                        <option key={c.id} value={c.id} className="bg-[#162844] text-white">
+                          {c.title} ({c.enrollment_type})
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={handleEnroll}
+                    disabled={!selectedCourseId || enrolling}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 whitespace-nowrap"
+                  >
+                    {enrolling ? <Loader2 className="w-4 h-4 animate-spin" /> : <BookOpen className="w-4 h-4" />}
+                    Enroll
+                  </button>
+                </div>
+                {enrollError && (
+                  <p className="text-sm text-red-500 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> {enrollError}
+                  </p>
+                )}
+                {enrollSuccess && (
+                  <p className="text-sm text-green-500 flex items-center gap-1">
+                    <Check className="w-3 h-3" /> {enrollSuccess}
+                  </p>
+                )}
+              </div>
+
+              {/* Current enrollments */}
+              {enrollments.length > 0 && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-200">
+                    Current Enrollments ({enrollments.length})
+                  </label>
+                  <div className="space-y-2">
+                    {enrollments.map(enr => (
+                      <div key={enr.id} className="flex items-center justify-between p-3 bg-[#0a1628] rounded-lg">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{enr.course_title}</p>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              enr.status === 'active' ? 'bg-green-500/20 text-green-400' :
+                              enr.status === 'completed' ? 'bg-blue-500/20 text-blue-400' :
+                              enr.status === 'terminated' ? 'bg-red-500/20 text-red-400' :
+                              'bg-yellow-500/20 text-yellow-400'
+                            }`}>
+                              {enr.status}
+                            </span>
+                            {enr.progress !== null && enr.progress !== undefined && (
+                              <span className="text-xs text-gray-500">
+                                {Math.round((enr.progress || 0) * 100)}% progress
+                              </span>
+                            )}
+                            {enr.cohort_label && (
+                              <span className="text-xs text-gray-500">
+                                Cohort: {enr.cohort_label}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleUnenroll(enr.id)}
+                          disabled={unenrollingId === enr.id}
+                          className="ml-3 p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors disabled:opacity-50"
+                          title="Remove enrollment"
+                        >
+                          {unenrollingId === enr.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {enrollments.length === 0 && !selectedCourseId && (
+                <p className="text-sm text-gray-500 text-center py-2">
+                  No current enrollments. Select a course above to enroll this user.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Form Actions */}
           <div className="flex items-center justify-between pt-4 border-t sticky bottom-0 bg-[#162844] pb-2">

@@ -118,6 +118,30 @@ export class AdminService {
     }
   }
 
+  static async enrollUser(userId: number, data: {
+    course_id: number;
+    payment_status?: string;
+    payment_verified?: boolean;
+  }): Promise<{ message: string; enrollment: any }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/users/${userId}/enroll`, data);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  static async unenrollUser(userId: number, enrollmentId: number): Promise<{ message: string }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/users/${userId}/unenroll`, {
+        enrollment_id: enrollmentId,
+      });
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
   static async deleteUser(userId: number): Promise<{ message: string }> {
     try {
       const response = await apiClient.delete(`${this.BASE_PATH}/users/${userId}`);

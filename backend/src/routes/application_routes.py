@@ -20,6 +20,7 @@ from ..utils.application_scoring import (
 )
 from ..utils.user_utils import generate_username, generate_temp_password
 from ..utils.brevo_email_service import brevo_service
+from ..utils.email_utils import send_email
 from ..utils.email_templates import (
     application_received_email,
     application_approved_email,

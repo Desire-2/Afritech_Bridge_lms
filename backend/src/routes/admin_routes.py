@@ -651,7 +651,7 @@ def create_user_admin():
 @admin_bp.route("/users/<int:user_id>", methods=["GET"])
 @admin_required
 def get_user_admin(user_id):
-    """Get detailed user information including statistics"""
+    """Get detailed user information including statistics, enrollments, and available courses"""
     try:
         user = User.query.get_or_404(user_id)
         user_dict = user.to_dict()
@@ -668,6 +668,22 @@ def get_user_admin(user_id):
                 "completed_lessons": completed_lessons,
                 "quiz_submissions": submissions
             }
+            
+            # Include enrollment details for students
+            user_enrollments = Enrollment.query.filter_by(student_id=user_id).all()
+            user_dict["enrollments"] = []
+            for enr in user_enrollments:
+                enr_course = Course.query.get(enr.course_id)
+                user_dict["enrollments"].append({
+                    "id": enr.id,
+                    "course_id": enr.course_id,
+                    "course_title": enr_course.title if enr_course else "Unknown",
+                    "status": enr.status,
+                    "progress": enr.progress,
+                    "enrollment_date": enr.enrollment_date.isoformat() if enr.enrollment_date else None,
+                    "payment_status": enr.payment_status,
+                    "cohort_label": enr.cohort_label,
+                })
         elif user.role.name == "instructor":
             # Instructor-specific stats
             courses_taught = Course.query.filter_by(instructor_id=user_id).count()
@@ -679,6 +695,23 @@ def get_user_admin(user_id):
                 "courses_taught": courses_taught,
                 "total_students": total_students or 0
             }
+        
+        # Include available courses for enrollment (for student users)
+        if user.role.name == "student":
+            all_courses = Course.query.filter_by(is_published=True).all()
+            enrolled_course_ids = set(
+                enr.course_id for enr in Enrollment.query.filter_by(student_id=user_id).all()
+            )
+            available_courses = []
+            for c in all_courses:
+                available_courses.append({
+                    "id": c.id,
+                    "title": c.title,
+                    "instructor": f"{c.instructor.first_name} {c.instructor.last_name}" if c.instructor else "Unknown",
+                    "enrollment_type": getattr(c, 'enrollment_type', 'free'),
+                    "is_enrolled": c.id in enrolled_course_ids,
+                })
+            user_dict["available_courses"] = available_courses
         
         return jsonify(user_dict), 200
     except Exception as e:
@@ -742,6 +775,134 @@ def update_user_admin(user_id):
         db.session.rollback()
         logger.error(f"Error updating user {user_id}: {str(e)}")
         return jsonify({"error": "Failed to update user"}), 500
+
+@admin_bp.route("/users/<int:user_id>/enroll", methods=["POST"])
+@admin_required
+def enroll_user_in_course(user_id):
+    """Enroll a user in a course from the admin user management panel"""
+    try:
+        user = User.query.get_or_404(user_id)
+        if not user.role or user.role.name.lower() != "student":
+            return jsonify({"error": "Only student users can be enrolled in courses"}), 400
+
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        course_id = data.get("course_id")
+        if not course_id:
+            return jsonify({"error": "course_id is required"}), 400
+
+        course = Course.query.get(course_id)
+        if not course:
+            return jsonify({"error": "Course not found"}), 404
+
+        # Check for existing active enrollment
+        existing = Enrollment.query.filter_by(
+            student_id=user_id, course_id=course_id, status="active"
+        ).first()
+        if existing:
+            return jsonify({"error": "Student is already enrolled in this course"}), 409
+
+        # Resolve cohort from application window if available
+        win_id = None
+        cohort_label = None
+        cohort_start = None
+        cohort_end = None
+        try:
+            from ..models.course_models import ApplicationWindow
+            window = ApplicationWindow.query.filter_by(course_id=course_id).first()
+            if window:
+                win_id = window.id
+                cohort_label = window.cohort_label
+                cohort_start = window.cohort_start
+                cohort_end = window.cohort_end
+        except Exception:
+            pass
+
+        enrollment = Enrollment(
+            student_id=user_id,
+            course_id=course_id,
+            status="active",
+            application_window_id=win_id,
+            cohort_label=cohort_label,
+            cohort_start_date=cohort_start,
+            cohort_end_date=cohort_end,
+            payment_status=data.get("payment_status", "not_required"),
+            payment_verified=data.get("payment_verified", True),
+        )
+        db.session.add(enrollment)
+
+        # Initialize module progress for the course
+        from ..models.student_models import ModuleProgress
+        modules = course.modules.filter_by(is_published=True).all()
+        db.session.flush()
+        for module in modules:
+            module_progress = ModuleProgress(
+                student_id=user_id,
+                module_id=module.id,
+                enrollment_id=enrollment.id
+            )
+            db.session.add(module_progress)
+
+        db.session.commit()
+
+        logger.info(f"Admin enrolled user {user.username} in course {course.title}")
+        return jsonify({
+            "message": f"User enrolled in '{course.title}' successfully",
+            "enrollment": {
+                "id": enrollment.id,
+                "course_id": enrollment.course_id,
+                "course_title": course.title,
+                "status": enrollment.status,
+                "enrollment_date": enrollment.enrollment_date.isoformat() if enrollment.enrollment_date else None,
+                "payment_status": enrollment.payment_status,
+                "cohort_label": enrollment.cohort_label,
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error enrolling user {user_id}: {str(e)}")
+        return jsonify({"error": "Failed to enroll user in course"}), 500
+
+@admin_bp.route("/users/<int:user_id>/unenroll", methods=["POST"])
+@admin_required
+def unenroll_user_from_course(user_id):
+    """Remove a user's enrollment from a course"""
+    try:
+        user = User.query.get_or_404(user_id)
+        data = request.get_json()
+        enrollment_id = data.get("enrollment_id")
+        if not enrollment_id:
+            return jsonify({"error": "enrollment_id is required"}), 400
+
+        enrollment = Enrollment.query.filter_by(
+            id=enrollment_id, student_id=user_id
+        ).first()
+        if not enrollment:
+            return jsonify({"error": "Enrollment not found"}), 404
+
+        course_title = enrollment.course.title if enrollment.course else "Unknown"
+
+        # Clean up progress data
+        from ..models.student_models import ModuleProgress
+        ModuleProgress.query.filter_by(
+            student_id=user_id, enrollment_id=enrollment_id
+        ).delete()
+
+        db.session.delete(enrollment)
+        db.session.commit()
+
+        logger.info(f"Admin removed enrollment {enrollment_id} for user {user.username}")
+        return jsonify({
+            "message": f"Enrollment in '{course_title}' removed successfully"
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error unenrolling user {user_id}: {str(e)}")
+        return jsonify({"error": "Failed to remove enrollment"}), 500
 
 @admin_bp.route("/users/<int:user_id>", methods=["DELETE"])
 @admin_required
