@@ -84,6 +84,33 @@ def seed_services():
     return count
 
 
+PAYMENT_METHOD_SEEDS = [
+    ('Cash', 'cash'),
+    ('Mobile Money', 'momo'),
+    ('Bank', 'bank'),
+    ('Credit / Debit Card', 'card'),
+    ('Cheque', 'cheque'),
+    ('Online Payment', 'online'),
+]
+
+
+def seed_payment_methods():
+    """Idempotently seed payment methods by unique code (safe to re-run)."""
+    print('[seed-payment-methods] Seeding payment methods...')
+    count = 0
+    for name, code in PAYMENT_METHOD_SEEDS:
+        pm = PaymentMethod.query.filter_by(code=code).first()
+        if pm is None:
+            pm = PaymentMethod(name=name, code=code, is_active=True)
+            db.session.add(pm)
+        else:
+            pm.name = name
+            pm.is_active = True
+        count += 1
+    db.session.commit()
+    return count
+
+
 def _pwd():
     return 'Password123!'
 
@@ -108,15 +135,12 @@ def seed_dev():
     db.session.add_all([service_dept, training_dept, finance_dept])
     db.session.commit()
 
-    print('[dev-seed] Seeding payment methods...')
-    cash = PaymentMethod(name='Cash', code='cash')
-    momo = PaymentMethod(name='Mobile Money', code='momo')
-    bank = PaymentMethod(name='Bank', code='bank')
-    other = PaymentMethod(name='Other', code='other')
-    db.session.add_all([cash, momo, bank, other])
-
+    seed_payment_methods()
     seed_services()
 
+    by_code = {pm.code: pm for pm in PaymentMethod.query.all()}
+    cash, momo, bank = by_code['cash'], by_code['momo'], by_code['bank']
+    pms = [by_code['cash'], by_code['momo'], by_code['bank'], by_code['online']]
     print('[dev-seed] Seeding users and employees...')
     admin_user = User(email='admin@afritech.dev')
     admin_user.set_password(_pwd())
@@ -238,7 +262,7 @@ def seed_dev():
             svc = random.choice(services)
             client = random.choice(clients)
             agent = random.choice([agent_emp, agent2_emp])
-            pm = random.choice([cash, momo, bank, other])
+            pm = random.choice(pms)
             cost = svc.official_cost
             price = svc.customer_price
             gross = price - cost
@@ -348,6 +372,14 @@ def seed_services_command():
     click.echo(f'Seeded {n} services across {ServiceCategory.query.count()} categories')
 
 
+@click.command('seed-payment-methods')
+@with_appcontext
+def seed_payment_methods_command():
+    n = seed_payment_methods()
+    click.echo(f'Seeded {n} payment methods')
+
+
 def register_cli(app):
     app.cli.add_command(seed_dev_command)
     app.cli.add_command(seed_services_command)
+    app.cli.add_command(seed_payment_methods_command)
