@@ -1420,6 +1420,7 @@ class Project(db.Model):
     allowed_file_types = db.Column(db.String(255), nullable=True)  # JSON string of allowed extensions
     collaboration_allowed = db.Column(db.Boolean, default=False)
     max_team_size = db.Column(db.Integer, default=1)
+    tasks = db.Column(db.Text, nullable=True)  # JSON string of project tasks
     created_at = db.Column(db.DateTime, default=now_local)
     updated_at = db.Column(db.DateTime, default=now_local, onupdate=now_local)
     
