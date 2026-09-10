@@ -1356,8 +1356,8 @@ def update_project(project_id):
         # Log the comparison for debugging
         logger.info(f"Update project check: project.course.instructor_id={project.course.instructor_id}, current_user_id={current_user_id}")
         
-        # Verify instructor owns the course
-        if project.course.instructor_id != current_user_id:
+        # Verify instructor owns the course (admin bypass)
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             logger.warning(f"User {current_user_id} attempted to update project {project_id} owned by instructor {project.course.instructor_id}")
             return jsonify({
                 "message": "Forbidden. You do not have permission to perform this action.",
@@ -1466,8 +1466,8 @@ def delete_project(project_id):
         # Log the comparison for debugging
         logger.info(f"Delete project check: project.course.instructor_id={project.course.instructor_id} (type: {type(project.course.instructor_id)}), current_user_id={current_user_id} (type: {type(current_user_id)})")
         
-        # Verify instructor owns the course
-        if project.course.instructor_id != current_user_id:
+        # Verify instructor owns the course (admin bypass)
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             logger.warning(f"User {current_user_id} attempted to delete project {project_id} owned by instructor {project.course.instructor_id}")
             return jsonify({
                 "message": "Forbidden. You do not have permission to perform this action.",
@@ -1558,8 +1558,8 @@ def assign_project_teams(project_id):
         
         project = Project.query.get_or_404(project_id)
         
-        # Verify instructor owns the course
-        if project.course.instructor_id != current_user_id:
+        # Verify instructor owns the course (admin bypass)
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied to this project"}), 403
         
         # Validate collaboration is enabled
@@ -1704,7 +1704,7 @@ def list_project_teams(project_id):
         current_user_id = int(get_jwt_identity())
         project = Project.query.get_or_404(project_id)
 
-        if project.course.instructor_id != current_user_id:
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
         submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(ProjectSubmission.submitted_at).all()
@@ -1752,7 +1752,7 @@ def list_unassigned_students(project_id):
         current_user_id = int(get_jwt_identity())
         project = Project.query.get_or_404(project_id)
 
-        if project.course.instructor_id != current_user_id:
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
         # Get existing submissions and collect all assigned student IDs
@@ -1807,7 +1807,7 @@ def reassign_team_member(project_id, submission_id):
             return jsonify({"message": "member_id and target_team_id are required"}), 400
 
         project = Project.query.get_or_404(project_id)
-        if project.course.instructor_id != current_user_id:
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
         # Get source submission
@@ -1896,7 +1896,7 @@ def remove_team_member(project_id, submission_id):
             return jsonify({"message": "member_id is required"}), 400
 
         project = Project.query.get_or_404(project_id)
-        if project.course.instructor_id != current_user_id:
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
         sub = ProjectSubmission.query.get_or_404(submission_id)
@@ -1949,7 +1949,7 @@ def get_team_assignment_history(project_id):
         current_user_id = int(get_jwt_identity())
         project = Project.query.get_or_404(project_id)
 
-        if project.course.instructor_id != current_user_id:
+        if project.course.instructor_id != current_user_id and not _is_admin_user():
             return jsonify({"message": "Access denied"}), 403
 
         submissions = ProjectSubmission.query.filter_by(project_id=project_id).order_by(ProjectSubmission.submitted_at.desc()).all()
