@@ -49,6 +49,20 @@ class Config:
     LMS_API_KEY = os.environ.get('LMS_API_KEY', '')
     LMS_API_TIMEOUT = int(os.environ.get('LMS_API_TIMEOUT', '10'))
 
+    # Frontend URL used to build links inside notification emails.
+    FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+
+    # Email notifications (SMTP). When MAIL_USERNAME/MAIL_PASSWORD are missing,
+    # email delivery is disabled and notifications are in-app only.
+    MAIL_SERVER = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+    MAIL_PORT = int(os.environ.get('MAIL_PORT', '587'))
+    MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'True').lower() in ('true', 'yes', '1')
+    MAIL_USE_SSL = os.environ.get('MAIL_USE_SSL', 'False').lower() in ('true', 'yes', '1')
+    MAIL_USERNAME = os.environ.get('MAIL_USERNAME')
+    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD')
+    MAIL_DEFAULT_SENDER = os.environ.get('MAIL_DEFAULT_SENDER', 'noreply@afritecbridge.online')
+    MAIL_SENDER_NAME = os.environ.get('MAIL_SENDER_NAME', 'AfriTech Bridge')
+
     @staticmethod
     def init_app(app):
         os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)

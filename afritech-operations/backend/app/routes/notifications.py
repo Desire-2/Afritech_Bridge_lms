@@ -5,6 +5,7 @@ from flask import Blueprint, request, jsonify
 from ..extensions import db
 from ..models import Notification
 from ..auth.auth import require_auth, current_user
+from ..services.notifications import preferences_to_dict, set_preferences
 from .helpers import paginate, paginate_response, json_error, parse_json
 
 bp = Blueprint('notifications', __name__, url_prefix='/api/notifications')
@@ -18,6 +19,9 @@ def list_notifications():
     unread_only = request.args.get('unread_only')
     if unread_only == 'true':
         q = q.filter_by(is_read=False)
+    severity = request.args.get('severity')
+    if severity:
+        q = q.filter_by(severity=severity)
     q = q.order_by(Notification.created_at.desc())
     p = paginate(q)
     return paginate_response([n.to_dict() for n in p.items], p)
@@ -29,6 +33,23 @@ def unread_count():
     user = current_user()
     count = Notification.query.filter_by(recipient_id=user.id, is_read=False).count()
     return jsonify({'unread': count})
+
+
+@bp.get('/preferences')
+@require_auth
+def get_preferences():
+    user = current_user()
+    return jsonify(preferences_to_dict(user))
+
+
+@bp.put('/preferences')
+@require_auth
+def update_preferences():
+    user = current_user()
+    payload = parse_json()
+    set_preferences(user, payload)
+    db.session.commit()
+    return jsonify(preferences_to_dict(user))
 
 
 @bp.post('/<int:notification_id>/read')

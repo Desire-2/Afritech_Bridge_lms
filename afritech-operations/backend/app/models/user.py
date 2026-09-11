@@ -22,6 +22,8 @@ class User(TimestampMixin, db.Model):
     is_super_admin = db.Column(db.Boolean, default=False, nullable=False)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     last_login_at = db.Column(db.DateTime(timezone=True))
+    # Master switch for email notification delivery.
+    email_notifications = db.Column(db.Boolean, default=True, nullable=False)
 
     roles = db.relationship('Role', secondary='user_roles', backref=db.backref('users', lazy='dynamic'))
     employee = db.relationship('Employee', backref='user', uselist=False)

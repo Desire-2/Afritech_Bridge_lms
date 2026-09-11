@@ -116,6 +116,30 @@ class Notification(TimestampMixin, db.Model):
         }
 
 
+class NotificationPreference(db.Model):
+    __tablename__ = 'notification_preferences'
+    __table_args__ = (db.UniqueConstraint('user_id', 'type', name='uq_notification_pref_user_type'),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    # Notification type this row applies to; '*' is the fallback applied to any
+    # type without an explicit row.
+    type = db.Column(db.String(64), default='*', nullable=False)
+    email_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    in_app_enabled = db.Column(db.Boolean, default=True, nullable=False)
+
+    user = db.relationship('User', backref='notification_preferences')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'type': self.type,
+            'email_enabled': self.email_enabled,
+            'in_app_enabled': self.in_app_enabled,
+        }
+
+
 class AuditLog(db.Model):
     __tablename__ = 'audit_logs'
 

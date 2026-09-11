@@ -5,7 +5,7 @@ from .finance import ServiceTransaction, Payment, CommissionRule, DailyClosing, 
 from .attendance import Attendance, WorkSchedule, Task
 from .payroll import PayrollPeriod, PayrollItem, PayrollTransactionSource, LeaveRequest
 from .instruct import Instructor, Course, Cohort, InstructorAssignment, WeeklyPlan, WeeklyPlanActivity, Assignment, Learner, Enrollment, AssignmentSubmission, LearnerAttendance, TeachingActivity
-from .system import PerformanceMetric, PerformanceScore, PerformanceScoreComponent, Notification, AuditLog, Setting, LMSIntegration
+from .system import PerformanceMetric, PerformanceScore, PerformanceScoreComponent, Notification, NotificationPreference, AuditLog, Setting, LMSIntegration
 
 __all__ = [
     'User', 'Role', 'Permission', 'PasswordResetToken', 'SessionRecord', 'user_roles', 'role_permissions',
@@ -15,5 +15,5 @@ __all__ = [
     'Attendance', 'WorkSchedule', 'Task',
     'PayrollPeriod', 'PayrollItem', 'PayrollTransactionSource', 'LeaveRequest',
     'Instructor', 'Course', 'Cohort', 'InstructorAssignment', 'WeeklyPlan', 'WeeklyPlanActivity', 'Assignment', 'Learner', 'Enrollment', 'AssignmentSubmission', 'LearnerAttendance', 'TeachingActivity',
-    'PerformanceMetric', 'PerformanceScore', 'PerformanceScoreComponent', 'Notification', 'AuditLog', 'Setting', 'LMSIntegration',
+    'PerformanceMetric', 'PerformanceScore', 'PerformanceScoreComponent', 'Notification', 'NotificationPreference', 'AuditLog', 'Setting', 'LMSIntegration',
 ]

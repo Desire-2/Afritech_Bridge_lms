@@ -10,14 +10,47 @@ import { api, fmtDateTime, logout } from '@/lib/api';
 import { routeDenied, pageIdentity, roleLabel } from '@/lib/permissions';
 import { Loading } from '@/components/ui';
 
+interface NotifItem {
+  id: number;
+  type: string;
+  severity: string;
+  message: string;
+  is_read: boolean;
+  created_at: string | null;
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
-  const [notice, setNotice] = useState<{ id: number; title: string; created_at: string; is_read: boolean }[]>([]);
+  const [notice, setNotice] = useState<NotifItem[]>([]);
+  const [unread, setUnread] = useState(0);
   const [bellOpen, setBellOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const refresh = useCallback(async () => {
+    if (!user) return;
+    try {
+      const [list, count] = await Promise.all([
+        api('/api/notifications?per_page=8'),
+        api('/api/notifications/unread-count'),
+      ]);
+      setNotice((list as any)?.items || []);
+      setUnread((count as any)?.unread || 0);
+    } catch {
+      setNotice([]);
+      setUnread(0);
+    }
+  }, [user]);
+
+  const markRead = useCallback(async (n: NotifItem) => {
+    try {
+      await api(`/api/notifications/${n.id}/read`, { method: 'POST' });
+    } catch {
+      // ignore; unread badge refreshes next poll
+    }
+    refresh();
+  }, [refresh]);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -27,10 +60,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
-    api('/api/notifications?limit=8')
-      .then((d: any) => setNotice(d.notifications || []))
-      .catch(() => setNotice([]));
-  }, [user, pathname]);
+    refresh();
+    const t = setInterval(refresh, 30000);
+    return () => clearInterval(t);
+  }, [user, refresh]);
 
   useEffect(() => {
     setBellOpen(false);
@@ -75,7 +108,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const unreadCount = notice.filter((n) => !n.is_read).length;
+  const unreadCount = unread;
 
   return (
     <div className="d-flex">
@@ -97,7 +130,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               className="btn btn-sm btn-outline-secondary position-relative"
-              onClick={() => setBellOpen((o) => !o)}
+              onClick={() => { setBellOpen((o) => !o); refresh(); }}
               aria-label="Notifications"
             >
               <i className="bi bi-bell" />
@@ -116,9 +149,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <div className="list-group list-group-flush notif-list">
                   {notice.length === 0 && <div className="list-group-item small text-muted">No notifications.</div>}
                   {notice.map((n) => (
-                    <Link href="/notifications" key={n.id} className={`list-group-item list-group-item-action ${n.is_read ? '' : 'bg-primary-subtle'}`}>
+                    <Link href="/notifications" key={n.id} onClick={() => markRead(n)} className={`list-group-item list-group-item-action ${n.is_read ? '' : 'bg-primary-subtle'}`}>
                       <div className="d-flex justify-content-between align-items-start gap-2">
-                        <span className="small">{n.title}</span>
+                        <span className={`small ${n.is_read ? '' : 'fw-semibold'}`}>{n.message || n.type}</span>
                       </div>
                       <div className="small text-muted">{fmtDateTime(n.created_at)}</div>
                     </Link>
