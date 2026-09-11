@@ -66,7 +66,8 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 - `GET /api/transactions?status=&service_id=&employee_id=&payment_method_id=&start=&end=&search=&page=`
 - `POST /api/transactions` — `{service_id, client_id, payment_method_id, customer_price?, official_cost?}`
   (amounts optional; snapshot rules apply)
-- `GET /api/transactions/{id}` · `POST /api/transactions/{id}/status` `{status: completed|cancelled|…}`
+- `GET /api/transactions/{id}` · `PUT /api/transactions/{id}` `{service_id?, client_id?, payment_method_id?, customer_price?, official_cost?, transaction_date?, reference?, notes?}`
+- `POST /api/transactions/{id}/status` `{status: completed|cancelled|…}`
 
 ### Employees
 - `GET /api/employees?search=&branch_id=&department_id=&status=&position=`
@@ -78,8 +79,10 @@ Base URL: `http://localhost:5000/api` (proxied from the frontend at `:3001`).
 - `GET /api/closings/totals?date=&employee_id=` — preview for agent (self) /
   manager+ (any employee)
 - `POST /api/closings/submit` — `{closing_date, actual_cash, notes, employee_id?}`
+  (re-submit allowed when `status=correction_requested|rejected`; resets status to `submitted`)
 - `GET /api/closings?status=&start=&end=&employee_id=`
 - `GET /api/closings/{id}` · `POST /api/closings/{id}/review` — `{decision, note}`
+  decision: `approved` (locks) | `rejected` | `correction_requested`
 
 ## Finance
 

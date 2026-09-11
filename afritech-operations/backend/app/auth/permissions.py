@@ -27,6 +27,7 @@ PERMISSIONS = [
     ('transactions.view', 'View Transactions', 'View transactions'),
     ('transactions.view_all', 'View All Transactions', 'View all employees transactions'),
     ('transactions.cancel', 'Cancel Transactions', 'Cancel/refund transactions'),
+    ('transactions.edit', 'Edit Transactions', 'Edit transaction details'),
     ('transactions.approve', 'Approve Transactions', 'Approve transactions'),
     # daily closing
     ('closings.submit', 'Submit Daily Closing', 'Submit daily closing'),
@@ -82,7 +83,7 @@ ROLE_PERMISSIONS = {
     'manager': [
         'employees.manage', 'employees.view', 'employees.earnings.view_all',
         'services.view', 'clients.view',
-        'transactions.view', 'transactions.view_all', 'transactions.approve', 'transactions.cancel',
+        'transactions.view', 'transactions.view_all', 'transactions.approve', 'transactions.cancel', 'transactions.edit',
         'closings.submit', 'closings.approve', 'closings.view',
         'expenses.create', 'expenses.approve', 'expenses.view',
         'payroll.manage', 'payroll.approve', 'payroll.mark_paid', 'payroll.view',
@@ -97,7 +98,7 @@ ROLE_PERMISSIONS = {
     'service_agent': [
         'services.view',
         'clients.manage', 'clients.view',
-        'transactions.create', 'transactions.view',
+        'transactions.create', 'transactions.view', 'transactions.edit',
         'closings.submit', 'closings.view',
         'expenses.create',
         'attendance.view',

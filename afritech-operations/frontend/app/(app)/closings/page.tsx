@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate, getUserCache } from '@/lib/api';
+import { api, fmtMoney, fmtDate, getUserCache, can } from '@/lib/api';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 
@@ -20,9 +20,12 @@ export default function ClosingsPage() {
   const [busy, setBusy] = useState(false);
   const [reviewing, setReviewing] = useState<any | null>(null);
   const [reviewNote, setReviewNote] = useState('');
+  const [reRunning, setReRunning] = useState<any | null>(null);
   const [error2, setError2] = useState('');
 
   const items = data?.items || [];
+  const me = getUserCache();
+  const canApprove = can(me, 'closings.approve');
 
   async function loadTotals() {
     setLoadingTotals(true);
@@ -38,17 +41,37 @@ export default function ClosingsPage() {
     }
   }
 
+  async function rerunClosing(c: any) {
+    setReRunning(c);
+    setDate(c.closing_date);
+    setActualCash(String(c.actual_cash || ''));
+    setNotes('');
+    setSubmitOpen(true);
+    setLoadingTotals(true);
+    setTotalErr('');
+    try {
+      const d: any = await api('/api/closings/totals?date=' + c.closing_date + '&employee_id=' + c.employee_id);
+      setTotals(d.totals);
+    } catch (e: any) {
+      setTotalErr(e.message);
+    } finally {
+      setLoadingTotals(false);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError2('');
     try {
-      const body = { closing_date: date, actual_cash: actualCash !== '' ? Number(actualCash) : undefined, notes: notes || undefined };
+      const body: any = { closing_date: date, actual_cash: actualCash !== '' ? Number(actualCash) : undefined, notes: notes || undefined };
+      if (reRunning) body.employee_id = reRunning.employee_id;
       await api('/api/closings/submit', { method: 'POST', body });
       setSubmitOpen(false);
       setActualCash('');
       setNotes('');
       setTotals(null);
+      setReRunning(null);
       reload();
       await loadTotals();
     } catch (err: any) {
@@ -73,10 +96,15 @@ export default function ClosingsPage() {
     }
   }
 
+  function openReview(c: any) {
+    setReviewNote(c.review_note || '');
+    setReviewing(c);
+  }
+
   return (
     <div>
       <PageHeader title="Daily Closing" subtitle="End-of-day cash reconciliation and approval"
-        actions={<button className="btn btn-primary" onClick={() => { loadTotals(); setSubmitOpen(true); }}><i className="bi bi-cash-coin me-1" /> Run closing</button>} />
+        actions={<button className="btn btn-primary" onClick={() => { setReRunning(null); setActualCash(''); setNotes(''); loadTotals(); setSubmitOpen(true); }}><i className="bi bi-cash-coin me-1" /> Run closing</button>} />
 
       <div className="row g-4">
         <div className="col-lg-5">
@@ -137,8 +165,21 @@ export default function ClosingsPage() {
                   <div className="d-flex align-items-center gap-2">
                     <Badge status={c.reconciliation_class} />
                     <Badge status={c.status} />
-                    {c.status === 'submitted' && (
-                      <button className="btn btn-sm btn-outline-primary" onClick={() => setReviewing(c)}>Review</button>
+                    {c.status === 'submitted' && canApprove && (
+                      <button className="btn btn-sm btn-outline-primary" onClick={() => openReview(c)}>Review</button>
+                    )}
+                    {c.status === 'correction_requested' && (
+                      <button className="btn btn-sm btn-outline-warning" onClick={() => rerunClosing(c)}>
+                        <i className="bi bi-arrow-repeat me-1" />Re-run
+                      </button>
+                    )}
+                    {c.status === 'rejected' && (
+                      <>
+                        <button className="btn btn-sm btn-outline-warning" onClick={() => rerunClosing(c)}>
+                          <i className="bi bi-arrow-repeat me-1" />Re-run
+                        </button>
+                        <button className="btn btn-sm btn-outline-secondary" onClick={() => openReview(c)}>View</button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -149,16 +190,22 @@ export default function ClosingsPage() {
         </div>
       </div>
 
-      <Modal show={submitOpen} title={`Submit closing for ${fmtDate(date)}`} onClose={() => setSubmitOpen(false)}
+      <Modal show={submitOpen} title={`Submit closing for ${fmtDate(date)}`} onClose={() => { setReRunning(null); setSubmitOpen(false); }}
         footer={
           <>
-            <button className="btn btn-outline-secondary" onClick={() => setSubmitOpen(false)}>Close</button>
+            <button className="btn btn-outline-secondary" onClick={() => { setReRunning(null); setSubmitOpen(false); }}>Close</button>
             <button className="btn btn-primary" onClick={submit} disabled={busy}>{busy ? 'Submitting…' : 'Submit closing'}</button>
           </>
         }
       >
         {error2 && <div className="alert alert-danger py-2 small">{error2}</div>}
-        <p className="small text-muted">Enter the actual cash counted at the end of the day. The system compares it with the expected cash above to detect shortages or overages.</p>
+        {reRunning ? (
+          <div className="alert alert-warning py-2 small">
+            Re-submitting a closing that was {reRunning.status === 'rejected' ? 'rejected' : 'returned for correction'}. After re-running, it moves back to <strong>submitted</strong> for manager review. Edit the underlying transactions first, then re-run.
+          </div>
+        ) : (
+          <p className="small text-muted">Enter the actual cash counted at the end of the day. The system compares it with the expected cash above to detect shortages or overages.</p>
+        )}
         {totals && (
           <div className="alert alert-info small py-2">
             Expected cash from records: <strong>{fmtMoney(totals.expected_cash)}</strong>
@@ -176,9 +223,13 @@ export default function ClosingsPage() {
         footer={
           <>
             <button className="btn btn-outline-secondary" onClick={() => setReviewing(null)}>Close</button>
-            <button className="btn btn-outline-warning" disabled={busy} onClick={() => review('correction_requested')}>Request correction</button>
-            <button className="btn btn-outline-danger" disabled={busy} onClick={() => review('rejected')}>Reject</button>
-            <button className="btn btn-success" disabled={busy} onClick={() => review('approved')}>Approve & lock</button>
+            {canApprove && (
+              <>
+                <button className="btn btn-outline-warning" disabled={busy} onClick={() => review('correction_requested')}>Request correction</button>
+                <button className="btn btn-outline-danger" disabled={busy} onClick={() => review('rejected')}>Reject</button>
+                <button className="btn btn-success" disabled={busy} onClick={() => review('approved')}>Approve & lock</button>
+              </>
+            )}
           </>
         }
       >

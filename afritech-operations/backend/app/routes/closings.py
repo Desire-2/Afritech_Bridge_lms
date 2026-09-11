@@ -124,7 +124,7 @@ def submit_closing():
     else:
         from ..services.notifications import notify_by_roles
         notify_by_roles(
-            ['manager', 'admin', 'super_admin'], 'closing_approval',
+            ['manager', 'super_admin'], 'closing_approval',
             f'Daily closing awaiting approval: {closing.employee.full_name} ({closing_date}).',
             severity='warning', related_type='daily_closing', related_id=closing.id, rule='closing-approval'
         )

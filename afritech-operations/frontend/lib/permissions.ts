@@ -24,6 +24,7 @@ export const P = {
   transactionsView: 'transactions.view',
   transactionsViewAll: 'transactions.view_all',
   transactionsCancel: 'transactions.cancel',
+  transactionsEdit: 'transactions.edit',
   transactionsApprove: 'transactions.approve',
   closingsSubmit: 'closings.submit',
   closingsApprove: 'closings.approve',
@@ -170,7 +171,7 @@ export function navGroupsFor(user: any): NavGroup[] {
 /** Route → required permission (string = exactly one, array = any-of). Ordered longest-first. */
 const ROUTE_GUARDS: { path: string; perm: string | string[] }[] = [
   { path: '/transactions/new', perm: P.transactionsCreate },
-  { path: '/transactions', perm: P.transactionsView },
+  { path: '/transactions', perm: [P.transactionsView, P.transactionsEdit, P.transactionsApprove] },
   { path: '/clients', perm: P.clientsView },
   { path: '/services', perm: P.servicesView },
   { path: '/closings', perm: P.closingsView },

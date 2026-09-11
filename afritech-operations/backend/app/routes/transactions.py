@@ -1,4 +1,5 @@
 from datetime import datetime, timezone, date
+from decimal import Decimal
 
 from flask import Blueprint, request, jsonify
 
@@ -154,6 +155,96 @@ def get_transaction(transaction_id):
     payload = txn.to_dict()
     payload['payments'] = [p.to_dict() for p in txn.payments]
     return jsonify({'transaction': payload})
+
+
+@bp.put('/<int:transaction_id>')
+@require_any_permission('transactions.edit', 'transactions.approve')
+def update_transaction(transaction_id):
+    """Edit transaction details. Only allowed when no approved/locked closing covers this date."""
+    data = parse_json()
+    user = current_user()
+    txn = ServiceTransaction.query.get(transaction_id)
+    if not txn:
+        return json_error('Transaction not found', 404)
+
+    if txn.status in ('cancelled', 'refunded'):
+        return json_error('Cannot edit a cancelled or refunded transaction', 400)
+
+    owner_or_manager = user.has_permission('transactions.approve') or (
+        user.employee and txn.employee_id == user.employee.id
+    )
+    if not owner_or_manager:
+        return json_error('You do not have permission to edit this transaction', 403)
+
+    from ..models import DailyClosing
+    modifiable = ('correction_requested', 'rejected')
+    locked = DailyClosing.query.filter(
+        DailyClosing.employee_id == txn.employee_id,
+        DailyClosing.closing_date == txn.transaction_date,
+        DailyClosing.status.notin_(modifiable),
+    ).first()
+    if locked:
+        action = 'approved' if locked.status == 'approved' else 'submitted'
+        return json_error(f'Cannot edit: the closing for this date is {action} and locks transactions', 400)
+
+    if data.get('service_id'):
+        svc = Service.query.get(data['service_id'])
+        if not svc:
+            return json_error('Service not found', 404)
+        if not svc.is_active:
+            return json_error('Service is inactive', 400)
+        txn.service_id = svc.id
+        txn.service_name = svc.name
+
+    if data.get('client_id'):
+        client = Client.query.get(data['client_id'])
+        if not client:
+            return json_error('Client not found', 404)
+        txn.client_id = client.id
+
+    if data.get('payment_method_id'):
+        pm = PaymentMethod.query.get(data['payment_method_id'])
+        if not pm or not pm.is_active:
+            return json_error('Invalid payment method', 400)
+        txn.payment_method_id = pm.id
+        txn.is_cash = pm.code in ('cash', 'CASH')
+
+    if data.get('transaction_date'):
+        txn.transaction_date = date.fromisoformat(data['transaction_date'])
+
+    if 'reference' in data:
+        txn.reference = data['reference']
+    if 'notes' in data:
+        txn.notes = data['notes']
+
+    price_changed = False
+    if 'customer_price' in data:
+        try:
+            txn.customer_price = Decimal(str(float(data['customer_price'])))
+            price_changed = True
+        except Exception:
+            return json_error('Invalid customer_price', 400)
+    if 'official_cost' in data:
+        try:
+            txn.official_cost = Decimal(str(float(data['official_cost'])))
+            price_changed = True
+        except Exception:
+            return json_error('Invalid official_cost', 400)
+
+    if price_changed:
+        svc = txn.service or Service.query.get(txn.service_id)
+        emp = Employee.query.get(txn.employee_id)
+        if svc and emp:
+            calc = resolve_commission(svc, emp, official_cost=float(txn.official_cost), customer_price=float(txn.customer_price))
+            txn.commission_rate_used = calc['rate']
+            txn.commission_source = calc['rate_source']
+            txn.gross_profit = calc['gross_profit']
+            txn.commission_amount = calc['commission_amount']
+            txn.company_profit = calc['company_profit']
+
+    db.session.commit()
+    audit('transaction_updated', 'transaction', txn.id, new_value=txn.to_dict())
+    return jsonify({'message': 'Transaction updated', 'transaction': txn.to_dict()})
 
 
 @bp.post('/<int:transaction_id>/status')

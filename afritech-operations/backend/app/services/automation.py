@@ -48,7 +48,7 @@ def _setting_int(key, default):
 
 def _managers():
     users = User.query.filter(User.is_active.is_(True)).all()
-    return [u for u in users if set(['manager', 'admin']).intersection(u.role_codes)]
+    return [u for u in users if set(['manager', 'super_admin']).intersection(u.role_codes)]
 
 
 def run_all(scope_date=None):

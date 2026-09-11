@@ -91,7 +91,7 @@ def create_expense():
     db.session.add(exp)
     db.session.commit()
     audit('expense_created', 'expense', exp.id, new_value=exp.to_dict())
-    notify_by_roles(['manager', 'admin', 'super_admin', 'accountant'], 'expense_approval',
+    notify_by_roles(['manager', 'super_admin', 'accountant'], 'expense_approval',
                     f'Expense awaiting approval: {exp.category} {exp.amount:,.0f} RWF.',
                     severity='warning', related_type='expense', related_id=exp.id, rule='expense-approval')
     return jsonify({'message': 'Expense submitted', 'expense': exp.to_dict()}), 201

@@ -24,6 +24,7 @@ export default function TransactionDetailPage() {
   const t = data.transaction;
   const ownsTxn = !!user && t.employee_id === user.employee_id;
   const canCancel = can(user, 'transactions.cancel');
+  const canEdit = can(user, 'transactions.approve') || (ownsTxn && can(user, 'transactions.edit'));
   const canComplete = can(user, 'transactions.approve') || ownsTxn;
 
   async function updateStatus(status: string) {
@@ -47,6 +48,9 @@ export default function TransactionDetailPage() {
   const actions = (
     <>
       <Link href="/transactions/new" className="btn btn-sm btn-outline-primary">New transaction</Link>
+      {t.status !== 'cancelled' && t.status !== 'refunded' && canEdit && (
+        <Link href={`/transactions/${id}/edit`} className="btn btn-sm btn-outline-secondary">Edit</Link>
+      )}
       {t.status !== 'cancelled' && t.status !== 'refunded' && t.status !== 'completed' && canComplete && (
         <button className="btn btn-sm btn-outline-success" onClick={() => updateStatus('completed')}>Mark completed</button>
       )}
