@@ -125,6 +125,24 @@ class TestCorrectionFlow:
                        json={'customer_price': 9999})
         assert r.status_code == 403
 
+    def test_move_txn_updates_payment_paid_at(self, client):
+        agent = _token(client, 'agent@afritech.dev')
+        old_date = (date.today() + timedelta(days=55)).isoformat()
+        new_date = (date.today() + timedelta(days=56)).isoformat()
+        txn = _make_cash_transaction(client, agent, old_date, price=2000)
+
+        r = client.get(f"/api/transactions/{txn['id']}", headers=_hdr(agent))
+        paid_at = r.get_json()['transaction']['payments'][0]['paid_at']
+        assert paid_at[:10] != new_date  # payment timestamp pre-dates the move
+
+        r = client.put(f"/api/transactions/{txn['id']}", headers=_hdr(agent),
+                       json={'transaction_date': new_date})
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+        r = client.get(f"/api/transactions/{txn['id']}", headers=_hdr(agent))
+        paid_at = r.get_json()['transaction']['payments'][0]['paid_at']
+        assert paid_at[:10] == new_date
+
     def test_edit_recalculates_commission(self, client):
         agent = _token(client, 'agent@afritech.dev')
         txn = _make_cash_transaction(client, agent, (date.today() + timedelta(days=8)).isoformat(), price=2000)

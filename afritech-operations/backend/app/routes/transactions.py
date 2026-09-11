@@ -224,6 +224,12 @@ def update_transaction(transaction_id):
 
     if data.get('transaction_date'):
         txn.transaction_date = date.fromisoformat(data['transaction_date'])
+        if txn.transaction_date != old_date:
+            for pay in txn.payments:
+                if pay.paid_at:
+                    pay.paid_at = datetime.combine(
+                        txn.transaction_date, pay.paid_at.time(), tzinfo=timezone.utc
+                    )
     if 'reference' in data:
         txn.reference = data['reference']
     if 'notes' in data:
