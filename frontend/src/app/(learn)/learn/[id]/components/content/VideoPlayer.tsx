@@ -6,6 +6,97 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Video, CheckCircle, Lock, Loader2, Maximize2, Minimize2, AlertCircle } from "lucide-react";
 
+type YouTubeApi = {
+  Player: new (element: HTMLElement, options: Record<string, unknown>) => any;
+};
+
+let youtubeApiPromise: Promise<YouTubeApi> | null = null;
+
+const getYouTubeVideoId = (url: string) =>
+  url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
+
+const loadYouTubeApi = (): Promise<YouTubeApi> => {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("YouTube is only available in the browser"));
+  }
+
+  const browserWindow = window as typeof window & {
+    YT?: Partial<YouTubeApi>;
+    onYouTubeIframeAPIReady?: () => void;
+  };
+
+  if (typeof browserWindow.YT?.Player === "function") {
+    return Promise.resolve(browserWindow.YT as YouTubeApi);
+  }
+
+  if (youtubeApiPromise) return youtubeApiPromise;
+
+  const apiPromise = new Promise<YouTubeApi>((resolve, reject) => {
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+    const script = document.querySelector<HTMLScriptElement>(
+      'script[src*="youtube.com/iframe_api"]'
+    ) || document.createElement("script");
+
+    const cleanup = () => {
+      if (pollTimer) clearTimeout(pollTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      script.removeEventListener("error", handleScriptError);
+    };
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(browserWindow.YT as YouTubeApi);
+    };
+
+    const checkForPlayer = () => {
+      if (settled) return;
+      if (typeof browserWindow.YT?.Player === "function") {
+        finish();
+        return;
+      }
+      pollTimer = setTimeout(checkForPlayer, 50);
+    };
+
+    const handleScriptError = () => {
+      finish(new Error("The YouTube player API failed to load"));
+    };
+
+    script.addEventListener("error", handleScriptError, { once: true });
+    if (!script.src) {
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      document.head.appendChild(script);
+    }
+
+    const previousReadyHandler = browserWindow.onYouTubeIframeAPIReady;
+    browserWindow.onYouTubeIframeAPIReady = () => {
+      try {
+        previousReadyHandler?.();
+      } finally {
+        checkForPlayer();
+      }
+    };
+
+    timeoutTimer = setTimeout(() => {
+      finish(new Error("Timed out while loading the YouTube player API"));
+    }, 10000);
+    checkForPlayer();
+  });
+
+  youtubeApiPromise = apiPromise.catch((error) => {
+    youtubeApiPromise = null;
+    throw error;
+  });
+  return youtubeApiPromise;
+};
 // ── Duration formatting ────────────────────────────────────────────
 const fmt = (s: number): string => {
   if (!s || !isFinite(s)) return "0:00";
@@ -106,12 +197,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [videoWatched, setVideoWatched] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [playerReady, setPlayerReady] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoWatchedRef = useRef(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const youtubePlayerRef = useRef<any>(null);
   const vimeoPlayerRef = useRef<any>(null);
@@ -140,14 +231,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   }, [mixedContentIndex, onMixedContentVideoProgress, onProgress]);
 
   const markWatched = useCallback(() => {
-    if (!videoWatched) {
+    if (!videoWatchedRef.current) {
+      videoWatchedRef.current = true;
       setVideoWatched(true);
       onComplete?.();
       if (mixedContentIndex !== undefined) {
         onMixedContentVideoComplete?.(mixedContentIndex);
       }
     }
-  }, [mixedContentIndex, onComplete, onMixedContentVideoComplete, videoWatched]);
+  }, [mixedContentIndex, onComplete, onMixedContentVideoComplete]);
 
   // Fullscreen toggle
   const handleFullscreenToggle = useCallback(async (el: HTMLElement | null) => {
@@ -184,12 +276,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   useEffect(() => {
     setVideoProgress(0);
+    videoWatchedRef.current = false;
     setVideoWatched(false);
     setVideoDuration(0);
     setCurrentTime(0);
     setVideoError(null);
     setVideoLoading(false);
-    setPlayerReady(false);
     youtubePlayerRef.current?.destroy?.();
     vimeoPlayerRef.current?.destroy?.();
     youtubePlayerRef.current = null;
@@ -212,6 +304,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     if (resumeDisplayKeyRef.current !== displayKey) {
       setVideoProgress(savedProgress);
       setCurrentTime(savedTime);
+      videoWatchedRef.current = initialCompleted;
       setVideoWatched(initialCompleted);
       resumeDisplayKeyRef.current = displayKey;
     }
@@ -231,50 +324,58 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   }, [videoUrl, initialProgress, initialCurrentTime, initialCompleted, isDirect, isYouTube, isVimeo, videoDuration]);
 
-  // YouTube: load API + init player with 10s fallback timeout
+  // YouTube: wait for the actual Player constructor before creating the
+  // player. The global YT object can exist briefly before YT.Player is ready.
   useEffect(() => {
     if (!isYouTube || !iframeRef.current) return;
-    if (!(window as any).YT) {
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      document.getElementsByTagName("script")[0].parentNode?.insertBefore(tag, document.getElementsByTagName("script")[0]);
-      (window as any).onYouTubeIframeAPIReady = () => setPlayerReady(true);
-      setPlayerReady(false);
-      const timeout = setTimeout(() => {
-        console.warn("⏱️ YouTube loading timeout - forcing playerReady");
-        setPlayerReady(true);
-      }, 10000);
-      return () => clearTimeout(timeout);
-    }
-    setPlayerReady(true);
-  }, [isYouTube, videoUrl]);
+    let cancelled = false;
 
-  useEffect(() => {
-    if (!playerReady || !isYouTube || !iframeRef.current || youtubePlayerRef.current) return;
-    const vid = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
-    if (!vid) return;
+    const initializePlayer = async () => {
+      const api = await loadYouTubeApi();
+      if (cancelled || !iframeRef.current || youtubePlayerRef.current) return;
 
-    youtubePlayerRef.current = new (window as any).YT.Player(iframeRef.current, {
-      videoId: vid,
-      events: {
-        onReady: (e: any) => {
-          setVideoDuration(e.target.getDuration());
-          progressIntervalRef.current = setInterval(() => {
-            const ct = e.target.getCurrentTime();
-            const dur = e.target.getDuration();
-            if (dur > 0) {
-              const pct = (ct / dur) * 100;
-              setVideoProgress(pct);
-              setCurrentTime(ct);
-              if (pct >= 90) markWatched();
-            }
-          }, 2000);
+      const videoId = getYouTubeVideoId(videoUrl);
+      if (!videoId) throw new Error("The YouTube URL is invalid");
+      if (typeof api.Player !== "function") {
+        throw new Error("The YouTube Player constructor is unavailable");
+      }
+
+      youtubePlayerRef.current = new api.Player(iframeRef.current, {
+        videoId,
+        events: {
+          onReady: (event: any) => {
+            const duration = event.target.getDuration();
+            setVideoDuration(duration);
+            progressIntervalRef.current = setInterval(() => {
+              const current = event.target.getCurrentTime();
+              const total = event.target.getDuration();
+              if (total > 0) {
+                const progress = (current / total) * 100;
+                setVideoProgress(progress);
+                setCurrentTime(current);
+                if (progress >= 90) markWatched();
+              }
+            }, 2000);
+          },
+          onStateChange: (event: any) => setIsPlaying(event.data === 1),
         },
-        onStateChange: (e: any) => setIsPlaying(e.data === 1),
-      },
+      });
+    };
+
+    initializePlayer().catch((error) => {
+      if (!cancelled) {
+        console.error("Failed to initialize YouTube player:", error);
+        setVideoError("YouTube could not be loaded. Check the video URL or try again later.");
+      }
     });
-    return () => { if (progressIntervalRef.current) clearInterval(progressIntervalRef.current); };
-  }, [playerReady, isYouTube, videoUrl, markWatched, reportProgress]);
+
+    return () => {
+      cancelled = true;
+      if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+      youtubePlayerRef.current?.destroy?.();
+      youtubePlayerRef.current = null;
+    };
+  }, [isYouTube, videoUrl, markWatched]);
 
   // Vimeo: load SDK + init
   useEffect(() => {
