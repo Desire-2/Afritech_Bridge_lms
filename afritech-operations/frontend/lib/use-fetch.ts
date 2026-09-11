@@ -8,6 +8,8 @@ export function useFetch<T = any>(path: string, deps: any[] = [], params?: Recor
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
+  const paramsKey = JSON.stringify(params || {});
+
   const reload = useCallback(() => {
     if (!path) {
       setData(null);
@@ -27,7 +29,7 @@ export function useFetch<T = any>(path: string, deps: any[] = [], params?: Recor
         setLoading(false);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, ...deps]);
+  }, [path, paramsKey, ...deps]);
 
   useEffect(() => {
     reload();
