@@ -18,11 +18,12 @@ export default function InstructorDashboard() {
   return (
     <div>
       <PageHeader
-        title="My Dashboard"
-        subtitle={`Teaching overview for ${user?.employee_name || 'you'} — ${data.today}`}
+        eyebrow="My teaching"
+        title={`Welcome back, ${user?.employee_name?.split(' ')[0] || 'there'}`}
+        subtitle={`Your teaching overview for ${data.today}`}
         actions={
           <>
-            <Link href="/learning/weekly-plans" className="btn btn-primary">
+            <Link href="/learning/weekly-plans" className="btn btn-accent">
               <i className="bi bi-journal-richtext me-1" /> Weekly plans
             </Link>
             <Link href="/learning/cohorts" className="btn btn-outline-primary">My cohorts</Link>
@@ -36,27 +37,32 @@ export default function InstructorDashboard() {
         <StatCard label="Learners (all cohorts)" value={data.total_learners || 0} tone="primary" icon="bi-people" />
         <StatCard label="Awaiting grading" value={data.pending_grading || 0} tone={data.pending_grading > 0 ? 'warning' : 'success'} icon="bi-clipboard-check" />
         <StatCard label="Open tasks" value={data.my_open_tasks || 0} sub={`${data.my_overdue_tasks || 0} overdue`} tone={data.my_overdue_tasks > 0 ? 'danger' : 'primary'} icon="bi-check2-square" />
-        <StatCard label="Current plan completion" value={`${data.plan_completion || 0}%`} tone="primary" icon="bi-graph-up-arrow" />
+        <StatCard label="Plan completion" value={`${data.plan_completion || 0}%`} tone="success" icon="bi-graph-up-arrow" />
       </div>
 
       <div className="row g-4">
         <div className="col-lg-7">
           <div className="card h-100">
-            <div className="card-body">
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <h5 className="card-title h6 fw-semibold mb-0">Upcoming teaching activities</h5>
-                <Link href="/learning/weekly-plans" className="small text-decoration-none">All plans</Link>
-              </div>
+            <div className="card-header d-flex justify-content-between align-items-center">
+              <span>Upcoming teaching activities</span>
+              <Link href="/learning/weekly-plans" className="small text-decoration-none text-primary fw-semibold">All plans</Link>
+            </div>
+            <div className="card-body p-0">
               {(data.upcoming_activities || []).length === 0 && (
-                <EmptyState message="No upcoming activities scheduled." icon="bi-calendar2-week" />
+                <div className="p-3"><EmptyState message="No upcoming activities scheduled." icon="bi-calendar2-week" /></div>
               )}
               {(data.upcoming_activities || []).map((a: any) => (
-                <div key={a.id} className="d-flex justify-content-between align-items-center py-2 border-bottom small">
-                  <div>
-                    <div className="fw-semibold">{a.lesson_topic}</div>
-                    <div className="text-muted">{fmtDate(a.activity_date)} · {a.cohort_name || 'Class'}</div>
+                <div key={a.id} className="list-row d-flex justify-content-between align-items-center px-3 py-2">
+                  <div className="d-flex align-items-center gap-3">
+                    <div className="stat-icon d-none d-sm-flex" style={{ width: 36, height: 36, fontSize: 15, background: 'var(--accent-100)', color: 'var(--accent-600)' }}>
+                      <i className="bi bi-easel" />
+                    </div>
+                    <div>
+                      <div className="fw-semibold">{a.lesson_topic}</div>
+                      <div className="small text-muted">{fmtDate(a.activity_date)} · {a.cohort_name || 'Class'}</div>
+                    </div>
                   </div>
-                  <div className="text-end text-muted">{a.duration_hours ? `${a.duration_hours}h` : '—'}</div>
+                  <div className="text-end text-muted small">{a.duration_hours ? `${a.duration_hours}h` : '—'}</div>
                 </div>
               ))}
             </div>
@@ -65,17 +71,17 @@ export default function InstructorDashboard() {
 
         <div className="col-lg-5">
           <div className="card h-100">
+            <div className="card-header d-flex justify-content-between align-items-center">
+              <span>Attendance today</span>
+              {data.today_attendance && <Badge status={data.today_attendance.status} />}
+            </div>
             <div className="card-body">
-              <div className="d-flex justify-content-between align-items-center mb-2">
-                <h5 className="card-title h6 fw-semibold mb-0">Attendance today</h5>
-                {data.today_attendance && <Badge status={data.today_attendance.status} />}
-              </div>
               {data.today_attendance ? (
                 <table className="table table-sm mb-0">
                   <tbody>
-                    <tr><td className="text-muted">Clock in</td><td>{data.today_attendance.clock_in ? fmtDateTime(data.today_attendance.clock_in) : '—'}</td></tr>
-                    <tr><td className="text-muted">Clock out</td><td>{data.today_attendance.clock_out ? fmtDateTime(data.today_attendance.clock_out) : '—'}</td></tr>
-                    <tr><td className="text-muted">Hours</td><td>{data.today_attendance.total_hours || 0}</td></tr>
+                    <tr><td className="text-muted">Clock in</td><td className="text-end">{data.today_attendance.clock_in ? fmtDateTime(data.today_attendance.clock_in) : '—'}</td></tr>
+                    <tr><td className="text-muted">Clock out</td><td className="text-end">{data.today_attendance.clock_out ? fmtDateTime(data.today_attendance.clock_out) : '—'}</td></tr>
+                    <tr><td className="text-muted">Hours</td><td className="text-end fw-semibold">{data.today_attendance.total_hours || 0}</td></tr>
                   </tbody>
                 </table>
               ) : (
@@ -87,24 +93,27 @@ export default function InstructorDashboard() {
       </div>
 
       <div className="card mt-4">
+        <div className="card-header d-flex justify-content-between align-items-center">
+          <span>Current weekly plan</span>
+          <Link href="/learning/weekly-plans" className="small text-decoration-none text-primary fw-semibold">View</Link>
+        </div>
         <div className="card-body">
-          <div className="d-flex justify-content-between align-items-center mb-2">
-            <h5 className="card-title h6 fw-semibold mb-0">Current weekly plan</h5>
-            <Link href="/learning/weekly-plans" className="small text-decoration-none">View</Link>
-          </div>
           {plan ? (
-            <div className="row g-3">
+            <div className="row g-3 align-items-center">
               <div className="col-md-4">
                 <div className="text-muted small">Week</div>
                 <div className="fw-semibold">{fmtDate(plan.week_start)} → {fmtDate(plan.week_end)}</div>
               </div>
-              <div className="col-md-4">
+              <div className="col-md-3">
                 <div className="text-muted small">Status</div>
                 <Badge status={plan.status} />
               </div>
-              <div className="col-md-4">
-                <div className="text-muted small">Completion</div>
-                <div className="fw-semibold">{data.plan_completion}%</div>
+              <div className="col-md-3">
+                <div className="text-muted small mb-1">Completion</div>
+                <div className="progress" style={{ height: 8 }}>
+                  <div className="progress-bar" style={{ width: `${data.plan_completion}%`, background: 'var(--accent)' }} role="progressbar" aria-valuenow={data.plan_completion} aria-valuemin={0} aria-valuemax={100} />
+                </div>
+                <div className="small fw-semibold mt-1">{data.plan_completion}%</div>
               </div>
             </div>
           ) : (

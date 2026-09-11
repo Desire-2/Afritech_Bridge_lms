@@ -48,15 +48,23 @@ export default function TransactionDetailPage() {
 
   const actions = (
     <>
-      <Link href="/transactions/new" className="btn btn-sm btn-outline-primary">New transaction</Link>
+      <Link href="/transactions/new" className="btn btn-accent">
+        <i className="bi bi-plus-circle me-1" /> New transaction
+      </Link>
       {t.status !== 'cancelled' && t.status !== 'refunded' && canEdit && (
-        <Link href={`/transactions/${id}/edit`} className="btn btn-sm btn-outline-secondary">Edit</Link>
+        <Link href={`/transactions/${id}/edit`} className="btn btn-outline-primary">
+          <i className="bi bi-pencil me-1" /> Edit
+        </Link>
       )}
       {t.status !== 'cancelled' && t.status !== 'refunded' && t.status !== 'completed' && canComplete && (
-        <button className="btn btn-sm btn-outline-success" onClick={() => updateStatus('completed')}>Mark completed</button>
+        <button className="btn btn-teal" onClick={() => updateStatus('completed')}>
+          <i className="bi bi-check-circle me-1" /> Mark completed
+        </button>
       )}
       {t.status !== 'cancelled' && t.status !== 'refunded' && t.status !== 'failed' && canCancel && (
-        <button className="btn btn-sm btn-outline-danger" onClick={() => setCancelOpen(true)}>Cancel / refund</button>
+        <button className="btn btn-outline-danger" onClick={() => setCancelOpen(true)}>
+          <i className="bi bi-x-circle me-1" /> Cancel / refund
+        </button>
       )}
     </>
   );
@@ -71,7 +79,7 @@ export default function TransactionDetailPage() {
         <div className="col-lg-7">
           <div className="card">
             <div className="card-body">
-              <h6 className="card-title fw-semibold d-flex justify-content-between">
+              <h6 className="card-title fw-semibold d-flex justify-content-between align-items-center">
                 Details
                 <Badge status={t.status} />
               </h6>

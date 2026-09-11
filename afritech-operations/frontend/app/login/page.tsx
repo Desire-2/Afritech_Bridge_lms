@@ -33,11 +33,11 @@ export default function LoginPage() {
         <div className="card-body p-4 p-md-5">
           <div className="text-center mb-4">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.jpg" alt="AfriTech Bridge logo" className="brand-mark-img mx-auto mb-3" style={{ width: 52, height: 52, borderRadius: 12 }} />
-            <h1 className="h4 fw-semibold mb-1">AfriTech Bridge Operations</h1>
+            <img src="/logo.jpg" alt="AfriTech Bridge logo" className="brand-mark-img mx-auto mb-3" style={{ width: 56, height: 56, borderRadius: 14 }} />
+            <h1 className="h4 fw-bold mb-1">AfriTech Bridge Operations</h1>
             <p className="text-muted small mb-0">Internal business management</p>
           </div>
-          {error && <div className="alert alert-danger py-2 small">{error}</div>}
+          {error && <div className="alert alert-danger py-2 small"><i className="bi bi-exclamation-triangle me-1" />{error}</div>}
           <form onSubmit={submit}>
             <div className="mb-3">
               <label className="form-label small fw-semibold">Email</label>
@@ -68,6 +68,7 @@ export default function LoginPage() {
                   tabIndex={-1}
                   onClick={() => setShowPw((v) => !v)}
                   title={showPw ? 'Hide password' : 'Show password'}
+                  aria-label={showPw ? 'Hide password' : 'Show password'}
                 >
                   <i className={`bi ${showPw ? 'bi-eye-slash' : 'bi-eye'}`} />
                 </button>
@@ -77,7 +78,8 @@ export default function LoginPage() {
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
-          <div className="text-center mt-4 text-muted small">
+          <div className="text-center mt-4 text-muted small d-flex align-items-center justify-content-center gap-2">
+            <i className="bi bi-shield-lock text-success" />
             Forgot your password? Contact your administrator.
           </div>
         </div>

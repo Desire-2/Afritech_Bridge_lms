@@ -8,7 +8,7 @@ import AccessDenied from '@/components/AccessDenied';
 import { useAuth } from '@/lib/auth';
 import { api, fmtDateTime, logout } from '@/lib/api';
 import { routeDenied, pageIdentity, roleLabel } from '@/lib/permissions';
-import { Loading } from '@/components/ui';
+import { Loading, Badge } from '@/components/ui';
 
 interface NotifItem {
   id: number;
@@ -78,37 +78,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (routeDenied(user, pathname)) {
-    return (
-      <div className="d-flex">
-<Sidebar open={menuOpen} onClose={closeMenu} />
-      <div className="main-area flex-grow-1 d-flex flex-column">
-        <header className="app-header">
-          <div className="d-flex align-items-center gap-2">
-            <button type="button" className="btn btn-sm btn-outline-secondary d-lg-none" onClick={() => setMenuOpen(true)} aria-label="Open menu">
-              <i className="bi bi-list" />
-            </button>
-            <div>
-              <div className="small text-muted text-uppercase">{pageIdentity(pathname).group}</div>
-              <h1 className="h5 fw-semibold mb-0">{pageIdentity(pathname).title}</h1>
-            </div>
-          </div>
-          <div className="d-flex align-items-center gap-2">
-            <span className="small text-muted d-none d-md-inline-block">
-              Signed in as <strong>{user.employee_name || user.email}</strong>
-            </span>
-            <span className="role-chip">{roleLabel(user)}</span>
-          </div>
-        </header>
-          <main className="main-content flex-grow-1">
-            <AccessDenied />
-          </main>
-        </div>
-      </div>
-    );
-  }
-
-  const unreadCount = unread;
+  const identity = pageIdentity(pathname);
 
   return (
     <div className="d-flex">
@@ -120,23 +90,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <i className="bi bi-list" />
             </button>
             <div>
-              {pageIdentity(pathname).group && (
-                <div className="small text-muted text-uppercase">{pageIdentity(pathname).group}</div>
-              )}
-              <h1 className="h5 fw-semibold mb-0">{pageIdentity(pathname).title}</h1>
+              {identity.group && <div className="header-eyebrow">{identity.group}</div>}
+              <h1>{identity.title}</h1>
             </div>
           </div>
           <div className="d-flex align-items-center gap-2 position-relative">
             <button
               type="button"
-              className="btn btn-sm btn-outline-secondary position-relative"
+              className="icon-btn"
               onClick={() => { setBellOpen((o) => !o); refresh(); }}
               aria-label="Notifications"
+              aria-expanded={bellOpen}
             >
               <i className="bi bi-bell" />
-              {unreadCount > 0 && (
-                <span className="badge-notify position-absolute top-0 start-100 translate-middle bg-danger text-white rounded-pill">
-                  {unreadCount > 9 ? '9+' : unreadCount}
+              {unread > 0 && (
+                <span className="badge-notify position-absolute top-0 start-100 translate-middle bg-danger text-white">
+                  {unread > 9 ? '9+' : unread}
                 </span>
               )}
             </button>
@@ -150,26 +119,29 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   {notice.length === 0 && <div className="list-group-item small text-muted">No notifications.</div>}
                   {notice.map((n) => (
                     <Link href="/notifications" key={n.id} onClick={() => markRead(n)} className={`list-group-item list-group-item-action ${n.is_read ? '' : 'bg-primary-subtle'}`}>
-                      <div className="d-flex justify-content-between align-items-start gap-2">
-                        <span className={`small ${n.is_read ? '' : 'fw-semibold'}`}>{n.message || n.type}</span>
+                      <div className="small fw-semibold mb-1">{n.message || n.type}</div>
+                      <div className="small text-muted d-flex align-items-center gap-2">
+                        <Badge status={n.severity} />
+                        <span>{fmtDateTime(n.created_at)}</span>
                       </div>
-                      <div className="small text-muted">{fmtDateTime(n.created_at)}</div>
                     </Link>
                   ))}
                 </div>
               </div>
             )}
             <span className="role-chip">{roleLabel(user)}</span>
-            <Link href="/profile" className="d-inline-flex align-items-center gap-2 nav-user rounded-3 px-3 py-1 small text-decoration-none">
-              <i className="bi bi-person-circle text-primary" />
-              <span className="d-none d-md-inline">{user.employee_name || user.email}</span>
+            <Link href="/profile" className="nav-user d-inline-flex align-items-center gap-2 px-3 py-2 small text-decoration-none">
+              <i className="bi bi-person-circle fs-6 text-primary" />
+              <span className="d-none d-md-inline fw-semibold">{user.employee_name || user.email}</span>
             </Link>
-            <button type="button" className="btn btn-sm btn-outline-secondary px-2" onClick={() => { logout(); router.replace('/login'); }} title="Sign out">
+            <button type="button" className="icon-btn" onClick={() => { logout(); router.replace('/login'); }} title="Sign out">
               <i className="bi bi-box-arrow-right" />
             </button>
           </div>
         </header>
-        <main className="main-content flex-grow-1">{children}</main>
+        <main className="main-content flex-grow-1">
+          {routeDenied(user, pathname) ? <AccessDenied /> : children}
+        </main>
       </div>
     </div>
   );

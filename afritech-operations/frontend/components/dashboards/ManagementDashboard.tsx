@@ -16,14 +16,22 @@ export default function ManagementDashboard() {
   const e = data.employees;
   const i = data.instructors;
 
+  const mini = [
+    { label: 'Transactions today', value: s.transactions_today, tone: 'text-primary' },
+    { label: 'This month', value: s.transactions_month, tone: '' },
+    { label: 'Pending (processing)', value: s.pending_services, tone: 'text-warning' },
+    { label: 'Cancelled / refunded (month)', value: s.cancelled_month, tone: 'text-danger' },
+  ];
+
   return (
     <div>
       <PageHeader
-        title="Dashboard"
-        subtitle={`Business overview — ${data.period.today}`}
+        eyebrow="Overview"
+        title="Business Dashboard"
+        subtitle={`Company performance for ${data.period.today}`}
         actions={
           <>
-            <Link href="/transactions/new" className="btn btn-primary">
+            <Link href="/transactions/new" className="btn btn-accent">
               <i className="bi bi-plus-circle me-1" /> New transaction
             </Link>
             <Link href="/closings" className="btn btn-outline-primary">Daily closing</Link>
@@ -42,39 +50,39 @@ export default function ManagementDashboard() {
       <div className="row g-4">
         <div className="col-lg-8">
           <div className="card mb-4">
+            <div className="card-header">Service centre</div>
             <div className="card-body">
-              <h5 className="card-title h6 fw-semibold mb-3">Service centre</h5>
-              <div className="row g-3 text-center">
-                <div className="col-6 col-md-3">
-                  <div className="fs-4 fw-semibold text-primary">{s.transactions_today}</div>
-                  <div className="small text-muted">Transactions today</div>
-                </div>
-                <div className="col-6 col-md-3">
-                  <div className="fs-4 fw-semibold">{s.transactions_month}</div>
-                  <div className="small text-muted">Transactions this month</div>
-                </div>
-                <div className="col-6 col-md-3">
-                  <div className="fs-4 fw-semibold text-warning">{s.pending_services}</div>
-                  <div className="small text-muted">Pending (processing)</div>
-                </div>
-                <div className="col-6 col-md-3">
-                  <div className="fs-4 fw-semibold text-danger">{s.cancelled_month}</div>
-                  <div className="small text-muted">Cancelled/refunded (month)</div>
-                </div>
+              <div className="row g-3">
+                {mini.map((m) => (
+                  <div className="col-6 col-md-3" key={m.label}>
+                    <div className="mini-stat">
+                      <div className={`fs-3 fw-bold ${m.tone} money`}>{m.value}</div>
+                      <div className="small text-muted">{m.label}</div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
-          <div className="row g-3">
+          <div className="row g-3 mb-4">
             <div className="col-md-6">
               <div className="card h-100">
-                <div className="card-body">
-                  <h5 className="card-title h6 fw-semibold">Top services (month)</h5>
-                  {(s.top_services || []).length === 0 && <EmptyState message="No data yet." icon="bi-bar-chart-line" />}
+                <div className="card-header d-flex justify-content-between align-items-center">
+                  <span>Top services (month)</span>
+                  <span className="badge bg-secondary-subtle text-secondary border border-secondary-subtle">{s.transactions_month} total</span>
+                </div>
+                <div className="card-body p-0">
+                  {(s.top_services || []).length === 0 && (
+                    <div className="p-3"><EmptyState message="No data yet." icon="bi-bar-chart-line" /></div>
+                  )}
                   {s.top_services.map((ts: any, idx: number) => (
-                    <div key={ts.name} className="d-flex justify-content-between py-1 border-bottom small">
-                      <span>{idx + 1}. {ts.name}</span>
-                      <span className="fw-semibold">{ts.count}</span>
+                    <div key={ts.name} className="list-row d-flex justify-content-between align-items-center px-3 py-2">
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="rank-badge">{idx + 1}</span>
+                        <span>{ts.name}</span>
+                      </div>
+                      <span className="fw-semibold money">{ts.count}</span>
                     </div>
                   ))}
                 </div>
@@ -82,12 +90,17 @@ export default function ManagementDashboard() {
             </div>
             <div className="col-md-6">
               <div className="card h-100">
-                <div className="card-body">
-                  <h5 className="card-title h6 fw-semibold">Top earners (company profit)</h5>
-                  {(s.top_employees || []).length === 0 && <EmptyState message="No data yet." icon="bi-bar-chart-line" />}
+                <div className="card-header">Top earners (company profit)</div>
+                <div className="card-body p-0">
+                  {(s.top_employees || []).length === 0 && (
+                    <div className="p-3"><EmptyState message="No data yet." icon="bi-bar-chart-line" /></div>
+                  )}
                   {s.top_employees.map((te: any, idx: number) => (
-                    <div key={te.name} className="d-flex justify-content-between py-1 border-bottom small">
-                      <span>{idx + 1}. {te.name}</span>
+                    <div key={te.name} className="list-row d-flex justify-content-between align-items-center px-3 py-2">
+                      <div className="d-flex align-items-center gap-2">
+                        <span className="rank-badge">{idx + 1}</span>
+                        <span>{te.name}</span>
+                      </div>
                       <span className="money fw-semibold">{fmtMoney(te.profit)}</span>
                     </div>
                   ))}
@@ -99,54 +112,55 @@ export default function ManagementDashboard() {
 
         <div className="col-lg-4">
           <div className="card mb-4">
-            <div className="card-body">
-              <h5 className="card-title h6 fw-semibold">Pulse</h5>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
-                <span className="text-muted">Active employees</span><span>{e.active_employees} / {e.total_employees}</span>
+            <div className="card-header">Org pulse</div>
+            <div className="card-body py-2">
+              <div className="d-flex justify-content-between py-2 border-bottom small">
+                <span className="text-muted">Active employees</span><span className="fw-semibold">{e.active_employees} / {e.total_employees}</span>
               </div>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
-                <span className="text-muted">Attendance recorded today</span><span>{e.today_attendance}</span>
+              <div className="d-flex justify-content-between py-2 border-bottom small">
+                <span className="text-muted">Attendance recorded today</span><span className="fw-semibold">{e.today_attendance}</span>
               </div>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
-                <span className="text-muted">Open / overdue tasks</span><span>{e.open_tasks} / {e.overdue_tasks}</span>
+              <div className="d-flex justify-content-between py-2 border-bottom small">
+                <span className="text-muted">Open / overdue tasks</span>
+                <span className={`fw-semibold ${e.overdue_tasks > 0 ? 'text-danger' : ''}`}>{e.open_tasks} / {e.overdue_tasks}</span>
               </div>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
-                <span className="text-muted">Active instructors</span><span>{i.active_instructors}</span>
+              <div className="d-flex justify-content-between py-2 border-bottom small">
+                <span className="text-muted">Active instructors</span><span className="fw-semibold">{i.active_instructors}</span>
               </div>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
-                <span className="text-muted">Current weekly plans</span><span>{i.current_plans}</span>
+              <div className="d-flex justify-content-between py-2 border-bottom small">
+                <span className="text-muted">Current weekly plans</span><span className="fw-semibold">{i.current_plans}</span>
               </div>
-              <div className="d-flex justify-content-between py-1 small">
-                <span className="text-muted">Plan completion</span><span>{i.plan_completion}%</span>
+              <div className="d-flex justify-content-between py-2 small">
+                <span className="text-muted">Plan completion</span><span className="fw-semibold">{i.plan_completion}%</span>
               </div>
             </div>
           </div>
 
           <div className="card mb-4">
-            <div className="card-body">
-              <h5 className="card-title h6 fw-semibold">Attention needed</h5>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
+            <div className="card-header">Attention needed</div>
+            <div className="card-body py-2">
+              <div className="d-flex justify-content-between align-items-center py-2 border-bottom small">
                 <span className="text-muted">Closings awaiting review</span>
-                <Link href="/closings" className="fw-semibold text-decoration-none">{data.closings_pending}</Link>
+                <Link href="/closings" className="btn btn-sm btn-outline-warning">{data.closings_pending}</Link>
               </div>
-              <div className="d-flex justify-content-between py-1 border-bottom small">
+              <div className="d-flex justify-content-between align-items-center py-2 border-bottom small">
                 <span className="text-muted">Pending expenses</span>
-                <Link href="/finance/expenses" className="fw-semibold text-decoration-none">{data.expenses_pending}</Link>
+                <Link href="/finance/expenses" className="btn btn-sm btn-outline-warning">{data.expenses_pending}</Link>
               </div>
-              <div className="d-flex justify-content-between py-1 small">
+              <div className="d-flex justify-content-between align-items-center py-2 small">
                 <span className="text-muted">Unread notifications</span>
-                <span className="fw-semibold">{data.unread_notifications}</span>
+                <Link href="/notifications" className="btn btn-sm btn-outline-primary">{data.unread_notifications}</Link>
               </div>
             </div>
           </div>
 
           <div className="card">
-            <div className="card-body">
-              <h5 className="card-title h6 fw-semibold">Recent instructor scores</h5>
+            <div className="card-header">Recent instructor scores</div>
+            <div className="card-body py-2">
               {(i.recent_scores || []).length === 0 && <EmptyState message="No scores calculated yet." icon="bi-clipboard-data" />}
               {i.recent_scores.map((sc: any) => (
-                <div key={sc.id} className="d-flex justify-content-between py-1 border-bottom small">
-                  <span>{sc.employee_name}</span>
+                <div key={sc.id} className="d-flex justify-content-between align-items-center py-2 border-bottom small">
+                  <span className="text-truncate">{sc.employee_name}</span>
                   <span className="fw-semibold">{sc.overall_score} <span className="text-capitalize text-muted">({sc.rating})</span></span>
                 </div>
               ))}
