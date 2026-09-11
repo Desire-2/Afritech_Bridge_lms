@@ -95,7 +95,7 @@ export default function EditTransactionPage() {
           client_id: Number(form.client_id),
           payment_method_id: Number(form.payment_method_id),
           customer_price: Number(form.customer_price) || 0,
-          official_cost: Number(form.official_cost) || null,
+          official_cost: Number(form.official_cost) || 0,
         },
       });
       router.push(`/transactions/${id}`);

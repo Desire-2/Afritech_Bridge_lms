@@ -224,7 +224,7 @@ def update_transaction(transaction_id):
             price_changed = True
         except Exception:
             return json_error('Invalid customer_price', 400)
-    if 'official_cost' in data:
+    if 'official_cost' in data and data['official_cost'] is not None:
         try:
             txn.official_cost = Decimal(str(float(data['official_cost'])))
             price_changed = True
