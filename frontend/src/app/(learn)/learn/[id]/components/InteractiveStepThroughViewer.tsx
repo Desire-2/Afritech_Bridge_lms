@@ -73,7 +73,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   // Current active step
   const [activeStep, setActiveStep] = useState(0);
   // Set of viewed/completed section indices
-  const [viewedSections, setViewedSections] = useState<Set<number>>(new Set([0]));
+  const [viewedSections, setViewedSections] = useState<Set<number>>(new Set());
   // Direction for animation
   const [direction, setDirection] = useState(0); // 0 = initial, 1 = forward, -1 = backward
   // Show completion celebration when all sections viewed
@@ -82,28 +82,39 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
   const [celebrationDismissed, setCelebrationDismissed] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Mark section as viewed when active step changes
+  const sectionKey = useMemo(() => sections.map((section) => section.id).join('|'), [sections]);
+
+  // Reset step state when a different lesson/content shape is rendered into
+  // this component instance.
   useEffect(() => {
-    setViewedSections(prev => {
-      const updated = new Set(prev);
-      updated.add(activeStep);
-      return updated;
-    });
+    setActiveStep(0);
+    setViewedSections(new Set());
+    setShowCompletionCelebration(false);
+    setCelebrationDismissed(false);
+  }, [sectionKey, totalSteps]);
+
+  // Mark the active section as viewed using the next set, not stale state.
+  useEffect(() => {
+    if (totalSteps <= 0 || activeStep >= sections.length) {
+      onViewedSectionsUpdate?.(0, totalSteps);
+      return;
+    }
+
+    const nextViewedSections = new Set(viewedSections);
+    nextViewedSections.add(activeStep);
+    const viewedCount = nextViewedSections.size;
+
+    if (viewedCount !== viewedSections.size) {
+      setViewedSections(nextViewedSections);
+    }
+    onViewedSectionsUpdate?.(viewedCount, totalSteps);
     onStepChange?.(activeStep, totalSteps);
 
-    // Notify parent of viewed sections count
-    // We use the old viewedSections + 1 (current activeStep being added)
-    onViewedSectionsUpdate?.(viewedSections.size + 1, totalSteps);
-
-    // Check if all sections viewed
-    // viewedSections still has the old value here (state update not yet applied),
-    // so we check if it already has all-but-one (the current activeStep is about to be added)
-    const allViewed = viewedSections.size >= totalSteps - 1;
-    if (allViewed) {
+    if (viewedCount >= totalSteps && !showCompletionCelebration) {
       setShowCompletionCelebration(true);
       onAllSectionsViewed?.();
     }
-  }, [activeStep]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeStep, totalSteps, sections.length, viewedSections, showCompletionCelebration, onStepChange, onAllSectionsViewed, onViewedSectionsUpdate]);
 
   const goToStep = useCallback((step: number) => {
     setDirection(step > activeStep ? 1 : -1);
@@ -129,7 +140,10 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
       if (
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLButtonElement ||
+        e.target instanceof HTMLAnchorElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable)
       ) {
         return;
       }
@@ -251,7 +265,9 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
           )}
 
           {/* Render the actual section content via the renderSection prop */}
-          {renderSection(sections[activeStep], activeStep, true)}
+          {sections[activeStep]
+            ? renderSection(sections[activeStep], activeStep, true)
+            : <p className="text-sm text-gray-400">No lesson content is available.</p>}
         </motion.div>
       </AnimatePresence>
 
@@ -317,7 +333,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               transition={{ delay: 0.2 }}
               className="text-xl sm:text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-emerald-300 via-green-200 to-teal-300 mb-2"
             >
-              All Sections Completed! 🎉
+              All Sections Viewed
             </motion.h3>
 
             {/* Subtitle */}
@@ -328,7 +344,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               className="text-sm text-gray-300 mb-4"
             >
               You've reviewed all {totalSteps} {totalSteps === 1 ? 'section' : 'sections'} of this lesson.
-              Your reading progress has been updated to 100%.
+              Lesson completion may still require engagement or assessment checks.
             </motion.p>
 
             {/* Stats row */}
@@ -348,7 +364,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
               </div>
               <div className="flex items-center gap-1.5">
                 <Award className="h-4 w-4 text-purple-400" />
-                <span className="text-sm font-medium text-purple-300">Complete</span>
+                <span className="text-sm font-medium text-purple-300">Viewed</span>
               </div>
             </motion.div>
 
@@ -373,12 +389,7 @@ export const InteractiveStepThroughViewer: React.FC<InteractiveStepThroughViewer
                     setCelebrationDismissed(true);
                   }}
                   animate={{ scale: [1, 1.04, 1] }}
-                  transition={{
-                    duration: 2,
-                    ease: 'easeInOut',
-                    repeat: Infinity,
-                    repeatDelay: 0.5,
-                  }}
+                  transition={{ duration: 0.35, ease: 'easeOut' }}
                   whileHover={{ scale: 1.08 }}
                 >
                   {lastStepButton}

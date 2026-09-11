@@ -36,6 +36,9 @@ export interface ContentRichPreviewProps {
   onSwitchToAssignment?: () => void;
   onGoToNextLesson?: () => void;
   hasNextLesson?: boolean;
+  resumeVideoProgress?: number;
+  resumeVideoCurrentTime?: number;
+  resumeVideoCompleted?: boolean;
 }
 
 // ── PDF Viewer ────────────────────────────────────────────────────
@@ -91,6 +94,7 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
   lesson, onVideoComplete, onVideoProgress, onMixedContentVideoProgress,
   onMixedContentVideoComplete, onSectionProgress, hasQuiz, hasAssignments,
   isLessonCompleted, onSwitchToQuiz, onSwitchToAssignment, onGoToNextLesson, hasNextLesson,
+  resumeVideoProgress = 0, resumeVideoCurrentTime = 0, resumeVideoCompleted = false,
 }) => {
   // Derived state
   const cfg = typeConfig[lesson.content_type] || typeConfig.text;
@@ -106,6 +110,9 @@ export const ContentRichPreview: React.FC<ContentRichPreviewProps> = ({
             isMainVideo={true}
             onComplete={onVideoComplete}
             onProgress={onVideoProgress}
+            initialProgress={resumeVideoProgress}
+            initialCurrentTime={resumeVideoCurrentTime}
+            initialCompleted={resumeVideoCompleted}
           />
         );
 

@@ -89,12 +89,16 @@ export interface VideoPlayerProps {
   onProgress?: (progress: number, currentTime?: number, duration?: number) => void;
   onMixedContentVideoProgress?: (idx: number, progress: number) => void;
   onMixedContentVideoComplete?: (idx: number) => void;
+  initialProgress?: number;
+  initialCurrentTime?: number;
+  initialCompleted?: boolean;
 }
 
 // ── VideoPlayer Component ──────────────────────────────────────────
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   videoUrl, lessonTitle, isMainVideo, mixedContentIndex,
   onComplete, onProgress, onMixedContentVideoProgress, onMixedContentVideoComplete,
+  initialProgress = 0, initialCurrentTime = 0, initialCompleted = false,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -113,23 +117,37 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const vimeoPlayerRef = useRef<any>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const resumeDisplayKeyRef = useRef<string | null>(null);
+  const resumeSeekAppliedRef = useRef(false);
 
   const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be");
   const isVimeo = videoUrl.includes("vimeo.com");
   const directExtension = videoUrl.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
-  const isDirect = !isYouTube && !isVimeo && ['mp4', 'webm', 'ogg', 'mov'].includes(directExtension || '');
+  // CDN and signed media URLs often have no file extension. Anything that is
+  // not a supported provider URL is still a native video source.
+  const isDirect = !isYouTube && !isVimeo;
   const directMimeType = directExtension === 'webm'
     ? 'video/webm'
     : directExtension === 'ogg'
       ? 'video/ogg'
       : 'video/mp4';
 
+  const reportProgress = useCallback((progress: number, time?: number, duration?: number) => {
+    onProgress?.(progress, time, duration);
+    if (mixedContentIndex !== undefined) {
+      onMixedContentVideoProgress?.(mixedContentIndex, progress);
+    }
+  }, [mixedContentIndex, onMixedContentVideoProgress, onProgress]);
+
   const markWatched = useCallback(() => {
     if (!videoWatched) {
       setVideoWatched(true);
       onComplete?.();
+      if (mixedContentIndex !== undefined) {
+        onMixedContentVideoComplete?.(mixedContentIndex);
+      }
     }
-  }, [videoWatched, onComplete]);
+  }, [mixedContentIndex, onComplete, onMixedContentVideoComplete, videoWatched]);
 
   // Fullscreen toggle
   const handleFullscreenToggle = useCallback(async (el: HTMLElement | null) => {
@@ -159,12 +177,63 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     };
   }, []);
 
-  // Sync progress to parent
-  useEffect(() => { if (onProgress) onProgress(videoProgress, currentTime, videoDuration); }, [videoProgress, currentTime, videoDuration, onProgress]);
+  // Sync progress to parent and mixed-content tracking.
+  useEffect(() => {
+    reportProgress(videoProgress, currentTime, videoDuration);
+  }, [videoProgress, currentTime, videoDuration, reportProgress]);
+
+  useEffect(() => {
+    setVideoProgress(0);
+    setVideoWatched(false);
+    setVideoDuration(0);
+    setCurrentTime(0);
+    setVideoError(null);
+    setVideoLoading(false);
+    setPlayerReady(false);
+    youtubePlayerRef.current?.destroy?.();
+    vimeoPlayerRef.current?.destroy?.();
+    youtubePlayerRef.current = null;
+    vimeoPlayerRef.current = null;
+    resumeDisplayKeyRef.current = null;
+    resumeSeekAppliedRef.current = false;
+    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+  }, [videoUrl]);
+
+  // Restore saved progress once the underlying player exposes its duration.
+  // The seek is applied once per URL so live progress updates cannot move the
+  // player back to an older parent snapshot.
+  useEffect(() => {
+    const savedProgress = Math.max(0, Math.min(100, initialProgress || 0));
+    const savedTime = Math.max(0, initialCurrentTime || 0);
+    const hasSavedState = savedProgress > 0 || savedTime > 0 || initialCompleted;
+    if (!hasSavedState) return;
+
+    const displayKey = `${videoUrl}:${savedProgress}:${savedTime}:${initialCompleted}`;
+    if (resumeDisplayKeyRef.current !== displayKey) {
+      setVideoProgress(savedProgress);
+      setCurrentTime(savedTime);
+      setVideoWatched(initialCompleted);
+      resumeDisplayKeyRef.current = displayKey;
+    }
+
+    const duration = videoDuration || (videoRef.current?.duration ?? 0);
+    if (!duration || resumeSeekAppliedRef.current) return;
+
+    if (isDirect && videoRef.current) {
+      videoRef.current.currentTime = Math.min(savedTime, duration);
+      resumeSeekAppliedRef.current = true;
+    } else if (isYouTube && youtubePlayerRef.current?.seekTo) {
+      youtubePlayerRef.current.seekTo(Math.min(savedTime, duration), true);
+      resumeSeekAppliedRef.current = true;
+    } else if (isVimeo && vimeoPlayerRef.current?.setCurrentTime) {
+      void vimeoPlayerRef.current.setCurrentTime(Math.min(savedTime, duration));
+      resumeSeekAppliedRef.current = true;
+    }
+  }, [videoUrl, initialProgress, initialCurrentTime, initialCompleted, isDirect, isYouTube, isVimeo, videoDuration]);
 
   // YouTube: load API + init player with 10s fallback timeout
   useEffect(() => {
-    if (!isYouTube || !isMainVideo || !iframeRef.current) return;
+    if (!isYouTube || !iframeRef.current) return;
     if (!(window as any).YT) {
       const tag = document.createElement("script");
       tag.src = "https://www.youtube.com/iframe_api";
@@ -178,10 +247,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       return () => clearTimeout(timeout);
     }
     setPlayerReady(true);
-  }, [isYouTube, isMainVideo]);
+  }, [isYouTube, videoUrl]);
 
   useEffect(() => {
-    if (!playerReady || !isYouTube || !isMainVideo || !iframeRef.current || youtubePlayerRef.current) return;
+    if (!playerReady || !isYouTube || !iframeRef.current || youtubePlayerRef.current) return;
     const vid = videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
     if (!vid) return;
 
@@ -205,19 +274,26 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       },
     });
     return () => { if (progressIntervalRef.current) clearInterval(progressIntervalRef.current); };
-  }, [playerReady, isYouTube, isMainVideo, videoUrl, markWatched]);
+  }, [playerReady, isYouTube, videoUrl, markWatched, reportProgress]);
 
   // Vimeo: load SDK + init
   useEffect(() => {
-    if (!isVimeo || !isMainVideo || !iframeRef.current) return;
+    if (!isVimeo || !iframeRef.current) return;
+    let cancelled = false;
     const loadVimeo = async () => {
       if (!(window as any).Vimeo) {
         const s = document.createElement("script");
         s.src = "https://player.vimeo.com/api/player.js";
         s.async = true;
-        await new Promise<void>((r) => { s.onload = () => r(); document.body.appendChild(s); });
+        await new Promise<void>((resolve, reject) => {
+          s.onload = () => resolve();
+          s.onerror = () => reject(new Error('Vimeo player failed to load'));
+          document.body.appendChild(s);
+        });
       }
+      if (cancelled) return;
       const Player = (window as any).Vimeo.Player;
+      if (!Player) throw new Error('Vimeo player is unavailable');
       vimeoPlayerRef.current = new Player(iframeRef.current);
       vimeoPlayerRef.current.getDuration().then((d: number) => setVideoDuration(d));
       vimeoPlayerRef.current.on("timeupdate", (data: any) => {
@@ -229,21 +305,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       vimeoPlayerRef.current.on("play", () => setIsPlaying(true));
       vimeoPlayerRef.current.on("pause", () => setIsPlaying(false));
     };
-    loadVimeo();
+    loadVimeo().catch(() => setVideoError('Vimeo could not be loaded. Open the lesson again or try another browser.'));
     return () => {
+      cancelled = true;
       if (vimeoPlayerRef.current) {
         vimeoPlayerRef.current.off("timeupdate");
         vimeoPlayerRef.current.off("play");
         vimeoPlayerRef.current.off("pause");
       }
     };
-  }, [isVimeo, isMainVideo, markWatched]);
+  }, [isVimeo, videoUrl, markWatched, reportProgress]);
 
   // Direct video: track progress
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !isDirect) return;
     const onTime = () => {
+      if (!Number.isFinite(video.duration) || video.duration <= 0) return;
       const pct = (video.currentTime / video.duration) * 100;
       setVideoProgress(pct);
       setCurrentTime(video.currentTime);
@@ -253,14 +331,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     video.addEventListener("timeupdate", onTime);
     video.addEventListener("loadedmetadata", onMeta);
     return () => { video.removeEventListener("timeupdate", onTime); video.removeEventListener("loadedmetadata", onMeta); };
-  }, [isDirect, markWatched, playbackSpeed]);
+  }, [isDirect, markWatched, playbackSpeed, reportProgress]);
 
   // Keyboard shortcuts for direct video
   useEffect(() => {
     if (!isDirect) return;
     const handler = (e: KeyboardEvent) => {
       const v = videoRef.current;
-      if (!v || document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") return;
+      const activeElement = document.activeElement;
+      if (!v || activeElement?.tagName === "INPUT" || activeElement?.tagName === "TEXTAREA" ||
+        activeElement?.tagName === "SELECT" || activeElement?.tagName === "BUTTON" ||
+        activeElement?.tagName === "A" || (activeElement instanceof HTMLElement && activeElement.isContentEditable)) return;
       switch (e.key) {
         case " ": case "k": e.preventDefault(); v.paused ? v.play() : v.pause(); break;
         case "ArrowLeft": case "j": e.preventDefault(); v.currentTime = Math.max(0, v.currentTime - 5); break;
@@ -308,7 +389,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         : `https://player.vimeo.com/video/${videoUrl.match(/vimeo\.com\/(\d+)/)?.[1]}`;
       return (
         <iframe
-          ref={isMainVideo ? iframeRef : undefined}
+          ref={iframeRef}
           id={mixedContentIndex !== undefined ? `mixed-vid-${mixedContentIndex}` : "main-video"}
           src={src}
           className="absolute inset-0 w-full h-full"

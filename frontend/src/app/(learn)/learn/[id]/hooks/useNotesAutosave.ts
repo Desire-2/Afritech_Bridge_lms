@@ -17,10 +17,14 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
   const lessonIdRef = useRef<number | undefined>(currentLessonId);
   const notesRef = useRef("");
   const noteIdRef = useRef<number | null>(null);
+  const notesDirtyRef = useRef(false);
+  const notesVersionRef = useRef(0);
   const loadingRef = useRef(false);
   const saveInFlightRef = useRef<Promise<void> | null>(null);
 
   const setLessonNotes = useCallback((value: string) => {
+    notesVersionRef.current += 1;
+    notesDirtyRef.current = true;
     notesRef.current = value;
     setLessonNotesState(value);
   }, []);
@@ -35,6 +39,7 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
     const content = notesRef.current;
     const noteId = noteIdRef.current;
     const generation = generationRef.current;
+    const version = notesVersionRef.current;
 
     if (!lessonId || (!content.trim() && !noteId)) return;
     if (saveInFlightRef.current) {
@@ -55,6 +60,7 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
         // Ignore a late response from a previous lesson or an older request.
         if (generation !== generationRef.current || lessonId !== lessonIdRef.current) return;
         if (saved?.id) setCurrentNoteId(saved.id);
+        if (version === notesVersionRef.current) notesDirtyRef.current = false;
         setNotesSaveStatus("saved");
         if (statusResetRef.current) clearTimeout(statusResetRef.current);
         statusResetRef.current = setTimeout(() => {
@@ -84,6 +90,8 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
     loadingRef.current = true;
     notesRef.current = "";
     noteIdRef.current = null;
+    notesVersionRef.current += 1;
+    notesDirtyRef.current = false;
     setLessonNotesState("");
     setCurrentNoteIdState(null);
     setNotesSaveStatus("idle");
@@ -102,11 +110,16 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
         if (generation !== generationRef.current) return;
         const latest = notes?.[0];
         const content = latest?.content || "";
-        notesRef.current = content;
         noteIdRef.current = latest?.id ?? null;
-        setLessonNotesState(content);
+        // Do not overwrite text entered while the backend load was pending.
+        // The existing note id is still adopted so the user's edit updates
+        // the persisted note instead of creating a duplicate.
+        if (!notesDirtyRef.current) {
+          notesRef.current = content;
+          setLessonNotesState(content);
+        }
         setCurrentNoteIdState(latest?.id ?? null);
-        setNotesSaveStatus("idle");
+        setNotesSaveStatus(notesDirtyRef.current ? "saving" : "idle");
       })
       .catch((error) => {
         if (generation !== generationRef.current) return;
@@ -114,7 +127,15 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
         setNotesSaveStatus("error");
       })
       .finally(() => {
-        if (generation === generationRef.current) loadingRef.current = false;
+        if (generation === generationRef.current) {
+          loadingRef.current = false;
+          if (notesDirtyRef.current && (notesRef.current.trim() || noteIdRef.current)) {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            debounceRef.current = setTimeout(() => {
+              void saveCurrentNotes();
+            }, 1500);
+          }
+        }
       });
 
     return () => {
@@ -144,6 +165,8 @@ export function useNotesAutosave(currentLessonId: number | undefined) {
 
   const clearNotes = useCallback(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    notesVersionRef.current += 1;
+    notesDirtyRef.current = false;
     notesRef.current = "";
     noteIdRef.current = null;
     setLessonNotesState("");

@@ -200,9 +200,16 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
   // Works on both desktop and mobile devices
   useEffect(() => {
     if (quizState.status === 'in-progress') {
+      const securityTimers: ReturnType<typeof setTimeout>[] = [];
+      const schedule = (callback: () => void, delay: number) => {
+        const timer = setTimeout(callback, delay);
+        securityTimers.push(timer);
+        return timer;
+      };
+
       // Grace period: ignore events briefly after fullscreen entry to avoid false positives
       securityGraceRef.current = true;
-      const graceTimer = setTimeout(() => {
+      schedule(() => {
         securityGraceRef.current = false;
       }, 2000); // 2 second grace period
 
@@ -220,7 +227,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
               description: 'Quiz will be submitted with 0 score due to multiple security violations.',
               duration: 5000
             });
-            setTimeout(() => { submitQuizWithViolation(); }, 2000);
+            schedule(() => { submitQuizWithViolation(); }, 2000);
           }
           return newCount;
         });
@@ -247,7 +254,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
           recordViolation('Tab Switch Detected', 'Switching tabs during the quiz is not allowed. 3 violations = automatic 0 score.');
         } else {
           // Small delay before showing content again (defeats rapid tab-back screenshot)
-          setTimeout(showContent, 600);
+          schedule(showContent, 600);
         }
       };
 
@@ -259,7 +266,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         }
       };
       const handleWindowFocus = () => {
-        setTimeout(showContent, 600);
+          schedule(showContent, 600);
       };
 
       // === 3. SCREENSHOT KEY PREVENTION (desktop) ===
@@ -274,7 +281,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
             description: 'Screenshots are not allowed during the quiz.',
             duration: 3000
           });
-          setTimeout(showContent, 1500);
+          schedule(showContent, 1500);
           return;
         }
         // Ctrl/Cmd + P (print)
@@ -288,7 +295,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
           e.preventDefault();
           hideContent();
           toast.warning('Screenshot Blocked', { description: 'Screenshots are not allowed during the quiz.', duration: 3000 });
-          setTimeout(showContent, 1500);
+          schedule(showContent, 1500);
           return;
         }
         // Ctrl+Shift+I / F12 (DevTools)
@@ -339,7 +346,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         if (e.touches.length >= 3) {
           hideContent();
           toast.warning('Multi-touch Detected', { description: 'Multi-touch gestures are not allowed during the quiz.', duration: 3000 });
-          setTimeout(showContent, 1500);
+          schedule(showContent, 1500);
         }
       };
 
@@ -412,7 +419,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
         recordViolation('Print Attempt Detected', 'Printing the quiz is not allowed.');
       };
       const handleAfterPrint = () => {
-        setTimeout(showContent, 1000);
+        schedule(showContent, 1000);
       };
 
       // === 13. FULLSCREEN EXIT MONITORING ===
@@ -432,7 +439,7 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
                 description: 'Quiz will be submitted with 0 score due to multiple security violations.',
                 duration: 5000
               });
-              setTimeout(() => { submitQuizWithViolation(); }, 2000);
+              schedule(() => { submitQuizWithViolation(); }, 2000);
             } else {
               enterFullscreen();
             }
@@ -448,9 +455,10 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
       window.addEventListener('blur', handleWindowBlur);
       window.addEventListener('focus', handleWindowFocus);
       document.addEventListener('keydown', handleKeyDown, true); // capture phase
-      document.addEventListener('keyup', (e) => {
+      const handleKeyUp = (e: KeyboardEvent) => {
         if (e.key === 'PrintScreen') { navigator.clipboard?.writeText?.('')?.catch(() => {}); }
-      }, true);
+      };
+      document.addEventListener('keyup', handleKeyUp, true);
       document.addEventListener('copy', handleCopy, true);
       document.addEventListener('cut', handleCut, true);
       document.addEventListener('contextmenu', handleContextMenu);
@@ -464,11 +472,12 @@ export const QuizAttemptTracker: React.FC<QuizAttemptTrackerProps> = ({
 
       // Cleanup
       return () => {
-        clearTimeout(graceTimer);
+        securityTimers.forEach((timer) => clearTimeout(timer));
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         window.removeEventListener('blur', handleWindowBlur);
         window.removeEventListener('focus', handleWindowFocus);
         document.removeEventListener('keydown', handleKeyDown, true);
+        document.removeEventListener('keyup', handleKeyUp, true);
         document.removeEventListener('copy', handleCopy, true);
         document.removeEventListener('cut', handleCut, true);
         document.removeEventListener('contextmenu', handleContextMenu);

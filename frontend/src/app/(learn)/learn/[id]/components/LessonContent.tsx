@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import {
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
-  PenTool, Loader2, AlertCircle, Lock, Unlock, Sparkles, GraduationCap,
+  PenTool, Loader2, AlertCircle, Lock, Unlock, GraduationCap,
   Star, Flame, BookOpen, Maximize2, Minimize2
 } from 'lucide-react';
 import Link from 'next/link';
@@ -63,6 +63,9 @@ interface LessonContentProps {
   videoProgress?: number;
   videoCurrentTime?: number;
   videoDuration?: number;
+  savedVideoProgress?: number;
+  savedVideoCurrentTime?: number;
+  savedVideoCompleted?: boolean;
   moduleScoring: any;
   lessonScore: number;
   currentLessonQuizScore?: number;
@@ -120,6 +123,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   videoProgress = 0,
   videoCurrentTime = 0,
   videoDuration = 0,
+  savedVideoProgress = 0,
+  savedVideoCurrentTime = 0,
+  savedVideoCompleted = false,
   moduleScoring,
   lessonScore,
   currentLessonQuizScore = 0,
@@ -163,6 +169,8 @@ export const LessonContent: React.FC<LessonContentProps> = ({
 
   // Fullscreen state for content card
   const [contentFullscreen, setContentFullscreen] = useState(false);
+  const contentFullscreenRef = useRef<HTMLDivElement | null>(null);
+  const fullscreenPreviousFocusRef = useRef<HTMLElement | null>(null);
 
   // Auto-expand progress card on lesson completion
   useEffect(() => {
@@ -239,7 +247,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   const readingComplete = readingProgress >= LESSON_READING_PROGRESS_THRESHOLD;
   const quizNotAttempted = hasQuiz && (!lessonQuiz?.best_score || lessonQuiz.best_score === 0);
   const assignmentsNotSubmitted = hasAssignments && lessonAssignments.some(
-    (a: any) => !a.submission_status?.score
+    (a: any) => !a.submission_status?.submitted
   );
   const showQuizAssignPrompt = readingComplete && !isLessonCompleted && (quizNotAttempted || assignmentsNotSubmitted);
 
@@ -257,22 +265,42 @@ export const LessonContent: React.FC<LessonContentProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [contentFullscreen]);
 
-  // Debug logging for module unlock card
-  if (isLastLessonInModule) {
-    console.log('🎯 Last lesson in module - Unlock card check:', {
-      isLastLessonInModule,
-      isLastModule,
-      isCourseComplete,
-      nextModuleInfo,
-      isLessonCompleted,
-      cumulativeScore,
-      isModulePassing,
-      isModuleScoringLoaded,
-      canUnlockNextModule,
-      moduleScoring
-    });
-  }
-  
+  useEffect(() => {
+    if (!contentFullscreen) return;
+
+    fullscreenPreviousFocusRef.current = document.activeElement as HTMLElement | null;
+    const dialog = contentFullscreenRef.current;
+    const focusable = dialog
+      ? Array.from(dialog.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+        ))
+      : [];
+    focusable[0]?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleDialogKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleDialogKeyDown);
+      document.body.style.overflow = previousOverflow;
+      fullscreenPreviousFocusRef.current?.focus();
+      fullscreenPreviousFocusRef.current = null;
+    };
+  }, [contentFullscreen]);
+
   // ── Dedicated Assignment View ──────────────────────────────────────────
   // When the assignments tab is active, render a clean, focused view with
   // only the assignment panel(s) and a back button — no lesson header,
@@ -281,7 +309,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
     return (
       <div
         ref={contentRef}
-        className="flex-1 w-full h-[calc(100vh-4rem)] overflow-y-auto"
+        className="flex-1 w-full h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain"
         onClick={() => onTrackInteraction('content_click')}
       >
         <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 max-w-[1600px] mx-auto">
@@ -369,7 +397,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   return (
     <div 
       ref={contentRef}
-      className={`flex-1 w-full h-[calc(100vh-4rem)] overflow-y-auto ${focusMode ? 'bg-[#0b1220]' : ''}`}
+      className={`flex-1 w-full h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] overflow-y-auto overscroll-contain ${focusMode ? 'bg-[#0b1220]' : ''}`}
       onClick={() => onTrackInteraction('content_click')}
     >
       <div className={`w-full px-3 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-4 sm:py-6 mx-auto ${focusMode ? 'max-w-5xl' : 'max-w-[1600px]'}`}>
@@ -420,7 +448,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                       transition={{ type: 'spring', stiffness: 300, delay: 0.2 }}
                       className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30"
                     >
-                      <Sparkles className="h-3 w-3" />
+                      <CheckCircle className="h-3 w-3" />
                       COMPLETE
                     </motion.span>
                   )}
@@ -567,6 +595,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                 quizScore={currentLessonQuizScore}
                 assignmentScore={currentLessonAssignmentScore}
                 lessonScore={lessonScore}
+                isLessonCompleted={isLessonCompleted}
                 hasQuiz={!!lessonQuiz}
                 hasAssignment={lessonAssignments && lessonAssignments.length > 0}
                 variant="inline"
@@ -699,6 +728,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onSwitchToAssignment={() => setCurrentViewMode('assignments')}
                   onGoToNextLesson={() => onNavigate('next')}
                   hasNextLesson={hasNextLesson}
+                  resumeVideoProgress={savedVideoProgress}
+                  resumeVideoCurrentTime={savedVideoCurrentTime}
+                  resumeVideoCompleted={savedVideoCompleted}
                 />
                 )}
                 </CollapsibleCard>
@@ -837,9 +869,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           ) : canUnlockNextModule ? (
                             <div className="space-y-4">
                               <div className="flex items-center justify-center space-x-2 text-green-300">
-                                <Sparkles className="h-5 w-5" />
+                                <CheckCircle className="h-5 w-5" />
                                 <span className="font-semibold">Module Complete! Score: {cumulativeScore.toFixed(1)}%</span>
-                                <Sparkles className="h-5 w-5" />
+                                <CheckCircle className="h-5 w-5" />
                               </div>
                               <Button
                                 onClick={onUnlockNextModule}
@@ -1247,7 +1279,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                         </div>
                       </div>
 
-                  {/* 🎯 Animated Quiz/Assignment Prompt when reading is complete */}
+                  {/* Assessment prompt when reading is complete */}
                   {showQuizAssignPrompt && (
                     <motion.div
                       initial={{ opacity: 0, y: 12, scale: 0.95 }}
@@ -1276,7 +1308,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                           </motion.div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-blue-200">
-                              🎯 Reading Complete! Ready for the next step?
+                              Reading complete. Ready for the next step?
                             </p>
                             <p className="text-xs text-blue-300/70 mt-0.5">
                               {quizNotAttempted && assignmentsNotSubmitted
@@ -1670,6 +1702,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }}
           className="fixed inset-0 z-50 bg-[#0a0e1a]"
+          ref={contentFullscreenRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Fullscreen lesson content"
         >
           {/* Fullscreen header bar */}
           <div className="sticky top-0 z-10 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-gray-800 bg-gray-900/90 backdrop-blur-sm">
@@ -1698,7 +1734,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
           </div>
 
           {/* Fullscreen scrollable content area */}
-          <div className="overflow-y-auto h-[calc(100vh-57px)]">
+          <div className="overflow-y-auto h-[calc(100dvh-57px)]">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-12 py-6 sm:py-8">
               <ContentRichPreview
                 key={`fullscreen-${currentLesson.id ?? currentLessonIndex}`}
@@ -1721,6 +1757,9 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                   onSwitchToQuiz={() => setCurrentViewMode('quiz')}
                   onSwitchToAssignment={() => setCurrentViewMode('assignments')}
                   onGoToNextLesson={() => onNavigate('next')}
+                  resumeVideoProgress={savedVideoProgress}
+                  resumeVideoCurrentTime={savedVideoCurrentTime}
+                  resumeVideoCompleted={savedVideoCompleted}
               />
             </div>
           </div>

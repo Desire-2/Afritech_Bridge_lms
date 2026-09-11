@@ -71,6 +71,13 @@ export const navigateToLesson = (
       }
     }
   } else if (direction === 'next' && currentIndex < allLessons.length - 1) {
+    // The next control is a progression control, not a review shortcut.
+    // Completed lessons remain available from the sidebar, but moving forward
+    // must wait for the current lesson's authoritative completion state.
+    if (!isCurrentLessonCompleted) {
+      return;
+    }
+
     const nextLesson = allLessons[currentIndex + 1];
     const nextLessonModule = courseModules?.find((m: any) => m.id === nextLesson.moduleId);
     const isNextLessonCompleted = lessonCompletionStatus?.[nextLesson.id] || false;
@@ -112,6 +119,7 @@ export const hasNextLesson = (
   canUnlockNextModule?: boolean
 ): boolean => {
   if (currentLessonIndex >= allLessons.length - 1) return false;
+  if (!isCurrentLessonCompleted) return false;
   
   const nextLesson = allLessons[currentLessonIndex + 1];
   if (!nextLesson) return false;

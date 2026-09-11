@@ -97,6 +97,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
   const [openModules, setOpenModules] = useState<Set<number>>(new Set());
   const sidebarRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const moduleProgressRequestRef = useRef(0);
 
   // Mobile navigation behaves as a modal drawer: Escape closes it, focus is
   // trapped while open, and focus returns to the control that opened it.
@@ -183,6 +184,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
       
       setLoadingProgress(true);
       setProgressError(null);
+      const requestId = ++moduleProgressRequestRef.current;
       const progressMap: { [moduleId: number]: ModuleProgressData } = {};
       
       try {
@@ -234,13 +236,16 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
           })
         );
         
+        if (requestId !== moduleProgressRequestRef.current) return;
         setModuleProgressData(progressMap);
         console.log('📊 Loaded module progress data:', progressMap);
       } catch (error) {
         console.error('Error fetching module progress:', error);
-        setProgressError('Module progress is temporarily unavailable.');
+        if (requestId === moduleProgressRequestRef.current) {
+          setProgressError('Module progress is temporarily unavailable.');
+        }
       } finally {
-        setLoadingProgress(false);
+        if (requestId === moduleProgressRequestRef.current) setLoadingProgress(false);
       }
     };
     
@@ -362,13 +367,12 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
         fixed lg:sticky
         ${viewAsStudent ? 'top-[6.5rem] sm:top-24' : 'top-14 sm:top-16'} lg:top-0
         left-0 
-        h-[calc(100vh-3.5rem)] sm:h-[calc(100vh-4rem)] lg:h-[calc(100vh-4rem)]
+        h-[calc(100dvh-3.5rem)] sm:h-[calc(100dvh-4rem)] lg:h-[calc(100dvh-4rem)]
         z-50 lg:z-auto
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}
         ref={sidebarRef}
-        role="dialog"
-        aria-modal={sidebarOpen ? true : undefined}
+        role="navigation"
         aria-label="Course navigation"
       >
         <div className="h-full overflow-y-auto overscroll-contain">
@@ -515,26 +519,6 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                                 Click to see requirements
                               </Badge>
                             )}
-                            {hasProgressData && moduleProgress.cumulativeScore > 0 && !isLocked && (
-                              <Dialog>
-                                <DialogTrigger asChild>
-                                  <Badge 
-                                    variant="outline" 
-                                    className="bg-blue-900/30 text-blue-300 text-xs px-1.5 py-0 border-blue-700/50 cursor-pointer hover:bg-blue-800/40 transition-colors"
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    <BarChart3 className="h-3 w-3 mr-0.5" />
-                                    {Math.round(moduleProgress.cumulativeScore)}%
-                                  </Badge>
-                                </DialogTrigger>
-                                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                                  <DialogHeader>
-                                    <DialogTitle>Module {moduleIndex + 1}: {module.title} - Score Breakdown</DialogTitle>
-                                  </DialogHeader>
-                                  <ModuleScoreBreakdown moduleId={module.id} />
-                                </DialogContent>
-                              </Dialog>
-                            )}
                           </div>
                           <div className="space-y-1 mt-1">
                             <p className="text-[10px] sm:text-xs text-gray-400">
@@ -564,6 +548,28 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                       } ${isLocked ? 'opacity-50' : ''}`} />
                     </Button>
                   </CollapsibleTrigger>
+
+                  {hasProgressData && moduleProgress.cumulativeScore > 0 && !isLocked && (
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="ml-8 mt-1 h-7 px-2 text-xs text-blue-300 hover:bg-blue-900/30"
+                        >
+                          <BarChart3 className="h-3 w-3 mr-1" />
+                          View score breakdown ({Math.round(moduleProgress.cumulativeScore)}%)
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                          <DialogTitle>Module {moduleIndex + 1}: {module.title} - Score Breakdown</DialogTitle>
+                        </DialogHeader>
+                        <ModuleScoreBreakdown moduleId={module.id} />
+                      </DialogContent>
+                    </Dialog>
+                  )}
                   
                   <CollapsibleContent className="ml-2 sm:ml-3 md:ml-4 mt-1 space-y-2">
                     {module.lessons && module.lessons.length > 0 ? (
@@ -578,7 +584,7 @@ export const LearningSidebar: React.FC<LearningSidebarProps> = ({
                       // 4. FIXED: First module (index 0) lessons are always accessible
                       // 5. In instructor preview mode, ALL lessons are accessible
                       const isFirstModule = moduleIndex === 0;
-                      const isModuleAccessible = isFirstModule || 
+                      const isModuleAccessible = isFirstModule || isCurrentModule ||
                                                   moduleStatus === 'completed' || 
                                                   moduleStatus === 'in_progress' || 
                                                   moduleStatus === 'unlocked';

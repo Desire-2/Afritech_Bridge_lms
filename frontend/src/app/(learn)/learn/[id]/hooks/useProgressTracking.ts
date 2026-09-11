@@ -1,7 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { StudentApiService } from '@/services/studentApi';
-import { ProgressData, InteractionEvent } from '../types';
-import { LESSON_PASSING_THRESHOLD } from '../utils/learningRules';
+import { InteractionEvent } from '../types';
+import {
+  ASSIGNMENT_PASSING_THRESHOLD,
+  DEFAULT_QUIZ_PASSING_THRESHOLD,
+  LESSON_ENGAGEMENT_THRESHOLD,
+  LESSON_PASSING_THRESHOLD,
+  LESSON_READING_PROGRESS_THRESHOLD,
+  calculateLessonScore,
+} from '../utils/learningRules';
 
 interface UseProgressTrackingProps {
   currentLesson: any;
@@ -44,21 +51,27 @@ export const useProgressTracking = ({
   const [scrollProgress, setScrollProgress] = useState<number>(0);
   const [engagementScore, setEngagementScore] = useState<number>(0);
   const [lessonScore, setLessonScore] = useState<number>(0);
+  const [savedVideoProgress, setSavedVideoProgress] = useState(0);
+  const [savedVideoCurrentTime, setSavedVideoCurrentTime] = useState(0);
+  const [savedVideoDuration, setSavedVideoDuration] = useState(0);
+  const [savedVideoCompleted, setSavedVideoCompleted] = useState(false);
   const [isLessonCompleted, setIsLessonCompleted] = useState<boolean>(false);
   const [completionInProgress, setCompletionInProgress] = useState<boolean>(false);
   const [nextLessonInfo, setNextLessonInfo] = useState<any>(null);
 
   const startTimeRef = useRef<number>(Date.now());
-  const lastInteractionRef = useRef<number>(Date.now());
-  const readingTimeRef = useRef<number>(0);
   const maxScrollProgressRef = useRef<number>(0); // Track maximum scroll progress reached
   const maxReadingProgressRef = useRef<number>(0); // Track maximum reading progress reached
   const maxEngagementScoreRef = useRef<number>(0); // Track maximum engagement score reached
   const [progressLoaded, setProgressLoaded] = useState<boolean>(false);
   const progressRequestRef = useRef(0);
+  const activeLessonIdRef = useRef<number | null>(null);
+  const saveInFlightRef = useRef<Promise<any> | null>(null);
   
   // Completion threshold (80%)
   const COMPLETION_THRESHOLD = LESSON_PASSING_THRESHOLD;
+
+  activeLessonIdRef.current = currentLesson?.id ?? null;
 
   // Load existing progress from backend
   const loadExistingProgress = useCallback(async () => {
@@ -80,6 +93,10 @@ export const useProgressTracking = ({
         setScrollProgress(existingProgress.scroll_progress || 0);
         setEngagementScore(existingProgress.engagement_score || 0);
         setIsLessonCompleted(existingProgress.completed || false);
+        setSavedVideoProgress(existingProgress.video_progress || 0);
+        setSavedVideoCurrentTime(existingProgress.video_current_time || 0);
+        setSavedVideoDuration(existingProgress.video_duration || 0);
+        setSavedVideoCompleted(existingProgress.video_completed || false);
         
         // Initialize max progress refs with loaded values
         maxScrollProgressRef.current = existingProgress.scroll_progress || 0;
@@ -159,12 +176,7 @@ export const useProgressTracking = ({
     
     setReadingProgress(newMaxReadingProgress);
     
-    console.log('Progress update:', 
-      `Current Scroll: ${currentScrollProgress.toFixed(1)}%, Max Scroll: ${newMaxScrollProgress.toFixed(1)}%, Time: ${timeProgress.toFixed(1)}%, Reading: ${newMaxReadingProgress.toFixed(1)}%`);
-    
     if (currentScrollProgress > 0 || timeSinceStart > 10) {
-      lastInteractionRef.current = currentTime;
-      readingTimeRef.current += 2;
     }
     
     const sectionProgress = totalSections > 0 ? viewedSections / totalSections : 0;
@@ -172,7 +184,10 @@ export const useProgressTracking = ({
       scrollProgress: newMaxScrollProgress / 100,
       timeSpent: Math.min(timeSinceStart / 600, 1),
       interactions: Math.min(interactionHistory.length / 10, 1),
-      consistency: Math.min(readingTimeRef.current / 100, 1),
+      // Use elapsed lesson time, not the number of scroll/timer events. The
+      // old event counter added two seconds on every call and inflated
+      // engagement whenever a user scrolled or the timer re-rendered.
+      consistency: Math.min(timeSinceStart / 300, 1),
       videoWatchProgress: videoProgress / 100,  // Add video progress to engagement
       sectionCompletion: sectionProgress,        // Add section navigation progress
     };
@@ -214,24 +229,16 @@ export const useProgressTracking = ({
     maxEngagementScoreRef.current = finalEngagementScore;
     setEngagementScore(finalEngagementScore);
     
-    // Calculate estimated lesson score (this will be confirmed by backend)
-    // For lessons without quiz/assignment: 50% reading + 50% engagement
-    // For lessons with quiz: 35% reading + 35% engagement + 30% quiz
-    // For lessons with assignment: 35% reading + 35% engagement + 30% assignment
-    // For both: 25% each
-    let estimatedScore = 0;
-    if (!hasQuiz && !hasAssignment) {
-      estimatedScore = (maxReadingProgressRef.current * 0.5) + (finalEngagementScore * 0.5);
-    } else if (hasQuiz && !hasAssignment) {
-      estimatedScore = (maxReadingProgressRef.current * 0.35) + (finalEngagementScore * 0.35);
-    } else if (!hasQuiz && hasAssignment) {
-      estimatedScore = (maxReadingProgressRef.current * 0.35) + (finalEngagementScore * 0.35);
-    } else {
-      estimatedScore = (maxReadingProgressRef.current * 0.25) + (finalEngagementScore * 0.25);
-    }
-    // Lesson score should also never decrease locally
+    const estimatedScore = calculateLessonScore({
+      readingProgress: maxReadingProgressRef.current,
+      engagementScore: finalEngagementScore,
+      quizScore,
+      assignmentScore,
+      hasQuiz,
+      hasAssignment,
+    });
     setLessonScore(prev => Math.max(prev, estimatedScore));
-  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, videoProgress, videoCurrentTime, videoDuration, viewedSections, totalSections]);
+  }, [interactionHistory.length, showCelebration, contentRef, progressLoaded, isLessonCompleted, hasQuiz, hasAssignment, quizScore, assignmentScore, videoProgress, videoCurrentTime, videoDuration, viewedSections, totalSections]);
 
   // Check if lesson should auto-complete based on 80% lesson score
   const checkAutoCompletion = useCallback(() => {
@@ -260,9 +267,20 @@ export const useProgressTracking = ({
       actualScore = (readingProgress * 0.25) + (engagementScore * 0.25) + (quizScore * 0.25) + (assignmentScore * 0.25);
     }
 
-    // ONLY auto-complete if the calculated lesson score meets the 80% threshold
-    // This prevents premature completion celebration
-    const meetsScoreThreshold = actualScore >= COMPLETION_THRESHOLD;
+    // Mirror the backend's minimum component requirements before making a
+    // completion request. The backend still performs the final authoritative
+    // check, but this avoids repeatedly calling it with impossible payloads.
+    const readingRequirementsMet =
+      (readingProgress >= LESSON_READING_PROGRESS_THRESHOLD &&
+        engagementScore >= LESSON_ENGAGEMENT_THRESHOLD) ||
+      actualScore >= COMPLETION_THRESHOLD;
+    const quizRequirementsMet = !hasQuiz || quizScore >= DEFAULT_QUIZ_PASSING_THRESHOLD;
+    const assignmentRequirementsMet = !hasAssignment || assignmentScore >= ASSIGNMENT_PASSING_THRESHOLD;
+    const meetsScoreThreshold =
+      actualScore >= COMPLETION_THRESHOLD &&
+      readingRequirementsMet &&
+      quizRequirementsMet &&
+      assignmentRequirementsMet;
 
     if (meetsScoreThreshold) {
       console.log('✅ Auto-completion criteria met:', {
@@ -310,12 +328,20 @@ export const useProgressTracking = ({
       return;
     }
     
-    try {
+    if (saveInFlightRef.current) {
+      // Serialize writes so a slower 10-second save cannot overwrite a newer
+      // progress snapshot after the user changes lessons.
+      await saveInFlightRef.current.catch(() => undefined);
+    }
+
+    const lessonId = currentLesson.id;
+    const savePromise = (async () => {
+      try {
       const saveReason = forceSave ? 'FORCED SAVE' : 
         `auto-save (reading ${readingProgress.toFixed(1)}%, engagement ${engagementScore.toFixed(1)}%, score ${lessonScore.toFixed(1)}%)`;
       console.log(`📤 Saving progress to database - ${saveReason}`);
       
-      const response = await StudentApiService.updateLessonProgress(currentLesson.id, {
+      const response = await StudentApiService.updateLessonProgress(lessonId, {
         reading_progress: readingProgress,
         engagement_score: engagementScore,
         scroll_progress: scrollProgress,
@@ -327,6 +353,8 @@ export const useProgressTracking = ({
         auto_saved: !forceSave
       } as any);
       
+      if (activeLessonIdRef.current !== lessonId) return response;
+
       console.log('Progress saved successfully', response);
       
       // Check if backend auto-completed the lesson
@@ -347,7 +375,7 @@ export const useProgressTracking = ({
         if (onAutoComplete) {
           onAutoComplete({
             type: 'auto_completed',
-            lessonId: currentLesson.id,
+            lessonId,
             moduleId: currentModuleId,
             lessonScore: response.progress?.lesson_score,
             nextLesson: response.next_lesson,
@@ -361,9 +389,17 @@ export const useProgressTracking = ({
       }
       
       return response;
-    } catch (error) {
-      console.error('Save failed:', error);
-      throw error;
+      } catch (error) {
+        console.error('Save failed:', error);
+        throw error;
+      }
+    })();
+
+    saveInFlightRef.current = savePromise;
+    try {
+      return await savePromise;
+    } finally {
+      if (saveInFlightRef.current === savePromise) saveInFlightRef.current = null;
     }
   }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, isLessonCompleted, lessonScore, progressLoaded]);
 
@@ -379,7 +415,7 @@ export const useProgressTracking = ({
     onComplete: (data: any) => void,
     onError?: (error: any) => void
   ) => {
-    if (!currentLesson || completionInProgress) {
+    if (!currentLesson || completionInProgress || isLessonCompleted) {
       console.log('⏭️ Skipping completion:', { currentLesson: !!currentLesson, completionInProgress });
       return;
     }
@@ -419,9 +455,11 @@ export const useProgressTracking = ({
         video_progress: videoProgress,
         completion_method: 'automatic'
       });
+
+      if (activeLessonIdRef.current !== currentLesson.id) return;
       
       // Check result status
-      if (result.completed) {
+      if (result.completed && activeLessonIdRef.current === currentLesson.id) {
         // Successfully completed with all requirements met
         setIsLessonCompleted(true);
         
@@ -471,6 +509,7 @@ export const useProgressTracking = ({
       
     } catch (error: any) {
       console.error('❌ Failed to complete lesson:', error);
+      if (activeLessonIdRef.current !== currentLesson.id) return;
       
       // Handle different error scenarios
       if (error?.response?.status === 202 && error?.response?.data?.progress_saved) {
@@ -521,19 +560,25 @@ export const useProgressTracking = ({
     } finally {
       setCompletionInProgress(false);
     }
-  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, completionInProgress]);
+  }, [currentLesson, currentModuleId, readingProgress, engagementScore, scrollProgress, videoProgress, videoCurrentTime, videoDuration, videoCompleted, completionInProgress, isLessonCompleted]);
 
   // Reset progress and load existing data when lesson changes
   useEffect(() => {
     if (currentLesson) {
+      activeLessonIdRef.current = currentLesson.id;
+      progressRequestRef.current += 1;
+      completionInProgress && setCompletionInProgress(false);
       // Reset to defaults first
       startTimeRef.current = Date.now();
       setReadingProgress(0);
       setScrollProgress(0);
       setEngagementScore(0);
       setTimeSpent(0);
+      setSavedVideoProgress(0);
+      setSavedVideoCurrentTime(0);
+      setSavedVideoDuration(0);
+      setSavedVideoCompleted(false);
       setIsLessonCompleted(false);
-      readingTimeRef.current = 0;
       maxScrollProgressRef.current = 0; // Reset max scroll progress
       maxReadingProgressRef.current = 0; // Reset max reading progress
       maxEngagementScoreRef.current = 0; // Reset max engagement score
@@ -596,12 +641,6 @@ export const useProgressTracking = ({
         });
 
         // sendBeacon is the most reliable way to send data during page unload
-        const blob = new Blob([payload], { type: 'application/json' });
-        const headers = new Blob(
-          [JSON.stringify({ 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' })],
-          { type: 'application/json' }
-        );
-        
         // sendBeacon doesn't support custom headers, so use fetch with keepalive instead
         fetch(url, {
           method: 'POST',
@@ -612,8 +651,8 @@ export const useProgressTracking = ({
           body: payload,
           keepalive: true  // Ensures request completes even after page unloads
         }).catch(() => {
-          // Fallback: try sendBeacon (won't have auth header, but at least try)
-          // This is a last resort
+          // No authenticated sendBeacon fallback is possible because Beacon
+          // requests cannot carry the bearer header used by this API.
         });
         
         console.log('💾 Saved progress via keepalive fetch on page unload/hide');
@@ -650,6 +689,10 @@ export const useProgressTracking = ({
     isLessonCompleted,
     completionInProgress,
     progressLoaded,
+    savedVideoProgress,
+    savedVideoCurrentTime,
+    savedVideoDuration,
+    savedVideoCompleted,
     nextLessonInfo,
     completionThreshold: COMPLETION_THRESHOLD,
     updateReadingProgress,

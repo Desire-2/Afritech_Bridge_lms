@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +21,12 @@ import {
   ArrowLeft,
   BookOpen,
   MessageSquare,
-  RefreshCw
+  RefreshCw,
+  Image,
+  Video,
+  Music,
+  Archive,
+  File
 } from 'lucide-react';
 import type { ContentAssignment } from '@/services/contentAssignmentApi';
 import ContentAssignmentService from '@/services/contentAssignmentApi';
@@ -62,10 +67,28 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [assignmentData, setAssignmentData] = useState<ContentAssignment>(assignment);
+  const stagedFilesRef = useRef<StagedFile[]>([]);
+  const assignmentIdRef = useRef(assignment.id);
+
+  useEffect(() => {
+    stagedFilesRef.current = stagedFiles;
+  }, [stagedFiles]);
 
   // Sync assignment data when props change
   React.useEffect(() => {
     setAssignmentData(assignment);
+    if (assignmentIdRef.current !== assignment.id) {
+      FileUploadService.cleanupStagedFiles?.(stagedFilesRef.current);
+      stagedFilesRef.current = [];
+      setStagedFiles([]);
+      setTextResponse('');
+      setSubmissionMode('view');
+      setSubmissionResult(null);
+      setError(null);
+      setValidationErrors([]);
+      setResubmittedForCurrentRequest(false);
+      assignmentIdRef.current = assignment.id;
+    }
   }, [assignment]);
   
   // Cleanup staged files on unmount
@@ -73,11 +96,11 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
     return () => {
       // Safety check to ensure method exists
       if (typeof FileUploadService.cleanupStagedFiles === 'function') {
-        FileUploadService.cleanupStagedFiles(stagedFiles);
+        FileUploadService.cleanupStagedFiles(stagedFilesRef.current);
       } else {
         console.warn('FileUploadService.cleanupStagedFiles is not available');
         // Manual cleanup as fallback
-        stagedFiles.forEach(stagedFile => {
+        stagedFilesRef.current.forEach(stagedFile => {
           if (stagedFile.preview && stagedFile.preview.startsWith('blob:')) {
             URL.revokeObjectURL(stagedFile.preview);
           }
@@ -188,16 +211,16 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
         ? undefined 
         : allowedFileTypes.map(ext => FileUploadService.getContentType('file' + ext));
       
-      const newStagedFiles = FileUploadService.stageFiles(files, {
+      const remainingSlots = Math.max(0, 10 - stagedFiles.length);
+      if (remainingSlots === 0) {
+        throw new Error('You can select a maximum of 10 files. Remove a file before adding another.');
+      }
+
+      const newStagedFiles = FileUploadService.stageFiles(files.slice(0, remainingSlots), {
         allowedTypes: allowedMimeTypes,
         maxSize: maxFileSizeBytes,
         maxFiles: 10 // Reasonable limit
       });
-      
-      // Clean up any previous previews before adding new files
-      if (typeof FileUploadService.cleanupStagedFiles === 'function') {
-        FileUploadService.cleanupStagedFiles(stagedFiles);
-      }
       
       setStagedFiles(prev => [...prev, ...newStagedFiles]);
       
@@ -1294,10 +1317,10 @@ export const AssignmentPanel: React.FC<AssignmentPanelProps> = ({
                   accept={allowedFileTypes.join(',')}
                   onChange={handleFileSelect}
                   className="hidden"
-                  id="file-upload"
+                  id={`file-upload-${assignmentData.id}`}
                 />
                 <label
-                  htmlFor="file-upload"
+                  htmlFor={`file-upload-${assignmentData.id}`}
                   className="cursor-pointer"
                 >
                   <div className="p-4 bg-green-100 dark:bg-green-900 rounded-full w-fit mx-auto mb-4">

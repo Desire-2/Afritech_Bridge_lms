@@ -51,22 +51,24 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
       <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8">
         <div className="flex items-center justify-between h-14 sm:h-16">
           <div className="flex items-center space-x-2 sm:space-x-4 min-w-0 flex-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex-shrink-0 hover:bg-blue-900/30 text-gray-300 lg:hover:bg-gray-800/50 transition-colors duration-200"
-              aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
-            >
-              {sidebarOpen ? (
-                <X className="h-5 w-5 sm:h-6 sm:w-6" /> 
-              ) : (
-                <Menu className="h-5 w-5 sm:h-6 sm:w-6" />
-              )}
-              <span className="sr-only">
-                {sidebarOpen ? "Close" : "Open"} course navigation
-              </span>
-            </Button>
+            {!focusMode && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="flex-shrink-0 hover:bg-blue-900/30 text-gray-300 lg:hover:bg-gray-800/50 transition-colors duration-200"
+                aria-label={sidebarOpen ? "Close navigation" : "Open navigation"}
+              >
+                {sidebarOpen ? (
+                  <X className="h-5 w-5 sm:h-6 sm:w-6" />
+                ) : (
+                  <Menu className="h-5 w-5 sm:h-6 sm:w-6" />
+                )}
+                <span className="sr-only">
+                  {sidebarOpen ? "Close" : "Open"} course navigation
+                </span>
+              </Button>
+            )}
             <div className="flex items-center space-x-2 sm:space-x-3 min-w-0 flex-1">
               <div className="h-6 w-6 sm:h-8 sm:w-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
                 <BookOpen className="h-3 w-3 sm:h-4 sm:w-4 text-white" />
@@ -90,8 +92,8 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
             <div className="hidden md:flex items-center space-x-2 lg:space-x-4">
               <TooltipProvider>
                 <Tooltip>
-                  <TooltipTrigger>
-                    <div className="flex items-center space-x-2 px-2 lg:px-3 py-1 bg-blue-900/30 border border-blue-800 rounded-full">
+                  <TooltipTrigger asChild>
+                    <div tabIndex={0} role="status" className="flex items-center space-x-2 px-2 lg:px-3 py-1 bg-blue-900/30 border border-blue-800 rounded-full">
                       <Timer className="h-3 w-3 lg:h-4 lg:w-4 text-blue-400" />
                       <span className="text-xs lg:text-sm font-medium text-blue-300">
                         {Math.floor(timeSpent / 60)}:{(timeSpent % 60).toString().padStart(2, '0')}
@@ -104,8 +106,8 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
               
               <TooltipProvider>
                 <Tooltip>
-                  <TooltipTrigger>
-                    <div className="flex items-center space-x-2 px-2 lg:px-3 py-1 bg-green-900/30 border border-green-800 rounded-full">
+                  <TooltipTrigger asChild>
+                    <div tabIndex={0} role="status" className="flex items-center space-x-2 px-2 lg:px-3 py-1 bg-green-900/30 border border-green-800 rounded-full">
                       <Brain className="h-3 w-3 lg:h-4 lg:w-4 text-green-400" />
                       <span className="text-xs lg:text-sm font-medium text-green-300">
                         {Math.round(engagementScore)}%
@@ -121,7 +123,7 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
                   {currentLessonIndex + 1} / {totalLessons}
                 </span>
                 <Progress 
-                  value={(currentLessonIndex + 1) / totalLessons * 100} 
+                  value={totalLessons > 0 ? (currentLessonIndex + 1) / totalLessons * 100 : 0}
                   className="w-16 lg:w-24 h-2"
                 />
               </div>
@@ -207,7 +209,7 @@ export const LearningHeader: React.FC<LearningHeaderProps> = ({
                       </h4>
                       <ul className="text-sm text-gray-600 space-y-2">
                         <li>• Your progress is tracked automatically as you read and interact</li>
-                        <li>• Lessons complete automatically when you reach 80% reading progress</li>
+                        <li>• Lessons complete after the required reading, engagement, and assessment checks are met</li>
                         <li>• Engagement score improves with active reading and interaction</li>
                         <li>• Time spent and scroll progress are saved continuously</li>
                       </ul>

@@ -38,7 +38,15 @@ export interface MixedContentRendererProps {
 function parseMixedContent(raw: string): MixedSection[] {
   try {
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) {
+      const validSections = parsed.filter((section): section is MixedSection => {
+        if (!section || typeof section !== "object") return false;
+        const typedSection = section as MixedSection;
+        return ["text", "video", "pdf", "image", "heading"].includes(typedSection.type) &&
+          Boolean(typedSection.content || typedSection.url || typedSection.title);
+      });
+      if (validSections.length > 0) return validSections;
+    }
   } catch {}
   // Fallback: try line-by-line parsing
   const lines = raw.split("\n");
@@ -132,7 +140,15 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
   // Step sections derived from content
   const mixedStepSections = useMemo((): StepSection[] => {
     if (lesson.content_type === "text") {
-      return parseTextIntoSections(lesson.content_data);
+      const textSections = parseTextIntoSections(lesson.content_data);
+      return textSections.length > 0
+        ? textSections
+        : [{
+            id: "empty-content",
+            type: "text",
+            heading: "Content unavailable",
+            content: "This lesson does not have readable content yet. Please contact your instructor.",
+          }];
     }
 
     const mixed = parseMixedContent(lesson.content_data);
@@ -156,7 +172,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
           (s.type === "video" ? "Video" : s.type === "pdf" ? "Document" : s.type === "image" ? "Image" : `Step ${i + 1}`);
         sections.push({
           id: `step-${i}`,
-          type: s.type === "image" ? "image" : s.type === "pdf" ? "text" : s.type as StepSection["type"],
+          type: s.type as StepSection["type"],
           heading,
           content: s.content || s.url,
           url: s.url,
@@ -166,7 +182,14 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       }
     });
 
-    return sections;
+    return sections.length > 0
+      ? sections
+      : [{
+          id: "empty-content",
+          type: "text",
+          heading: "Content unavailable",
+          content: "This lesson does not have readable content yet. Please contact your instructor.",
+        }];
   }, [lesson.content_data, lesson.content_type]);
 
   // Last step button
@@ -188,7 +211,7 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
         </button >
       );
     }
-    if (!hasNextLesson || !onGoToNextLesson) return null;
+    if (!isLessonCompleted || !hasNextLesson || !onGoToNextLesson) return null;
     return (
       <button type="button" onClick={onGoToNextLesson}
         className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-green-600 text-white rounded-lg font-semibold shadow-lg hover:shadow-xl transition-all" >
@@ -225,16 +248,29 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
         );
       }
 
+      if (originalSection?.type === "pdf") {
+        const url = section.url || section.content || "";
+        const driveMatch = url.match(/\/file\/d\/([^/]+)/);
+        const previewUrl = driveMatch
+          ? `https://drive.google.com/file/d/${driveMatch[1]}/preview`
+          : url;
+        return (
+          <div className="space-y-3">
+            <iframe
+              src={previewUrl}
+              title={section.heading || "Lesson document"}
+              className="w-full h-[min(70vh,42rem)] rounded-lg border border-gray-700 bg-gray-900"
+            />
+            <a href={url} target="_blank" rel="noreferrer" className="text-sm text-blue-300 underline">
+              Open document in a new tab
+            </a>
+          </div>
+        );
+      }
+
       return <TextContentRenderer content={section.content || ""} showFontControls={false} />;
     },
     [lesson.title, onMixedContentVideoProgress, onMixedContentVideoComplete]
-  );
-
-  const handleStepChange = useCallback(
-    (stepIndex: number, total: number) => {
-      onSectionProgress?.(stepIndex + 1, total);
-    },
-    [onSectionProgress]
   );
 
   const handleAllSectionsViewed = useCallback(() => {
@@ -246,9 +282,8 @@ export const MixedContentRenderer: React.FC<MixedContentRendererProps> = ({
       sections={mixedStepSections}
       totalSteps={mixedStepSections.length}
       renderSection={renderSection}
-      onStepChange={handleStepChange}
       onAllSectionsViewed={handleAllSectionsViewed}
-      onViewedSectionsUpdate={(viewed, total) => onSectionProgress?.(viewed, total)}
+      onViewedSectionsUpdate={onSectionProgress}
       lastStepButton={!isLessonCompleted ? lastStepButton : undefined}
     />
   );

@@ -11,7 +11,7 @@ import {
   Target,
   Shield,
   Flame,
-  Sparkles,
+  CheckCircle,
   Trophy,
   Medal,
   Gem,
@@ -134,6 +134,7 @@ interface LessonScoreDisplayProps {
   quizScore?: number;
   assignmentScore?: number;
   lessonScore: number;
+  isLessonCompleted?: boolean;
   hasQuiz?: boolean;
   hasAssignment?: boolean;
   /** When 'inline', renders without the outer card wrapper for embedding inside another container */
@@ -155,6 +156,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
   quizScore,
   assignmentScore,
   lessonScore,
+  isLessonCompleted = false,
   hasQuiz = false,
   hasAssignment = false,
   variant = 'full',
@@ -162,7 +164,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
   const displayScore = Math.round(lessonScore);
   const level = getLevel(displayScore);
   const stars = starRating(displayScore);
-  const isCompleted = displayScore >= LESSON_PASSING_THRESHOLD;
+  const isCompleted = isLessonCompleted;
   const missing = Math.max(0, LESSON_PASSING_THRESHOLD - displayScore);
 
   // Build component list (same data as before, displayed compactly)
@@ -227,7 +229,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
               transition={{ type: 'spring', stiffness: 300, delay: 0.3 }}
               className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-400 ring-1 ring-emerald-500/30"
             >
-              <Sparkles className="h-3 w-3" />
+              <CheckCircle className="h-3 w-3" />
               COMPLETE
             </motion.div>
           ) : (
@@ -318,7 +320,7 @@ export const LessonScoreDisplay: React.FC<LessonScoreDisplayProps> = ({
           transition={{ delay: 0.5 }}
           className="mt-2 flex items-center gap-2 text-[11px] text-emerald-400"
         >
-          <Sparkles className="h-3 w-3" />
+          <CheckCircle className="h-3 w-3" />
           <span>Lesson mastered! All requirements met.</span>
         </motion.div>
       )}

@@ -287,7 +287,7 @@ def get_course_progress(course_id):
 @student_bp.route("/lessons/<int:lesson_id>/progress", methods=["POST"])
 @student_required
 def update_lesson_progress(lesson_id):
-    """Update lesson reading progress with auto-completion at 80% score"""
+    """Update lesson progress without bypassing the authoritative completion service."""
     current_user_id = int(get_jwt_identity())
     data = request.get_json() or {}
     
@@ -307,8 +307,6 @@ def update_lesson_progress(lesson_id):
         student_id=current_user_id,
         lesson_id=lesson_id
     ).first()
-    
-    was_already_completed = lesson_completion.completed if lesson_completion else False
     
     if not lesson_completion:
         lesson_completion = LessonCompletion(
@@ -365,50 +363,14 @@ def update_lesson_progress(lesson_id):
     if data.get('auto_saved'):
         lesson_completion.last_accessed = now_local()
     
-    # Calculate lesson score and auto-complete if >= 80%
+    # Calculate the live score for the response. Completion is handled by the
+    # dedicated endpoint below, which checks quiz/assignment and reading
+    # requirements as well as the overall score. Auto-completing here used to
+    # mark lessons complete before those requirements were checked.
     lesson_score = lesson_completion.calculate_lesson_score()
     auto_completed = False
     next_lesson_unlocked = False
     next_lesson_info = None
-    
-    # Auto-complete lesson if score >= 80% and not already completed
-    COMPLETION_THRESHOLD = 80.0
-    if lesson_score >= COMPLETION_THRESHOLD and not was_already_completed:
-        lesson_completion.completed = True
-        lesson_completion.completed_at = now_local()
-        auto_completed = True
-        
-        # Update user progress
-        user_progress = UserProgress.query.filter_by(
-            user_id=current_user_id,
-            course_id=lesson.module.course_id
-        ).first()
-        
-        if user_progress:
-            # Update last accessed time (lessons_completed is tracked via LessonCompletion table)
-            user_progress.last_accessed = now_local()
-        
-        # Update enrollment progress
-        total_lessons = db.session.query(Lesson).join(Module).filter(
-            Module.course_id == lesson.module.course_id
-        ).count()
-        
-        completed_lessons = db.session.query(LessonCompletion).join(Lesson).join(Module).filter(
-            Module.course_id == lesson.module.course_id,
-            LessonCompletion.student_id == current_user_id,
-            LessonCompletion.completed == True
-        ).count()
-        
-        if total_lessons > 0:
-            enrollment.progress = completed_lessons / total_lessons
-            if enrollment.progress >= 1.0 and not enrollment.completed_at:
-                enrollment.completed_at = now_local()
-                enrollment.status = 'completed'
-        
-        # Unlock next lesson in the module
-        next_lesson_info = _unlock_next_lesson(lesson, current_user_id, enrollment.id)
-        if next_lesson_info:
-            next_lesson_unlocked = True
     
     # Update lesson component scores if reading/engagement changed
     if reading_or_engagement_updated:
@@ -463,12 +425,16 @@ def update_lesson_progress(lesson_id):
                 "engagement_score": lesson_completion.engagement_score,
                 "scroll_progress": lesson_completion.scroll_progress,
                 "time_spent": lesson_completion.time_spent,
+                "video_progress": lesson_completion.video_progress or 0,
+                "video_current_time": lesson_completion.video_current_time or 0,
+                "video_duration": lesson_completion.video_duration or 0,
+                "video_completed": bool(lesson_completion.video_completed),
                 "lesson_score": lesson_score,
                 "completed": lesson_completion.completed,
                 "last_updated": lesson_completion.updated_at.isoformat()
             },
             "auto_completed": auto_completed,
-            "completion_threshold": COMPLETION_THRESHOLD
+            "completion_threshold": 80.0
         }
         
         # Add component score breakdown if available
@@ -591,6 +557,10 @@ def get_lesson_progress(lesson_id):
                 "engagement_score": lesson_completion.engagement_score or 0,
                 "scroll_progress": lesson_completion.scroll_progress or 0,
                 "time_spent": lesson_completion.time_spent or 0,
+                "video_progress": lesson_completion.video_progress or 0,
+                "video_current_time": lesson_completion.video_current_time or 0,
+                "video_duration": lesson_completion.video_duration or 0,
+                "video_completed": bool(lesson_completion.video_completed),
                 "completed": lesson_completion.completed,
                 "last_updated": lesson_completion.updated_at.isoformat() if lesson_completion.updated_at else None,
                 "lesson_score": score_breakdown['total_score'],
@@ -607,6 +577,10 @@ def get_lesson_progress(lesson_id):
                 "engagement_score": 0,
                 "scroll_progress": 0,
                 "time_spent": 0,
+                "video_progress": 0,
+                "video_current_time": 0,
+                "video_duration": 0,
+                "video_completed": False,
                 "completed": False,
                 "last_updated": None,
                 "lesson_score": 0,
