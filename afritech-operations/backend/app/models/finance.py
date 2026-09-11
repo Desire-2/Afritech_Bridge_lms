@@ -193,7 +193,7 @@ class DailyClosing(TimestampMixin, db.Model):
     cash_difference = db.Column(db.Numeric(16, 2), default=0, nullable=False)
     reconciliation_class = db.Column(db.String(16), default='exact')  # exact | shortage | overage
 
-    status = db.Column(db.String(16), default='submitted', nullable=False)  # submitted | approved | rejected | correction_requested
+    status = db.Column(db.String(32), default='submitted', nullable=False)  # submitted | approved | rejected | correction_requested
     notes = db.Column(db.String(500))
     submitted_at = db.Column(db.DateTime(timezone=True), default=utcnow)
     reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'))
