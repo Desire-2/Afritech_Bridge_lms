@@ -1,16 +1,20 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { api } from './api';
 
 export function useFetch<T = any>(path: string, deps: any[] = [], params?: Record<string, any>) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [fetchKey, setFetchKey] = useState(0);
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
 
-  const paramsKey = JSON.stringify(params || {});
+  const reload = useCallback(() => setFetchKey((k) => k + 1), []);
 
-  const reload = useCallback(() => {
+  useEffect(() => {
+    let cancelled = false;
     if (!path) {
       setData(null);
       setLoading(false);
@@ -19,21 +23,16 @@ export function useFetch<T = any>(path: string, deps: any[] = [], params?: Recor
     }
     setLoading(true);
     setError('');
-    api<T>(path, { params })
+    api<T>(path, { params: paramsRef.current })
       .then((d) => {
-        setData(d);
-        setLoading(false);
+        if (!cancelled) { setData(d); setLoading(false); }
       })
       .catch((e: any) => {
-        setError(e.message);
-        setLoading(false);
+        if (!cancelled) { setError(e.message); setLoading(false); }
       });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, paramsKey, ...deps]);
-
-  useEffect(() => {
-    reload();
-  }, [reload]);
+  }, [path, fetchKey, ...deps]);
 
   return { data, error, loading, reload, setData };
 }
@@ -42,15 +41,24 @@ export function useMemoParams(params: Record<string, any> | undefined) {
   return params;
 }
 
-/** Converts a Date input value (YYYY-MM-DD) into a nice label; returns raw otherwise */
+/** Converts a Date to a YYYY-MM-DD string using LOCAL time (not UTC), so the
+ *  default filter range always matches the user's local calendar date. */
+function toLocalIso(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Local date (YYYY-MM-DD), optionally shifted by whole days. */
 export function todayIso(offsetDays = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  return toLocalIso(d);
 }
 
 export function yearAgoIso(): string {
   const d = new Date();
   d.setFullYear(d.getFullYear() - 1);
-  return d.toISOString().slice(0, 10);
+  return toLocalIso(d);
 }

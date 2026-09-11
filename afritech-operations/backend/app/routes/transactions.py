@@ -56,7 +56,7 @@ def list_transactions():
             ServiceTransaction.reference.ilike(like),
             ServiceTransaction.service_name.ilike(like),
         ))
-    p = paginate(q.order_by(ServiceTransaction.created_at.desc()))
+    p = paginate(q.order_by(ServiceTransaction.transaction_date.desc(), ServiceTransaction.created_at.desc()))
     return paginate_response([t.to_dict() for t in p.items], p)
 
 
