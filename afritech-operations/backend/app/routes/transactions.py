@@ -177,15 +177,28 @@ def update_transaction(transaction_id):
         return json_error('You do not have permission to edit this transaction', 403)
 
     from ..models import DailyClosing
+    from .closings import recompute_daily_closing
     modifiable = ('correction_requested', 'rejected')
-    locked = DailyClosing.query.filter(
-        DailyClosing.employee_id == txn.employee_id,
-        DailyClosing.closing_date == txn.transaction_date,
-        DailyClosing.status.notin_(modifiable),
-    ).first()
+    old_date = txn.transaction_date
+
+    def _locked_closing(d):
+        return DailyClosing.query.filter(
+            DailyClosing.employee_id == txn.employee_id,
+            DailyClosing.closing_date == d,
+            DailyClosing.status.notin_(modifiable),
+        ).first()
+
+    locked = _locked_closing(old_date)
     if locked:
         action = 'approved' if locked.status == 'approved' else 'submitted'
         return json_error(f'Cannot edit: the closing for this date is {action} and locks transactions', 400)
+
+    new_date = date.fromisoformat(data['transaction_date']) if data.get('transaction_date') else old_date
+    if new_date != old_date:
+        locked_new = _locked_closing(new_date)
+        if locked_new:
+            action = 'approved' if locked_new.status == 'approved' else 'submitted'
+            return json_error(f'Cannot move transaction: the closing for {new_date} is {action} and locks transactions', 400)
 
     if data.get('service_id'):
         svc = Service.query.get(data['service_id'])
@@ -211,7 +224,6 @@ def update_transaction(transaction_id):
 
     if data.get('transaction_date'):
         txn.transaction_date = date.fromisoformat(data['transaction_date'])
-
     if 'reference' in data:
         txn.reference = data['reference']
     if 'notes' in data:
@@ -241,6 +253,11 @@ def update_transaction(transaction_id):
             txn.gross_profit = calc['gross_profit']
             txn.commission_amount = calc['commission_amount']
             txn.company_profit = calc['company_profit']
+
+    for d in set((old_date, txn.transaction_date)):
+        closing = DailyClosing.query.filter_by(employee_id=txn.employee_id, closing_date=d).first()
+        if closing and closing.status in modifiable:
+            recompute_daily_closing(closing)
 
     db.session.commit()
     audit('transaction_updated', 'transaction', txn.id, new_value=txn.to_dict())

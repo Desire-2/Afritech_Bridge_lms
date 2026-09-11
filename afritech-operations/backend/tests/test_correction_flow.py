@@ -138,3 +138,49 @@ class TestCorrectionFlow:
         assert after['official_cost'] == 500
         assert after['gross_profit'] == 1500
         assert after['commission_amount'] == round(1500 * after['commission_rate_used'], 2)
+
+    def test_move_txn_blocked_when_target_date_closing_submitted(self, client):
+        agent = _token(client, 'agent@afritech.dev')
+        free_date = (date.today() + timedelta(days=50)).isoformat()
+        target_date = (date.today() + timedelta(days=51)).isoformat()
+        txn = _make_cash_transaction(client, agent, free_date, price=1500)
+
+        # a submitted closing exists on the target date
+        r = client.post('/api/closings/submit', headers=_hdr(agent),
+                        json={'closing_date': target_date, 'actual_cash': 0})
+        assert r.status_code == 201, r.get_data(as_text=True)
+
+        # moving the transaction into that date must be blocked
+        r = client.put(f"/api/transactions/{txn['id']}", headers=_hdr(agent),
+                       json={'transaction_date': target_date})
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert 'locks transactions' in r.get_json()['error']
+
+    def test_move_txn_out_of_correction_recomputes_closing(self, client):
+        agent = _token(client, 'agent@afritech.dev')
+        move_date = (date.today() + timedelta(days=52)).isoformat()
+        closing_date = (date.today() + timedelta(days=53)).isoformat()
+        free_date = (date.today() + timedelta(days=54)).isoformat()
+        txn2 = _make_cash_transaction(client, agent, closing_date, price=1000)
+        txn1 = _make_cash_transaction(client, agent, closing_date, price=2000)
+
+        r = client.post('/api/closings/submit', headers=_hdr(agent),
+                        json={'closing_date': closing_date, 'actual_cash': 3000})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        closing_id = r.get_json()['closing']['id']
+        assert r.get_json()['closing']['transaction_count'] == 2
+
+        manager = _token(client, 'manager@afritech.dev')
+        r = client.post(f'/api/closings/{closing_id}/review', headers=_hdr(manager),
+                        json={'decision': 'correction_requested', 'note': 'move one out'})
+        assert r.status_code == 200
+        assert r.get_json()['closing']['is_locked'] is False
+
+        # move txn2 to a free date; the old closing snapshot must drop it
+        r = client.put(f"/api/transactions/{txn2['id']}", headers=_hdr(agent),
+                       json={'transaction_date': free_date})
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+        closing = client.get(f'/api/closings/{closing_id}', headers=_hdr(agent)).get_json()['closing']
+        assert closing['transaction_count'] == 1
+        assert closing['expected_cash'] == 2000

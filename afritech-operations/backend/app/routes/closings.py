@@ -40,6 +40,27 @@ def triage_daily_totals(employee_id, closing_date):
     }
 
 
+def recompute_daily_closing(closing):
+    """Refresh a closing's stored totals from live transactions (keeps its
+    submitted cash figure and status; only derived amounts are recalculated).
+
+    Used when an underlying transaction is edited after the closing was
+    returned for correction, so the closing never shows stale/duplicated counts.
+    """
+    totals = triage_daily_totals(closing.employee_id, closing.closing_date)
+    closing.transaction_count = totals['transaction_count']
+    closing.customer_payments = totals['customer_payments']
+    closing.cash_payments = totals['cash_payments']
+    closing.non_cash_payments = totals['non_cash_payments']
+    closing.service_costs = totals['service_costs']
+    closing.gross_profit = totals['gross_profit']
+    closing.total_commission = totals['total_commission']
+    closing.company_profit = totals['company_profit']
+    closing.expected_cash = totals['expected_cash']
+    closing.cash_difference = closing.actual_cash - totals['expected_cash']
+    closing.reconciliation_class = DailyClosing.reconciliation_class_for(closing.cash_difference)
+
+
 @bp.get('/totals')
 @require_any_permission('closings.view', 'closings.submit')
 def closing_totals():
