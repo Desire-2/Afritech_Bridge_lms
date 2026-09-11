@@ -17,7 +17,7 @@ def _rate_limit_storage_uri(app):
         Redis.from_url(uri).ping()
         return uri
     except Exception as exc:  # noqa: BLE001 - degrade gracefully on any failure
-        app.logger.warning(
+        app.logger.info(
             'Rate-limit storage %s unavailable (%s); falling back to in-memory storage',
             uri, exc,
         )

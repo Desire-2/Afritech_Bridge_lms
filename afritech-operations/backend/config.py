@@ -71,7 +71,8 @@ class ProductionConfig(Config):
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL', 'postgresql://localhost/afritech_operations')
     RATE_LIMIT_DEFAULT = os.environ.get('RATE_LIMIT_DEFAULT', '200 per hour;1000 per day')
     # Multi-process production needs a shared rate-limit store (Redis).
-    RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI', 'redis://localhost:6379/0')
+    # Set RATELIMIT_STORAGE_URI env var to redis://localhost:6379/0 when Redis is available.
+    RATELIMIT_STORAGE_URI = os.environ.get('RATELIMIT_STORAGE_URI', 'memory://')
 
     @staticmethod
     def init_app(app):
