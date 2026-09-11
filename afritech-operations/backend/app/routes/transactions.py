@@ -5,7 +5,7 @@ from flask import Blueprint, request, jsonify
 
 from ..extensions import db
 from ..models import (
-    Service, Client, Employee, PaymentMethod, ServiceTransaction, Payment,
+    Service, Client, Employee, PaymentMethod, ServiceTransaction, Payment, DailyClosing,
     generate_transaction_number,
 )
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
@@ -154,13 +154,17 @@ def get_transaction(transaction_id):
             return json_error('You do not have permission to view this transaction', 403)
     payload = txn.to_dict()
     payload['payments'] = [p.to_dict() for p in txn.payments]
+    closing = DailyClosing.query.filter_by(employee_id=txn.employee_id, closing_date=txn.transaction_date).first()
+    payload['closing_status'] = closing.status if closing else None
+    payload['closing_id'] = closing.id if closing else None
     return jsonify({'transaction': payload})
 
 
 @bp.put('/<int:transaction_id>')
 @require_any_permission('transactions.edit', 'transactions.approve')
 def update_transaction(transaction_id):
-    """Edit transaction details. Only allowed when no approved/locked closing covers this date."""
+    """Edit transaction details. Only allowed during the correction workflow, i.e. when a
+    closing for the transaction's date was requested for modification."""
     data = parse_json()
     user = current_user()
     txn = ServiceTransaction.query.get(transaction_id)
@@ -176,28 +180,26 @@ def update_transaction(transaction_id):
     if not owner_or_manager:
         return json_error('You do not have permission to edit this transaction', 403)
 
-    from ..models import DailyClosing
     from .closings import recompute_daily_closing
-    modifiable = ('correction_requested', 'rejected')
     old_date = txn.transaction_date
-
-    def _locked_closing(d):
-        return DailyClosing.query.filter(
-            DailyClosing.employee_id == txn.employee_id,
-            DailyClosing.closing_date == d,
-            DailyClosing.status.notin_(modifiable),
-        ).first()
-
-    locked = _locked_closing(old_date)
-    if locked:
-        action = 'approved' if locked.status == 'approved' else 'submitted'
-        return json_error(f'Cannot edit: the closing for this date is {action} and locks transactions', 400)
-
     new_date = date.fromisoformat(data['transaction_date']) if data.get('transaction_date') else old_date
+
+    def _closing(d):
+        return DailyClosing.query.filter_by(employee_id=txn.employee_id, closing_date=d).first()
+
+    # Edits are part of the correction workflow only: the transaction must sit on a
+    # date whose closing was requested for modification (not submitted/approved, and
+    # not a plain date with no closing).
+    source_closing = _closing(old_date)
+    if not source_closing or source_closing.status != 'correction_requested':
+        return json_error(
+            'Cannot edit: only transactions on a date whose closing has a modification '
+            'request can be edited.', 400)
+
     if new_date != old_date:
-        locked_new = _locked_closing(new_date)
-        if locked_new:
-            action = 'approved' if locked_new.status == 'approved' else 'submitted'
+        target = _closing(new_date)
+        if target and target.status not in ('correction_requested', 'rejected'):
+            action = 'approved' if target.status == 'approved' else 'submitted'
             return json_error(f'Cannot move transaction: the closing for {new_date} is {action} and locks transactions', 400)
 
     if data.get('service_id'):
@@ -262,7 +264,7 @@ def update_transaction(transaction_id):
 
     for d in set((old_date, txn.transaction_date)):
         closing = DailyClosing.query.filter_by(employee_id=txn.employee_id, closing_date=d).first()
-        if closing and closing.status in modifiable:
+        if closing and closing.status in ('correction_requested', 'rejected'):
             recompute_daily_closing(closing)
 
     db.session.commit()

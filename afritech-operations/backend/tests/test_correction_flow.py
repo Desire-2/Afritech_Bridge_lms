@@ -2,6 +2,9 @@
 
 Covers the full workflow: submit -> correction_requested -> edit transaction ->
 re-submit with recalculated totals -> approve (locks further edits).
+
+Edits are ONLY allowed on transactions whose date has a closing that was requested
+for modification (status `correction_requested`).
 """
 from datetime import date, timedelta
 
@@ -24,7 +27,7 @@ def _hdr(token):
 
 
 def _make_cash_transaction(client, token, date_str, price=2000):
-    """Create one cash transaction for the agent on the given date."""
+    """Create one cash transaction by the agent on the given date."""
     pm = next(p for p in client.get('/api/services/payment-methods', headers=_hdr(token)).get_json()['payment_methods']
               if p['code'] == 'cash')
     svc = client.get('/api/services?per_page=5', headers=_hdr(token)).get_json()['items'][0]
@@ -39,6 +42,23 @@ def _make_cash_transaction(client, token, date_str, price=2000):
     })
     assert r.status_code == 201, r.get_data(as_text=True)
     return r.get_json()['transaction']
+
+
+def _submit_closing(client, agent_token, date_str, actual_cash):
+    r = client.post('/api/closings/submit', headers=_hdr(agent_token),
+                    json={'closing_date': date_str, 'actual_cash': actual_cash})
+    assert r.status_code == 201, r.get_data(as_text=True)
+    return r.get_json()['closing']
+
+
+def _request_correction(client, agent_token, manager_token, date_str, actual_cash):
+    """Submit a closing for the date and have the manager request a modification."""
+    closing = _submit_closing(client, agent_token, date_str, actual_cash)
+    r = client.post(f"/api/closings/{closing['id']}/review", headers=_hdr(manager_token),
+                    json={'decision': 'correction_requested', 'note': 'Please fix'})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert r.get_json()['closing']['status'] == 'correction_requested'
+    return r.get_json()['closing']
 
 
 class TestCorrectionFlow:
@@ -106,17 +126,15 @@ class TestCorrectionFlow:
         assert r.status_code == 400
         assert 'closing' in r.get_json()['error']
 
-    def test_can_edit_without_any_closing(self, client):
+    def test_cannot_edit_without_modification_request(self, client):
         agent = _token(client, 'agent@afritech.dev')
         txn = _make_cash_transaction(client, agent, (date.today() + timedelta(days=7)).isoformat(), price=1200)
+
+        # no closing exists on this date -> not part of any modification request
         r = client.put(f"/api/transactions/{txn['id']}", headers=_hdr(agent),
                        json={'reference': 'edited-ref', 'notes': 'fixed after review'})
-        assert r.status_code == 200, r.get_data(as_text=True)
-        updated = r.get_json()['transaction']
-        assert updated['reference'] == 'edited-ref'
-        assert updated['notes'] == 'fixed after review'
-        # untouched amounts stay stable
-        assert updated['customer_price'] == 1200
+        assert r.status_code == 400, r.get_data(as_text=True)
+        assert 'modification request' in r.get_json()['error']
 
     def test_non_owner_without_permission_cannot_edit(self, client):
         accountant = _token(client, 'accountant@afritech.dev')
@@ -127,9 +145,11 @@ class TestCorrectionFlow:
 
     def test_move_txn_updates_payment_paid_at(self, client):
         agent = _token(client, 'agent@afritech.dev')
+        manager = _token(client, 'manager@afritech.dev')
         old_date = (date.today() + timedelta(days=55)).isoformat()
         new_date = (date.today() + timedelta(days=56)).isoformat()
         txn = _make_cash_transaction(client, agent, old_date, price=2000)
+        _request_correction(client, agent, manager, old_date, 2000)
 
         r = client.get(f"/api/transactions/{txn['id']}", headers=_hdr(agent))
         paid_at = r.get_json()['transaction']['payments'][0]['paid_at']
@@ -145,7 +165,10 @@ class TestCorrectionFlow:
 
     def test_edit_recalculates_commission(self, client):
         agent = _token(client, 'agent@afritech.dev')
-        txn = _make_cash_transaction(client, agent, (date.today() + timedelta(days=8)).isoformat(), price=2000)
+        manager = _token(client, 'manager@afritech.dev')
+        edit_date = (date.today() + timedelta(days=8)).isoformat()
+        txn = _make_cash_transaction(client, agent, edit_date, price=2000)
+        _request_correction(client, agent, manager, edit_date, 2000)
         before = client.get(f"/api/transactions/{txn['id']}", headers=_hdr(agent)).get_json()['transaction']
         assert before['gross_profit'] == 1000
 
@@ -159,9 +182,11 @@ class TestCorrectionFlow:
 
     def test_move_txn_blocked_when_target_date_closing_submitted(self, client):
         agent = _token(client, 'agent@afritech.dev')
-        free_date = (date.today() + timedelta(days=50)).isoformat()
+        manager = _token(client, 'manager@afritech.dev')
+        source_date = (date.today() + timedelta(days=50)).isoformat()
         target_date = (date.today() + timedelta(days=51)).isoformat()
-        txn = _make_cash_transaction(client, agent, free_date, price=1500)
+        txn = _make_cash_transaction(client, agent, source_date, price=1500)
+        _request_correction(client, agent, manager, source_date, 1500)
 
         # a submitted closing exists on the target date
         r = client.post('/api/closings/submit', headers=_hdr(agent),

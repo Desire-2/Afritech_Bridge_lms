@@ -24,7 +24,8 @@ export default function TransactionDetailPage() {
   const t = data.transaction;
   const ownsTxn = !!user && t.employee_id === user.employee_id;
   const canCancel = can(user, 'transactions.cancel');
-  const canEdit = can(user, 'transactions.approve') || (ownsTxn && can(user, 'transactions.edit'));
+  const canEdit = (can(user, 'transactions.approve') || (ownsTxn && can(user, 'transactions.edit')))
+    && t.closing_status === 'correction_requested';
   const canComplete = can(user, 'transactions.approve') || ownsTxn;
 
   async function updateStatus(status: string) {
