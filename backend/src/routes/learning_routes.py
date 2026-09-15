@@ -8,9 +8,14 @@ import uuid
 import os
 import logging
 
-from ..models.user_models import User
-from ..models.course_models import Course, Module, Enrollment
-from ..models.student_models import ModuleProgress, AssessmentAttempt
+from ..models.user_models import User, db
+from ..models.course_models import Course, Module, Enrollment, Lesson
+from ..models.student_models import (
+    ModuleProgress,
+    AssessmentAttempt,
+    LessonCompletion,
+    UserProgress,
+)
 from ..services.dashboard_service import DashboardService
 from ..services.progression_service import ProgressionService
 from ..services.enhanced_learning_service import EnhancedLearningService
@@ -379,7 +384,10 @@ def get_course_for_learning(course_id):
         else:
             lessons_by_module = {}
         
-        # OPTIMIZED: Batch query for all module progress (only if enrolled)
+        # Batch-load module progress and lesson completion records. The learning
+        # page needs the status of every lesson on its first render; returning
+        # only aggregate counts causes it to initialize an empty completion map
+        # and incorrectly start at lesson one.
         existing_progress_map = {}
         if enrollment and module_ids:
             existing_progress_map = {
@@ -389,56 +397,233 @@ def get_course_for_learning(course_id):
                     ModuleProgress.enrollment_id == enrollment.id
                 ).all()
             }
-        
-        # Initialize missing progress records (only if enrolled and needed)
-        if enrollment:
+
             try:
                 missing_modules = [m for m in modules if m.id not in existing_progress_map]
                 if missing_modules:
-                    current_app.logger.info(f"Initializing {len(missing_modules)} missing module progress records")
+                    current_app.logger.info(
+                        f"Initializing {len(missing_modules)} missing module progress records"
+                    )
                     for module in missing_modules:
                         ProgressionService._initialize_module_progress(
                             student_id, module.id, enrollment.id
                         )
                     db.session.commit()
+
+                # Re-query after initialization so newly-created records are
+                # included in the response.
+                existing_progress_map = {
+                    mp.module_id: mp for mp in ModuleProgress.query.filter(
+                        ModuleProgress.student_id == student_id,
+                        ModuleProgress.module_id.in_(module_ids),
+                        ModuleProgress.enrollment_id == enrollment.id
+                    ).all()
+                }
             except Exception as init_error:
-                current_app.logger.error(f"Error initializing module progress: {str(init_error)}")
+                current_app.logger.error(
+                    f"Error initializing module progress: {str(init_error)}"
+                )
                 db.session.rollback()
-            finally:
-                # Ensure session is cleaned up
-                db.session.close()
-        
-        # OPTIMIZED: Get lightweight progress data (only if enrolled)
+
+        all_visible_lessons = [
+            lesson
+            for module in modules
+            for lesson in lessons_by_module.get(module.id, [])
+        ]
+        lesson_ids = [lesson.id for lesson in all_visible_lessons]
+        completion_map = {}
+        if enrollment and lesson_ids:
+            completion_map = {
+                completion.lesson_id: completion
+                for completion in LessonCompletion.query.filter(
+                    LessonCompletion.student_id == student_id,
+                    LessonCompletion.lesson_id.in_(lesson_ids)
+                ).all()
+            }
+
+        # Repair legacy records where a module stayed locked even though the
+        # learner has a saved (possibly incomplete) lesson record in it.
+        # Without this, the resume lesson is returned but rejected by the
+        # module-access check in the frontend.
+        if enrollment and completion_map:
+            history_module_ids = {
+                lesson.module_id
+                for lesson in all_visible_lessons
+                if lesson.id in completion_map
+            }
+            restored_progress = False
+            for module_id in history_module_ids:
+                module_progress = existing_progress_map.get(module_id)
+                if module_progress and module_progress.status == "locked":
+                    module_progress.status = "in_progress"
+                    module_progress.prerequisites_met = True
+                    module_progress.started_at = module_progress.started_at or now_local()
+                    module_progress.unlocked_at = module_progress.unlocked_at or now_local()
+                    restored_progress = True
+            if restored_progress:
+                db.session.commit()
+
+        user_progress = None
         if enrollment:
-            try:
-                # Quick progress calculation without full ProgressionService
-                completed_modules = ModuleProgress.query.filter(
-                    ModuleProgress.student_id == student_id,
-                    ModuleProgress.enrollment_id == enrollment.id,
-                    ModuleProgress.status == 'completed'
-                ).count()
-                
-                overall_progress = (completed_modules / len(modules) * 100) if modules else 0
-                
-                progress_data = {
-                    "overall_progress": overall_progress,
-                    "completed_modules": completed_modules,
-                    "total_modules": len(modules)
+            user_progress = UserProgress.query.filter_by(
+                user_id=student_id,
+                course_id=course_id
+            ).first()
+
+        modules_progress = []
+        completed_lessons_count = 0
+        lesson_records = []
+        for module in modules:
+            module_lessons = lessons_by_module.get(module.id, [])
+            lessons_progress = []
+            module_completed_count = 0
+
+            for lesson in module_lessons:
+                completion = completion_map.get(lesson.id)
+                is_completed = bool(completion and completion.completed)
+                if is_completed:
+                    module_completed_count += 1
+                    completed_lessons_count += 1
+
+                lesson_data = {
+                    "id": lesson.id,
+                    "title": lesson.title,
+                    "description": lesson.description or "",
+                    "content_type": lesson.content_type,
+                    "order": lesson.order,
+                    "duration_minutes": lesson.duration_minutes,
+                    "is_published": lesson.is_published,
+                    "completed": is_completed,
+                    "completion_date": (
+                        completion.completed_at.isoformat()
+                        if completion and completion.completed_at else None
+                    ),
+                    "time_spent": completion.time_spent if completion else 0,
+                    "reading_progress": completion.reading_progress if completion else 0,
+                    "engagement_score": completion.engagement_score if completion else 0,
+                    "last_accessed": (
+                        completion.last_accessed.isoformat()
+                        if completion and completion.last_accessed else None
+                    ),
                 }
-            except Exception as e:
-                current_app.logger.error(f"Progress calculation error: {str(e)}")
-                progress_data = {
-                    "overall_progress": 0,
-                    "completed_modules": 0,
-                    "total_modules": len(modules)
+                lessons_progress.append(lesson_data)
+                lesson_records.append((module, lesson, completion, is_completed))
+
+            module_progress = existing_progress_map.get(module.id)
+            module_progress_data = None
+            if module_progress:
+                # Use cached module scores here. Calling ModuleProgress.to_dict()
+                # recalculates every lesson/assessment score and makes the
+                # initial learning request unnecessarily expensive.
+                cached_score = module_progress.cumulative_score or 0.0
+                module_progress_data = {
+                    "id": module_progress.id,
+                    "student_id": module_progress.student_id,
+                    "module_id": module_progress.module_id,
+                    "enrollment_id": module_progress.enrollment_id,
+                    "course_contribution_score": module_progress.course_contribution_score or 0.0,
+                    "quiz_score": module_progress.quiz_score or 0.0,
+                    "assignment_score": module_progress.assignment_score or 0.0,
+                    "final_assessment_score": module_progress.final_assessment_score or 0.0,
+                    "module_score": cached_score,
+                    "lessons_average_score": cached_score,
+                    "weighted_score": cached_score,
+                    "cumulative_score": cached_score,
+                    "attempts_count": module_progress.attempts_count or 0,
+                    "max_attempts": module_progress.max_attempts or 3,
+                    "status": module_progress.status or "locked",
+                    "started_at": module_progress.started_at.isoformat() if module_progress.started_at else None,
+                    "completed_at": module_progress.completed_at.isoformat() if module_progress.completed_at else None,
+                    "failed_at": module_progress.failed_at.isoformat() if module_progress.failed_at else None,
+                    "unlocked_at": module_progress.unlocked_at.isoformat() if module_progress.unlocked_at else None,
+                    "prerequisites_met": module_progress.prerequisites_met or False,
+                    "module_title": module.title,
                 }
+            modules_progress.append({
+                "module": module.to_dict(),
+                "progress": module_progress_data,
+                # Keep the historical key used by the frontend, but include
+                # `lessons` as well for clients using the clearer name.
+                "lessons_completed": lessons_progress,
+                "lessons": lessons_progress,
+                "completed_lessons": module_completed_count,
+                "total_lessons": len(lessons_progress),
+                "progress_percentage": (
+                    module_completed_count / len(lessons_progress) * 100
+                    if lessons_progress else 0
+                ),
+            })
+
+        # Resume the last incomplete lesson saved by autosave. If it was
+        # completed since the last visit, continue with the first incomplete
+        # lesson instead of sending the learner back to lesson one.
+        resume_record = None
+        if user_progress and user_progress.current_lesson_id:
+            resume_record = next(
+                (
+                    record for record in lesson_records
+                    if record[1].id == user_progress.current_lesson_id and not record[3]
+                ),
+                None,
+            )
+        if resume_record is None:
+            # Backfill resume behavior for learners who have lesson progress
+            # but no UserProgress row yet: the most recently accessed partial
+            # lesson is the best available representation of where they left
+            # off.
+            partial_records = [
+                record for record in lesson_records
+                if not record[3] and record[2] and (
+                    record[2].last_accessed or record[2].updated_at
+                )
+            ]
+            if partial_records:
+                resume_record = max(
+                    partial_records,
+                    key=lambda record: (
+                        record[2].last_accessed or record[2].updated_at
+                    ).timestamp()
+                )
+        if resume_record is None:
+            resume_record = next(
+                (record for record in lesson_records if not record[3]),
+                None,
+            )
+        if resume_record is None and lesson_records:
+            resume_record = lesson_records[0]
+
+        current_lesson_id = resume_record[1].id if resume_record else None
+        if user_progress and current_lesson_id and user_progress.current_lesson_id != current_lesson_id:
+            user_progress.current_lesson_id = current_lesson_id
+            user_progress.last_accessed = now_local()
+            db.session.commit()
+
+        if enrollment:
+            completed_modules = sum(
+                1 for item in modules_progress
+                if item["progress"] and item["progress"].get("status") == "completed"
+            )
+            progress_data = {
+                "overall_progress": (
+                    completed_modules / len(modules) * 100 if modules else 0
+                ),
+                "completed_modules": completed_modules,
+                "total_modules": len(modules),
+                "lessons_completed": completed_lessons_count,
+                "total_lessons": len(all_visible_lessons),
+                "current_lesson_id": current_lesson_id,
+                "modules": modules_progress,
+            }
         else:
-            # Preview mode - no progress
             progress_data = {
                 "overall_progress": 0,
                 "completed_modules": 0,
                 "total_modules": len(modules),
-                "preview_mode": True
+                "lessons_completed": 0,
+                "total_lessons": len(all_visible_lessons),
+                "current_lesson_id": None,
+                "modules": modules_progress,
+                "preview_mode": True,
             }
         
         # OPTIMIZED: Build lightweight course data
@@ -468,25 +653,17 @@ def get_course_for_learning(course_id):
             } for m in modules]
         }
         
-        # Find first incomplete lesson as current lesson (only if enrolled)
+        # Resolve the current lesson from the same resume record used by the
+        # progress payload so the UI and API never disagree.
         current_lesson = None
-        if enrollment:
-            for module in modules:
-                for lesson in lessons_by_module.get(module.id, []):
-                    completion = LessonCompletion.query.filter_by(
-                        student_id=student_id,
-                        lesson_id=lesson.id
-                    ).first()
-                    if not completion:
-                        current_lesson = {
-                            "id": lesson.id,
-                            "title": lesson.title,
-                            "module_id": module.id,
-                            "module_title": module.title
-                        }
-                        break
-                if current_lesson:
-                    break
+        if resume_record:
+            module, lesson = resume_record[0], resume_record[1]
+            current_lesson = {
+                "id": lesson.id,
+                "title": lesson.title,
+                "module_id": module.id,
+                "module_title": module.title,
+            }
         
         # If all complete or preview mode, default to first lesson
         if not current_lesson and course_data["modules"] and course_data["modules"][0]["lessons"]:
@@ -511,6 +688,7 @@ def get_course_for_learning(course_id):
             "success": True,
             "course": course_data,
             "current_lesson": current_lesson,
+            "current_lesson_id": current_lesson_id,
             "progress": progress_data,
             "enrollment": enrollment_data
         }), 200
@@ -607,6 +785,23 @@ def get_course_modules(course_id):
             cohort_id = enrollment.application_window_id if enrollment else None
             modules = course.get_released_modules(cohort_id=cohort_id)
         
+        # Preserve access to modules with previously saved partial lesson
+        # progress, including legacy records whose module status is still
+        # locked.
+        history_module_ids = set()
+        if enrollment and modules:
+            history_module_ids = {
+                row[0] for row in db.session.query(Lesson.module_id)
+                .join(LessonCompletion, LessonCompletion.lesson_id == Lesson.id)
+                .filter(
+                    Lesson.module_id.in_([module.id for module in modules]),
+                    LessonCompletion.student_id == student_id,
+                )
+                .distinct()
+                .all()
+            }
+        restored_module_progress = False
+
         # Get progress for each module
         modules_data = []
         for module in modules:
@@ -623,6 +818,17 @@ def get_course_modules(course_id):
                     module_progress = ProgressionService._initialize_module_progress(
                         student_id, module.id, enrollment.id
                     )
+
+                if (
+                    module.id in history_module_ids
+                    and module_progress.status == 'locked'
+                    and not view_as_student
+                ):
+                    module_progress.status = 'in_progress'
+                    module_progress.prerequisites_met = True
+                    module_progress.started_at = module_progress.started_at or now_local()
+                    module_progress.unlocked_at = module_progress.unlocked_at or now_local()
+                    restored_module_progress = True
                 
                 # Override module status for instructor view_as_student mode
                 if view_as_student and (is_instructor or is_admin):
@@ -656,6 +862,9 @@ def get_course_modules(course_id):
                 }
             
             modules_data.append(module_data)
+
+        if restored_module_progress:
+            db.session.commit()
         
         # Get suspension status (only for enrolled students)
         suspension_status = None

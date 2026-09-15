@@ -508,29 +508,33 @@ class ProgressionService:
         module = Module.query.get(module_id)
         first_module = module.course.modules.order_by('order').first()
         
-        # ENHANCED: Check if student has completed any lessons in this module
-        # If they have, the module should be unlocked/in_progress, not locked
-        # Query lessons in this module and check for completions
+        # Restore a module when the student has any saved lesson history in it.
+        # A partial LessonCompletion record is enough to prove that the module
+        # was previously accessible; checking only completed lessons could lock
+        # a learner out of the exact lesson they were resuming.
         module_lesson_ids = [lesson.id for lesson in module.lessons]
-        has_completed_lessons = False
-        completed_count = 0
+        has_lesson_progress = False
+        progress_count = 0
         
         if module_lesson_ids:
-            completed_count = LessonCompletion.query.filter(
+            progress_count = LessonCompletion.query.filter(
                 LessonCompletion.student_id == student_id,
                 LessonCompletion.lesson_id.in_(module_lesson_ids)
             ).count()
-            has_completed_lessons = completed_count > 0
+            has_lesson_progress = progress_count > 0
         
         # Determine initial status
         if module.id == first_module.id:
             initial_status = 'unlocked'
             is_unlocked = True
-        elif has_completed_lessons:
-            # If student has completed lessons, module must have been unlocked before
+        elif has_lesson_progress:
+            # If student has lesson history, the module must have been unlocked before
             initial_status = 'in_progress'
             is_unlocked = True
-            current_app.logger.info(f"Restoring module {module_id} as in_progress (found {completed_count} completed lessons)")
+            current_app.logger.info(
+                f"Restoring module {module_id} as in_progress "
+                f"(found {progress_count} lesson progress records)"
+            )
         else:
             # Check if previous modules are completed (should be unlocked)
             previous_modules = module.course.modules.filter(

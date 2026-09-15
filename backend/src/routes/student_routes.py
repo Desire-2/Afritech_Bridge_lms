@@ -400,6 +400,22 @@ def update_lesson_progress(lesson_id):
     active_user = User.query.get(current_user_id)
     if active_user:
         active_user.update_last_activity()
+
+    # Persist the learner's current position independently of completion. This
+    # lets the learning page resume an unfinished lesson after a refresh or a
+    # different device instead of defaulting to the first lesson.
+    user_progress = UserProgress.query.filter_by(
+        user_id=current_user_id,
+        course_id=lesson.module.course_id
+    ).first()
+    if not user_progress:
+        user_progress = UserProgress(
+            user_id=current_user_id,
+            course_id=lesson.module.course_id,
+        )
+        db.session.add(user_progress)
+    user_progress.current_lesson_id = lesson_id
+    user_progress.last_accessed = now_local()
     
     try:
         db.session.commit()
@@ -712,6 +728,9 @@ def complete_lesson(lesson_id):
                 else:
                     user_progress.total_time_spent += data.get('time_spent', 0)
                     user_progress.last_accessed = now_local()
+
+                user_progress.current_lesson_id = lesson_id
+                user_progress.last_accessed = now_local()
                 
                 # Calculate overall course progress
                 total_lessons = db.session.query(Lesson).join(Module).filter(

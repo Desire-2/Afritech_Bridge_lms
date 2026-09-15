@@ -1110,35 +1110,37 @@ const LearningPage = () => {
 
     try {
       const completionMap: { [lessonId: number]: boolean } = {};
-      
-      // ENHANCED: Use the lessons_completed data from progress_data.modules if available
-      // This data is already returned from the backend with completion status
-      if (courseData.modules && Array.isArray(courseData.modules)) {
+      const courseModules = courseData?.course?.modules || [];
+
+      // Always initialize every lesson as incomplete so a partial response
+      // cannot leave stale statuses or make the sidebar omit lessons.
+      courseModules.forEach((module: any) => {
+        (module.lessons || []).forEach((lesson: any) => {
+          completionMap[lesson.id] = false;
+        });
+      });
+
+      // Use the lesson-level records returned with the course response when
+      // available. They include both completed and non-completed lessons.
+      if (courseData.modules && Array.isArray(courseData.modules) && courseData.modules.length > 0) {
         console.log('📊 Using completion data from backend progress_data.modules');
-        
+
         courseData.modules.forEach((moduleData: any) => {
-          const lessonsCompleted = moduleData.lessons_completed || [];
-          
-          lessonsCompleted.forEach((lesson: any) => {
-            // Backend sets completed: true/false
-            if (lesson.completed) {
-              completionMap[lesson.id] = true;
-              console.log(`✅ Lesson ${lesson.id} marked as completed from backend data`);
-            } else {
-              completionMap[lesson.id] = false;
-            }
+          const lessonsProgress = moduleData.lessons_completed || moduleData.lessons || [];
+          lessonsProgress.forEach((lesson: any) => {
+            completionMap[lesson.id] = lesson.completed === true;
           });
         });
-        
+
         if (requestId !== lessonCompletionRequestRef.current) return;
         setLessonCompletionStatus(completionMap);
         console.log('📊 Loaded completion status from backend:', completionMap);
-        return; // Exit early - we have the data!
+        return;
       }
       
       // FALLBACK: If progress data not available, fetch individually
       // This is less efficient but works as a backup
-      const modules = courseData?.course?.modules || [];
+      const modules = courseModules;
       if (modules.length === 0) return;
       
       console.log('⚠️ Falling back to individual lesson progress fetching');
@@ -1436,10 +1438,10 @@ const LearningPage = () => {
         });
         
         // Priority order for setting current lesson:
-        // 1. Find first uncompleted lesson from backend data (most accurate)
-        // 2. Use current_lesson_id from API if available
-        // 3. Check localStorage for last accessed lesson
-        // 4. Default to first lesson
+        // 1. Explicit lesson deep link
+        // 2. Server-persisted current lesson
+        // 3. Most recently saved partial/first incomplete lesson
+        // 4. Local storage and finally the first lesson
         
         let lessonToSet = null;
         let moduleIdToSet = null;
@@ -1485,58 +1487,57 @@ const LearningPage = () => {
           }
         }
         
-        // 1. Try to find the first uncompleted lesson from backend progress modules data
-        if (!lessonToSet && response.progress?.modules && response.progress.modules.length > 0) {
-          console.log('🔍 Searching for first uncompleted lesson in progress data...');
-          
-          for (const moduleData of response.progress.modules) {
-            const lessonsCompleted = moduleData.lessons_completed || [];
-            const moduleInfo = moduleData.module; // Get module info from moduleData
-            
-            if (lessonsCompleted.length > 0) {
-              const uncompletedLesson = lessonsCompleted.find((lesson: any) => !lesson.completed);
-              
-              if (uncompletedLesson) {
-                // Find full lesson object from course.modules
-                const fullModule = response.course?.modules?.find((m: any) => m.id === moduleInfo.id);
-                if (fullModule) {
-                  const fullLesson = fullModule.lessons?.find((l: any) => l.id === uncompletedLesson.id);
-                  if (fullLesson) {
-                    if (isAccessibleInResponse(moduleInfo.id)) {
-                      lessonToSet = fullLesson;
-                      moduleIdToSet = moduleInfo.id;
-                    }
-                    console.log('✅ Found first uncompleted lesson:', fullLesson.title, 'in module:', fullModule.title);
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-        
-        // 2. Fallback to API's current_lesson_id
-        if (!lessonToSet && response.current_lesson_id && response.course?.modules) {
-          console.log('🔍 Using current_lesson_id from API:', response.current_lesson_id);
+        // 1. Resume the server-persisted lesson first. This is authoritative
+        // when a learner has partial progress and is more useful than the
+        // first-uncompleted fallback.
+        const serverCurrentLessonId =
+          response.current_lesson_id ??
+          response.progress?.current_lesson_id ??
+          response.current_lesson?.id;
+        if (!lessonToSet && serverCurrentLessonId && response.course?.modules) {
+          console.log('🔍 Resuming current lesson from API:', serverCurrentLessonId);
           
           for (const module of response.course.modules) {
-            const lesson = module.lessons?.find((l: any) => l.id === response.current_lesson_id);
+            const lesson = module.lessons?.find((l: any) => l.id === serverCurrentLessonId);
             if (lesson && isAccessibleInResponse(module.id)) {
               lessonToSet = lesson;
               moduleIdToSet = module.id;
-              console.log('✅ Found lesson from current_lesson_id:', lesson.title);
+              console.log('✅ Resumed lesson:', lesson.title);
               break;
             }
           }
         }
         
+        // 2. Try to find the first uncompleted lesson from backend progress
+        // data when there is no saved server-side position yet.
+        if (!lessonToSet && response.progress?.modules && response.progress.modules.length > 0) {
+          console.log('🔍 Searching for first uncompleted lesson in progress data...');
+
+          for (const moduleData of response.progress.modules) {
+            const lessonsProgress = moduleData.lessons_completed || moduleData.lessons || [];
+            const moduleInfo = moduleData.module || moduleData;
+            const uncompletedLesson = lessonsProgress.find((lesson: any) => !lesson.completed);
+
+            if (uncompletedLesson) {
+              const fullModule = response.course?.modules?.find((m: any) => m.id === moduleInfo.id);
+              const fullLesson = fullModule?.lessons?.find((l: any) => l.id === uncompletedLesson.id);
+              if (fullModule && fullLesson && isAccessibleInResponse(moduleInfo.id)) {
+                lessonToSet = fullLesson;
+                moduleIdToSet = moduleInfo.id;
+                console.log('✅ Found first uncompleted lesson:', fullLesson.title, 'in module:', fullModule.title);
+                break;
+              }
+            }
+          }
+        }
+
         // 3. Try to restore from localStorage
         if (!lessonToSet) {
           const savedProgress = loadLastLesson(courseId);
           if (savedProgress && response.course?.modules) {
             console.log('🔍 Checking localStorage for saved lesson:', savedProgress.lessonId);
             
-            // Verify the saved lesson still exists and is not completed
+            // Verify that the saved lesson still exists and its module is accessible.
             const moduleWithLesson = response.course.modules.find((module: any) => 
               module.id === savedProgress.moduleId && 
               module.lessons?.some((lesson: any) => lesson.id === savedProgress.lessonId)
