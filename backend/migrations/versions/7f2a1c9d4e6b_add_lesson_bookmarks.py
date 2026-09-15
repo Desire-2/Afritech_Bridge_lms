@@ -15,17 +15,22 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        'student_lesson_bookmarks',
-        sa.Column('id', sa.Integer(), nullable=False),
-        sa.Column('student_id', sa.Integer(), nullable=False),
-        sa.Column('lesson_id', sa.Integer(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), nullable=True),
-        sa.ForeignKeyConstraint(['lesson_id'], ['lessons.id']),
-        sa.ForeignKeyConstraint(['student_id'], ['users.id']),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('student_id', 'lesson_id', name='_student_lesson_bookmark_uc'),
-    )
+    # Some older application boots used ``db.create_all()`` before Alembic
+    # was run. Keep this migration idempotent so such a database can still be
+    # brought under version control during deployment.
+    bind = op.get_bind()
+    if not sa.inspect(bind).has_table('student_lesson_bookmarks'):
+        op.create_table(
+            'student_lesson_bookmarks',
+            sa.Column('id', sa.Integer(), nullable=False),
+            sa.Column('student_id', sa.Integer(), nullable=False),
+            sa.Column('lesson_id', sa.Integer(), nullable=False),
+            sa.Column('created_at', sa.DateTime(), nullable=True),
+            sa.ForeignKeyConstraint(['lesson_id'], ['lessons.id']),
+            sa.ForeignKeyConstraint(['student_id'], ['users.id']),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('student_id', 'lesson_id', name='_student_lesson_bookmark_uc'),
+        )
 
 
 def downgrade():

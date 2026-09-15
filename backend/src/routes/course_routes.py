@@ -8,6 +8,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 # Assuming db and models are correctly set up and accessible.
 from ..models.user_models import db, User, Role # For role checking
 from ..models.course_models import Course, Module, Lesson, Enrollment, Quiz, Question, Answer, Submission, Announcement, ApplicationWindow, CohortModuleRelease
+from ..models.student_models import StudentLessonBookmark
 from ..utils.email_notifications import send_announcement_notification
 from ..services.notification_service import notify_announcement_new
 
@@ -776,6 +777,17 @@ def delete_course(course_id):
         }), 403
 
     try:
+        # Remove lesson bookmarks before the course cascade deletes modules
+        # and lessons; the bookmark foreign key is intentionally not nullable.
+        lesson_ids = [
+            lesson.id
+            for module in course.modules.all()
+            for lesson in module.lessons.all()
+        ]
+        if lesson_ids:
+            StudentLessonBookmark.query.filter(
+                StudentLessonBookmark.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
         db.session.delete(course)
         db.session.commit()
         logger.info(f"Course {course_id} deleted successfully by user {current_user_id}")
@@ -1409,6 +1421,13 @@ def delete_module(module_id):
         }), 403
 
     try:
+        # Remove lesson bookmarks before the module cascade deletes its
+        # lessons; the bookmark foreign key is intentionally not nullable.
+        lesson_ids = [lesson.id for lesson in module.lessons.all()]
+        if lesson_ids:
+            StudentLessonBookmark.query.filter(
+                StudentLessonBookmark.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
         db.session.delete(module)
         db.session.commit()
         logger.info(f"Module {module_id} deleted successfully by user {current_user_id}")

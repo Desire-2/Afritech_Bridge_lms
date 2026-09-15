@@ -4,6 +4,12 @@
 # Exit on error
 set -o errexit
 
+# Render runs this script from the configured working directory. Resolve the
+# backend directory explicitly so the migration command and requirements file
+# always refer to this service's files.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # Determine available Python command
 if command -v python3 &>/dev/null; then
   PYTHON_CMD="python3"
@@ -29,7 +35,7 @@ else
 fi
 
 # Check if we're in a production environment (like Render)
-if [ -n "$RENDER" ]; then
+if [ -n "$RENDER" ] || [ "$FLASK_ENV" = "production" ]; then
   # On Render, we can use pip directly as they manage the Python environment
   echo "Running in Render environment, using system Python..."
   # Install Python dependencies
@@ -91,20 +97,30 @@ fi
 echo "Creating static directory..."
 mkdir -p static
 
-# Run database schema synchronization (production deployment)
-if [ -n "$RENDER" ] && [ -n "$DATABASE_URL" ]; then
+# Production startup already requires a database URL. Fail during the build
+# so a deployment cannot pass while silently skipping its schema migration.
+if { [ -n "$RENDER" ] || [ "$FLASK_ENV" = "production" ]; } && [ -z "$DATABASE_URL" ]; then
+  echo "ERROR: DATABASE_URL must be set for a production deployment."
+  exit 1
+fi
+
+# Apply the versioned database migrations before the application starts.
+# The old sync_production_schema.py script only added columns and was removed;
+# it also allowed deployments to continue after a schema failure. That left
+# newly deployed models (including student_lesson_bookmarks) unavailable in
+# production while the app was already serving traffic.
+if [ -n "$DATABASE_URL" ] && { [ -n "$RENDER" ] || [ "$FLASK_ENV" = "production" ]; }; then
   echo "=================================================="
-  echo "Running database schema synchronization..."
+  echo "Running Alembic database migrations..."
   echo "=================================================="
-  
-  # Run the schema sync script
-  if $PYTHON_CMD sync_production_schema.py; then
-    echo "✅ Database schema synchronized successfully!"
-  else
-    echo "⚠️  Warning: Schema synchronization had issues, but continuing deployment..."
-    echo "   Check logs above for details."
-    # Don't exit - allow deployment to continue even if migration has issues
-  fi
+
+  # A failed migration must fail the build. Starting the web service against
+  # a stale schema produces runtime 500s and is unsafe for production.
+  # Upgrade every migration head. The repository can contain parallel feature
+  # branches (for example the workflow tables and the lesson-bookmark chain)
+  # until a merge revision is committed.
+  FLASK_APP=main.py $PYTHON_CMD -m flask db upgrade heads
+  echo "✅ Alembic migrations completed successfully!"
   
   # Run forum course_id nullable migration (only if the script exists -
   # this file is not part of the repo, so don't reference it unconditionally)

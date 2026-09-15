@@ -375,6 +375,11 @@ app.register_blueprint(booking_bp) # Register booking blueprint
 maintenance_mode = MaintenanceMode(app)
 logger.info("Maintenance mode middleware initialized and active")
 
+# Importing the Flask app is part of every Alembic command. Do not run normal
+# startup database seeding or background schedulers while the migration tool is
+# loading the application, especially against a fresh database.
+RUNNING_FLASK_DB_CLI = 'db' in sys.argv[1:]
+
 def _auto_migrate_missing_columns():
     """
     Auto-add columns from models that are missing in the SQLite schema.
@@ -451,8 +456,7 @@ with app.app_context():
     # `flask --app main db ...`): Alembic owns the schema then, and
     # create_all() racing the migrations is exactly what produced the
     # "relation ... already exists" crash you saw with `flask db upgrade`.
-    running_flask_db_cli = 'db' in sys.argv[1:]
-    if not running_flask_db_cli:
+    if not RUNNING_FLASK_DB_CLI:
         _bootstrap_schema()
 
         # _auto_migrate_missing_columns() issues raw ALTER TABLE statements.
@@ -464,31 +468,35 @@ with app.app_context():
         if not is_postgresql:
             _auto_migrate_missing_columns()
 
-    if not Role.query.filter_by(name='student').first():
-        db.session.add(Role(name='student'))
-    if not Role.query.filter_by(name='instructor').first():
-        db.session.add(Role(name='instructor'))
-    if not Role.query.filter_by(name='admin').first():
-        db.session.add(Role(name='admin'))
-    if not Role.query.filter_by(name='intern').first():
-        db.session.add(Role(name='intern'))
-    db.session.commit()
-    
-    # Initialize default system settings
-    try:
-        initialize_default_settings()
-        logger.info("✅ System settings initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize system settings: {str(e)}")
+    if not RUNNING_FLASK_DB_CLI:
+        if not Role.query.filter_by(name='student').first():
+            db.session.add(Role(name='student'))
+        if not Role.query.filter_by(name='instructor').first():
+            db.session.add(Role(name='instructor'))
+        if not Role.query.filter_by(name='admin').first():
+            db.session.add(Role(name='admin'))
+        if not Role.query.filter_by(name='intern').first():
+            db.session.add(Role(name='intern'))
+        db.session.commit()
+
+        # Initialize default system settings
+        try:
+            initialize_default_settings()
+            logger.info("✅ System settings initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize system settings: {str(e)}")
 
 # Start scheduled cohort migration job only when enabled.
-start_cohort_migration_scheduler(app)
+if not RUNNING_FLASK_DB_CLI:
+    start_cohort_migration_scheduler(app)
 
 # Start cohort-start email notification scheduler (notifies students when their cohort begins)
-start_cohort_start_notification_scheduler(app)
+if not RUNNING_FLASK_DB_CLI:
+    start_cohort_start_notification_scheduler(app)
 
 # Start booking reminder scheduler (24h + 1h reminders for confirmed sessions)
-start_booking_reminder_scheduler(app)
+if not RUNNING_FLASK_DB_CLI:
+    start_booking_reminder_scheduler(app)
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext

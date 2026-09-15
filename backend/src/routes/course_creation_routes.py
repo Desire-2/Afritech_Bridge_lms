@@ -15,7 +15,13 @@ from ..models.course_models import (
     Assignment, AssignmentSubmission, Project, ProjectSubmission,
     Enrollment, Submission, Announcement
 )
-from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
+from ..models.student_models import (
+    LessonCompletion,
+    UserProgress,
+    StudentNote,
+    StudentBookmark,
+    StudentLessonBookmark,
+)
 from ..models.quiz_progress_models import QuizAttempt, UserAnswer
 from ..config.course_skill_profiles import get_skill_profile_for_course
 
@@ -426,6 +432,11 @@ def delete_module(course_id, module_id):
             StudentNote.query.filter(
                 StudentNote.lesson_id.in_(lesson_ids)
             ).delete(synchronize_session=False)
+            # Lesson bookmarks have a foreign key to lessons and are not
+            # database-cascaded.
+            StudentLessonBookmark.query.filter(
+                StudentLessonBookmark.lesson_id.in_(lesson_ids)
+            ).delete(synchronize_session=False)
             # Nullify current_lesson_id in UserProgress
             UserProgress.query.filter(
                 UserProgress.current_lesson_id.in_(lesson_ids)
@@ -629,13 +640,22 @@ def delete_lesson(course_id, module_id, lesson_id):
         logger.debug(f"DELETION - Deleting student notes...")
         deleted_notes = StudentNote.query.filter_by(lesson_id=lesson_id).delete()
         logger.debug(f"DELETION - Deleted {deleted_notes} student notes")
+
+        # 3. Delete lesson-specific bookmarks before deleting the lesson.
+        # The relationship is not configured with a database-level cascade,
+        # so leaving these rows behind can violate the lesson foreign key.
+        logger.debug(f"DELETION - Deleting student lesson bookmarks...")
+        deleted_bookmarks = StudentLessonBookmark.query.filter_by(
+            lesson_id=lesson_id
+        ).delete(synchronize_session=False)
+        logger.debug(f"DELETION - Deleted {deleted_bookmarks} lesson bookmarks")
         
-        # 3. Update user progress - remove references to this lesson
+        # 4. Update user progress - remove references to this lesson
         logger.debug(f"DELETION - Updating user progress...")
         updated_progress = UserProgress.query.filter_by(current_lesson_id=lesson_id).update({"current_lesson_id": None})
         logger.debug(f"DELETION - Updated {updated_progress} user progress records")
         
-        # 4. Delete any quizzes linked to this lesson (and their submissions)
+        # 5. Delete any quizzes linked to this lesson (and their submissions)
         logger.debug(f"DELETION - Deleting quizzes...")
         quizzes = Quiz.query.filter_by(lesson_id=lesson_id).all()
         logger.debug(f"DELETION - Found {len(quizzes)} quizzes to delete")
@@ -666,7 +686,7 @@ def delete_lesson(course_id, module_id, lesson_id):
             # Delete the quiz itself
             db.session.delete(quiz)
         
-        # 5. Delete any assignments linked to this lesson
+        # 6. Delete any assignments linked to this lesson
         logger.debug(f"DELETION - Deleting assignments...")
         assignments = Assignment.query.filter_by(lesson_id=lesson_id).all()
         logger.debug(f"DELETION - Found {len(assignments)} assignments to delete")
@@ -684,9 +704,8 @@ def delete_lesson(course_id, module_id, lesson_id):
         
         return jsonify({"message": "Lesson deleted successfully"}), 200
         
-    except Exception as e:
-        logger.debug(f"DELETION ERROR - Exception occurred: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    except Exception:
+        logger.exception("DELETION ERROR - Failed to delete lesson %s", lesson_id)
         db.session.rollback()
-        return jsonify({"message": "Failed to delete lesson", "error": str(e)}), 500
+        # Do not expose SQL statements or database details to clients.
+        return jsonify({"message": "Failed to delete lesson"}), 500
