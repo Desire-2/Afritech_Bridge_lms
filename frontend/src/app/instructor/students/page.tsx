@@ -101,29 +101,56 @@ const StudentsPage = () => {
     };
     fetchCourses();
 
-    // Restore step from URL params
-    const courseParam = searchParams.get('course_id');
-    const cohortParam = searchParams.get('cohort_id');
-    if (courseParam) {
-      const cId = parseInt(courseParam);
-      setSelectedCourseId(cId);
-      if (cohortParam) {
-        setSelectedCohortId(parseInt(cohortParam));
-        setStep('students');
-      } else {
-        setStep('cohorts');
-      }
-    }
   }, [token]);
 
-  // Step 2: Fetch cohorts when course selected
+  // Restore the selected course/cohort from the URL. Keep this separate from
+  // the course request so direct links also work after client-side navigation.
   useEffect(() => {
-    if (selectedCourseId && step === 'cohorts') {
+    if (!token) return;
+
+    const courseParam = searchParams.get('course_id');
+    const cohortParam = searchParams.get('cohort_id');
+    const cId = courseParam ? Number(courseParam) : null;
+    const cohortId = cohortParam ? Number(cohortParam) : null;
+
+    if (cId && Number.isInteger(cId)) {
+      setSelectedCourseId(cId);
+      if (cohortId && Number.isInteger(cohortId)) {
+        setSelectedCohortId(cohortId);
+        setStep('students');
+      } else {
+        setSelectedCohortId(null);
+        setStep('cohorts');
+      }
+    } else {
+      setSelectedCourseId(null);
+      setSelectedCohortId(null);
+      setStep('courses');
+    }
+  }, [token, searchParams]);
+
+  // Keep course/cohort display data available for direct URL loads, not only
+  // after clicking through the wizard.
+  useEffect(() => {
+    if (selectedCourseId) {
       const course = courses.find(c => c.id === selectedCourseId);
       if (course) setSelectedCourseData(course);
+    }
+  }, [selectedCourseId, courses]);
+
+  // Fetch cohorts for both the cohort picker and direct cohort URLs. The
+  // response also hydrates the selected cohort label/count on direct loads.
+  useEffect(() => {
+    if (selectedCourseId) {
       fetchCohorts(selectedCourseId);
     }
-  }, [selectedCourseId, step, courses]);
+  }, [selectedCourseId]);
+
+  useEffect(() => {
+    if (!selectedCohortId) return;
+    const cohort = cohorts.find(c => c.id === selectedCohortId);
+    if (cohort) setSelectedCohortData(cohort);
+  }, [selectedCohortId, cohorts]);
 
   // Step 3: Fetch students when cohort selected
   useEffect(() => {

@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, or_, false
 from datetime import datetime
 import logging
 import threading
@@ -43,6 +43,40 @@ def instructor_required(f):
     return decorated_function
 
 instructor_bp = Blueprint("instructor_bp", __name__, url_prefix="/api/v1/instructor")
+
+
+def _apply_cohort_filter(query, cohort_id=None, cohort_label=None, course_id=None):
+    """Filter enrollments using the same cohort identity as cohort cards.
+
+    ``application_window_id`` is the canonical relationship.  Some older
+    enrollments only have ``cohort_label`` populated, so include those rows
+    when the selected window has the same label.  When an ID is supplied it
+    takes precedence over a label supplied by the client; otherwise a stale
+    label can turn a valid cohort selection into an empty result set.
+    """
+    if cohort_id is not None:
+        window_query = ApplicationWindow.query.filter_by(id=cohort_id)
+        if course_id is not None:
+            window_query = window_query.filter_by(course_id=course_id)
+        window = window_query.first()
+
+        if not window:
+            return query.filter(false())
+
+        cohort_matches = [Enrollment.application_window_id == window.id]
+        if window.cohort_label:
+            cohort_matches.append(
+                and_(
+                    Enrollment.application_window_id.is_(None),
+                    Enrollment.cohort_label == window.cohort_label,
+                )
+            )
+        return query.filter(or_(*cohort_matches))
+
+    if cohort_label:
+        return query.filter(Enrollment.cohort_label == cohort_label)
+
+    return query
 
 # Helper function for sending announcement emails
 def _send_announcement_emails(announcement, course, cohort_id=None):
@@ -420,10 +454,12 @@ def get_instructor_students():
         enrollment_query = db.session.query(Enrollment).filter(
             Enrollment.course_id.in_(course_ids)
         )
-        if cohort_id:
-            enrollment_query = enrollment_query.filter(Enrollment.application_window_id == cohort_id)
-        if cohort_label:
-            enrollment_query = enrollment_query.filter(Enrollment.cohort_label == cohort_label)
+        enrollment_query = _apply_cohort_filter(
+            enrollment_query,
+            cohort_id=cohort_id,
+            cohort_label=cohort_label,
+            course_id=course_id,
+        )
 
         enrollments = enrollment_query.join(User, Enrollment.student_id == User.id).all()
 
@@ -504,10 +540,12 @@ def get_course_enrollments(course_id):
         enrollment_query = Enrollment.query.filter_by(course_id=course_id).filter(
             Enrollment.status.in_(['active', 'completed'])
         )
-        if cohort_id:
-            enrollment_query = enrollment_query.filter_by(application_window_id=cohort_id)
-        if cohort_label:
-            enrollment_query = enrollment_query.filter_by(cohort_label=cohort_label)
+        enrollment_query = _apply_cohort_filter(
+            enrollment_query,
+            cohort_id=cohort_id,
+            cohort_label=cohort_label,
+            course_id=course_id,
+        )
 
         enrollments = enrollment_query.all()
         
@@ -582,7 +620,10 @@ def get_course_cohorts(course_id):
 
         for w in windows:
             wd = w.to_dict()
-            wd["student_count"] = window_counts.get(w.id, 0)
+            # Include legacy rows that carry this window's label but do not
+            # have the foreign-key relationship populated yet. This is the
+            # same matching rule used by the student drill-down endpoint.
+            wd["student_count"] = window_counts.get(w.id, 0) + legacy_counts.get(w.cohort_label, 0)
             cohorts.append(wd)
             if w.cohort_label:
                 seen_labels.add(w.cohort_label)
