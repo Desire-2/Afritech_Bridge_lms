@@ -103,8 +103,19 @@ app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'sta
 
 # Configure CORS for development and production
 if os.environ.get('FLASK_ENV') == 'production':
-    # In production, only allow specific origins
-    allowed_origins = os.environ.get('ALLOWED_ORIGINS', 'https://yourfrontenddomain.com').split(',')
+    # In production, only allow explicitly configured origins. Keep the live
+    # frontend as a safe fallback so a missing Render env var does not silently
+    # disable CORS for every browser request. Strip whitespace and trailing
+    # slashes because browser Origin values never include a trailing slash.
+    configured_origins = os.environ.get('ALLOWED_ORIGINS')
+    allowed_origins = [
+        origin.strip().rstrip('/')
+        for origin in (configured_origins.split(',') if configured_origins else [])
+        if origin.strip()
+    ]
+    if not allowed_origins:
+        allowed_origins = ['https://study.afritechbridge.online']
+
     CORS(app, 
          resources={r"/*": {
              "origins": allowed_origins,
