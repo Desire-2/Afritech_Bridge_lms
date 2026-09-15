@@ -113,8 +113,9 @@ if os.environ.get('FLASK_ENV') == 'production':
         for origin in (configured_origins.split(',') if configured_origins else [])
         if origin.strip()
     ]
-    if not allowed_origins:
-        allowed_origins = ['https://study.afritechbridge.online']
+    live_frontend_origin = 'https://study.afritechbridge.online'
+    if live_frontend_origin not in allowed_origins:
+        allowed_origins.append(live_frontend_origin)
 
     CORS(app, 
          resources={r"/*": {
