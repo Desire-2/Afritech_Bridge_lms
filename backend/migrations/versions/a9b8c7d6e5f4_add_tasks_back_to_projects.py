@@ -24,8 +24,15 @@ depends_on = None
 
 
 def upgrade():
-    with op.batch_alter_table('projects', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('tasks', sa.Text(), nullable=True))
+    # Older production deployments may already have this column because the
+    # application bootstrap created it before Alembic was run.
+    bind = op.get_bind()
+    project_columns = {
+        column['name'] for column in sa.inspect(bind).get_columns('projects')
+    }
+    if 'tasks' not in project_columns:
+        with op.batch_alter_table('projects', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('tasks', sa.Text(), nullable=True))
 
 
 def downgrade():
