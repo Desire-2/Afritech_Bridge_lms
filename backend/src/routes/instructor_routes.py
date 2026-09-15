@@ -3,6 +3,7 @@
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import func, and_, or_, false
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 import logging
 import threading
@@ -77,6 +78,35 @@ def _apply_cohort_filter(query, cohort_id=None, cohort_label=None, course_id=Non
         return query.filter(Enrollment.cohort_label == cohort_label)
 
     return query
+
+
+def _get_cached_enrollment_scores(enrollment_ids):
+    """Return average cached module scores without recalculating lesson scores.
+
+    Enrollment.calculate_course_score() performs nested queries for every
+    module, lesson completion, quiz, and assignment. That becomes a request
+    timeout for large cohorts. ModuleProgress.cumulative_score is the score
+    already maintained by the grading/progress services, so aggregate it once
+    for the enrollments in this response.
+    """
+    if not enrollment_ids:
+        return {}
+
+    from ..models.student_models import ModuleProgress
+
+    rows = (
+        db.session.query(
+            ModuleProgress.enrollment_id,
+            db.func.avg(ModuleProgress.cumulative_score),
+        )
+        .filter(
+            ModuleProgress.enrollment_id.in_(enrollment_ids),
+            ModuleProgress.cumulative_score.isnot(None),
+        )
+        .group_by(ModuleProgress.enrollment_id)
+        .all()
+    )
+    return {enrollment_id: round(float(score), 1) for enrollment_id, score in rows}
 
 # Helper function for sending announcement emails
 def _send_announcement_emails(announcement, course, cohort_id=None):
@@ -451,7 +481,11 @@ def get_instructor_students():
         course_ids = [c.id for c in courses]
         
         # Get enrollments for these courses
-        enrollment_query = db.session.query(Enrollment).filter(
+        enrollment_query = db.session.query(Enrollment).options(
+            joinedload(Enrollment.student),
+            joinedload(Enrollment.course),
+            joinedload(Enrollment.application_window),
+        ).filter(
             Enrollment.course_id.in_(course_ids)
         )
         enrollment_query = _apply_cohort_filter(
@@ -462,6 +496,7 @@ def get_instructor_students():
         )
 
         enrollments = enrollment_query.join(User, Enrollment.student_id == User.id).all()
+        average_scores = _get_cached_enrollment_scores([enrollment.id for enrollment in enrollments])
 
         students_data = []
         for enrollment in enrollments:
@@ -483,13 +518,11 @@ def get_instructor_students():
                 enrollment.cohort_end_date or (window.cohort_end if window else None)
             )
 
-            # Real progress, last-activity and average score (0-100) so the
-            # instructor view reports the same information as the admin view.
+            # Real progress and cached average score (0-100). Do not call
+            # calculate_course_score() here: it performs nested per-lesson
+            # queries and can time out on large cohorts.
             progress = round((enrollment.progress or 0) * 100, 1)
-            try:
-                average_score = round(enrollment.calculate_course_score(), 1)
-            except Exception:
-                average_score = 0.0
+            average_score = average_scores.get(enrollment.id, 0.0)
 
             student_data = user.to_dict()
             student_data.update({
