@@ -13,7 +13,7 @@ export default function UsersPage() {
   const [perms, setPerms] = useState<any[]>([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
-  const [form, setForm] = useState<any>({ email: '', password: '', is_active: true, is_super_admin: false, roles: [] as string[] });
+  const [form, setForm] = useState<any>({ email: '', password: '', first_name: '', last_name: '', position: '', create_employee: true, is_active: true, is_super_admin: false, roles: [] as string[] });
   const [busy, setBusy] = useState(false);
   const [error2, setError2] = useState('');
   const [deactUser, setDeactUser] = useState<any | null>(null);
@@ -32,7 +32,7 @@ export default function UsersPage() {
   async function openCreate() {
     setEditing(null);
     await loadMeta();
-    setForm({ email: '', password: '', is_active: true, is_super_admin: false, roles: [] as string[] });
+    setForm({ email: '', password: '', first_name: '', last_name: '', position: '', create_employee: true, is_active: true, is_super_admin: false, roles: [] as string[] });
     setError2('');
     setOpen(true);
   }
@@ -57,7 +57,17 @@ export default function UsersPage() {
         if (form.password) body.password = form.password;
         await api(`/api/users/${editing.id}`, { method: 'PUT', body });
       } else {
-        await api('/api/users', { method: 'POST', body: { email: form.email, password: form.password, is_active: form.is_active, is_super_admin: form.is_super_admin, roles: form.roles } });
+        await api('/api/users', { method: 'POST', body: {
+          email: form.email,
+          password: form.password,
+          create_employee: form.create_employee,
+          first_name: form.first_name,
+          last_name: form.last_name,
+          position: form.position,
+          is_active: form.is_active,
+          is_super_admin: form.is_super_admin,
+          roles: form.roles,
+        } });
       }
       setOpen(false);
       reload();
@@ -89,12 +99,13 @@ export default function UsersPage() {
             <div className="table-responsive">
               <table className="table table-hover mb-0">
                 <thead>
-                  <tr><th>Email</th><th>Roles</th><th>Last login</th><th>Status</th><th /></tr>
+                  <tr><th>Email</th><th>Employee</th><th>Roles</th><th>Last login</th><th>Status</th><th /></tr>
                 </thead>
                 <tbody>
                   {items.map((u: any) => (
                     <tr key={u.id}>
                       <td className="fw-semibold">{u.email} {u.is_super_admin && <span className="badge border bg-danger-subtle text-danger border-danger-subtle ms-1">Super admin</span>}</td>
+                      <td>{u.employee_name || <span className="text-muted">—</span>}</td>
                       <td>{(u.role_codes || []).map((r: string) => <Badge key={r} status={r.replace(/_/g, ' ')} />)}</td>
                       <td>{u.last_login_at ? fmtDateTime(u.last_login_at) : '—'}</td>
                       <td><Badge status={u.is_active ? 'active' : 'inactive'} /></td>
@@ -126,6 +137,33 @@ export default function UsersPage() {
           <Field label={editing ? 'New password (leave blank to keep current)' : 'Password'} required={!editing}>
             <TextInput type="password" value={form.password} onChange={(e) => set('password', e.target.value)} required={!editing} minLength={8} />
           </Field>
+          {!editing && (
+            <>
+              <div className="form-check form-switch mb-3">
+                <input className="form-check-input" type="checkbox" id="uCreateEmp" checked={form.create_employee} onChange={(e) => set('create_employee', e.target.checked)} />
+                <label className="form-check-label" htmlFor="uCreateEmp">Create employee profile (shown in Employees directory)</label>
+              </div>
+              {form.create_employee && (
+                <>
+                  <div className="row">
+                    <div className="col-md-6">
+                      <Field label="First name" required>
+                        <TextInput value={form.first_name} onChange={(e) => set('first_name', e.target.value)} required />
+                      </Field>
+                    </div>
+                    <div className="col-md-6">
+                      <Field label="Last name" required>
+                        <TextInput value={form.last_name} onChange={(e) => set('last_name', e.target.value)} required />
+                      </Field>
+                    </div>
+                  </div>
+                  <Field label="Position (optional)">
+                    <TextInput value={form.position} onChange={(e) => set('position', e.target.value)} />
+                  </Field>
+                </>
+              )}
+            </>
+          )}
           <Field label="Roles">
             <div className="border rounded-3 p-2" style={{ maxHeight: 180, overflowY: 'auto' }}>
               {rolesData.map((r) => (

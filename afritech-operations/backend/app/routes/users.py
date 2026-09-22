@@ -4,6 +4,7 @@ from ..extensions import db
 from ..models import User, Role, Permission, user_roles
 from ..auth.auth import require_permission
 from ..services.audit import audit
+from ..services.employee_link import ensure_employee_for_user
 from .helpers import json_error, parse_json, parse_pagination
 
 bp = Blueprint('users', __name__, url_prefix='/api/users')
@@ -46,8 +47,28 @@ def create_user():
         role = Role.query.filter_by(code=code).first()
         if role:
             user.roles.append(role)
+
+    # Create (or link) an employee profile so the user shows up in the
+    # employee directory and employee-scoped features (profile, earnings,
+    # ownership checks) work. Opt out with create_employee: false.
+    if bool(data.get('create_employee', True)):
+        ensure_employee_for_user(
+            user,
+            first_name=data.get('first_name'),
+            last_name=data.get('last_name'),
+            phone=data.get('phone'),
+            position=data.get('position'),
+            branch_id=data.get('branch_id'),
+            department_id=data.get('department_id'),
+            roles=data.get('roles'),
+        )
+
     db.session.commit()
-    audit('user_created', 'user', user.id, new_value={'email': email, 'roles': data.get('roles')})
+    audit('user_created', 'user', user.id, new_value={
+        'email': email,
+        'roles': data.get('roles'),
+        'employee_id': user.employee.id if user.employee else None,
+    })
     return jsonify({'message': 'User created', 'user': user.to_dict()}), 201
 
 
