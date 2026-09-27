@@ -1355,11 +1355,16 @@ def remind_draft_applicant(app_id):
             except Exception as custom_err:
                 logger.warning(f'Failed to send custom follow-up to draft {app_id}: {custom_err}')
 
-        # Update reminder tracking
-        application.last_payment_reminder_sent = now_local()
-        application.payment_reminder_count = (application.payment_reminder_count or 0) + 1
-        db.session.commit()
+        # Update reminder tracking only when the email actually went out,
+        # otherwise a failed send burns the cooldown for a real one.
+        if email_sent:
+            application.last_payment_reminder_sent = now_local()
+            application.payment_reminder_count = (application.payment_reminder_count or 0) + 1
+            db.session.commit()
+        else:
+            db.session.rollback()
     except Exception as e:
+        db.session.rollback()
         logger.error(f'Error sending reminder to draft {app_id}: {e}')
 
     return jsonify({
@@ -1389,12 +1394,21 @@ def bulk_remind_draft_applicants():
         return jsonify({'error': 'Unauthorized'}), 403
 
     data = request.get_json() or {}
-    stale_days = data.get('stale_days', 3)
+    try:
+        stale_days = int(data.get('stale_days', 3))
+        max_recipients = int(data.get('max_recipients', 100))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'stale_days and max_recipients must be integers'}), 400
+    if stale_days < 0 or stale_days > 365:
+        return jsonify({'error': 'stale_days must be between 0 and 365'}), 400
+    if max_recipients < 1 or max_recipients > 500:
+        return jsonify({'error': 'max_recipients must be between 1 and 500'}), 400
+
     course_id = data.get('course_id')
     instructor_id = data.get('instructor_id')
-    max_recipients = data.get('max_recipients', 100)
 
-    cutoff = datetime.utcnow() - timedelta(days=stale_days)
+    # CourseApplication.updated_at is stored in local time
+    cutoff = now_local() - timedelta(days=stale_days)
 
     query = CourseApplication.query.filter(
         CourseApplication.is_draft == True,
@@ -6437,19 +6451,43 @@ def run_payment_reminder_scheduler():
         result = PaymentReminderScheduler.run_scheduler(dry_run=dry_run)
         
         if result.get('status') == 'success':
+            # run_scheduler() reports per-category buckets; flatten them so the
+            # API does not answer with an all-zero summary.
+            category_results = result.get('category_results') or {}
+            sent = sum(r.get('sent', 0) for r in category_results.values())
+            failed = sum(r.get('failed', 0) for r in category_results.values())
+            total_checked = sum(
+                r.get('total', r.get('reminders_needed', 0)) for r in category_results.values()
+            )
+            reminders_needed = sum(
+                r.get('reminders_needed', r.get('total', 0)) for r in category_results.values()
+            )
+            errors = [
+                dict(err, category=category)
+                for category, r in category_results.items()
+                for err in (r.get('errors') or [])
+            ]
+            preview = []
+            if dry_run:
+                for category, r in category_results.items():
+                    for app in r.get('applications', []):
+                        preview.append(dict(app, category=category))
+                    for enr in r.get('enrollments', []):
+                        preview.append(dict(enr, category=category))
+
             return jsonify({
                 "message": "Payment reminder scheduler completed successfully",
                 "dry_run": dry_run,
                 "summary": {
-                    "total_checked": result.get('total_checked', 0),
-                    "reminders_needed": result.get('reminders_needed', 0),
-                    "sent": result.get('sent', 0),
-                    "failed": result.get('failed', 0),
-                    "skipped": result.get('skipped', 0),
+                    "total_checked": total_checked,
+                    "reminders_needed": reminders_needed,
+                    "sent": sent,
+                    "failed": failed,
+                    "skipped": 0,
                     "duration_seconds": result.get('duration_seconds', 0)
                 },
-                "errors": result.get('errors', []),
-                "applications": result.get('applications', []) if dry_run else None
+                "errors": errors[:20],
+                "applications": preview if dry_run else None
             }), 200
         else:
             return jsonify({
@@ -6578,11 +6616,18 @@ def preview_payment_reminders():
         return jsonify({"error": "Admin or instructor access required"}), 403
     
     try:
-        applications_to_remind = PaymentReminderScheduler.get_applications_needing_reminders()
-        
         preview_data = []
-        for application, course, app_window, days_remaining, reminder_type in applications_to_remind:
+
+        def _last_sent(value):
+            return value.isoformat() if value else None
+
+        # Category A: draft applications with pending payment
+        for application, course, app_window, days_remaining, reminder_type in \
+                PaymentReminderScheduler.get_applications_needing_reminders():
+            deadline = app_window.closes_at or app_window.cohort_start
             preview_data.append({
+                "source": "application",
+                "category": "draft",
                 "application_id": application.id,
                 "applicant_name": application.full_name,
                 "email": application.email,
@@ -6590,14 +6635,61 @@ def preview_payment_reminders():
                 "course_title": course.title,
                 "days_remaining": days_remaining,
                 "reminder_type": reminder_type,
-                "deadline": (app_window.closes_at or app_window.cohort_start).isoformat() if (app_window.closes_at or app_window.cohort_start) else None,
-                "amount_due": application.amount_paid or app_window.cohort_price or course.price or 0,
-                "currency": application.payment_currency or app_window.cohort_currency or course.currency or 'USD',
-                "last_reminder_sent": application.last_payment_reminder_sent.isoformat() if application.last_payment_reminder_sent else None,
+                "deadline": deadline.isoformat() if deadline else None,
+                "amount_due": application.amount_paid or app_window.get_effective_price() or course.price or 0,
+                "currency": application.payment_currency or app_window.get_effective_currency() or course.currency or 'USD',
+                "last_reminder_sent": _last_sent(application.last_payment_reminder_sent),
                 "last_reminder_type": application.last_payment_reminder_type,
                 "reminder_count": application.payment_reminder_count or 0
             })
-        
+
+        # Category B: submitted applications awaiting payment approval
+        for application, course, app_window, days_remaining, _ in \
+                PaymentReminderScheduler.get_submitted_unapproved_applications():
+            deadline = app_window.closes_at or app_window.cohort_start
+            preview_data.append({
+                "source": "application",
+                "category": "submitted_unapproved",
+                "application_id": application.id,
+                "applicant_name": application.full_name,
+                "email": application.email,
+                "course_id": course.id,
+                "course_title": course.title,
+                "payment_status": application.payment_status,
+                "days_remaining": days_remaining,
+                "reminder_type": "submitted_unapproved",
+                "deadline": deadline.isoformat() if deadline else None,
+                "amount_due": application.amount_paid or app_window.get_effective_price() or course.price or 0,
+                "currency": application.payment_currency or app_window.get_effective_currency() or course.currency or 'USD',
+                "last_reminder_sent": _last_sent(application.last_payment_reminder_sent),
+                "last_reminder_type": application.last_payment_reminder_type,
+                "reminder_count": application.payment_reminder_count or 0
+            })
+
+        # Category C: enrollments still pending payment
+        for enrollment, course, student, app_window, is_migrated in \
+                PaymentReminderScheduler.get_pending_payment_enrollments():
+            applicant_name = (
+                f"{student.first_name or ''} {student.last_name or ''}".strip()
+                or student.username
+            )
+            preview_data.append({
+                "source": "enrollment",
+                "category": "pending_enrollment",
+                "enrollment_id": enrollment.id,
+                "application_id": enrollment.application_id,
+                "applicant_name": applicant_name,
+                "email": student.email,
+                "course_id": course.id,
+                "course_title": course.title,
+                "is_migrated": is_migrated,
+                "reminder_type": "pending_payment",
+                "amount_due": app_window.get_effective_price() or course.price or 0,
+                "currency": app_window.get_effective_currency() or course.currency or 'USD',
+                "last_reminder_sent": _last_sent(enrollment.last_payment_reminder_sent),
+                "reminder_count": enrollment.payment_reminder_count or 0
+            })
+
         return jsonify({
             "total_count": len(preview_data),
             "applications": preview_data

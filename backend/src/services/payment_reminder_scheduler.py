@@ -1,4 +1,3 @@
-from ..utils.time_utils import now_local
 """
 ⏰ Automated Payment Reminder Scheduler for Afritech Bridge LMS
 Sends scheduled payment reminders to ALL applicants who have not completed payment:
@@ -11,6 +10,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Tuple, Optional
 from sqlalchemy import and_, or_
+
+from ..utils.time_utils import now_local
 
 logger = logging.getLogger(__name__)
 
@@ -48,16 +49,19 @@ class PaymentReminderScheduler:
         from ..models.course_models import Course, ApplicationWindow
 
         try:
-            now = datetime.utcnow()
+            now = now_local()
             applications_to_remind = []
 
             # Query draft applications with payment required
             query = CourseApplication.query.filter(
                 and_(
                     CourseApplication.is_draft == True,
-                    CourseApplication.payment_status.in_([
-                        'pending', 'pending_bank_transfer', None
-                    ]),
+                    or_(
+                        CourseApplication.payment_status.in_([
+                            'pending', 'pending_bank_transfer'
+                        ]),
+                        CourseApplication.payment_status.is_(None),
+                    ),
                     CourseApplication.application_window_id.isnot(None)
                 )
             ).all()
@@ -149,7 +153,7 @@ class PaymentReminderScheduler:
         from ..models.course_models import Course, ApplicationWindow
 
         try:
-            now = datetime.utcnow()
+            now = now_local()
             results = []
 
             # Query submitted applications with unapproved payment
@@ -159,7 +163,8 @@ class PaymentReminderScheduler:
                 and_(
                     CourseApplication.is_draft == False,
                     CourseApplication.payment_status.in_([
-                        'pending', 'pending_bank_transfer', 'submitted', 'submitted_with_proof'
+                        'pending', 'pending_bank_transfer', 'submitted',
+                        'submitted_with_proof', 'pending_verification', 'failed'
                     ]),
                     CourseApplication.application_window_id.isnot(None)
                 )
@@ -251,7 +256,7 @@ class PaymentReminderScheduler:
         from ..models.user_models import User
 
         try:
-            now = datetime.utcnow()
+            now = now_local()
             results = []
 
             # Query enrollments with pending_payment status
@@ -364,7 +369,7 @@ class PaymentReminderScheduler:
                         continue
 
                 if last_reminder_sent:
-                    hours_since_last = (datetime.utcnow() - last_reminder_sent).total_seconds() / 3600
+                    hours_since_last = (now_local() - last_reminder_sent).total_seconds() / 3600
                     if hours_since_last < 24:
                         logger.debug(
                             f"⏭️ Skipping reminder for application #{application.id} "
@@ -431,7 +436,7 @@ class PaymentReminderScheduler:
                     application.last_payment_reminder_sent = now_local()
                     application.last_payment_reminder_type = reminder_type
                     application.payment_reminder_count = (
-                        getattr(application, 'payment_reminder_count', 0) + 1
+                        (getattr(application, 'payment_reminder_count', 0) or 0) + 1
                     )
                     db.session.commit()
                     results['sent'] += 1
@@ -503,7 +508,7 @@ class PaymentReminderScheduler:
                 if email_sent:
                     application.last_payment_reminder_sent = now_local()
                     application.payment_reminder_count = (
-                        getattr(application, 'payment_reminder_count', 0) + 1
+                        (getattr(application, 'payment_reminder_count', 0) or 0) + 1
                     )
                     db.session.commit()
                     results['sent'] += 1
@@ -848,7 +853,7 @@ class PaymentReminderScheduler:
             if app_window:
                 deadline = app_window.closes_at or app_window.cohort_start
                 if deadline:
-                    days_remaining = (deadline - datetime.utcnow()).days
+                    days_remaining = (deadline - now_local()).days
 
                 effective_price = app_window.get_effective_price() or course.price or 0
                 currency = app_window.get_effective_currency() or course.currency or 'USD'
@@ -893,8 +898,10 @@ class PaymentReminderScheduler:
             if email_sent:
                 application.last_payment_reminder_sent = now_local()
                 application.payment_reminder_count = (
-                    getattr(application, 'payment_reminder_count', 0) + 1
+                    (getattr(application, 'payment_reminder_count', 0) or 0) + 1
                 )
+                if application.is_draft and not application.last_payment_reminder_type:
+                    application.last_payment_reminder_type = 'first'
                 db.session.commit()
 
                 return {

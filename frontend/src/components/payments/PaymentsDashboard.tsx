@@ -738,6 +738,9 @@ export default function PaymentsDashboard({ role }: Props) {
   const [enrollmentSummary, setEnrollmentSummary] = useState<EnrollmentPaymentSummary | null>(null);
   const [records, setRecords] = useState<PaymentRecord[]>([]);
   const [totalRecords, setTotalRecords] = useState(0);
+  // Whether either source returned a full page, i.e. another page may exist.
+  // `records` cannot answer this because it is filtered client-side.
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tableLoading, setTableLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -796,17 +799,21 @@ export default function PaymentsDashboard({ role }: Props) {
 
       let merged: PaymentRecord[] = [];
       let total = 0;
+      let appPageCount = 0;
+      let enrollmentPageCount = 0;
 
       if (appRes.ok) {
         const appData = await appRes.json() as { applications?: PaymentRecord[]; items?: PaymentRecord[]; total?: number };
-        let apps = (appData.applications || appData.items || []).filter((a) => a.payment_method);
-        merged = merged.concat(apps);
-        total = appData.total || apps.length;
+        const rawApps = appData.applications || appData.items || [];
+        appPageCount = rawApps.length;
+        merged = merged.concat(rawApps.filter((a) => a.payment_method));
+        total = appData.total || rawApps.length;
       }
 
       if (enrRes.ok) {
         const enrData = await enrRes.json() as { enrollment_payments?: PaymentRecord[]; total?: number };
         const enrollments = enrData.enrollment_payments || [];
+        enrollmentPageCount = enrollments.length;
         merged = merged.concat(enrollments);
         total += enrData.total || enrollments.length;
       }
@@ -820,6 +827,7 @@ export default function PaymentsDashboard({ role }: Props) {
 
       setRecords(merged);
       setTotalRecords(total);
+      setHasMore(appPageCount >= perPage || enrollmentPageCount >= perPage);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load records');
     } finally { setTableLoading(false); }
@@ -1303,14 +1311,18 @@ export default function PaymentsDashboard({ role }: Props) {
           </div>
 
           {/* Pagination */}
-          {totalRecords > perPage && (
+          {hasMore && (
             <div className="p-4 border-t flex items-center justify-between">
-              <p className="text-sm text-gray-500">{totalRecords.toLocaleString()} total records</p>
+              <p className="text-sm text-gray-500">
+                {tab === 'action'
+                  ? `${records.length.toLocaleString()} actionable on this page`
+                  : `${totalRecords.toLocaleString()} total records`}
+              </p>
               <div className="flex gap-2 items-center">
                 <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
                   className="px-3 py-1 border rounded text-sm disabled:opacity-40 hover:bg-[#0a1628]">← Prev</button>
                 <span className="text-sm font-medium px-1">Page {page}</span>
-                <button onClick={() => setPage((p) => p + 1)} disabled={records.length < perPage}
+                <button onClick={() => setPage((p) => p + 1)} disabled={!hasMore}
                   className="px-3 py-1 border rounded text-sm disabled:opacity-40 hover:bg-[#0a1628]">Next →</button>
               </div>
             </div>

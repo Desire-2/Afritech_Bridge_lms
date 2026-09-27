@@ -86,6 +86,10 @@ class BackgroundTaskScheduler:
              self._send_deletion_warnings, "send_deletion_warnings"),
             # Update user activity stats every 6 hours
             (IntervalTrigger(hours=6), None, self._update_activity_stats, "update_activity_stats"),
+            # Send payment reminders (drafts / unapproved / pending-payment
+            # enrollments) daily at 09:30 local time
+            (CronTrigger(hour=9, minute=30), None,
+             self._send_payment_reminders, "send_payment_reminders"),
         ]
 
         for trigger, next_run_time, func, job_id in jobs:
@@ -206,8 +210,10 @@ class BackgroundTaskScheduler:
 
         try:
             with self.app.app_context():
-                # Send warnings to students inactive for 5+ days
-                warnings_sent = InactivityService.send_inactivity_warnings(threshold_days=5)
+                # Send warnings to students at the warning threshold
+                warnings_sent = InactivityService.send_inactivity_warnings(
+                    threshold_days=InactivityService.WARNING_THRESHOLD_DAYS
+                )
 
                 logger.info(f"Sent {warnings_sent} inactivity warnings")
 
@@ -225,6 +231,27 @@ class BackgroundTaskScheduler:
 
         except Exception as e:
             logger.error(f"Failed to send account deactivation warnings: {str(e)}")
+
+    def _send_payment_reminders(self):
+        """Send scheduled payment reminders for unpaid applications/enrollments"""
+        logger.info("Sending payment reminders...")
+
+        try:
+            with self.app.app_context():
+                from ..services.payment_reminder_scheduler import PaymentReminderScheduler
+
+                result = PaymentReminderScheduler.run_scheduler()
+                if result.get('status') != 'success':
+                    logger.error(f"Payment reminder scheduler failed: {result.get('error')}")
+                    return
+
+                category_results = result.get('category_results') or {}
+                sent = sum(r.get('sent', 0) for r in category_results.values())
+                failed = sum(r.get('failed', 0) for r in category_results.values())
+                logger.info(f"Sent {sent} payment reminders ({failed} failed)")
+
+        except Exception as e:
+            logger.error(f"Failed to send payment reminders: {str(e)}")
 
     def _update_activity_stats(self):
         """Update user activity statistics"""
@@ -298,6 +325,7 @@ class BackgroundTaskScheduler:
             'weekly_cleanup': self._weekly_cleanup,
             'send_warnings': self._send_inactivity_warnings,
             'send_deletion_warnings': self._send_deletion_warnings,
+            'send_payment_reminders': self._send_payment_reminders,
             'update_stats': self._update_activity_stats
         }
 
