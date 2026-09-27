@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import InstructorService from '@/services/instructor.service';
 import StudentActivityAnalysis from '@/components/instructor/StudentActivityAnalysis';
 import StudentPerformanceAnalytics from '@/components/instructor/StudentPerformanceAnalytics';
+import SendInactivityWarningsButton from '@/components/common/SendInactivityWarningsButton';
 import { User, Course } from '@/types/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -501,6 +502,14 @@ const StudentsPage = () => {
             <p className="text-slate-600 dark:text-slate-400 mt-1">
               {selectedCourseData?.title || 'Course'} — {filteredStudents.length} student{filteredStudents.length !== 1 ? 's' : ''}
             </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <SendInactivityWarningsButton
+              scope="instructor"
+              courseId={selectedCourseId}
+              applicationWindowId={selectedCohortId}
+              theme="light"
+            />
           </div>
         </div>
       </div>

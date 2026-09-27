@@ -13,6 +13,7 @@ import {
 } from '@/services/admin-student.service';
 import waitlistService from '@/services/api/waitlist.service';
 import { toast } from 'sonner';
+import SendInactivityWarningsButton from '@/components/common/SendInactivityWarningsButton';
 import {
   RefreshCw, Search, Download, GraduationCap, Users, TrendingUp,
   Award, Clock, CheckCircle2, XCircle, AlertTriangle, ChevronLeft,
@@ -1363,6 +1364,12 @@ export default function StudentManagementPage() {
               <Mail className="w-4 h-4" /> Message All
             </button>
           )}
+          <SendInactivityWarningsButton
+            scope="admin"
+            theme="dark"
+            courseId={selectedCourse?.id ?? null}
+            applicationWindowId={selectedCohort?.id ?? null}
+          />
         </div>
       </div>
 

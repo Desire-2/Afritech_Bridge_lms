@@ -927,6 +927,51 @@ export class AdminService {
       throw ApiErrorHandler.handleError(error);
     }
   }
+
+  /**
+   * Manually send inactivity warning emails now (async), instead of waiting
+   * for the scheduled job. Optionally scoped to a course / cohort.
+   */
+  static async sendInactivityWarnings(params?: {
+    threshold_days?: number;
+    course_id?: number | null;
+    application_window_id?: number | null;
+  }): Promise<{
+    success: boolean;
+    task_id: string;
+    status: string;
+    message: string;
+    poll_url: string;
+  }> {
+    try {
+      const response = await apiClient.post(`${this.BASE_PATH}/system/send-warnings`, {
+        threshold_days: params?.threshold_days ?? 5,
+        course_id: params?.course_id ?? undefined,
+        application_window_id: params?.application_window_id ?? undefined,
+      });
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
+
+  /** Poll the manual send-warnings background task. */
+  static async getSendWarningsStatus(taskId: string): Promise<{
+    success: boolean;
+    status: string;
+    warnings_sent?: number;
+    total_at_risk?: number;
+    message?: string;
+    error?: string;
+    progress?: number;
+  }> {
+    try {
+      const response = await apiClient.get(`${this.BASE_PATH}/system/send-warnings/status/${taskId}`);
+      return response.data;
+    } catch (error) {
+      throw ApiErrorHandler.handleError(error);
+    }
+  }
 }
 
 // Types for inactive user management

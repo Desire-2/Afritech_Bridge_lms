@@ -17,6 +17,7 @@ import csv
 import json
 import re
 from io import StringIO
+from ..services.background_service import background_service
 
 logger = logging.getLogger(__name__)
 
@@ -1921,6 +1922,149 @@ def run_background_task():
         return jsonify({
             "success": False,
             "message": "Failed to run background task",
+            "error": str(e)
+        }), 500
+
+
+# ═══════════════════════════════════════════════════════════════
+# Manual inactivity warnings
+# ═══════════════════════════════════════════════════════════════
+
+def _send_warnings_task(threshold_days: int,
+                        course_id=None,
+                        application_window_id=None):
+    """Background task: email students who haven't studied recently.
+
+    Runs platform-wide unless scoped to a course / cohort.
+    Returns the same shape as the instructor warning task so the status
+    endpoint (and the frontend poller) can stay identical.
+    """
+    import logging
+    from ..services.inactivity_service import InactivityService
+
+    task_logger = logging.getLogger(__name__)
+
+    at_risk_students = InactivityService.get_inactive_students(
+        threshold_days=threshold_days,
+        course_id=course_id,
+        application_window_id=application_window_id,
+    )
+
+    warnings_sent = 0
+    total_students = len(at_risk_students)
+    task_logger.info(
+        f"Admin warning task: {total_students} at-risk students "
+        f"(threshold={threshold_days}d, course={course_id}, cohort={application_window_id})"
+    )
+
+    for i, student_data in enumerate(at_risk_students):
+        try:
+            student = User.query.get(student_data['student_id'])
+            if student and InactivityService._send_inactivity_warning(student, student_data):
+                warnings_sent += 1
+                task_logger.info(f"Sent warning {warnings_sent}/{total_students} to {student.email}")
+        except Exception as e:
+            task_logger.error(f"Failed to send warning to student {student_data['student_id']}: {e}")
+
+        # Small delay between emails so a batch can't stall the worker
+        if i < total_students - 1:
+            InactivityService._throttle_between_emails()
+
+    return {
+        "warnings_sent": warnings_sent,
+        "total_at_risk": total_students,
+        "threshold_days": threshold_days,
+    }
+
+
+@admin_bp.route("/system/send-warnings", methods=["POST"])
+@admin_required
+def send_warnings_manually():
+    """Send inactivity warning emails now (async) instead of waiting for the cron job."""
+    try:
+        data = request.get_json() or {}
+        try:
+            threshold_days = int(data.get('threshold_days', 5))
+        except (TypeError, ValueError):
+            threshold_days = 5
+        if threshold_days < 1 or threshold_days > 365:
+            return jsonify({
+                "success": False,
+                "message": "threshold_days must be between 1 and 365"
+            }), 400
+
+        course_id = data.get('course_id')
+        application_window_id = data.get('application_window_id')
+
+        logger.info(
+            f"Manual warning task requested by {get_jwt_identity()}, "
+            f"threshold={threshold_days}d, course={course_id}, cohort={application_window_id}"
+        )
+
+        task_id = background_service.create_task(
+            _send_warnings_task,
+            threshold_days,
+            course_id,
+            application_window_id,
+        )
+
+        return jsonify({
+            "success": True,
+            "task_id": task_id,
+            "status": "started",
+            "message": "Warning emails are being sent in background",
+            "poll_url": f"/api/v1/admin/system/send-warnings/status/{task_id}"
+        }), 202
+
+    except Exception as e:
+        logger.error(f"Error starting manual warning task: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to start warning process",
+            "error": str(e)
+        }), 500
+
+
+@admin_bp.route("/system/send-warnings/status/<task_id>", methods=["GET"])
+@admin_required
+def get_send_warnings_status(task_id):
+    """Poll the manual inactivity-warning task."""
+    try:
+        task_status = background_service.get_task_status(task_id)
+        if not task_status:
+            return jsonify({
+                "success": False,
+                "message": "Task not found",
+                "task_id": task_id
+            }), 404
+
+        if task_status['status'] == 'completed':
+            result = task_status.get('result') or {}
+            return jsonify({
+                "success": True,
+                "status": "completed",
+                "warnings_sent": result.get('warnings_sent', 0),
+                "total_at_risk": result.get('total_at_risk', 0),
+                "message": f"Sent {result.get('warnings_sent', 0)} warning emails"
+            }), 200
+        elif task_status['status'] == 'failed':
+            return jsonify({
+                "success": False,
+                "status": "failed",
+                "error": task_status.get('error')
+            }), 500
+        else:
+            return jsonify({
+                "success": True,
+                "status": task_status['status'],
+                "progress": task_status.get('progress', 0)
+            }), 200
+
+    except Exception as e:
+        logger.error(f"Error checking warning task status: {str(e)}")
+        return jsonify({
+            "success": False,
+            "message": "Failed to check task status",
             "error": str(e)
         }), 500
 

@@ -524,3 +524,39 @@ def test_login_blocked_for_deactivated_accounts(app, db_session, roles):
     assert blocked.status_code == 403
     assert blocked.get_json()['error_type'] == 'account_deactivated'
 
+
+# ── Manual "Send Inactivity Warnings" button ────────────────────────────────
+
+def test_admin_manual_warning_routes_are_registered(app):
+    """The button on the admin students page needs these two routes."""
+    from src.routes.admin_routes import admin_bp
+
+    app.register_blueprint(admin_bp)
+    rules = {str(rule) for rule in app.url_map.iter_rules()}
+
+    assert '/api/v1/admin/system/send-warnings' in rules
+    assert '/api/v1/admin/system/send-warnings/status/<task_id>' in rules
+
+
+def test_admin_warning_task_only_notifies_scoped_inactive_students(
+        db_session, roles, scenario, monkeypatch):
+    from src.routes.admin_routes import _send_warnings_task
+    from src.services.inactivity_service import InactivityService
+
+    sent = []
+
+    def record_send(student, student_data):
+        sent.append(student.username)
+        return True
+
+    monkeypatch.setattr(InactivityService, '_send_inactivity_warning', record_send)
+    monkeypatch.setattr(InactivityService, '_throttle_between_emails', lambda *a, **k: None)
+
+    # Scoped to Cohort A: the stale student (20 days quiet) is inactive, the
+    # one who read a lesson 5 days ago is not.
+    result = _send_warnings_task(7, scenario['course'].id, scenario['window_a'].id)
+
+    assert result['threshold_days'] == 7
+    assert result['total_at_risk'] == 1
+    assert result['warnings_sent'] == 1
+    assert sent == ['stale_student']
