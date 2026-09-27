@@ -269,6 +269,7 @@ class ProgressionService:
                 lesson_id=lesson_id,
                 time_spent=time_spent,
                 completed=True,  # Mark as completed
+                completed_at=now_local(),
                 reading_progress=100.0,  # Default to 100% if completing manually
                 engagement_score=100.0  # Default to 100% for completed lessons
             )

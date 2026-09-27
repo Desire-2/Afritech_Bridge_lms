@@ -223,10 +223,10 @@ def list_students():
                 scores = [mp.cumulative_score or 0 for mp in module_progresses if mp.cumulative_score is not None]
                 avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
 
-            # Days since last activity
+            # Days since last activity (timestamps are stored in local time)
             days_inactive = None
             if student.last_activity:
-                days_inactive = (datetime.utcnow() - student.last_activity).days
+                days_inactive = max((now_local() - student.last_activity).days, 0)
 
             # Resolve phone: prefer User.phone_number, fall back to CourseApplication.phone
             phone_number = getattr(student, 'phone_number', None)
@@ -308,7 +308,7 @@ def list_students():
         total_students = User.query.filter(User.role_id == student_role.id).count()
         active_students = User.query.filter(User.role_id == student_role.id, User.is_active == True).count()
         
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        seven_days_ago = now_local() - timedelta(days=7)
         recently_active = User.query.filter(
             User.role_id == student_role.id,
             User.last_activity >= seven_days_ago
@@ -327,7 +327,10 @@ def list_students():
             "summary": {
                 "total_students": total_students,
                 "active_students": active_students,
-                "inactive_students": total_students - active_students,
+                # Accounts flagged inactive/deactivated by an admin
+                "deactivated_students": total_students - active_students,
+                # Students with no recorded activity in the last 7 days
+                "inactive_students": total_students - recently_active,
                 "recently_active_7d": recently_active,
             }
         }), 200
@@ -1048,8 +1051,8 @@ def student_stats():
         total = User.query.filter(User.role_id == student_role.id).count()
         active = User.query.filter(User.role_id == student_role.id, User.is_active == True).count()
 
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-        thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+        seven_days_ago = now_local() - timedelta(days=7)
+        thirty_days_ago = now_local() - timedelta(days=30)
 
         new_7d = User.query.filter(
             User.role_id == student_role.id,
@@ -1075,7 +1078,10 @@ def student_stats():
         return jsonify({
             "total_students": total,
             "active_students": active,
-            "inactive_students": total - active,
+            # Accounts deactivated by an admin (is_active == False)
+            "deactivated_students": total - active,
+            # Students with no activity recorded in the last 7 days
+            "inactive_students": total - active_7d,
             "new_students_7d": new_7d,
             "new_students_30d": new_30d,
             "active_last_7d": active_7d,

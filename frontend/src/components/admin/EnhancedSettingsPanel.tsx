@@ -306,6 +306,16 @@ const EnhancedSettingsPanel: React.FC = () => {
       }
     };
 
+    // Publish the idle-logout timeout to localStorage so the auth context can
+    // enforce "Automatic logout after inactivity" (no public settings endpoint
+    // exists for non-admin sessions to read this from).
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        'session_timeout_minutes',
+        String(transformed.user.session_timeout)
+      );
+    }
+
     return transformed;
   };
 

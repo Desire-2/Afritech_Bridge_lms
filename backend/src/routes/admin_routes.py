@@ -1522,7 +1522,10 @@ def get_inactive_users():
         
         # Get inactive users
         inactive_users = InactivityService.get_inactive_users(threshold_days=threshold_days)
-        
+
+        # Admin accounts are never auto-deleted, so they are never candidates
+        inactive_users = [u for u in inactive_users if u['role'] != 'admin']
+
         # Filter by role if specified
         if role_filter:
             inactive_users = [u for u in inactive_users if u['role'] == role_filter]
@@ -1657,6 +1660,12 @@ def auto_delete_user(user_id):
         from ..services.inactivity_service import InactivityService
         
         # Auto-delete user
+        if user_id == current_user_id:
+            return jsonify({
+                "success": False,
+                "message": "You cannot delete your own account"
+            }), 400
+        
         result = InactivityService.auto_delete_inactive_user(
             user_id=user_id,
             admin_id=current_user_id
@@ -1696,6 +1705,14 @@ def bulk_auto_delete_users():
             return jsonify({
                 "success": False,
                 "message": "No user IDs provided"
+            }), 400
+
+        # Safety: never let a bulk delete remove the requesting admin
+        user_ids = [uid for uid in user_ids if uid != current_user_id]
+        if not user_ids:
+            return jsonify({
+                "success": False,
+                "message": "No valid user IDs to delete"
             }), 400
         
         from ..services.inactivity_service import InactivityService
@@ -1745,9 +1762,12 @@ def run_system_cleanup():
         current_user_id = int(get_jwt_identity())
         
         data = request.get_json() or {}
-        dry_run = data.get('dry_run', False)  # If true, only simulate cleanup
-        user_threshold_days = data.get('user_threshold_days', 14)
+        # Safe by default: simulate unless the caller explicitly opts in with
+        # dry_run=false (a bare POST must never mass-delete accounts).
+        dry_run = bool(data.get('dry_run', True))
+        user_threshold_days = data.get('user_threshold_days', 30)
         student_threshold_days = data.get('student_threshold_days', 7)
+        max_deletions = int(data.get('max_deletions', 50))
         
         from ..services.inactivity_service import InactivityService
         
@@ -1789,8 +1809,12 @@ def run_system_cleanup():
                 "errors": []
             }
             
-            # Delete inactive users
-            for user in inactive_users:
+            # Delete inactive users (capped so one request can't wipe the DB)
+            to_delete = inactive_users[:max_deletions]
+            cleanup_summary["deletion_cap"] = max_deletions
+            cleanup_summary["skipped_by_cap"] = max(len(inactive_users) - len(to_delete), 0)
+
+            for user in to_delete:
                 result = InactivityService.auto_delete_inactive_user(
                     user_id=user['user_id'],
                     admin_id=current_user_id
@@ -1829,6 +1853,7 @@ def run_system_cleanup():
 def get_background_task_status():
     """Get status of background tasks and scheduler"""
     try:
+        from flask import current_app
         from ..services.scheduler_service import get_scheduler
         
         scheduler = get_scheduler()
@@ -1840,14 +1865,17 @@ def get_background_task_status():
                 "daily_cleanup",
                 "weekly_cleanup", 
                 "send_warnings",
+                "send_deletion_warnings",
                 "update_stats"
             ],
             "schedule_info": {
                 "daily_cleanup": "Daily at 2:00 AM",
                 "weekly_cleanup": "Sundays at 3:00 AM",
                 "send_warnings": "Every 3 days at 10:00 AM",
+                "send_deletion_warnings": "Mondays at 9:00 AM",
                 "update_stats": "Every 6 hours"
-            }
+            },
+            "auto_delete_enabled": bool(current_app.config.get('AUTO_DELETE_INACTIVE_USERS', False))
         }), 200
         
     except Exception as e:

@@ -6,6 +6,8 @@ Handles tracking and managing inactive students and users
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import logging
+import os
+import time
 
 from ..utils.time_utils import now_local
 from ..models.user_models import db, User, Role
@@ -21,8 +23,31 @@ class InactivityService:
     
     # Default thresholds
     STUDENT_INACTIVITY_THRESHOLD = 7  # days
-    USER_DELETION_THRESHOLD = 14      # days
+    USER_DELETION_THRESHOLD = 14      # days: first account-deactivation warning
+    AUTO_DELETE_THRESHOLD_DAYS = 30   # days: weekly job auto-deletes at this point
     WARNING_BEFORE_TERMINATION = 2    # days before termination to send warning
+
+    # Seconds to wait between inactivity emails so a batch can't stall a
+    # worker thread (override with INACTIVITY_EMAIL_DELAY_SECONDS).
+    EMAIL_THROTTLE_SECONDS = float(os.getenv('INACTIVITY_EMAIL_DELAY_SECONDS', '1'))
+
+    @staticmethod
+    def _throttle_between_emails(seconds: Optional[float] = None):
+        """Short pause between inactivity emails to avoid rate-limit bursts."""
+        delay = InactivityService.EMAIL_THROTTLE_SECONDS if seconds is None else seconds
+        if delay > 0:
+            time.sleep(delay)
+
+    @staticmethod
+    def _should_send(user, category: str = 'system') -> bool:
+        """Respect the user's email notification preferences (master + category)."""
+        try:
+            from ..utils.email_notifications import _should_send_email
+            return _should_send_email(user, category)
+        except Exception as e:
+            # Never block a notification on a preference lookup failure.
+            logger.warning(f"Could not check email preferences for user {getattr(user, 'id', '?')}: {e}")
+            return True
     
     @staticmethod
     def get_inactive_students(instructor_id: Optional[int] = None,
@@ -72,8 +97,14 @@ class InactivityService:
         for student_id, student in students_by_id.items():
             last_study_activity = InactivityService._get_last_study_activity(student_id)
 
+            # Reference timestamp: real study activity when it exists, otherwise
+            # general platform activity. Without this fallback a student who
+            # never studied but logged in today would be reported as
+            # "inactive for 0 days".
+            reference_activity = last_study_activity or student.last_activity
+
             # Check if student is inactive
-            if last_study_activity and last_study_activity >= cutoff_date:
+            if reference_activity and reference_activity >= cutoff_date:
                 continue
 
             # Only include if the student has scoped (active) enrollments
@@ -82,7 +113,7 @@ class InactivityService:
                 continue
 
             days_inactive = InactivityService._compute_days_inactive(
-                student, last_study_activity
+                student, reference_activity
             )
 
             inactive_students.append({
@@ -115,11 +146,13 @@ class InactivityService:
         return inactive_students
 
     @staticmethod
-    def _compute_days_inactive(student: User, last_study_activity: Optional[datetime]) -> int:
+    def _compute_days_inactive(student: User,
+                               reference_activity: Optional[datetime] = None) -> int:
         """Best-effort number of days since the student last engaged with the platform."""
+        if reference_activity:
+            return max((now_local() - reference_activity).days, 0)
+
         candidates = []
-        if last_study_activity:
-            candidates.append(last_study_activity)
         if student.last_activity:
             candidates.append(student.last_activity)
         if student.last_login:
@@ -315,13 +348,8 @@ class InactivityService:
             except Exception as e:
                 logger.warning(f"Failed to send deletion notification: {str(e)}")
             
-            # Delete user and related data using existing admin logic
-            from ..routes.admin_routes import delete_user_admin
-            
-            # Note: This is a simplified approach. In production, you might want to
-            # implement a more sophisticated cascade deletion here.
-            
             # Soft delete approach - mark as deleted instead of hard delete
+            # (keeps progress/certificates recoverable by an admin)
             user.is_active = False
             user.deleted_at = now_local()
             user.deleted_by = admin_id
@@ -360,8 +388,6 @@ class InactivityService:
         Returns:
             Number of warnings sent
         """
-        import time
-        
         warning_students = InactivityService.get_inactive_students(
             threshold_days=threshold_days,
             instructor_id=instructor_id,
@@ -374,14 +400,14 @@ class InactivityService:
         for i, student_data in enumerate(warning_students):
             try:
                 student = User.query.get(student_data['student_id'])
-                InactivityService._send_inactivity_warning(student, student_data)
-                warnings_sent += 1
+                if not student:
+                    continue
+                if InactivityService._send_inactivity_warning(student, student_data):
+                    warnings_sent += 1
                 
-                # Add 30-second delay between emails to avoid server overload
-                # Skip delay for the last email
+                # Small delay between emails so a batch can't stall the worker
                 if i < total_students - 1:
-                    logger.info(f"Sent warning {warnings_sent}/{total_students}. Waiting 30 seconds before next email...")
-                    time.sleep(30)
+                    InactivityService._throttle_between_emails()
                     
             except Exception as e:
                 logger.error(f"Failed to send warning to student {student_data['student_id']}: {str(e)}")
@@ -391,12 +417,12 @@ class InactivityService:
 
     @staticmethod
     def send_deletion_warnings(min_days: int = USER_DELETION_THRESHOLD,
-                              max_days: int = 28) -> int:
+                              max_days: int = AUTO_DELETE_THRESHOLD_DAYS - 1) -> int:
         """
         Send advance warnings to users approaching account deactivation.
-        Users with `min_days` <= days_inactive <= `max_days` are notified once
-        (the window is one week wide) so they can log in before the deletion
-        threshold in the weekly cleanup job is reached.
+        Users with `min_days` <= days_inactive <= `max_days` are warned while
+        they can still log in to reactivate, i.e. before the weekly cleanup
+        job auto-deletes accounts at AUTO_DELETE_THRESHOLD_DAYS (30) days.
 
         Returns:
             Number of warnings sent
@@ -409,13 +435,22 @@ class InactivityService:
             if days_inactive is None or days_inactive >= max_days:
                 continue
 
+            # Admins are never auto-deleted (weekly cleanup filters them out),
+            # so never warn them that their account is about to be removed.
+            if user_data.get('role') == 'admin':
+                continue
+
             try:
                 user = User.query.get(user_data['user_id'])
                 if not user:
                     continue
-                days_remaining = max(30 - days_inactive, 1)
-                InactivityService._send_deletion_warning(user, days_inactive, days_remaining)
-                warnings_sent += 1
+                if not InactivityService._should_send(user, 'system'):
+                    continue
+                days_remaining = max(
+                    InactivityService.AUTO_DELETE_THRESHOLD_DAYS - days_inactive, 1
+                )
+                if InactivityService._send_deletion_warning(user, days_inactive, days_remaining):
+                    warnings_sent += 1
                 logger.info(
                     f"Sent account deactivation warning to {user.email} "
                     f"(inactive {days_inactive} days)"
@@ -429,8 +464,13 @@ class InactivityService:
         return warnings_sent
 
     @staticmethod
-    def _send_deletion_warning(user: User, days_inactive: int, days_remaining: int):
-        """Send an advance notice that the account will be deactivated unless active."""
+    def _send_deletion_warning(user: User, days_inactive: int, days_remaining: int) -> bool:
+        """Send an advance notice that the account will be deactivated unless active.
+
+        Returns True if the email was actually sent.
+        """
+        if not InactivityService._should_send(user, 'system'):
+            return False
         from ..utils.email_templates import get_email_header, get_email_footer
         unsub_token = user.get_or_create_unsubscribe_token()
         try:
@@ -487,6 +527,7 @@ class InactivityService:
             subject=subject,
             html_content=html_body
         )
+        return True
 
     @staticmethod
     def _get_last_study_activity(student_id: int) -> Optional[datetime]:
@@ -498,10 +539,13 @@ class InactivityService:
         """
         from sqlalchemy import func as sqlfunc
 
-        # Lesson completion record: any touch (completed, opened, saved,
-        # video watched, assignment submitted) counts as study activity.
-        last_completed = db.session.query(sqlfunc.max(LessonCompletion.completed_at)).filter_by(
-            student_id=student_id
+        # Lesson completion record. Only count completed_at for rows that are
+        # actually completed: completed_at has a column default of now(), so a
+        # row created by merely opening a lesson carries a bogus "completed"
+        # timestamp that would mask real inactivity.
+        last_completed = db.session.query(sqlfunc.max(LessonCompletion.completed_at)).filter(
+            LessonCompletion.student_id == student_id,
+            LessonCompletion.completed == True
         ).scalar()
         last_accessed = db.session.query(sqlfunc.max(LessonCompletion.last_accessed)).filter_by(
             student_id=student_id
@@ -552,8 +596,10 @@ class InactivityService:
         return max(datetimes) if datetimes else None
     
     @staticmethod
-    def _send_termination_notification(student: User, terminated_courses: List[Dict], reason: str):
-        """Send email notification to terminated student"""
+    def _send_termination_notification(student: User, terminated_courses: List[Dict], reason: str) -> bool:
+        """Send email notification to terminated student. Returns True if sent."""
+        if not InactivityService._should_send(student, 'system'):
+            return False
         from ..utils.email_templates import get_email_header, get_email_footer
         unsub_token = student.get_or_create_unsubscribe_token()
         try:
@@ -648,10 +694,13 @@ class InactivityService:
             subject=subject,
             html_content=html_body
         )
+        return True
     
     @staticmethod
-    def _send_deletion_notification(user: User):
-        """Send email notification before user deletion"""
+    def _send_deletion_notification(user: User) -> bool:
+        """Send email notification before user deletion. Returns True if sent."""
+        if not InactivityService._should_send(user, 'system'):
+            return False
         from ..utils.email_templates import get_email_header, get_email_footer
         unsub_token = user.get_or_create_unsubscribe_token()
         try:
@@ -751,10 +800,13 @@ class InactivityService:
             subject=subject,
             html_content=html_body
         )
+        return True
     
     @staticmethod
-    def _send_inactivity_warning(student: User, student_data: Dict):
-        """Send inactivity warning to student"""
+    def _send_inactivity_warning(student: User, student_data: Dict) -> bool:
+        """Send inactivity warning to student. Returns True if sent."""
+        if not InactivityService._should_send(student, 'system'):
+            return False
         from ..utils.email_templates import get_email_header, get_email_footer
         unsub_token = student.get_or_create_unsubscribe_token()
         try:
@@ -873,3 +925,4 @@ class InactivityService:
             subject=subject,
             html_content=html_body
         )
+        return True

@@ -1306,17 +1306,21 @@ def _send_warnings_task(instructor_id: int, threshold_days: int,
             try:
                 student = User.query.get(student_data['student_id'])
                 if student:
-                    InactivityService._send_inactivity_warning(student, student_data)
-                    warnings_sent += 1
-                    logger.info(f"Sent warning {warnings_sent}/{total_students} to {student.email}")
+                    if InactivityService._send_inactivity_warning(student, student_data):
+                        warnings_sent += 1
+                        logger.info(f"Sent warning {warnings_sent}/{total_students} to {student.email}")
+                    else:
+                        logger.info(
+                            f"Skipped warning for {student.email} (already notified "
+                            f"or email preferences opted out)"
+                        )
                 else:
                     logger.warning(f"Student with ID {student_data['student_id']} not found")
                 
-                # Add 30-second delay between emails to avoid server overload
-                # Skip delay for the last email
+                # Small delay between emails so the batch can't stall the worker
+                # (throttle is configurable via INACTIVITY_EMAIL_DELAY_SECONDS)
                 if i < total_students - 1:
-                    logger.info(f"Sent warning {warnings_sent}/{total_students}. Waiting 30 seconds before next email...")
-                    time.sleep(30)
+                    InactivityService._throttle_between_emails()
                     
             except Exception as e:
                 logger.error(f"Failed to send warning to student {student_data['student_id']}: {str(e)}")
@@ -1525,32 +1529,42 @@ def get_send_warnings_status(task_id):
 def debug_tasks():
     """Debug endpoint to list all active background tasks"""
     try:
-        # Get all tasks from background service for debugging
-        with background_service._lock:
-            all_tasks = {}
-            for task_id, task_info in background_service._tasks.items():
-                all_tasks[task_id] = {
-                    "id": task_id,
-                    "status": task_info["status"],
-                    "created_at": task_info["created_at"].isoformat() if task_info["created_at"] else None,
-                    "started_at": task_info["started_at"].isoformat() if task_info["started_at"] else None,
-                    "completed_at": task_info["completed_at"].isoformat() if task_info["completed_at"] else None,
-                    "progress": task_info.get("progress", 0)
-                }
-        
+        # Tasks are persisted in the BackgroundTask table (multi-worker safe)
+        from ..models.task_models import BackgroundTask
+
+        tasks = BackgroundTask.query.order_by(
+            BackgroundTask.created_at.desc()
+        ).limit(50).all()
+
+        all_tasks = {
+            task.id: {
+                "id": task.id,
+                "task_name": task.task_name,
+                "status": task.status.value,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                "progress": task.progress
+            }
+            for task in tasks
+        }
+
         return jsonify({
             "success": True,
             "total_tasks": len(all_tasks),
             "tasks": all_tasks
         }), 200
-        
+
     except Exception as e:
         logger.error(f"Error getting debug tasks: {str(e)}")
         return jsonify({
             "success": False,
             "message": "Failed to get debug tasks",
             "error": str(e)
-        }), 500@instructor_bp.route("/debug/test-task", methods=["POST"])
+        }), 500
+
+
+@instructor_bp.route("/debug/test-task", methods=["POST"])
 @instructor_required
 def test_background_task():
     """Test endpoint to verify background task system is working"""

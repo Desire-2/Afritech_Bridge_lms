@@ -37,9 +37,11 @@ export class ApiErrorHandler {
           };
         case 403:
           return {
-            message: 'Forbidden. You do not have permission to perform this action.',
+            // Prefer the server's message (e.g. "This account has been
+            // deactivated") over a generic permission-denied string.
+            message: message || 'Forbidden. You do not have permission to perform this action.',
             status,
-            error_type: 'authorization_error',
+            error_type: errorType || 'authorization_error',
             details,
           };
         case 404:

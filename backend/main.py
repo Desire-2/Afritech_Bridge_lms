@@ -87,6 +87,7 @@ from src.services.background_service import background_service # Import backgrou
 from src.services.cohort_migration_scheduler import start_cohort_migration_scheduler # Import cohort migration scheduler
 from src.services.cohort_start_notification_scheduler import start_cohort_start_notification_scheduler  # Cohort start email notifications
 from src.services.booking_reminder_scheduler import start_booking_reminder_scheduler  # Booking reminder scheduler
+from src.services.scheduler_service import init_scheduler  # Inactivity warnings / cleanup scheduler
 from flask_migrate import Migrate
 from flask_cors import CORS
 
@@ -302,6 +303,19 @@ app.config['ENABLE_SCHEDULERS'] = os.getenv(
     'true' if env == 'production' else 'false'
 ).lower() in ('true', '1', 'yes')
 
+# Background scheduler that runs the inactivity / cleanup / warning jobs
+# (see src/services/scheduler_service.py). Defaults to ENABLE_SCHEDULERS.
+app.config['START_BACKGROUND_SCHEDULER'] = os.getenv(
+    'START_BACKGROUND_SCHEDULER',
+    'true' if app.config['ENABLE_SCHEDULERS'] else 'false'
+).lower() in ('true', '1', 'yes')
+
+# Allows the weekly job to auto-delete accounts inactive for 30+ days.
+# Off by default: destructive and not reversible.
+app.config['AUTO_DELETE_INACTIVE_USERS'] = os.getenv(
+    'AUTO_DELETE_INACTIVE_USERS', 'false'
+).lower() in ('true', '1', 'yes')
+
 # Check email service configuration
 if app.config.get('BREVO_API_KEY'):
     logger.info("🚀 Brevo API key found - enhanced email service will be used")
@@ -509,6 +523,11 @@ if not RUNNING_FLASK_DB_CLI:
 # Start booking reminder scheduler (24h + 1h reminders for confirmed sessions)
 if not RUNNING_FLASK_DB_CLI:
     start_booking_reminder_scheduler(app)
+
+# Start the background scheduler (inactivity warnings / cleanup / activity
+# stats). Guarded so `flask db ...` CLI runs never spawn worker threads.
+if not RUNNING_FLASK_DB_CLI:
+    init_scheduler(app)
 
 # Request lifecycle hooks for connection management
 @app.teardown_appcontext

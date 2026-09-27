@@ -185,7 +185,7 @@ class BackgroundTaskService:
             with app.app_context():
                 from ..models.user_models import db
                 
-                cutoff_time = datetime.utcnow() - timedelta(hours=6)
+                cutoff_time = now_local() - timedelta(hours=6)
                 
                 deleted_count = BackgroundTask.query.filter(
                     BackgroundTask.status.in_([TaskStatus.COMPLETED, TaskStatus.FAILED]),

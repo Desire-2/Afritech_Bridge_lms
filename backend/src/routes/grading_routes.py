@@ -810,7 +810,7 @@ def bulk_grade_assignments():
                                 time_spent=300,
                                 completed_at=now_local(),
                                 updated_at=now_local(),
-                                last_accessed=datetime.utcnow()
+                                last_accessed=now_local()
                             )
                             db.session.add(lesson_completion)
                             logger.info(f"Created LessonCompletion for lesson {lesson_id}, student {submission.student_id} (bulk grading)")

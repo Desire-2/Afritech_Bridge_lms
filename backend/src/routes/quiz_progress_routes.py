@@ -513,9 +513,14 @@ def mark_lesson_complete(lesson_id):
     lesson = Lesson.query.get_or_404(lesson_id)
     course_id = lesson.module.course_id # Assuming Lesson -> Module -> Course relationship
 
-    existing_completion = LessonCompletion.query.filter_by(user_id=user_id, lesson_id=lesson_id).first()
+    existing_completion = LessonCompletion.query.filter_by(student_id=user_id, lesson_id=lesson_id).first()
     if not existing_completion:
-        completion = LessonCompletion(user_id=user_id, lesson_id=lesson_id)
+        completion = LessonCompletion(
+            student_id=user_id,
+            lesson_id=lesson_id,
+            completed=True,
+            completed_at=now_local(),
+        )
         db.session.add(completion)
         db.session.commit()
         update_course_progress(user_id, course_id)

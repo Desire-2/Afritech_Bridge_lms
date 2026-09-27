@@ -366,3 +366,161 @@ def test_get_inactive_users_only_returns_inactive_users(db_session, roles, scena
     user_ids = {u['user_id'] for u in inactive}
     assert scenario['stale'].id in user_ids
     assert scenario['active'].id not in user_ids
+
+def test_recent_login_without_study_activity_is_not_flagged(db_session, roles):
+    """A student who never studied but logged in today must not be 'inactive 0 days'."""
+    from src.utils.time_utils import now_local
+    from src.models.user_models import User, Role
+    from src.models.course_models import Course, Enrollment
+    from src.services.inactivity_service import InactivityService
+
+    instructor = User(
+        username='instructor_no_study',
+        email='instructor_no_study@test.com',
+        password_hash='hashed',
+        first_name='Test',
+        last_name='Instructor',
+        role_id=roles['instructor'].id,
+        timezone='UTC',
+    )
+    db_session.add(instructor)
+    db_session.commit()
+
+    course = Course(title='No Study Course', description='test', instructor_id=instructor.id)
+    db_session.add(course)
+    db_session.commit()
+
+    # Never studied, but signed in 1 hour ago.
+    fresh_login = User(
+        username='fresh_login_student',
+        email='fresh_login@test.com',
+        password_hash='hashed',
+        first_name='Fresh',
+        last_name='Login',
+        role_id=roles['student'].id,
+        timezone='UTC',
+        is_active=True,
+        created_at=now_local() - timedelta(days=40),
+        last_activity=now_local() - timedelta(hours=1),
+    )
+    db_session.add(fresh_login)
+    db_session.commit()
+
+    db_session.add(Enrollment(
+        student_id=fresh_login.id,
+        course_id=course.id,
+        status='active',
+    ))
+    db_session.commit()
+
+    inactive = InactivityService.get_inactive_students(
+        instructor_id=instructor.id,
+        threshold_days=7,
+    )
+    assert fresh_login.id not in {s['student_id'] for s in inactive}
+
+
+def test_days_inactive_measured_from_study_activity(db_session, scenario):
+    """days_inactive must come from study activity, not a recent login."""
+    from src.utils.time_utils import now_local
+    from src.models.course_models import Lesson
+    from src.models.student_models import LessonCompletion
+    from src.services.inactivity_service import InactivityService
+
+    lesson = Lesson.query.first()
+    # The stale student last studied 20 days ago but logged in today.
+    db_session.add(LessonCompletion(
+        student_id=scenario['stale'].id,
+        lesson_id=lesson.id,
+        completed=False,
+        completed_at=None,
+        last_accessed=now_local() - timedelta(days=20),
+        updated_at=now_local() - timedelta(days=20),
+    ))
+    scenario['stale'].last_activity = now_local()
+    db_session.commit()
+
+    inactive = InactivityService.get_inactive_students(
+        instructor_id=scenario['instructor'].id,
+        threshold_days=7,
+    )
+    stale_row = next(s for s in inactive if s['student_id'] == scenario['stale'].id)
+    # Must be measured from the 20-day-old study activity, not today's login.
+    assert stale_row['days_inactive'] >= 7
+
+
+def test_inactivity_warning_honours_email_preferences(db_session, scenario, monkeypatch):
+    """Users who opted out of emails must not receive inactivity warnings."""
+    from src.services import inactivity_service as mod
+
+    sent = []
+    monkeypatch.setattr(
+        mod.brevo_service, 'send_email',
+        lambda **kwargs: sent.append(kwargs),
+    )
+
+    student = scenario['stale']
+    student.email_notifications = False
+    db_session.commit()
+
+    student_data = {
+        'student_id': student.id,
+        'days_inactive': 20,
+        'enrolled_courses': [{'course_id': scenario['course'].id, 'course_title': 'C'}],
+    }
+    mod.InactivityService._send_inactivity_warning(student, student_data)
+    assert sent == []
+
+    # Opted back in -> email is sent.
+    student.email_notifications = True
+    db_session.commit()
+    mod.InactivityService._send_inactivity_warning(student, student_data)
+    assert len(sent) == 1
+
+
+def test_login_blocked_for_deactivated_accounts(app, db_session, roles):
+    """Deactivated (e.g. auto-deleted for inactivity) accounts cannot log in."""
+    from src.utils.time_utils import now_local
+    from src.models.user_models import User
+    from src.routes.user_routes import auth_bp
+    from flask_jwt_extended import JWTManager
+
+    user = User(
+        username='deactivated_student',
+        email='deactivated@test.com',
+        first_name='De',
+        last_name='Activated',
+        role_id=roles['student'].id,
+        timezone='UTC',
+        is_active=False,
+        deleted_at=now_local(),
+        deletion_reason='Auto-deleted due to prolonged inactivity',
+        created_at=now_local() - timedelta(days=60),
+    )
+    user.set_password('Secret123!')
+    db_session.add(user)
+    db_session.commit()
+
+    JWTManager(app)
+    app.register_blueprint(auth_bp)
+    client = app.test_client()
+
+    # Active account with the same password can still log in.
+    user.is_active = True
+    db_session.commit()
+    ok = client.post('/api/v1/auth/login', json={
+        'identifier': 'deactivated@test.com',
+        'password': 'Secret123!',
+    })
+    assert ok.status_code == 200
+
+    # Deactivated account must be rejected.
+    user.is_active = False
+    db_session.commit()
+    blocked = client.post('/api/v1/auth/login', json={
+        'identifier': 'deactivated@test.com',
+        'password': 'Secret123!',
+    })
+    assert blocked.status_code == 403
+    assert blocked.get_json()['error_type'] == 'account_deactivated'
+

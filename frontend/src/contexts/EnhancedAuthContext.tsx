@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { jwtDecode } from 'jwt-decode';
 import { AuthService } from '@/services/auth.service';
@@ -72,6 +72,19 @@ const INITIAL_SESSION_STATE: SessionState = {
   maxRefreshCount: 3
 };
 
+// Idle timeout advertised by the admin "Session Timeout (minutes)" setting.
+// The settings panel writes the saved value to localStorage; we fall back to
+// the same 30 minute default the backend uses.
+const SESSION_TIMEOUT_STORAGE_KEY = 'session_timeout_minutes';
+const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
+
+const getIdleTimeoutMs = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_SESSION_TIMEOUT_MINUTES * 60_000;
+  const stored = Number(window.localStorage.getItem(SESSION_TIMEOUT_STORAGE_KEY));
+  const minutes = Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_SESSION_TIMEOUT_MINUTES;
+  return minutes * 60_000;
+};
+
 export const EnhancedAuthContext = createContext<EnhancedAuthContextType | undefined>(undefined);
 
 export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
@@ -82,6 +95,9 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
   const [sessionState, setSessionState] = useState<SessionState>(INITIAL_SESSION_STATE);
   const [lastError, setLastError] = useState<SessionError | null>(null);
   const [mounted, setMounted] = useState(false);
+  // Kept in a ref so the session timer reads the true last-activity time
+  // instead of a stale render closure.
+  const lastActivityRef = useRef<number>(Date.now());
   
   const router = useRouter();
   const pathname = usePathname();
@@ -91,12 +107,18 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
     setMounted(true);
   }, []);
 
-  // Session validation timer
+  // Session validation + idle-timeout timer
   useEffect(() => {
     if (!mounted) return;
 
     const interval = setInterval(async () => {
       if (isAuthenticated && token) {
+        // Enforce "Automatic logout after inactivity" (admin session_timeout)
+        if (Date.now() - lastActivityRef.current > getIdleTimeoutMs()) {
+          handleSessionExpiredWithReason('timeout');
+          return;
+        }
+
         const isValid = await validateSession();
         if (!isValid) {
           handleSessionExpired();
@@ -111,17 +133,30 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     if (!mounted) return;
 
-    const handleActivity = () => recordActivity();
+    let throttle = 0;
+    const handleActivity = () => {
+      const now = Date.now();
+      // mousemove fires continuously - only record once a second
+      if (now - throttle < 1000) return;
+      throttle = now;
+      recordActivity();
+    };
     
-    // Track user activity
+    // Track user activity (pointer + keyboard + touch + scroll)
     window.addEventListener('click', handleActivity);
     window.addEventListener('keydown', handleActivity);
     window.addEventListener('scroll', handleActivity);
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('wheel', handleActivity);
     
     return () => {
       window.removeEventListener('click', handleActivity);
       window.removeEventListener('keydown', handleActivity);
       window.removeEventListener('scroll', handleActivity);
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('wheel', handleActivity);
     };
   }, [mounted]);
 
@@ -132,9 +167,10 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
   }, [mounted]);
 
   const recordActivity = () => {
+    lastActivityRef.current = Date.now();
     setSessionState(prev => ({
       ...prev,
-      lastActivity: Date.now()
+      lastActivity: lastActivityRef.current
     }));
   };
 
@@ -184,9 +220,15 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const handleSessionExpired = () => {
+    handleSessionExpiredWithReason('expired');
+  };
+
+  const handleSessionExpiredWithReason = (reason: 'expired' | 'timeout') => {
     const error = createError(
       'SESSION_EXPIRED',
-      'Your session has expired. Please log in again.'
+      reason === 'timeout'
+        ? 'You have been logged out after a period of inactivity. Please log in again.'
+        : 'Your session has expired. Please log in again.'
     );
     setLastError(error);
     
@@ -194,7 +236,7 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
     clearAuthState();
     
     // Redirect to login
-    router.push(`/auth/login?redirect=${encodeURIComponent(pathname)}&error=expired`);
+    router.push(`/auth/login?redirect=${encodeURIComponent(pathname)}&error=${reason}`);
   };
 
   const clearAuthState = () => {
@@ -223,12 +265,12 @@ export const EnhancedAuthProvider = ({ children }: { children: ReactNode }) => {
         }
       }
 
-      // Update session state
+      // Update session state. NOTE: lastActivity is intentionally preserved -
+      // it tracks real user activity for the idle timeout, not token validity.
       setSessionState(prev => ({
         ...prev,
         isValid: true,
-        expiresAt: decoded.exp * 1000,
-        lastActivity: Date.now()
+        expiresAt: decoded.exp * 1000
       }));
 
       return true;

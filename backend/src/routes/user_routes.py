@@ -180,6 +180,21 @@ def login():
             }
         }), 401
 
+    # Reject deactivated / auto-deleted (e.g. inactivity) accounts. Password
+    # has already been verified so this cannot be used to enumerate accounts.
+    if not user.is_active:
+        print(f"Login failed: account {user.email} is deactivated")
+        return jsonify({
+            'message': (
+                'This account has been deactivated. '
+                'Please contact support to reactivate it.'
+            ),
+            'error_type': 'account_deactivated',
+            'details': {
+                'account_deactivated': True
+            }
+        }), 403
+
     # Successful login
     try:
         # Update last login and activity

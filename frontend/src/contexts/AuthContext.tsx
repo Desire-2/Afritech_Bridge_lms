@@ -1,11 +1,24 @@
 'use client';
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useHydrationFix } from '@/lib/hydration-fix';
 import { jwtDecode } from 'jwt-decode';
 import { AuthService } from '@/services/auth.service';
 import { ApiErrorHandler } from '@/lib/error-handler';
 import { User, LoginRequest, RegisterRequest, AuthResponse } from '@/types/api';
+
+// Idle timeout advertised by the admin "Session Timeout (minutes)" setting.
+// The settings panel publishes the saved value to localStorage; we fall back
+// to the same 30 minute default the backend uses.
+const SESSION_TIMEOUT_STORAGE_KEY = 'session_timeout_minutes';
+const DEFAULT_SESSION_TIMEOUT_MINUTES = 30;
+
+const getIdleTimeoutMs = (): number => {
+  if (typeof window === 'undefined') return DEFAULT_SESSION_TIMEOUT_MINUTES * 60_000;
+  const stored = Number(window.localStorage.getItem(SESSION_TIMEOUT_STORAGE_KEY));
+  const minutes = Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_SESSION_TIMEOUT_MINUTES;
+  return minutes * 60_000;
+};
 
 interface TokenPayload {
   exp: number;
@@ -24,7 +37,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   login: (identifier: string, password: string) => Promise<AuthResponse>;
   register: (userData: RegisterRequest) => Promise<void>;
-  logout: () => void;
+  logout: (message?: string) => void;
   fetchUserProfile: () => Promise<void>;
   refreshToken: () => Promise<boolean>;
   updateProfile: (userData: Partial<User>) => Promise<void>;
@@ -41,6 +54,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(null);
+  // True last-activity timestamp for idle timeout. Kept in a ref so timer
+  // callbacks never read a stale render's value.
+  const lastActivityRef = useRef<number>(Date.now());
+  // Keeps idle-timeout callbacks calling the latest `logout` closure
+  const logoutRef = useRef<(message?: string) => void>(() => {});
   const router = useRouter();
   
   // Apply hydration fix
@@ -50,6 +68,54 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     setHydrated(true);
   }, []);
+
+  // Track user activity (pointer, keyboard, touch, scroll) for idle timeout
+  useEffect(() => {
+    if (!hydrated) return;
+
+    let lastRecorded = 0;
+    const recordActivity = () => {
+      const now = Date.now();
+      // mousemove fires continuously - only record once a second
+      if (now - lastRecorded < 1000) return;
+      lastRecorded = now;
+      lastActivityRef.current = now;
+    };
+
+    window.addEventListener('click', recordActivity);
+    window.addEventListener('keydown', recordActivity);
+    window.addEventListener('scroll', recordActivity);
+    window.addEventListener('mousemove', recordActivity);
+    window.addEventListener('touchstart', recordActivity);
+    window.addEventListener('wheel', recordActivity);
+
+    return () => {
+      window.removeEventListener('click', recordActivity);
+      window.removeEventListener('keydown', recordActivity);
+      window.removeEventListener('scroll', recordActivity);
+      window.removeEventListener('mousemove', recordActivity);
+      window.removeEventListener('touchstart', recordActivity);
+      window.removeEventListener('wheel', recordActivity);
+    };
+  }, [hydrated]);
+
+  // Enforce "Automatic logout after inactivity" (admin session_timeout setting)
+  useEffect(() => {
+    if (!hydrated || !isAuthenticated) return;
+
+    // Starting a session counts as activity - otherwise the very first idle
+    // check would fire immediately with a lastActivity from page load.
+    lastActivityRef.current = Date.now();
+
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivityRef.current > getIdleTimeoutMs()) {
+        clearInterval(interval);
+        logoutRef.current('You have been logged out after a period of inactivity. Please log in again.');
+      }
+    }, 30_000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [hydrated, isAuthenticated]);
 
   // Setup automatic token refresh and event listeners
   useEffect(() => {
@@ -323,7 +389,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const logout = () => {
+  const logout = (message?: string) => {
     console.log('AuthContext: Performing logout');
     
     // Clear refresh interval
@@ -362,9 +428,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Call logout endpoint (fire and forget - don't wait for it)
     AuthService.logout().catch(console.error);
     
-    // Force navigation to login page
-    window.location.href = '/auth/login';
+    // Force navigation to login page (optionally explaining why)
+    const params = message ? `?message=${encodeURIComponent(message)}` : '';
+    window.location.href = `/auth/login${params}`;
   };
+
+  // Always call the latest logout from timers/refs
+  useEffect(() => {
+    logoutRef.current = logout;
+  });
 
   /**
    * Refreshes the access token using the refresh token

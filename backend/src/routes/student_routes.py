@@ -129,11 +129,14 @@ def get_student_dashboard():
     
     # Get recent activity (recent lesson completions)
     recent_completions = LessonCompletion.query.filter_by(
-        student_id=current_user_id
+        student_id=current_user_id,
+        completed=True
     ).order_by(LessonCompletion.completed_at.desc()).limit(5).all()
     
     recent_activity = []
     for completion in recent_completions:
+        if not completion.completed_at:
+            continue
         recent_activity.append({
             'type': 'lesson_completion',
             'lesson_title': completion.lesson.title,
@@ -229,7 +232,8 @@ def get_course_progress(course_id):
     
     # Get completed lessons
     completed_lessons = LessonCompletion.query.filter_by(
-        student_id=current_user_id
+        student_id=current_user_id,
+        completed=True
     ).join(Lesson).join(Module).filter(Module.course_id == course_id).all()
     
     completed_lesson_ids = [cl.lesson_id for cl in completed_lessons]
@@ -260,7 +264,9 @@ def get_course_progress(course_id):
             # Find completion date
             for cl in completed_lessons:
                 if cl.lesson_id == lesson.id:
-                    lesson_data['completion_date'] = cl.completed_at.isoformat()
+                    lesson_data['completion_date'] = (
+                        cl.completed_at.isoformat() if cl.completed_at else None
+                    )
                     lesson_data['time_spent'] = cl.time_spent
                     break
             
@@ -652,7 +658,7 @@ def complete_lesson(lesson_id):
             time_spent=data.get('time_spent', 0),
             completed_at=None,  # Will be set when actually completed
             updated_at=now_local(),
-            last_accessed=datetime.utcnow()
+            last_accessed=now_local()
         )
         db.session.add(existing_completion)
     else:
@@ -1584,7 +1590,7 @@ def complete_module(module_id):
                 modules_completed=0,
                 lessons_completed=0,
                 total_time_spent=0,
-                last_accessed=datetime.utcnow()
+                last_accessed=now_local()
             )
             db.session.add(progress)
         

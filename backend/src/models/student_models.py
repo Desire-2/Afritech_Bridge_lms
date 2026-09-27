@@ -12,7 +12,9 @@ class LessonCompletion(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     lesson_id = db.Column(db.Integer, db.ForeignKey('lessons.id'), nullable=False)
-    completed_at = db.Column(db.DateTime, default=now_local)
+    # Set only when the lesson is actually completed (never at row creation:
+    # inactivity detection treats completed_at as real study activity).
+    completed_at = db.Column(db.DateTime, nullable=True)
     time_spent = db.Column(db.Integer, default=0)  # in seconds
     
     # Enhanced progress tracking fields

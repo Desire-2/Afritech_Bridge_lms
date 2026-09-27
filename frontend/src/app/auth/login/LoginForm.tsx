@@ -247,7 +247,10 @@ export default function LoginForm() {
       // Use the error handler to get user-friendly messages
       let errorMessage = 'Login failed. Please try again.';
       
-      if (err.error_type === 'authentication_error' || err.status === 401) {
+      if (err.error_type === 'account_deactivated' || err.details?.account_deactivated) {
+        // Account was deactivated (e.g. auto-deleted for prolonged inactivity)
+        errorMessage = err.message || 'This account has been deactivated. Please contact support to reactivate it.';
+      } else if (err.error_type === 'authentication_error' || err.status === 401) {
         // Handle authentication-specific errors
         errorMessage = ApiErrorHandler.getLoginErrorMessage(err);
       } else if (err.error_type === 'validation_error' || err.status === 400 || err.status === 422) {

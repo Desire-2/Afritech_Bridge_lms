@@ -72,7 +72,7 @@ class BackgroundTask(db.Model):
     @classmethod
     def cleanup_old_tasks(cls, hours=24):
         """Remove tasks older than specified hours"""
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_time = now_local() - timedelta(hours=hours)
         completed_tasks = cls.query.filter(
             cls.status.in_([TaskStatus.COMPLETED, TaskStatus.FAILED]),
             cls.completed_at < cutoff_time

@@ -20,6 +20,7 @@ import {
   Activity
 } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { toast } from 'sonner';
 
 interface InactiveStudent {
   student_id: number;
@@ -67,6 +68,9 @@ interface StudentActivityAnalysisProps {
   courseId?: number | null;
   applicationWindowId?: number | null;
 }
+
+// ~10 minutes of 2-second polling before giving up on a background task
+const MAX_POLL_ATTEMPTS = 300;
 
 const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({ 
   onTerminateStudent,
@@ -124,7 +128,12 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
     }
   };
 
-  const pollForAnalysis = async (taskId: string) => {
+  const pollForAnalysis = async (taskId: string, attempts = 0) => {
+    if (attempts >= MAX_POLL_ATTEMPTS) {
+      setPollTasks(prev => ({ ...prev, analysis: undefined }));
+      setError('Analysis timed out. Please refresh.');
+      return;
+    }
     try {
       const response = await InstructorApiService.getStudentAnalysisStatus(taskId);
       
@@ -134,17 +143,26 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
       } else if (response.status === 'failed') {
         setError(response.error || 'Analysis failed');
         setPollTasks(prev => ({ ...prev, analysis: undefined }));
-      } else if (response.status === 'running' || response.status === 'started') {
+      } else if (response.status === 'running' || response.status === 'started' || response.status === 'pending') {
         // Poll again in 2 seconds
-        setTimeout(() => pollForAnalysis(taskId), 2000);
+        setTimeout(() => pollForAnalysis(taskId, attempts + 1), 2000);
+      } else {
+        // Unknown/finished-without-payload status: stop polling to avoid an infinite loop
+        setPollTasks(prev => ({ ...prev, analysis: undefined }));
+        setError('Analysis task ended unexpectedly. Please refresh.');
       }
     } catch (err) {
       console.error('Error polling for analysis:', err);
-      setTimeout(() => pollForAnalysis(taskId), 3000); // Retry after 3 seconds
+      setTimeout(() => pollForAnalysis(taskId, attempts + 1), 3000); // Retry after 3 seconds
     }
   };
 
-  const pollForInactiveStudents = async (taskId: string) => {
+  const pollForInactiveStudents = async (taskId: string, attempts = 0) => {
+    if (attempts >= MAX_POLL_ATTEMPTS) {
+      setPollTasks(prev => ({ ...prev, inactive: undefined }));
+      setError('Timed out fetching inactive students. Please refresh.');
+      return;
+    }
     try {
       const response = await InstructorApiService.getInactiveStudentsStatus(taskId);
       
@@ -154,19 +172,24 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
       } else if (response.status === 'failed') {
         setError(response.error || 'Failed to fetch inactive students');
         setPollTasks(prev => ({ ...prev, inactive: undefined }));
-      } else if (response.status === 'running' || response.status === 'started') {
+      } else if (response.status === 'running' || response.status === 'started' || response.status === 'pending') {
         // Poll again in 2 seconds
-        setTimeout(() => pollForInactiveStudents(taskId), 2000);
+        setTimeout(() => pollForInactiveStudents(taskId, attempts + 1), 2000);
+      } else {
+        // Unknown status: stop polling to avoid an infinite loop
+        setPollTasks(prev => ({ ...prev, inactive: undefined }));
+        setError('Inactive students task ended unexpectedly. Please refresh.');
       }
     } catch (err) {
       console.error('Error polling for inactive students:', err);
-      setTimeout(() => pollForInactiveStudents(taskId), 3000); // Retry after 3 seconds
+      setTimeout(() => pollForInactiveStudents(taskId, attempts + 1), 3000); // Retry after 3 seconds
     }
   };
 
   useEffect(() => {
     fetchData();
-  }, []);
+    // Refetch when the course / cohort filter changes
+  }, [courseId, applicationWindowId]);
 
   const handleTerminateStudent = async (studentId: number, reason: string = 'Inactivity') => {
     try {
@@ -240,7 +263,7 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
         if (onSendWarnings) {
           onSendWarnings();
         }
-        alert(`Sent ${response.warnings_sent} inactivity warnings`);
+        toast.success(`Sent ${response.warnings_sent} inactivity warning email(s)`);
         setSendingWarnings(false);
       }
 
@@ -250,7 +273,13 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
     }
   };
 
-  const pollForWarnings = async (taskId: string) => {
+  const pollForWarnings = async (taskId: string, attempts = 0) => {
+    if (attempts >= MAX_POLL_ATTEMPTS) {
+      setPollTasks(prev => ({ ...prev, warnings: undefined }));
+      setSendingWarnings(false);
+      setError('Timed out sending warnings. Please refresh and try again.');
+      return;
+    }
     try {
       const response = await InstructorApiService.getSendWarningsStatus(taskId);
       
@@ -263,18 +292,26 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
           onSendWarnings();
         }
         
-        alert(`Sent ${response.warnings_sent} inactivity warnings to ${response.total_at_risk} students`);
+        toast.success(
+          `Sent ${response.warnings_sent} inactivity warning email(s)` +
+          (response.total_at_risk !== undefined ? ` to ${response.total_at_risk} at-risk student(s)` : '')
+        );
       } else if (response.status === 'failed') {
         setError(response.error || 'Failed to send warnings');
         setPollTasks(prev => ({ ...prev, warnings: undefined }));
         setSendingWarnings(false);
-      } else if (response.status === 'running' || response.status === 'started') {
+      } else if (response.status === 'running' || response.status === 'started' || response.status === 'pending') {
         // Poll again in 2 seconds
-        setTimeout(() => pollForWarnings(taskId), 2000);
+        setTimeout(() => pollForWarnings(taskId, attempts + 1), 2000);
+      } else {
+        // Unknown status: stop polling to avoid an infinite loop
+        setPollTasks(prev => ({ ...prev, warnings: undefined }));
+        setSendingWarnings(false);
+        setError('Warning task ended unexpectedly. Please refresh.');
       }
     } catch (err) {
       console.error('Error polling for warnings status:', err);
-      setTimeout(() => pollForWarnings(taskId), 3000); // Retry after 3 seconds
+      setTimeout(() => pollForWarnings(taskId, attempts + 1), 3000); // Retry after 3 seconds
     }
   };
 
@@ -290,11 +327,15 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
   const formatLastActivity = (dateString: string | null) => {
     if (!dateString) return 'Never';
     
-    const date = new Date(dateString);
+    // Backend timestamps are naive Africa/Kigali (UTC+2) datetimes. Attach the
+    // offset explicitly so the browser doesn't reinterpret them in its own tz.
+    const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(dateString);
+    const date = new Date(hasTimezone ? dateString : `${dateString}+02:00`);
+    if (Number.isNaN(date.getTime())) return 'Unknown';
     const now = new Date();
     const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
     
-    if (diffDays === 0) return 'Today';
+    if (diffDays <= 0) return 'Today';
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return `${diffDays} days ago`;
     if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
