@@ -560,3 +560,62 @@ def test_admin_warning_task_only_notifies_scoped_inactive_students(
     assert result['total_at_risk'] == 1
     assert result['warnings_sent'] == 1
     assert sent == ['stale_student']
+
+
+def test_legacy_cohort_enrollment_is_seen_by_inactivity_query(db_session, roles, scenario):
+    """Enrollments carrying only a cohort_label (no window FK) must be counted.
+
+    The instructor student table finds them through apply_cohort_filter, but the
+    inactivity query used to filter purely on application_window_id - so the
+    student list showed people the warning task could never email.
+    """
+    from src.utils.time_utils import now_local
+    from src.models.course_models import Enrollment
+    from src.services.inactivity_service import InactivityService
+
+    legacy = _make_user(db_session, roles, 'legacy_student', 'legacy@test.com', days_ago=60)
+    legacy.last_activity = now_local() - timedelta(days=30)
+    legacy.last_login = now_local() - timedelta(days=30)
+    db_session.commit()
+
+    db_session.add(Enrollment(
+        student_id=legacy.id,
+        course_id=scenario['course'].id,
+        application_window_id=None,
+        cohort_label='Cohort A',
+        status='active',
+    ))
+    db_session.commit()
+
+    inactive = InactivityService.get_inactive_students(
+        instructor_id=scenario['instructor'].id,
+        threshold_days=7,
+        course_id=scenario['course'].id,
+        application_window_id=scenario['window_a'].id,
+    )
+    ids = {s['student_id'] for s in inactive}
+
+    assert legacy.id in ids, 'legacy (label-only) enrollment was invisible'
+    assert scenario['stale'].id in ids
+    assert scenario['active'].id not in ids
+
+
+def test_diagnose_scope_explains_an_empty_result(db_session, roles, scenario):
+    from src.services.inactivity_service import InactivityService
+
+    report = InactivityService.diagnose_scope(
+        instructor_id=scenario['instructor'].id,
+        threshold_days=7,
+        course_id=scenario['course'].id,
+        application_window_id=scenario['window_a'].id,
+    )
+
+    # Cohort A holds the stale student and the active student.
+    assert report['active_enrollments'] == 2
+    assert report['unique_students'] == 2
+    assert report['enrollments_by_status'] == {'active': 2}
+    # The active student read 5 days ago -> excluded as recent activity.
+    assert report['excluded_recent_activity'] == 1
+    assert report['would_be_flagged'] == 1
+    assert report['most_recent_reference'] is not None
+    assert report['cutoff']

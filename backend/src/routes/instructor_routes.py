@@ -2,7 +2,7 @@
 
 from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from sqlalchemy import func, and_, or_, false
+from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 import logging
@@ -16,6 +16,7 @@ from ..services.background_service import background_service
 from ..utils.email_utils import send_email
 from ..utils.email_templates import course_announcement_email
 from ..services.notification_service import notify_announcement_new
+from ..utils.cohort_filter import apply_cohort_filter as _apply_cohort_filter
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -44,40 +45,6 @@ def instructor_required(f):
     return decorated_function
 
 instructor_bp = Blueprint("instructor_bp", __name__, url_prefix="/api/v1/instructor")
-
-
-def _apply_cohort_filter(query, cohort_id=None, cohort_label=None, course_id=None):
-    """Filter enrollments using the same cohort identity as cohort cards.
-
-    ``application_window_id`` is the canonical relationship.  Some older
-    enrollments only have ``cohort_label`` populated, so include those rows
-    when the selected window has the same label.  When an ID is supplied it
-    takes precedence over a label supplied by the client; otherwise a stale
-    label can turn a valid cohort selection into an empty result set.
-    """
-    if cohort_id is not None:
-        window_query = ApplicationWindow.query.filter_by(id=cohort_id)
-        if course_id is not None:
-            window_query = window_query.filter_by(course_id=course_id)
-        window = window_query.first()
-
-        if not window:
-            return query.filter(false())
-
-        cohort_matches = [Enrollment.application_window_id == window.id]
-        if window.cohort_label:
-            cohort_matches.append(
-                and_(
-                    Enrollment.application_window_id.is_(None),
-                    Enrollment.cohort_label == window.cohort_label,
-                )
-            )
-        return query.filter(or_(*cohort_matches))
-
-    if cohort_label:
-        return query.filter(Enrollment.cohort_label == cohort_label)
-
-    return query
 
 
 def _get_cached_enrollment_scores(enrollment_ids):
@@ -1299,8 +1266,20 @@ def _send_warnings_task(instructor_id: int, threshold_days: int,
         
         warnings_sent = 0
         total_students = len(at_risk_students)
+        diagnosis = None
         
         logger.info(f"Found {total_students} at-risk students for instructor {instructor_id}")
+        if total_students == 0:
+            diagnosis = InactivityService.diagnose_scope(
+                instructor_id=instructor_id,
+                threshold_days=threshold_days,
+                course_id=course_id,
+                application_window_id=application_window_id,
+            )
+            logger.warning(
+                f"No at-risk students in scope (instructor={instructor_id}, "
+                f"course={course_id}, cohort={application_window_id}): {diagnosis}"
+            )
         
         for i, student_data in enumerate(at_risk_students):
             try:
@@ -1327,9 +1306,12 @@ def _send_warnings_task(instructor_id: int, threshold_days: int,
         
         result = {
             "warnings_sent": warnings_sent,
-            "total_at_risk": len(at_risk_students),
+            "total_at_risk": total_students,
             "threshold_days": threshold_days
         }
+        if diagnosis is not None:
+            # Surfaced by the status endpoint so the UI can explain an empty run.
+            result["diagnosis"] = diagnosis
         
         logger.info(f"Completed _send_warnings_task. Result: {result}")
         return result
@@ -1498,13 +1480,17 @@ def get_send_warnings_status(task_id):
             }), 404
         
         if task_status['status'] == 'completed':
-            return jsonify({
+            result = task_status.get('result') or {}
+            response = {
                 "success": True,
                 "status": "completed",
-                "warnings_sent": task_status['result']['warnings_sent'],
-                "total_at_risk": task_status['result']['total_at_risk'],
-                "message": f"Sent {task_status['result']['warnings_sent']} warning emails"
-            }), 200
+                "warnings_sent": result.get('warnings_sent', 0),
+                "total_at_risk": result.get('total_at_risk', 0),
+                "message": f"Sent {result.get('warnings_sent', 0)} warning emails"
+            }
+            if result.get('diagnosis'):
+                response["diagnosis"] = result["diagnosis"]
+            return jsonify(response), 200
         elif task_status['status'] == 'failed':
             return jsonify({
                 "success": False,

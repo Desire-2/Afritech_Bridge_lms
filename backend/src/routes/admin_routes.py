@@ -1952,10 +1952,21 @@ def _send_warnings_task(threshold_days: int,
 
     warnings_sent = 0
     total_students = len(at_risk_students)
+    diagnosis = None
     task_logger.info(
         f"Admin warning task: {total_students} at-risk students "
         f"(threshold={threshold_days}d, course={course_id}, cohort={application_window_id})"
     )
+    if total_students == 0:
+        diagnosis = InactivityService.diagnose_scope(
+            threshold_days=threshold_days,
+            course_id=course_id,
+            application_window_id=application_window_id,
+        )
+        task_logger.warning(
+            f"No at-risk students in scope (course={course_id}, "
+            f"cohort={application_window_id}): {diagnosis}"
+        )
 
     for i, student_data in enumerate(at_risk_students):
         try:
@@ -1970,11 +1981,15 @@ def _send_warnings_task(threshold_days: int,
         if i < total_students - 1:
             InactivityService._throttle_between_emails()
 
-    return {
+    result = {
         "warnings_sent": warnings_sent,
         "total_at_risk": total_students,
         "threshold_days": threshold_days,
     }
+    if diagnosis is not None:
+        # Surfaced by the status endpoint so the UI can explain an empty run.
+        result["diagnosis"] = diagnosis
+    return result
 
 
 @admin_bp.route("/system/send-warnings", methods=["POST"])
@@ -2040,13 +2055,16 @@ def get_send_warnings_status(task_id):
 
         if task_status['status'] == 'completed':
             result = task_status.get('result') or {}
-            return jsonify({
+            response = {
                 "success": True,
                 "status": "completed",
                 "warnings_sent": result.get('warnings_sent', 0),
                 "total_at_risk": result.get('total_at_risk', 0),
                 "message": f"Sent {result.get('warnings_sent', 0)} warning emails"
-            }), 200
+            }
+            if result.get('diagnosis'):
+                response["diagnosis"] = result["diagnosis"]
+            return jsonify(response), 200
         elif task_status['status'] == 'failed':
             return jsonify({
                 "success": False,

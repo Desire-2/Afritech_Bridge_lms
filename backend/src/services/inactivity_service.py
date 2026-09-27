@@ -10,6 +10,7 @@ import os
 import time
 
 from ..utils.time_utils import now_local
+from ..utils.cohort_filter import apply_cohort_filter
 from ..models.user_models import db, User, Role
 from ..models.course_models import Enrollment, Course, Submission
 from ..models.student_models import LessonCompletion, UserProgress, StudentNote, StudentBookmark
@@ -50,6 +51,34 @@ class InactivityService:
             return True
     
     @staticmethod
+    def _scoped_enrollments(instructor_id: Optional[int] = None,
+                            course_id: Optional[int] = None,
+                            application_window_id: Optional[int] = None,
+                            statuses: Optional[Tuple[str, ...]] = ('active',)):
+        """Enrollments visible in the given instructor / course / cohort scope.
+
+        Cohort matching goes through ``apply_cohort_filter`` so legacy
+        enrollments that only carry a ``cohort_label`` are included - the same
+        rule the instructor student table uses. Filtering purely on the
+        ``application_window_id`` foreign key would make the student table show
+        students that this query cannot see.
+        """
+        query = Enrollment.query
+        if statuses:
+            query = query.filter(Enrollment.status.in_(statuses))
+        if instructor_id:
+            query = query.join(
+                Course, Enrollment.course_id == Course.id
+            ).filter(Course.instructor_id == instructor_id)
+        if course_id is not None:
+            query = query.filter(Enrollment.course_id == course_id)
+        if application_window_id is not None:
+            query = apply_cohort_filter(
+                query, cohort_id=application_window_id, course_id=course_id
+            )
+        return query.all()
+
+    @staticmethod
     def get_inactive_students(instructor_id: Optional[int] = None,
                             threshold_days: int = STUDENT_INACTIVITY_THRESHOLD,
                             course_id: Optional[int] = None,
@@ -70,19 +99,11 @@ class InactivityService:
         cutoff_date = now_local() - timedelta(days=threshold_days)
 
         # Scope enrollments first (single-row-per-enrollment, avoids duplicate students)
-        enrollment_query = Enrollment.query.filter(Enrollment.status == 'active')
-        if instructor_id:
-            enrollment_query = enrollment_query.join(
-                Course, Enrollment.course_id == Course.id
-            ).filter(Course.instructor_id == instructor_id)
-        if course_id is not None:
-            enrollment_query = enrollment_query.filter(Enrollment.course_id == course_id)
-        if application_window_id is not None:
-            enrollment_query = enrollment_query.filter(
-                Enrollment.application_window_id == application_window_id
-            )
-
-        scoped_enrollments = enrollment_query.all()
+        scoped_enrollments = InactivityService._scoped_enrollments(
+            instructor_id=instructor_id,
+            course_id=course_id,
+            application_window_id=application_window_id,
+        )
         if not scoped_enrollments:
             return []
 
@@ -164,7 +185,72 @@ class InactivityService:
             return 365  # No timestamps at all - consider very inactive
         latest = max(candidates)
         return (now_local() - latest).days if latest else 365
-    
+
+    @staticmethod
+    def diagnose_scope(instructor_id: Optional[int] = None,
+                       threshold_days: int = STUDENT_INACTIVITY_THRESHOLD,
+                       course_id: Optional[int] = None,
+                       application_window_id: Optional[int] = None) -> Dict:
+        """Explain why a scope produced no inactive students.
+
+        Logged when a warning batch finds nobody, so "why zero emails?" is
+        answered in the log instead of by guessing.
+        """
+        cutoff_date = now_local() - timedelta(days=threshold_days)
+
+        all_enrollments = InactivityService._scoped_enrollments(
+            instructor_id=instructor_id,
+            course_id=course_id,
+            application_window_id=application_window_id,
+            statuses=None,
+        )
+
+        by_status: Dict[str, int] = {}
+        for enrollment in all_enrollments:
+            by_status[enrollment.status] = by_status.get(enrollment.status, 0) + 1
+
+        active_enrollments = [e for e in all_enrollments if e.status == 'active']
+        student_ids = {e.student_id for e in active_enrollments}
+        users = (
+            User.query.filter(User.id.in_(student_ids), User.is_active == True).all()
+            if student_ids else []
+        )
+
+        flagged = 0
+        excluded_recent = 0
+        no_reference = 0
+        most_recent_reference = None
+
+        for student in users:
+            last_study_activity = InactivityService._get_last_study_activity(student.id)
+            reference = last_study_activity or student.last_activity
+
+            if reference is None:
+                no_reference += 1
+                flagged += 1
+                continue
+            if most_recent_reference is None or reference > most_recent_reference:
+                most_recent_reference = reference
+            if reference >= cutoff_date:
+                excluded_recent += 1
+            else:
+                flagged += 1
+
+        return {
+            'threshold_days': threshold_days,
+            'enrollments_by_status': by_status,
+            'active_enrollments': len(active_enrollments),
+            'unique_students': len(student_ids),
+            'active_users': len(users),
+            'excluded_recent_activity': excluded_recent,
+            'no_activity_timestamp': no_reference,
+            'would_be_flagged': flagged,
+            'most_recent_reference': (
+                most_recent_reference.isoformat() if most_recent_reference else None
+            ),
+            'cutoff': cutoff_date.isoformat(),
+        }
+
     @staticmethod
     def get_inactive_users(threshold_days: int = USER_DELETION_THRESHOLD) -> List[Dict]:
         """
