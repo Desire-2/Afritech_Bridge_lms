@@ -5,11 +5,28 @@ import { Mail, RefreshCw, AlertTriangle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import InstructorApiService from '@/services/api/instructor.service';
 import { AdminService } from '@/services/admin.service';
+import { InactivityDiagnosis, formatInactivityDiagnosis } from '@/types/inactivity';
 
 interface SendWarningsResult {
   warnings_sent: number;
   total_at_risk: number;
+  /** Present when the batch found nobody; explains the zero. */
+  diagnosis?: InactivityDiagnosis | null;
 }
+
+/** Terminal HTTP statuses that retrying will never fix. */
+const TERMINAL_STATUSES = [400, 403, 404, 422, 500];
+
+const terminalError = (err: any): string | undefined => {
+  const status = err?.response?.status ?? err?.status;
+  if (!status || !TERMINAL_STATUSES.includes(status)) return undefined;
+  return (
+    err?.response?.data?.error ||
+    err?.response?.data?.message ||
+    err?.message ||
+    'Failed to send inactivity warnings.'
+  );
+};
 
 interface SendInactivityWarningsButtonProps {
   /** Which backend surface to call: instructor (scoped) or admin (platform-wide). */
@@ -85,10 +102,21 @@ const SendInactivityWarningsButton: React.FC<SendInactivityWarningsButtonProps> 
   const handleSent = (result: SendWarningsResult) => {
     if (!aliveRef.current) return;
     reset();
-    toast.success(
-      `Sent ${result.warnings_sent} inactivity warning email(s)` +
-        (result.total_at_risk > 0 ? ` to ${result.total_at_risk} at-risk student(s)` : '')
-    );
+
+    if (result.total_at_risk === 0) {
+      // An unexplained zero looks like a broken button - say why instead.
+      const reason = formatInactivityDiagnosis(result.diagnosis);
+      toast.warning('No students matched this inactivity scope — 0 emails sent', {
+        description: reason ?? 'Nobody in scope has been inactive for ' +
+          `${thresholdDays} day(s).`,
+        duration: 12000,
+      });
+    } else {
+      toast.success(
+        `Sent ${result.warnings_sent} inactivity warning email(s) ` +
+          `to ${result.total_at_risk} at-risk student(s)`
+      );
+    }
     onSent?.(result);
   };
 
@@ -116,6 +144,7 @@ const SendInactivityWarningsButton: React.FC<SendInactivityWarningsButtonProps> 
         handleSent({
           warnings_sent: status.warnings_sent,
           total_at_risk: status.total_at_risk ?? 0,
+          diagnosis: status.diagnosis ?? null,
         });
       } else if (status.status === 'failed') {
         handleFailed(status.error || 'Failed to send inactivity warnings.');
@@ -131,6 +160,13 @@ const SendInactivityWarningsButton: React.FC<SendInactivityWarningsButtonProps> 
       }
     } catch (err: any) {
       if (!aliveRef.current) return;
+      // The status endpoint answers a failed task with HTTP 500, which axios
+      // throws - retrying that for ten minutes just hides the real error.
+      const message = terminalError(err);
+      if (message) {
+        handleFailed(message);
+        return;
+      }
       // Transient failure (network blip, worker restart) — retry with backoff.
       timerRef.current = setTimeout(() => pollForStatus(id, attempts + 1), 3000);
     }
@@ -159,6 +195,7 @@ const SendInactivityWarningsButton: React.FC<SendInactivityWarningsButtonProps> 
         handleSent({
           warnings_sent: (response as any).warnings_sent ?? 0,
           total_at_risk: (response as any).total_at_risk ?? 0,
+          diagnosis: (response as any).diagnosis ?? null,
         });
       }
     } catch (err: any) {

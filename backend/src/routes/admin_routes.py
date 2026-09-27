@@ -1997,11 +1997,14 @@ def _send_warnings_task(threshold_days: int,
 def send_warnings_manually():
     """Send inactivity warning emails now (async) instead of waiting for the cron job."""
     try:
+        from ..services.inactivity_service import InactivityService
+
         data = request.get_json() or {}
+        default_threshold = InactivityService.WARNING_THRESHOLD_DAYS
         try:
-            threshold_days = int(data.get('threshold_days', 5))
+            threshold_days = int(data.get('threshold_days', default_threshold))
         except (TypeError, ValueError):
-            threshold_days = 5
+            threshold_days = default_threshold
         if threshold_days < 1 or threshold_days > 365:
             return jsonify({
                 "success": False,

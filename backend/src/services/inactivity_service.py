@@ -27,6 +27,10 @@ class InactivityService:
     USER_DELETION_THRESHOLD = 14      # days: first account-deactivation warning
     AUTO_DELETE_THRESHOLD_DAYS = 30   # days: weekly job auto-deletes at this point
     WARNING_BEFORE_TERMINATION = 2    # days before termination to send warning
+    # Single source of truth for "how many days without study counts as
+    # inactive" for warning emails and the at-risk preview. Endpoints and the
+    # UI must agree on this or the preview and the email blast disagree.
+    WARNING_THRESHOLD_DAYS = STUDENT_INACTIVITY_THRESHOLD - WARNING_BEFORE_TERMINATION
 
     # Seconds to wait between inactivity emails so a batch can't stall a
     # worker thread (override with INACTIVITY_EMAIL_DELAY_SECONDS).
@@ -151,7 +155,7 @@ class InactivityService:
                         'course_id': e.course.id,
                         'course_title': e.course.title,
                         'enrollment_id': e.id,
-                        'enrollment_date': e.enrollment_date.isoformat(),
+                        'enrollment_date': e.enrollment_date.isoformat() if e.enrollment_date else None,
                         'progress': e.progress,
                         'status': e.status,
                         'application_window_id': e.application_window_id,
@@ -460,7 +464,7 @@ class InactivityService:
             }
     
     @staticmethod
-    def send_inactivity_warnings(threshold_days: int = STUDENT_INACTIVITY_THRESHOLD - WARNING_BEFORE_TERMINATION,
+    def send_inactivity_warnings(threshold_days: int = WARNING_THRESHOLD_DAYS,
                                 instructor_id: Optional[int] = None,
                                 application_window_id: Optional[int] = None) -> int:
         """

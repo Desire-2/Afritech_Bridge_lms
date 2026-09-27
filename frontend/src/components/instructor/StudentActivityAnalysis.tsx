@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { InactivityDiagnosis, formatInactivityDiagnosis } from '@/types/inactivity';
 
 interface InactiveStudent {
   student_id: number;
@@ -35,7 +36,7 @@ interface InactiveStudent {
     course_id: number;
     course_title: string;
     enrollment_id: number;
-    enrollment_date: string;
+    enrollment_date: string | null;
     progress: number;
   }>;
 }
@@ -72,6 +73,24 @@ interface StudentActivityAnalysisProps {
 // ~10 minutes of 2-second polling before giving up on a background task
 const MAX_POLL_ATTEMPTS = 300;
 
+/** Days without study activity that counts as inactive. Must match
+ *  InactivityService.WARNING_THRESHOLD_DAYS on the backend. */
+const WARNING_THRESHOLD_DAYS = 5;
+
+/** Terminal HTTP statuses that retrying will never fix. */
+const TERMINAL_STATUSES = [400, 403, 404, 422, 500];
+
+const terminalError = (err: any): string | undefined => {
+  const status = err?.response?.status ?? err?.status;
+  if (!status || !TERMINAL_STATUSES.includes(status)) return undefined;
+  return (
+    err?.response?.data?.error ||
+    err?.response?.data?.message ||
+    err?.message ||
+    'Request failed.'
+  );
+};
+
 const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({ 
   onTerminateStudent,
   onSendWarnings,
@@ -82,6 +101,7 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
   const [inactiveStudents, setInactiveStudents] = useState<InactiveStudent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inactiveDiagnosis, setInactiveDiagnosis] = useState<InactivityDiagnosis | null>(null);
   const [terminating, setTerminating] = useState<number | null>(null);
   const [sendingWarnings, setSendingWarnings] = useState(false);
   const [selectedStudents, setSelectedStudents] = useState<Set<number>>(new Set());
@@ -117,6 +137,7 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
         pollForInactiveStudents(inactiveResponse.task_id);
       } else if (inactiveResponse.inactive_students) {
         setInactiveStudents(inactiveResponse.inactive_students);
+        setInactiveDiagnosis(inactiveResponse.diagnosis ?? null);
       }
 
       // Only set loading to false when we have initial responses (even if polling)
@@ -152,6 +173,12 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
         setError('Analysis task ended unexpectedly. Please refresh.');
       }
     } catch (err) {
+      const message = terminalError(err);
+      if (message) {
+        setError(message);
+        setPollTasks(prev => ({ ...prev, analysis: undefined }));
+        return;
+      }
       console.error('Error polling for analysis:', err);
       setTimeout(() => pollForAnalysis(taskId, attempts + 1), 3000); // Retry after 3 seconds
     }
@@ -168,6 +195,7 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
       
       if (response.inactive_students) {
         setInactiveStudents(response.inactive_students);
+        setInactiveDiagnosis(response.diagnosis ?? null);
         setPollTasks(prev => ({ ...prev, inactive: undefined }));
       } else if (response.status === 'failed') {
         setError(response.error || 'Failed to fetch inactive students');
@@ -180,7 +208,15 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
         setPollTasks(prev => ({ ...prev, inactive: undefined }));
         setError('Inactive students task ended unexpectedly. Please refresh.');
       }
-    } catch (err) {
+    } catch (err: any) {
+      // A failed task answers with HTTP 500, which axios throws - retrying it
+      // forever just hides the real error behind a spinner.
+      const message = terminalError(err);
+      if (message) {
+        setError(message);
+        setPollTasks(prev => ({ ...prev, inactive: undefined }));
+        return;
+      }
       console.error('Error polling for inactive students:', err);
       setTimeout(() => pollForInactiveStudents(taskId, attempts + 1), 3000); // Retry after 3 seconds
     }
@@ -250,7 +286,7 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
       setSendingWarnings(true);
       
       const response = await InstructorApiService.sendInactivityWarnings(
-        5,
+        WARNING_THRESHOLD_DAYS,
         courseId ?? undefined,
         applicationWindowId ?? undefined
       );
@@ -263,14 +299,26 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
         if (onSendWarnings) {
           onSendWarnings();
         }
-        toast.success(`Sent ${response.warnings_sent} inactivity warning email(s)`);
+        announceWarningResult(response.warnings_sent ?? 0, response.total_at_risk ?? 0, response.diagnosis);
         setSendingWarnings(false);
       }
 
     } catch (err: any) {
-      setError(err.message || 'Failed to send warnings');
+      setError(terminalError(err) || err.message || 'Failed to send warnings');
       setSendingWarnings(false);
     }
+  };
+
+  const announceWarningResult = (sent: number, atRisk: number, diagnosis?: InactivityDiagnosis | null) => {
+    if (atRisk === 0) {
+      toast.warning('No students matched this inactivity scope — 0 emails sent', {
+        description: formatInactivityDiagnosis(diagnosis) ??
+          `Nobody in scope has been inactive for ${WARNING_THRESHOLD_DAYS} day(s).`,
+        duration: 12000,
+      });
+      return;
+    }
+    toast.success(`Sent ${sent} inactivity warning email(s) to ${atRisk} at-risk student(s)`);
   };
 
   const pollForWarnings = async (taskId: string, attempts = 0) => {
@@ -292,9 +340,10 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
           onSendWarnings();
         }
         
-        toast.success(
-          `Sent ${response.warnings_sent} inactivity warning email(s)` +
-          (response.total_at_risk !== undefined ? ` to ${response.total_at_risk} at-risk student(s)` : '')
+        announceWarningResult(
+          response.warnings_sent ?? 0,
+          response.total_at_risk ?? 0,
+          response.diagnosis
         );
       } else if (response.status === 'failed') {
         setError(response.error || 'Failed to send warnings');
@@ -310,6 +359,13 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
         setError('Warning task ended unexpectedly. Please refresh.');
       }
     } catch (err) {
+      const message = terminalError(err);
+      if (message) {
+        setError(message);
+        setPollTasks(prev => ({ ...prev, warnings: undefined }));
+        setSendingWarnings(false);
+        return;
+      }
       console.error('Error polling for warnings status:', err);
       setTimeout(() => pollForWarnings(taskId, attempts + 1), 3000); // Retry after 3 seconds
     }
@@ -612,7 +668,14 @@ const StudentActivityAnalysis: React.FC<StudentActivityAnalysisProps> = ({
           <CardContent className="p-8 text-center">
             <UserCheck className="w-12 h-12 mx-auto text-green-500 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">All Students Active!</h3>
-            <p className="text-gray-600">No students have been inactive for 7+ days.</p>
+            <p className="text-gray-600">
+              No students have been inactive for {WARNING_THRESHOLD_DAYS}+ days.
+            </p>
+            {inactiveDiagnosis && (
+              <p className="mt-3 text-sm text-gray-500">
+                {formatInactivityDiagnosis(inactiveDiagnosis)}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}

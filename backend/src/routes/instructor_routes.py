@@ -16,7 +16,9 @@ from ..services.background_service import background_service
 from ..utils.email_utils import send_email
 from ..utils.email_templates import course_announcement_email
 from ..services.notification_service import notify_announcement_new
+from ..services.inactivity_service import InactivityService
 from ..utils.cohort_filter import apply_cohort_filter as _apply_cohort_filter
+from ..utils.time_utils import now_local
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -996,12 +998,16 @@ def get_inactive_students():
         task_status = background_service.get_task_status(task_id)
         if task_status:
             if task_status['status'] == 'completed':
-                return jsonify({
+                result = task_status.get('result') or {}
+                response = {
                     "success": True,
-                    "inactive_students": task_status['result']['inactive_students'],
-                    "threshold_days": task_status['result']['threshold_days'],
-                    "total_count": task_status['result']['total_count']
-                }), 200
+                    "inactive_students": result.get('inactive_students', []),
+                    "threshold_days": result.get('threshold_days'),
+                    "total_count": result.get('total_count', 0)
+                }
+                if result.get('diagnosis'):
+                    response["diagnosis"] = result["diagnosis"]
+                return jsonify(response), 200
             elif task_status['status'] == 'failed':
                 return jsonify({
                     "success": False,
@@ -1018,7 +1024,11 @@ def get_inactive_students():
     
     # Create new background task
     try:
-        threshold_days = request.args.get('threshold_days', 7, type=int)
+        # Default must match the warning threshold, otherwise the at-risk
+        # preview and the email blast disagree about who counts as inactive.
+        threshold_days = request.args.get(
+            'threshold_days', InactivityService.WARNING_THRESHOLD_DAYS, type=int
+        )
         course_id = request.args.get('course_id', type=int)
         application_window_id = request.args.get('application_window_id', type=int)
         
@@ -1129,25 +1139,23 @@ def get_inactive_students_status(task_id):
 def _perform_student_analysis(instructor_id: int, course_id: Optional[int] = None,
                               application_window_id: Optional[int] = None):
     """Background task function for student analysis (optionally cohort-scoped)"""
-    from ..services.inactivity_service import InactivityService
     from ..services.analytics_service import AnalyticsService
 
-    # Build the enrollment scope matching InactivityService
-    enrollment_query = Enrollment.query.filter(Enrollment.status == 'active')
-    if course_id:
-        enrollment_query = enrollment_query.filter(Enrollment.course_id == course_id)
-    if application_window_id:
-        enrollment_query = enrollment_query.filter(
-            Enrollment.application_window_id == application_window_id
-        )
-
-    enrollments = enrollment_query.all()
+    # Same enrollment scope as InactivityService: instructor-owned, legacy
+    # cohort_label rows included, active enrollments only. Rebuilding the
+    # scope here with a raw application_window_id filter produced totals that
+    # disagreed with the student table and with the at-risk counts.
+    enrollments = InactivityService._scoped_enrollments(
+        instructor_id=instructor_id,
+        course_id=course_id,
+        application_window_id=application_window_id,
+    )
     total_enrollments = len(enrollments)
 
     # Get inactive students (7+ days) scoped to the same cohort/course
     inactive_students = InactivityService.get_inactive_students(
         instructor_id=instructor_id,
-        threshold_days=7,
+        threshold_days=InactivityService.STUDENT_INACTIVITY_THRESHOLD,
         course_id=course_id,
         application_window_id=application_window_id
     )
@@ -1156,7 +1164,7 @@ def _perform_student_analysis(instructor_id: int, course_id: Optional[int] = Non
     # Get at-risk students (5-6 days inactive), same scope, excluding already-inactive
     at_risk_students = InactivityService.get_inactive_students(
         instructor_id=instructor_id,
-        threshold_days=5,
+        threshold_days=InactivityService.WARNING_THRESHOLD_DAYS,
         course_id=course_id,
         application_window_id=application_window_id
     )
@@ -1167,10 +1175,12 @@ def _perform_student_analysis(instructor_id: int, course_id: Optional[int] = Non
     active_students = len(active_enrollments)
     unique_students = len({e.student_id for e in enrollments})
 
-    # Group students by course
-    courses_in_scope = Course.query.filter_by(instructor_id=instructor_id).all()
+    # Group students by course (restricted to the selected course when scoped)
+    courses_in_scope = Course.query.filter_by(instructor_id=instructor_id)
+    if course_id:
+        courses_in_scope = courses_in_scope.filter(Course.id == course_id)
     students_by_course = {}
-    for course in courses_in_scope:
+    for course in courses_in_scope.all():
         course_enrollments = [e for e in enrollments if e.course_id == course.id]
         course_inactive = [e for e in course_enrollments if e.student_id in inactive_ids]
 
@@ -1189,7 +1199,8 @@ def _perform_student_analysis(instructor_id: int, course_id: Optional[int] = Non
         recommendations.append({
             'type': 'warning',
             'title': 'Inactive Students Detected',
-            'message': f'{len(inactive_students)} students have been inactive for 7+ days',
+            'message': f'{len(inactive_students)} students have been inactive for '
+                       f'{InactivityService.STUDENT_INACTIVITY_THRESHOLD}+ days',
             'action': 'Consider sending reminders or checking in with these students'
         })
 
@@ -1218,7 +1229,7 @@ def _perform_student_analysis(instructor_id: int, course_id: Optional[int] = Non
         "activity_rate": (active_students / total_enrollments * 100) if total_enrollments > 0 else 0,
         "students_by_course": students_by_course,
         "recommendations": recommendations,
-        "last_updated": datetime.utcnow().isoformat()
+        "last_updated": now_local().isoformat()
     }
 
 def _fetch_inactive_students(instructor_id: int, threshold_days: int,
@@ -1235,11 +1246,19 @@ def _fetch_inactive_students(instructor_id: int, threshold_days: int,
         application_window_id=application_window_id
     )
     
-    return {
+    result = {
         "inactive_students": inactive_students,
         "threshold_days": threshold_days,
         "total_count": len(inactive_students)
     }
+    if not inactive_students:
+        result["diagnosis"] = InactivityService.diagnose_scope(
+            instructor_id=instructor_id,
+            threshold_days=threshold_days,
+            course_id=course_id,
+            application_window_id=application_window_id,
+        )
+    return result
 
 
 def _send_warnings_task(instructor_id: int, threshold_days: int,
@@ -1431,7 +1450,23 @@ def send_inactivity_warnings():
     
     try:
         data = request.get_json() or {}
-        threshold_days = data.get('threshold_days', 5)  # Warn students inactive for 5+ days
+        # Warn students inactive for WARNING_THRESHOLD_DAYS (5+) days. Same
+        # validation the admin endpoint applies so a bad payload can't crash
+        # the background task.
+        try:
+            threshold_days = int(data.get(
+                'threshold_days', InactivityService.WARNING_THRESHOLD_DAYS
+            ))
+        except (TypeError, ValueError):
+            return jsonify({
+                "success": False,
+                "message": "threshold_days must be an integer between 1 and 365"
+            }), 400
+        if threshold_days < 1 or threshold_days > 365:
+            return jsonify({
+                "success": False,
+                "message": "threshold_days must be between 1 and 365"
+            }), 400
         course_id = data.get('course_id')
         application_window_id = data.get('application_window_id')
         

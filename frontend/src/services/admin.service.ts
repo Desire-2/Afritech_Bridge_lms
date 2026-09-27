@@ -1,6 +1,7 @@
 import apiClient from '@/lib/api-client';
 import { ApiErrorHandler } from '@/lib/error-handler';
 import { User, PaginatedResponse, UserListResponse, Course } from '@/types/api';
+import type { InactivityDiagnosis } from '@/types/inactivity';
 
 export interface CourseListParams {
   search?: string;
@@ -964,6 +965,8 @@ export class AdminService {
     message?: string;
     error?: string;
     progress?: number;
+    /** Returned when the batch found nobody, so the UI can explain the zero. */
+    diagnosis?: InactivityDiagnosis | null;
   }> {
     try {
       const response = await apiClient.get(`${this.BASE_PATH}/system/send-warnings/status/${taskId}`);
