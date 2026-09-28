@@ -6418,6 +6418,40 @@ def update_payment_status_endpoint(application_id):
 # PAYMENT REMINDER SCHEDULER ENDPOINTS
 # ============================================================
 
+# What the payments dashboard marks as "actionable": submitted applications
+# awaiting payment approval plus enrollments with a payment still outstanding.
+ACTIONABLE_REMINDER_CATEGORIES = ['submitted_unapproved', 'pending_enrollments']
+
+
+def _flatten_reminder_result(result, dry_run=False):
+    """Flatten run_scheduler()'s per-category buckets into a single API payload."""
+    category_results = result.get('category_results') or {}
+    return {
+        "summary": {
+            "total_checked": sum(
+                r.get('total', r.get('reminders_needed', 0)) for r in category_results.values()
+            ),
+            "reminders_needed": sum(
+                r.get('reminders_needed', r.get('total', 0)) for r in category_results.values()
+            ),
+            "sent": sum(r.get('sent', 0) for r in category_results.values()),
+            "failed": sum(r.get('failed', 0) for r in category_results.values()),
+            "skipped": 0,
+            "duration_seconds": result.get('duration_seconds', 0),
+        },
+        "errors": [
+            dict(err, category=category)
+            for category, r in category_results.items()
+            for err in (r.get('errors') or [])
+        ][:20],
+        "applications": [
+            dict(row, category=category)
+            for category, r in (category_results.items() if dry_run else [])
+            for row in (r.get('applications') or []) + (r.get('enrollments') or [])
+        ] if dry_run else None,
+    }
+
+
 @application_bp.route("/payment-reminders/run", methods=["POST"])
 @jwt_required()
 def run_payment_reminder_scheduler():
@@ -6451,44 +6485,12 @@ def run_payment_reminder_scheduler():
         result = PaymentReminderScheduler.run_scheduler(dry_run=dry_run)
         
         if result.get('status') == 'success':
-            # run_scheduler() reports per-category buckets; flatten them so the
-            # API does not answer with an all-zero summary.
-            category_results = result.get('category_results') or {}
-            sent = sum(r.get('sent', 0) for r in category_results.values())
-            failed = sum(r.get('failed', 0) for r in category_results.values())
-            total_checked = sum(
-                r.get('total', r.get('reminders_needed', 0)) for r in category_results.values()
-            )
-            reminders_needed = sum(
-                r.get('reminders_needed', r.get('total', 0)) for r in category_results.values()
-            )
-            errors = [
-                dict(err, category=category)
-                for category, r in category_results.items()
-                for err in (r.get('errors') or [])
-            ]
-            preview = []
-            if dry_run:
-                for category, r in category_results.items():
-                    for app in r.get('applications', []):
-                        preview.append(dict(app, category=category))
-                    for enr in r.get('enrollments', []):
-                        preview.append(dict(enr, category=category))
-
-            return jsonify({
+            payload = _flatten_reminder_result(result, dry_run=dry_run)
+            payload.update({
                 "message": "Payment reminder scheduler completed successfully",
                 "dry_run": dry_run,
-                "summary": {
-                    "total_checked": total_checked,
-                    "reminders_needed": reminders_needed,
-                    "sent": sent,
-                    "failed": failed,
-                    "skipped": 0,
-                    "duration_seconds": result.get('duration_seconds', 0)
-                },
-                "errors": errors[:20],
-                "applications": preview if dry_run else None
-            }), 200
+            })
+            return jsonify(payload), 200
         else:
             return jsonify({
                 "error": "Payment reminder scheduler failed",
@@ -6503,6 +6505,71 @@ def run_payment_reminder_scheduler():
         return jsonify({
             "error": "Failed to run payment reminder scheduler",
             "details": str(e)
+        }), 500
+
+
+@application_bp.route("/payment-reminders/send-actionable", methods=["POST"])
+@jwt_required()
+def send_actionable_payment_reminders():
+    """
+    Admin/Instructor: send payment reminders to every record the payments
+    dashboard marks as actionable - not just the records on the current page.
+
+    Body (JSON):
+      dry_run      : bool (optional) - count without sending
+      course_id    : int  (optional) - restrict to one course
+      instructor_id: int  (optional) - restrict to an instructor's courses
+    """
+    from flask_jwt_extended import get_jwt_identity
+    from ..models.user_models import User
+    from ..services.payment_reminder_scheduler import PaymentReminderScheduler
+
+    current_user_id = get_jwt_identity()
+    current_user = User.query.get(current_user_id)
+
+    if not current_user or current_user.role.name not in ("admin", "instructor"):
+        return jsonify({"error": "Admin or instructor access required"}), 403
+
+    data = request.get_json(silent=True) or {}
+    dry_run = bool(data.get("dry_run", False))
+    course_id = data.get("course_id")
+    instructor_id = data.get("instructor_id")
+
+    # An instructor may only remind students in their own courses.
+    if current_user.role.name == "instructor":
+        instructor_id = current_user_id
+        course_id = None
+
+    try:
+        result = PaymentReminderScheduler.run_scheduler(
+            dry_run=dry_run,
+            categories=ACTIONABLE_REMINDER_CATEGORIES,
+            course_id=course_id,
+            instructor_id=instructor_id,
+        )
+
+        if result.get('status') != 'success':
+            return jsonify({
+                "error": "Payment reminder run failed",
+                "details": result.get('error', 'Unknown error'),
+            }), 500
+
+        payload = _flatten_reminder_result(result, dry_run=dry_run)
+        payload.update({
+            "message": (
+                f"Preview ready: {payload['summary']['reminders_needed']} reminder(s) due"
+                if dry_run else
+                f"Sent {payload['summary']['sent']} payment reminder(s)"
+            ),
+            "dry_run": dry_run,
+        })
+        return jsonify(payload), 200
+
+    except Exception as e:
+        logger.error(f"❌ Send-actionable payment reminders error: {str(e)}")
+        return jsonify({
+            "error": "Failed to send payment reminders",
+            "details": str(e),
         }), 500
 
 

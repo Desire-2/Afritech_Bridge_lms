@@ -749,6 +749,9 @@ export default function PaymentsDashboard({ role }: Props) {
   const [remindingId, setRemindingId] = useState<number | string | null>(null);
   const [bulkReminding, setBulkReminding] = useState<{ total: number; sent: number; failed: number } | null>(null);
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState<number | null>(null);
+  const [bulkPreviewLoading, setBulkPreviewLoading] = useState(false);
+  const [bulkPreviewError, setBulkPreviewError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const [filterMethod, setFilterMethod] = useState('');
@@ -846,35 +849,60 @@ export default function PaymentsDashboard({ role }: Props) {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 4000); };
 
+  // Scope the bulk run to what the table is filtered to. The backend
+  // additionally enforces instructor ownership and per-record cooldowns.
+  const bulkScope = useCallback(() => ({
+    ...(filterCourse ? { course_id: filterCourse } : {}),
+    ...(role === 'instructor' && user?.id ? { instructor_id: user.id } : {}),
+  }), [filterCourse, role, user?.id]);
+
+  const callSendActionable = async (dryRun: boolean) => {
+    const res = await fetch(`${API_BASE}/applications/payment-reminders/send-actionable`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dry_run: dryRun, ...bulkScope() }),
+    });
+    const text = await res.text();
+    let data: { error?: string; summary?: { sent?: number; failed?: number; reminders_needed?: number } } = {};
+    try { data = JSON.parse(text); } catch { /* leave empty */ }
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  };
+
+  const openBulkConfirm = async () => {
+    setShowBulkConfirm(true);
+    setBulkPreview(null);
+    setBulkPreviewError(null);
+    setBulkPreviewLoading(true);
+    try {
+      const data = await callSendActionable(true);
+      setBulkPreview(data.summary?.reminders_needed ?? 0);
+    } catch (err) {
+      setBulkPreviewError(err instanceof Error ? err.message : 'Unable to count reminders');
+    } finally {
+      setBulkPreviewLoading(false);
+    }
+  };
+
   const handleBulkSendReminders = async () => {
-    const actionable = records.filter((r) => r.payment_status && ACTIONABLE_STATUSES.has(r.payment_status));
-    if (actionable.length === 0) {
-      showToast('No actionable records to send reminders to.');
-      return;
+    setBulkReminding({ total: bulkPreview ?? 0, sent: 0, failed: 0 });
+    try {
+      const data = await callSendActionable(false);
+      const sent = data.summary?.sent ?? 0;
+      const failed = data.summary?.failed ?? 0;
+      showToast(
+        failed > 0
+          ? `📧 Reminders sent: ${sent} succeeded, ${failed} failed`
+          : `📧 Sent ${sent} payment reminder(s)`
+      );
+      // The run is server-side, so the table has to be re-read to reflect it.
+      fetchRecords();
+      fetchSummary();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to send reminders');
+    } finally {
+      setBulkReminding(null);
     }
-    setBulkReminding({ total: actionable.length, sent: 0, failed: 0 });
-    let sent = 0;
-    let failed = 0;
-    for (const rec of actionable) {
-      try {
-        const isEnrollment = rec.source === 'enrollment';
-        const numericId = typeof rec.id === 'string' ? rec.id.replace(/^enr_/, '') : rec.id;
-        const endpoint = isEnrollment
-          ? `${API_BASE}/applications/enrollment/${numericId}/send-payment-reminder`
-          : `${API_BASE}/applications/${numericId}/send-payment-reminder`;
-        const res = await fetch(endpoint, { method: 'POST', headers: authHeaders() });
-        const text = await res.text();
-        let data: { error?: string } = {};
-        try { data = JSON.parse(text); } catch { /* ignore parse errors */ }
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        sent++;
-      } catch {
-        failed++;
-      }
-      setBulkReminding({ total: actionable.length, sent, failed });
-    }
-    showToast(`📧 Reminders sent: ${sent} succeeded, ${failed} failed (of ${actionable.length})`);
-    setBulkReminding(null);
   };
 
   const handleSendReminder = async (rec: PaymentRecord) => {
@@ -1045,7 +1073,7 @@ export default function PaymentsDashboard({ role }: Props) {
     <div className="space-y-5">
       {/* Bulk Confirmation Dialog */}
       {showBulkConfirm && (() => {
-        const actionableCount = records.filter((r) => r.payment_status && ACTIONABLE_STATUSES.has(r.payment_status)).length;
+        const actionableCount = bulkPreview;
         return (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowBulkConfirm(false)}>
             <div className="bg-[#162844] border rounded-xl shadow-2xl max-w-sm w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
@@ -1056,9 +1084,19 @@ export default function PaymentsDashboard({ role }: Props) {
                   <p className="text-sm text-gray-500">This will send payment reminders to</p>
                 </div>
               </div>
-              <p className="text-center text-3xl font-bold text-white mb-1">{actionableCount}</p>
+              <p className="text-center text-3xl font-bold text-white mb-1">
+                {bulkPreviewLoading ? '…' : actionableCount ?? '—'}
+              </p>
               <p className="text-center text-sm text-gray-500 mb-5">
-                {actionableCount === 1 ? 'applicant with pending payment' : 'applicants with pending payments'}
+                {bulkPreviewLoading
+                  ? 'Counting due reminders…'
+                  : bulkPreviewError
+                    ? bulkPreviewError
+                    : actionableCount === 0
+                      ? 'No records currently need a reminder'
+                      : actionableCount === 1
+                        ? 'applicant with pending payment'
+                        : 'applicants with pending payments'}
               </p>
               <div className="flex gap-3">
                 <button onClick={() => setShowBulkConfirm(false)}
@@ -1066,7 +1104,8 @@ export default function PaymentsDashboard({ role }: Props) {
                   Cancel
                 </button>
                 <button onClick={() => { setShowBulkConfirm(false); handleBulkSendReminders(); }}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
+                  disabled={bulkPreviewLoading || bulkPreview === 0}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
                   Send Reminders
                 </button>
               </div>
@@ -1203,10 +1242,10 @@ export default function PaymentsDashboard({ role }: Props) {
             {(filterMethod || filterStatus || filterCourse || search) && (
               <button onClick={resetFilters} className="px-3 py-2 border border-white/15 text-gray-600 text-sm rounded-lg hover:bg-[#0a1628]">Clear</button>
             )}
-            <button onClick={() => setShowBulkConfirm(true)} disabled={!!bulkReminding}
+            <button onClick={openBulkConfirm} disabled={!!bulkReminding || bulkPreviewLoading}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors">
               {bulkReminding
-                ? <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> {bulkReminding.sent + bulkReminding.failed}/{bulkReminding.total}</span>
+                ? <span className="flex items-center gap-2"><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Sending…</span>
                 : '📧 Send All Reminders'
               }
             </button>

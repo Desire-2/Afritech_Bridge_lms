@@ -38,9 +38,14 @@ class PaymentReminderScheduler:
     # ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def get_applications_needing_reminders() -> List[Tuple]:
+    def get_applications_needing_reminders(course_id: Optional[int] = None,
+                                            instructor_id: Optional[int] = None) -> List[Tuple]:
         """
         Find all draft applications with pending payments that need reminders.
+
+        Args:
+            course_id: Restrict to a single course
+            instructor_id: Restrict to courses owned by this instructor
 
         Returns:
             List of tuples: (application, course, application_window, days_remaining, reminder_type)
@@ -53,7 +58,9 @@ class PaymentReminderScheduler:
             applications_to_remind = []
 
             # Query draft applications with payment required
-            query = CourseApplication.query.filter(
+            query = CourseApplication.query.join(
+                Course, Course.id == CourseApplication.course_id
+            ).filter(
                 and_(
                     CourseApplication.is_draft == True,
                     or_(
@@ -64,7 +71,12 @@ class PaymentReminderScheduler:
                     ),
                     CourseApplication.application_window_id.isnot(None)
                 )
-            ).all()
+            )
+            if course_id is not None:
+                query = query.filter(CourseApplication.course_id == course_id)
+            if instructor_id is not None:
+                query = query.filter(Course.instructor_id == instructor_id)
+            query = query.all()
 
             logger.info(f"📋 Category A: Found {len(query)} draft applications to check for reminders")
 
@@ -138,7 +150,8 @@ class PaymentReminderScheduler:
     # ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def get_submitted_unapproved_applications() -> List[Tuple]:
+    def get_submitted_unapproved_applications(course_id: Optional[int] = None,
+                                               instructor_id: Optional[int] = None) -> List[Tuple]:
         """
         Find submitted (non-draft) applications where payment was initiated
         but has NOT been approved/completed by an administrator.
@@ -159,7 +172,9 @@ class PaymentReminderScheduler:
             # Query submitted applications with unapproved payment
             # These are non-draft applications where payment status is
             # still 'pending', 'pending_bank_transfer', or similar unapproved statuses
-            query = CourseApplication.query.filter(
+            query = CourseApplication.query.join(
+                Course, Course.id == CourseApplication.course_id
+            ).filter(
                 and_(
                     CourseApplication.is_draft == False,
                     CourseApplication.payment_status.in_([
@@ -168,7 +183,12 @@ class PaymentReminderScheduler:
                     ]),
                     CourseApplication.application_window_id.isnot(None)
                 )
-            ).all()
+            )
+            if course_id is not None:
+                query = query.filter(CourseApplication.course_id == course_id)
+            if instructor_id is not None:
+                query = query.filter(Course.instructor_id == instructor_id)
+            query = query.all()
 
             logger.info(f"📋 Category B: Found {len(query)} submitted applications with unapproved payment")
 
@@ -239,7 +259,8 @@ class PaymentReminderScheduler:
     # ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def get_pending_payment_enrollments() -> List[Tuple]:
+    def get_pending_payment_enrollments(course_id: Optional[int] = None,
+                                         instructor_id: Optional[int] = None) -> List[Tuple]:
         """
         Find enrollments where:
         - Status is 'pending_payment' (payment required but not yet verified)
@@ -260,16 +281,33 @@ class PaymentReminderScheduler:
             results = []
 
             # Query enrollments with pending_payment status
-            query = Enrollment.query.filter(
+            query = Enrollment.query.join(
+                Course, Course.id == Enrollment.course_id
+            ).filter(
                 and_(
-                    Enrollment.status == 'pending_payment',
+                    # Either the enrollment is parked in pending_payment, or its
+                    # payment_status is one the payments dashboard treats as
+                    # actionable (e.g. a screenshot awaiting verification on an
+                    # otherwise active enrollment).
+                    or_(
+                        Enrollment.status == 'pending_payment',
+                        Enrollment.payment_status.in_([
+                            'pending', 'pending_bank_transfer', 'submitted',
+                            'submitted_with_proof', 'pending_verification', 'failed'
+                        ]),
+                    ),
                     or_(
                         Enrollment.payment_verified == False,
                         Enrollment.payment_verified.is_(None)
                     ),
                     Enrollment.student_id.isnot(None)
                 )
-            ).all()
+            )
+            if course_id is not None:
+                query = query.filter(Enrollment.course_id == course_id)
+            if instructor_id is not None:
+                query = query.filter(Course.instructor_id == instructor_id)
+            query = query.all()
 
             logger.info(f"📋 Category C: Found {len(query)} enrollments with pending_payment status")
 
@@ -660,7 +698,10 @@ class PaymentReminderScheduler:
     # ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def run_scheduler(dry_run: bool = False, categories: Optional[List[str]] = None) -> Dict:
+    def run_scheduler(dry_run: bool = False,
+                      categories: Optional[List[str]] = None,
+                      course_id: Optional[int] = None,
+                      instructor_id: Optional[int] = None) -> Dict:
         """
         Main scheduler method - find and send all pending payment reminders
         across all categories.
@@ -669,6 +710,8 @@ class PaymentReminderScheduler:
             dry_run: If True, only identify applications but don't send emails
             categories: Optional list of categories to process.
                         Default: ['drafts', 'submitted_unapproved', 'pending_enrollments']
+            course_id: Restrict to a single course
+            instructor_id: Restrict to courses owned by this instructor
 
         Returns:
             Dict with scheduler run statistics
@@ -694,7 +737,9 @@ class PaymentReminderScheduler:
                 logger.info("📋 Category A: Draft applications with pending payment")
                 logger.info("=" * 60)
 
-                draft_apps = PaymentReminderScheduler.get_applications_needing_reminders()
+                draft_apps = PaymentReminderScheduler.get_applications_needing_reminders(
+                    course_id=course_id, instructor_id=instructor_id
+                )
 
                 if dry_run:
                     result['category_results']['drafts'] = {
@@ -728,7 +773,9 @@ class PaymentReminderScheduler:
                 logger.info("📋 Category B: Submitted applications with unapproved payment")
                 logger.info("=" * 60)
 
-                submitted_apps = PaymentReminderScheduler.get_submitted_unapproved_applications()
+                submitted_apps = PaymentReminderScheduler.get_submitted_unapproved_applications(
+                    course_id=course_id, instructor_id=instructor_id
+                )
 
                 if dry_run:
                     result['category_results']['submitted_unapproved'] = {
@@ -761,7 +808,9 @@ class PaymentReminderScheduler:
                 logger.info("📋 Category C: Enrollments pending payment (migrated students)")
                 logger.info("=" * 60)
 
-                pending_enrollments = PaymentReminderScheduler.get_pending_payment_enrollments()
+                pending_enrollments = PaymentReminderScheduler.get_pending_payment_enrollments(
+                    course_id=course_id, instructor_id=instructor_id
+                )
 
                 if dry_run:
                     result['category_results']['pending_enrollments'] = {
