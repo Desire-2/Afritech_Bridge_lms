@@ -34,3 +34,23 @@ export function useQuickCreate(open: (patch?: Record<string, any>) => void) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
+
+/**
+ * True only for the plain patches built above.
+ *
+ * Create handlers are often bound straight to a button
+ * (`onClick={openCreate}`), which hands them a React click event. Spreading
+ * that event into form state copies `view` (window), `nativeEvent` and DOM
+ * nodes into the request body, and `JSON.stringify` then walks
+ * window → document → React's root fiber and throws
+ * "Converting circular structure to JSON". Callers spread
+ * `isQuickPatch(patch) ? patch : {}` instead, so an accidental event is ignored.
+ */
+export function isQuickPatch(value: unknown): value is Record<string, any> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}

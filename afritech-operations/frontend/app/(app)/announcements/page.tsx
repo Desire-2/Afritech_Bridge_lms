@@ -9,7 +9,7 @@ import {
 } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 import { useEmployeeOptions, useOrgOptions, options } from '@/lib/use-options';
-import { useQuickCreate } from '@/lib/quick-create';
+import { useQuickCreate, isQuickPatch } from '@/lib/quick-create';
 
 const CATEGORIES = [
   'staff_announcement', 'meeting_notice', 'schedule_update', 'administrative_instruction',
@@ -68,7 +68,7 @@ export default function AnnouncementsPage() {
 
   function openCreate(patch?: Record<string, any>) {
     setEditing(null);
-    setForm({ ...EMPTY, publish_date: todayIso(), ...(patch || {}) });
+    setForm({ ...EMPTY, publish_date: todayIso(), ...(isQuickPatch(patch) ? patch : {}) });
     setFormError('');
     setOpen(true);
   }
@@ -159,7 +159,7 @@ export default function AnnouncementsPage() {
         title="Announcements"
         subtitle="Publish company notices and track who has acknowledged them."
         actions={canManage && (
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
+          <button className="btn btn-primary btn-sm" onClick={() => openCreate()}>
             <i className="bi bi-plus-lg me-1" />New announcement
           </button>
         )}
@@ -203,7 +203,7 @@ export default function AnnouncementsPage() {
       {!loading && !error && items.length === 0 && (
         <EmptyState message="No announcements" icon="bi-megaphone"
           action={canManage && (
-            <button className="btn btn-sm btn-primary" onClick={openCreate}>New announcement</button>
+            <button className="btn btn-sm btn-primary" onClick={() => openCreate()}>New announcement</button>
           )} />
       )}
 

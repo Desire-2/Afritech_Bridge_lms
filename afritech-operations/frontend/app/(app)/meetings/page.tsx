@@ -9,7 +9,7 @@ import {
 } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 import { useEmployeeOptions, useOrgOptions, options } from '@/lib/use-options';
-import { useQuickCreate } from '@/lib/quick-create';
+import { useQuickCreate, isQuickPatch } from '@/lib/quick-create';
 
 const STATUSES = ['scheduled', 'in_progress', 'completed', 'cancelled'];
 const ACTION_STATUSES = ['open', 'in_progress', 'done', 'cancelled'];
@@ -56,7 +56,7 @@ export default function MeetingsPage() {
   }
 
   function openCreate(patch?: Record<string, any>) {
-    setForm({ ...EMPTY, meeting_date: todayIso(), ...(patch || {}) });
+    setForm({ ...EMPTY, meeting_date: todayIso(), ...(isQuickPatch(patch) ? patch : {}) });
     setFormError('');
     setOpen(true);
   }
@@ -221,7 +221,7 @@ export default function MeetingsPage() {
         title="Meetings"
         subtitle="Schedule meetings, run the agenda, record minutes and track action items."
         actions={canManage && (
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
+          <button className="btn btn-primary btn-sm" onClick={() => openCreate()}>
             <i className="bi bi-plus-lg me-1" />New meeting
           </button>
         )}

@@ -9,7 +9,7 @@ import {
 } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 import { useEmployeeOptions, useOrgOptions, options } from '@/lib/use-options';
-import { useQuickCreate } from '@/lib/quick-create';
+import { useQuickCreate, isQuickPatch } from '@/lib/quick-create';
 
 const STATUSES = ['planned', 'in_progress', 'completed', 'postponed', 'cancelled'];
 const CATEGORIES = [
@@ -70,7 +70,7 @@ export default function ActivitiesPage() {
   }
 
   function openCreate(patch?: Record<string, any>) {
-    setForm({ ...EMPTY, activity_date: view === 'list' ? todayIso() : date, ...(patch || {}) });
+    setForm({ ...EMPTY, activity_date: view === 'list' ? todayIso() : date, ...(isQuickPatch(patch) ? patch : {}) });
     setChecklistDraft('');
     setFormError('');
     setOpen(true);
@@ -175,7 +175,7 @@ export default function ActivitiesPage() {
         title="Activities"
         subtitle="Daily and weekly planner for company and personal activities."
         actions={canManage && (
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
+          <button className="btn btn-primary btn-sm" onClick={() => openCreate()}>
             <i className="bi bi-plus-lg me-1" />New activity
           </button>
         )}

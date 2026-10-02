@@ -9,7 +9,7 @@ import {
 } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 import { useEmployeeOptions, useOrgOptions, options } from '@/lib/use-options';
-import { useQuickCreate } from '@/lib/quick-create';
+import { useQuickCreate, isQuickPatch } from '@/lib/quick-create';
 
 const CATEGORIES = ['office_notice', 'internal_circular', 'policy', 'reminder', 'other'];
 const AUDIENCES = [
@@ -57,7 +57,7 @@ export default function MemosPage() {
 
   function openCreate(patch?: Record<string, any>) {
     setEditing(null);
-    setForm({ ...EMPTY, ...(patch || {}) });
+    setForm({ ...EMPTY, ...(isQuickPatch(patch) ? patch : {}) });
     setFormError('');
     setOpen(true);
   }
@@ -130,7 +130,7 @@ export default function MemosPage() {
         title="Memos"
         subtitle="Internal office notices and circulars, addressed like announcements."
         actions={canManage && (
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
+          <button className="btn btn-primary btn-sm" onClick={() => openCreate()}>
             <i className="bi bi-plus-lg me-1" />New memo
           </button>
         )}

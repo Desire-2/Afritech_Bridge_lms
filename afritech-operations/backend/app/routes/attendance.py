@@ -7,6 +7,7 @@ from ..models import Attendance, WorkSchedule, Employee
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..auth.scope import can_access_service_agents, can_view_financials, employee_scope_error, exclude_service_agents, scope_error_status
 from ..services.audit import audit
+from ..utils.datetime_utils import as_utc
 from .helpers import json_error, parse_json, paginate, paginate_response, parse_date, parse_id
 
 bp = Blueprint('attendance', __name__, url_prefix='/api/attendance')
@@ -27,7 +28,9 @@ def attendance_dict_for(rec, user):
 def compute_hours(clock_in, clock_out):
     if not clock_in or not clock_out:
         return 0
-    delta = (clock_out - clock_in).total_seconds() / 3600
+    # SQLite hands back naive datetimes even for timezone-aware columns, while
+    # clock-in/out write aware ones — normalize before subtracting.
+    delta = (as_utc(clock_out) - as_utc(clock_in)).total_seconds() / 3600
     return round(max(0, delta), 2)
 
 

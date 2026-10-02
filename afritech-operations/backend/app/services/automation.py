@@ -30,6 +30,7 @@ from ..models import (
     Meeting, Announcement, AdminRequest,
 )
 from ..auth.scope import can_access_service_agents, is_service_agent_employee
+from ..utils.datetime_utils import as_utc
 from .audience import recipient_employee_ids
 from .notifications import notify
 
@@ -266,7 +267,7 @@ def ungraded_assignment_alert(scope_date=None):
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     count = 0
     for a in Assignment.query.all():
-        ungraded = [s for s in a.submissions if not s.graded and s.submitted_at < cutoff]
+        ungraded = [s for s in a.submissions if not s.graded and as_utc(s.submitted_at) < cutoff]
         if ungraded:
             if a.instructor and a.instructor.employee and a.instructor.employee.user_id:
                 notify(

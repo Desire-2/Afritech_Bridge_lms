@@ -10,6 +10,7 @@ from ..auth.auth import require_auth, current_user
 from ..auth.jwt_handlers import revoke_session
 from ..services.audit import audit
 from ..services.notifications import notify
+from ..utils.datetime_utils import as_utc
 from .helpers import json_error, parse_json
 
 bp = Blueprint('auth', __name__, url_prefix='/api/auth')
@@ -147,7 +148,7 @@ def reset_password():
     row = PasswordResetToken.query.filter_by(token_hash=hash_token(token)).first()
     if not row or row.used_at:
         return json_error('Invalid or expired reset token', 400)
-    if row.expires_at < datetime.now(timezone.utc):
+    if as_utc(row.expires_at) < datetime.now(timezone.utc):
         return json_error('Token expired. Request a new one.', 400)
     user = User.query.get(row.user_id)
     if not user:
@@ -163,6 +164,10 @@ def reset_password():
 @jwt_required()
 def my_sessions():
     user = current_user()
+    # A valid JWT with no matching (live) session — already logged out elsewhere,
+    # session expired, or the account was deactivated — must read as 401, not 500.
+    if not user:
+        return json_error('Authentication required', 401)
     sessions = SessionRecord.query.filter_by(user_id=user.id, revoked_at=None).order_by(SessionRecord.created_at.desc()).all()
     return jsonify({'sessions': [
         {
@@ -180,6 +185,8 @@ def my_sessions():
 @jwt_required()
 def revoke_session_endpoint(session_id):
     user = current_user()
+    if not user:
+        return json_error('Authentication required', 401)
     viewable = SessionRecord.query.filter_by(id=session_id, user_id=user.id).first()
     if not viewable:
         return json_error('Session not found', 404)

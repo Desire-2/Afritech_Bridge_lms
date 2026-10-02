@@ -9,7 +9,7 @@ import {
 } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 import { useEmployeeOptions, options } from '@/lib/use-options';
-import { useQuickCreate } from '@/lib/quick-create';
+import { useQuickCreate, isQuickPatch } from '@/lib/quick-create';
 
 const STATUSES = ['open', 'waiting', 'done', 'escalated', 'cancelled'];
 const PRIORITIES = ['low', 'medium', 'high', 'urgent'];
@@ -56,7 +56,7 @@ export default function FollowUpsPage() {
   }
 
   function openCreate(patch?: Record<string, any>) {
-    setForm({ ...EMPTY, ...(patch || {}) });
+    setForm({ ...EMPTY, ...(isQuickPatch(patch) ? patch : {}) });
     setFormError('');
     setOpen(true);
   }
@@ -123,7 +123,7 @@ export default function FollowUpsPage() {
         title="Follow-ups"
         subtitle="What the office promised an employee, and whether it happened."
         actions={canManage && (
-          <button className="btn btn-primary btn-sm" onClick={openCreate}>
+          <button className="btn btn-primary btn-sm" onClick={() => openCreate()}>
             <i className="bi bi-plus-lg me-1" />New follow-up
           </button>
         )}

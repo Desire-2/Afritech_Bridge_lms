@@ -6,7 +6,7 @@ import { api, fmtDate, can } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge, Modal, PriorityBadge } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
-import { useQuickCreate } from '@/lib/quick-create';
+import { useQuickCreate, isQuickPatch } from '@/lib/quick-create';
 
 export default function TasksPage() {
   const { user } = useAuth();
@@ -40,7 +40,7 @@ export default function TasksPage() {
   async function openCreate(patch?: Record<string, any>) {
     setEditing(null);
     await loadEmployees();
-    setForm({ title: '', description: '', assigned_to: '', priority: 'medium', due_date: '', comments: '', ...(patch || {}) });
+    setForm({ title: '', description: '', assigned_to: '', priority: 'medium', due_date: '', comments: '', ...(isQuickPatch(patch) ? patch : {}) });
     setError2('');
     setOpen(true);
   }
@@ -96,7 +96,7 @@ export default function TasksPage() {
     <div>
       <PageHeader title="Tasks" subtitle="Internal task management"
         actions={canCreate
-          ? <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> New task</button>
+          ? <button className="btn btn-primary" onClick={() => openCreate()}><i className="bi bi-plus-circle me-1" /> New task</button>
           : undefined} />
 
       <div className="d-flex gap-2 mb-3 flex-wrap">
