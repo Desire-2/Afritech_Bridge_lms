@@ -80,6 +80,7 @@ npm run dev                  # http://localhost:3001  (proxies /api → :5000)
 | `accountant@afritech.dev` | accountant |
 | `agent@afritech.dev`   | service agent |
 | `instructor@afritech.dev` | instructor |
+| `secretary@afritech.dev` | company secretary |
 
 ---
 
@@ -96,7 +97,7 @@ hard-coded. Both files are gitignored.
 - **Backend** loads `.env` from the project root at import time. Real
   OS-level variables (Docker, Heroku, CI) always take precedence over the file.
   Key settings: `SECRET_KEY`, `JWT_SECRET`, `DATABASE_URL`, `CORS_ORIGINS`,
-  `LMS_API_KEY`.
+  `LMS_API_KEY`, `BREVO_API_KEY`.
 - **Frontend** only exposes `NEXT_PUBLIC_*` values to the browser/clients.
   `NEXT_PUBLIC_API_URL` drives the dev/prod rewrites for `/api` and `/uploads`.
   In Docker builds, pass it as a build arg (compose reads it from `.env`).
@@ -108,11 +109,38 @@ cp frontend/.env.example frontend/.env
 ```
 
 Secrets reference for the stack: `docker/docker-compose.yml` interpolates
-`SECRET_KEY`, `JWT_SECRET`, `LMS_API_URL`, `LMS_API_KEY`, `BUSINESS_NAME`,
+`SECRET_KEY`, `JWT_SECRET`, `LMS_API_URL`, `LMS_API_KEY`, `BREVO_API_KEY`,
+`BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`, `BUSINESS_NAME`,
 `CURRENCY`, `DEFAULT_COMMISSION_RATE`, and `NEXT_PUBLIC_API_URL` from the
 project `.env`. The compose stack also ships a `redis` service backing the
 rate limiter (production defaults to `redis://localhost:6379/0` unless
 `RATELIMIT_STORAGE_URI` is overridden; dev/test use `memory://`).
+
+### Email notifications (Brevo)
+
+Notification emails go through the **Brevo transactional API** — the same
+transport the LMS uses (`backend/src/utils/brevo_email_service.py`). Configure
+it in `afritech-operations/.env`, then restart the backend:
+
+```bash
+BREVO_API_KEY=xkeysib-...          # Brevo → SMTP & API → API keys
+BREVO_SENDER_EMAIL=you@domain.tld   # sender verified in your Brevo account
+BREVO_SENDER_NAME=AfriTech Bridge
+FRONTEND_URL=https://your-frontend  # links inside the email body
+```
+
+Transport selection (`backend/app/services/email.py`):
+
+- `BREVO_API_KEY` + `BREVO_SENDER_EMAIL` set → Brevo API (3 retries on failure).
+- Otherwise → SMTP via `MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD`.
+- Neither set → email disabled; notifications are in-app only (logged, never
+  raised).
+
+Delivery is queued on a background worker, so a slow or failed send never
+breaks the request that triggered it. Per-user control lives on **Profile →
+Notifications** (master `email_notifications` switch plus per-type Email/In-app
+rows, `GET`/`PUT /api/notifications/preferences`), and admin automation
+thresholds are at `GET /api/settings/notification-rules` (`settings.manage`).
 
 ## Tests
 
@@ -178,7 +206,12 @@ docker compose -f docker/docker-compose.yml up --build
 ```
 
 First deploy: initialize schema inside the backend container with
-`flask db upgrade` (initial migration included) or run `flask seed-dev` for demo data.
+`flask db upgrade`. That runs every migration, including `03e60c5ab9dd`, which
+seeds the permission catalogue, all system roles (Company Secretary included),
+their role/permission links and — on an empty install — the first three
+branches. It is insert-only, so re-running it on an existing database changes
+nothing. `flask seed-dev` remains the local/demo path and is refused on
+non-SQLite databases.
 
 ### Heroku-style (Procfile)
 

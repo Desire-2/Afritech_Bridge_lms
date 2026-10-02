@@ -1,25 +1,32 @@
 """Email delivery for notifications.
 
-Mirrors the Afritech Bridge LMS conventions: SMTP credentials come from the
-environment, mail is composed as inline HTML, and sends are fire-and-forget so
+Mirrors the Afritech Bridge LMS conventions: the Brevo transactional API
+(`BREVO_API_KEY`) is the preferred transport, with SMTP (`MAIL_*`) as the
+fallback, and mail is composed as inline HTML. Sends are fire-and-forget so
 a slow/failed email never breaks the request that triggered it.
 
 Emails are enqueued on a background queue and delivered by a daemon worker
-thread; if SMTP is not configured the send is skipped (in-app notifications
-are unaffected).
+thread; if neither transport is configured the send is skipped (in-app
+notifications are unaffected).
 """
 import logging
 import queue
 import smtplib
 import threading
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from datetime import date
 
+import requests
 from flask import current_app
 
 logger = logging.getLogger(__name__)
+
+BREVO_ENDPOINT = 'https://api.brevo.com/v3/smtp/email'
+BREVO_RETRIES = 3
+BREVO_RETRY_DELAY = 2
 
 _email_queue = queue.Queue()
 _worker_started = False
@@ -29,6 +36,9 @@ _STOP = '__email_stop__'
 def email_settings():
     cfg = current_app.config
     return {
+        'brevo_api_key': cfg.get('BREVO_API_KEY') or '',
+        'brevo_sender_email': cfg.get('BREVO_SENDER_EMAIL') or '',
+        'brevo_sender_name': cfg.get('BREVO_SENDER_NAME') or cfg.get('MAIL_SENDER_NAME', 'AfriTech Bridge'),
         'server': cfg.get('MAIL_SERVER', 'smtp.gmail.com'),
         'port': int(cfg.get('MAIL_PORT', 587)),
         'use_tls': bool(cfg.get('MAIL_USE_TLS', True)),
@@ -40,9 +50,17 @@ def email_settings():
     }
 
 
+def brevo_configured(settings=None):
+    """True when the Brevo API transport is selected (same as the LMS)."""
+    s = settings or email_settings()
+    return bool(s['brevo_api_key'] and s['brevo_sender_email'])
+
+
 def email_configured():
-    """True when SMTP credentials are present; otherwise email is disabled."""
+    """True when a transport is available; otherwise email is disabled."""
     s = email_settings()
+    if brevo_configured(s):
+        return True
     return bool(s['username'] and s['password'])
 
 
@@ -123,11 +141,8 @@ def send_email(to, subject, html, text=None):
         settings = email_settings()
     except RuntimeError:  # called outside an app context - nothing configured
         return False
-    if not settings['username'] or not settings['password']:
-        if settings['server'] == 'console' or (settings['username'] is None and settings['password'] is None):
-            logger.info('Email delivery not configured; skipping send of "%s" to %s', subject, to)
-        else:
-            logger.warning('Email delivery not configured; skipping send of "%s" to %s', subject, to)
+    if not brevo_configured(settings) and not (settings['username'] and settings['password']):
+        logger.info('Email delivery not configured; skipping send of "%s" to %s', subject, to)
         return False
     _ensure_worker()
     _email_queue.put({
@@ -149,6 +164,8 @@ def send_email_now(to, subject, html, text=None):
 
 def _deliver(payload):
     s = payload['settings']
+    if brevo_configured(s):
+        return _deliver_brevo(payload, s)
     try:
         msg = MIMEMultipart('alternative')
         msg['Subject'] = payload['subject']
@@ -174,6 +191,39 @@ def _deliver(payload):
     except Exception as e:
         logger.error('Email sending failed (%s): %s', payload['subject'], e)
         return False
+
+
+def _deliver_brevo(payload, s):
+    """Send through the Brevo transactional API (LMS-parity transport)."""
+    body = {
+        'to': [{'email': to} for to in payload['to']],
+        'sender': {'email': s['brevo_sender_email'], 'name': s['brevo_sender_name']},
+        'subject': payload['subject'],
+        'htmlContent': payload['html'],
+    }
+    if payload.get('text'):
+        body['textContent'] = payload['text']
+    headers = {
+        'api-key': s['brevo_api_key'],
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+    }
+    last_error = None
+    for attempt in range(1, BREVO_RETRIES + 1):
+        try:
+            resp = requests.post(BREVO_ENDPOINT, json=body, headers=headers, timeout=15)
+            if resp.status_code < 300:
+                logger.info('Email sent (Brevo): %s -> %s', payload['subject'], payload['to'])
+                return True
+            last_error = 'HTTP %s: %s' % (resp.status_code, (resp.text or '')[:200])
+        except requests.RequestException as e:
+            last_error = str(e)
+        if attempt < BREVO_RETRIES:
+            logger.warning('Brevo send attempt %d/%d failed (%s); retrying',
+                           attempt, BREVO_RETRIES, last_error)
+            time.sleep(BREVO_RETRY_DELAY)
+    logger.error('Email sending failed (Brevo, %s): %s', payload['subject'], last_error)
+    return False
 
 
 def _worker():

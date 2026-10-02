@@ -91,7 +91,7 @@ def email_for_recipient(user, notification_type, message, severity):
     """Build and enqueue the notification email for a user.
 
     Returns True when an email was queued, False when the user is opted out or
-    SMTP is not configured. Called from `notify()`.
+    no email transport is configured. Called from `notify()`.
     """
     if not user or not user.email:
         return False

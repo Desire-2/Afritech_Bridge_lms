@@ -52,8 +52,15 @@ class Config:
     # Frontend URL used to build links inside notification emails.
     FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
-    # Email notifications (SMTP). When MAIL_USERNAME/MAIL_PASSWORD are missing,
-    # email delivery is disabled and notifications are in-app only.
+    # Email notifications — Brevo transactional API (same contract as the LMS).
+    # BREVO_API_KEY + BREVO_SENDER_EMAIL select the API transport; when they are
+    # absent delivery falls back to the MAIL_* SMTP settings below, and when
+    # neither is set email delivery is disabled (notifications are in-app only).
+    BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '')
+    BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL', '')
+    BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', '')
+
+    # Email notifications (SMTP fallback).
     MAIL_SERVER = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
     MAIL_PORT = int(os.environ.get('MAIL_PORT', '587'))
     MAIL_USE_TLS = os.environ.get('MAIL_USE_TLS', 'True').lower() in ('true', 'yes', '1')
