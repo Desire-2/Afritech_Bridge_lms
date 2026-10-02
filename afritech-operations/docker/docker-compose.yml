@@ -9,6 +9,10 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-key}
       JWT_SECRET: ${JWT_SECRET:-change-me-too-use-a-long-random-key-here}
       CORS_ORIGINS: http://localhost:3001
+      # Public frontend URL — notification emails link through this.
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
+      AUTOMATION_ENABLED: ${AUTOMATION_ENABLED:-true}
+      AUTOMATION_INTERVAL_MINUTES: ${AUTOMATION_INTERVAL_MINUTES:-15}
       BUSINESS_NAME: ${BUSINESS_NAME:-AfriTech Bridge Operations}
       CURRENCY: ${CURRENCY:-RWF}
       DEFAULT_COMMISSION_RATE: ${DEFAULT_COMMISSION_RATE:-0.20}

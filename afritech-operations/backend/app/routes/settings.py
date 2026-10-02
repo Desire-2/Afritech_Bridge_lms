@@ -171,3 +171,13 @@ def notification_rules():
         'automation.missing_closing_alert': _get_setting('automation.missing_closing_alert', 'true'),
     }
     return jsonify({'rules': rules})
+
+@bp.post('/run-automation')
+@require_permission('settings.manage')
+def run_automation_now():
+    """Run every alert rule now (normally handled by the scheduler thread)."""
+    from ..services.automation import run_all
+
+    results = [{'rule': name, 'result': value} for name, value in run_all()]
+    db.session.commit()
+    return jsonify({'results': results})

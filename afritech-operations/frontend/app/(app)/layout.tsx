@@ -38,8 +38,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       setNotice((list as any)?.items || []);
       setUnread((count as any)?.unread || 0);
     } catch {
-      setNotice([]);
-      setUnread(0);
+      // Transient failure — keep the last known badge instead of clearing it.
     }
   }, [user]);
 
@@ -62,7 +61,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (!user) return;
     refresh();
     const t = setInterval(refresh, 30000);
-    return () => clearInterval(t);
+    // Returning to the tab should show the count right away, not up to 30s later.
+    const onFocus = () => refresh();
+    const onVisible = () => { if (!document.hidden) refresh(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [user, refresh]);
 
   useEffect(() => {

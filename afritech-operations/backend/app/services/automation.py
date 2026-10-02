@@ -9,7 +9,6 @@ Rules currently implemented:
   missing-weekly-plan     : alert manager/instructor when a weekly plan for the current week is missing
   instructor-behind       : alert manager when weekly plan progress is below threshold
   ungraded-assignment     : alert instructor when an assignment remains ungraded past configured days
-  missing-daily-closing   : alert manager when an agent has no closing for yesterday
   task-due-tomorrow       : alert assignee and coordinators about work due tomorrow
   meeting-reminder         : alert participants and coordinators about tomorrow's meetings
   acknowledgement-pending : alert coordinators about outstanding announcement acknowledgements
@@ -114,12 +113,12 @@ def _notify_coordinators(notification_type, message, employees, severity, relate
     for u in _coordinators():
         if any(not _coordinator_can_see(u, emp) for emp in candidates):
             continue
-        notify(
+        if notify(
             u, notification_type, message,
             severity=severity, related_type=related_type, related_id=related_id,
             rule=rule,
-        )
-        count += 1
+        ):
+            count += 1
     return count
 
 
@@ -137,6 +136,7 @@ def run_all(scope_date=None):
         pending_acknowledgement_reminder,
         stale_request_reminder,
         task_awaiting_verification_alert,
+        ungraded_assignment_alert,
     ]
     run = []
     for t in triggers:
@@ -146,6 +146,10 @@ def run_all(scope_date=None):
         except Exception as e:  # noqa
             db.session.rollback()
             run.append((t.__name__, f'error: {e}'))
+    # Persist what the rules produced; `notify()` only queues rows, and the
+    # caller (scheduler thread, settings endpoint, test) has no request cycle.
+    if any(n for _, n in run if not isinstance(n, str)):
+        db.session.commit()
     return run
 
 
@@ -160,12 +164,12 @@ def cash_shortage_alert(scope_date):
         diff = float(c.cash_difference or 0)
         if diff < 0 and abs(diff) >= threshold:
             for m in _managers():
-                notify(
+                if notify(
                     m, 'cash_shortage',
                     f'Cash shortage detected: {abs(diff):,.0f} RWF for {c.employee.full_name} on {scope_date}.',
                     severity='critical', related_type='daily_closing', related_id=c.id, rule='cash-shortage'
-                )
-                count += 1
+                ):
+                    count += 1
     return count
 
 
@@ -174,12 +178,12 @@ def closing_approval_alert(scope_date):
     count = 0
     for c in closings:
         for m in _managers():
-            notify(
+            if notify(
                 m, 'closing_approval',
                 f'Daily closing awaiting approval: {c.employee.full_name} ({c.closing_date}).',
                 severity='warning', related_type='daily_closing', related_id=c.id, rule='closing-approval'
-            )
-            count += 1
+            ):
+                count += 1
     return count
 
 
@@ -188,12 +192,12 @@ def expense_approval_alert(scope_date=None):
     count = 0
     for e in expenses:
         for m in _managers():
-            notify(
+            if notify(
                 m, 'expense_approval',
                 f'Expense awaiting approval: {e.category} {e.amount:,.0f} RWF.',
                 severity='warning', related_type='expense', related_id=e.id, rule='expense-approval'
-            )
-            count += 1
+            ):
+                count += 1
     return count
 
 
@@ -206,12 +210,12 @@ def overdue_task_alert(scope_date):
     count = 0
     for t in tasks:
         if t.assignee and t.assignee.user_id:
-            notify(
+            if notify(
                 t.assignee.user_id, 'task_overdue',
                 f'Overdue task: {t.title} (due {t.due_date}).',
                 severity='warning', related_type='task', related_id=t.id, rule='overdue-task'
-            )
-            count += 1
+            ):
+                count += 1
     return count
 
 
@@ -226,19 +230,19 @@ def missing_weekly_plan_alert(scope_date):
         exists = WeeklyPlan.query.filter_by(instructor_id=ins.id, week_start=week_start).first()
         if not exists:
             if ins.employee.user_id:
-                notify(
+                if notify(
                     ins.employee.user_id, 'missing_weekly_plan',
                     f'No weekly plan submitted for week {week_start}–{week_end}.',
                     severity='warning', related_type='instructor', related_id=ins.id, rule='missing-weekly-plan'
-                )
-                count += 1
+                ):
+                    count += 1
             for m in _managers():
-                notify(
+                if notify(
                     m, 'missing_weekly_plan',
                     f'{ins.employee.full_name} has no weekly plan for {week_start}–{week_end}.',
                     severity='warning', related_type='instructor', related_id=ins.id, rule='missing-weekly-plan'
-                )
-                count += 1
+                ):
+                    count += 1
     return count
 
 
@@ -252,12 +256,12 @@ def instructor_behind_schedule_alert(scope_date):
     for p in plans:
         if p.progress_percent() < threshold:
             for m in _managers():
-                notify(
+                if notify(
                     m, 'instructor_behind',
                     f'Instructor {p.instructor.employee.full_name} weekly plan progress is {p.progress_percent()}% (threshold {threshold}%).',
                     severity='warning', related_type='weekly_plan', related_id=p.id, rule='instructor-behind'
-                )
-                count += 1
+                ):
+                    count += 1
     return count
 
 
@@ -270,12 +274,12 @@ def ungraded_assignment_alert(scope_date=None):
         ungraded = [s for s in a.submissions if not s.graded and as_utc(s.submitted_at) < cutoff]
         if ungraded:
             if a.instructor and a.instructor.employee and a.instructor.employee.user_id:
-                notify(
+                if notify(
                     a.instructor.employee.user_id, 'grading_overdue',
                     f'{len(ungraded)} submission(s) older than {days} days await grading for "{a.title}".',
                     severity='warning', related_type='assignment', related_id=a.id, rule='ungraded-assignment'
-                )
-                count += 1
+                ):
+                    count += 1
     return count
 
 
@@ -300,12 +304,12 @@ def task_due_tomorrow_alert(scope_date=None):
     count = 0
     for t in tasks:
         if t.assignee and t.assignee.user_id:
-            notify(
+            if notify(
                 t.assignee.user_id, 'task_due_tomorrow',
                 f'Task "{t.title}" is due tomorrow ({tomorrow}).',
                 severity='info', related_type='task', related_id=t.id, rule='task-due-tomorrow',
-            )
-            count += 1
+            ):
+                count += 1
         for u in _coordinators():
             # Don't double-notify the assignee, and never tell a coordinator
             # about work that belongs to a Service Agent they cannot see.
@@ -313,13 +317,13 @@ def task_due_tomorrow_alert(scope_date=None):
                 continue
             if not _coordinator_can_see(u, t.assignee):
                 continue
-            notify(
+            if notify(
                 u, 'task_due_tomorrow',
                 f'"{t.title}" is due tomorrow'
                 + (f' ({t.assignee.full_name}).' if t.assignee else '.'),
                 severity='info', related_type='task', related_id=t.id, rule='task-due-tomorrow',
-            )
-            count += 1
+            ):
+                count += 1
     return count
 
 
@@ -337,14 +341,14 @@ def upcoming_meeting_reminder(scope_date=None):
         participants = [p.employee for p in m.participants if p.employee]
         for emp in participants:
             if emp.user_id:
-                notify(
+                if notify(
                     emp.user_id, 'meeting_reminder',
                     f'Reminder: "{m.title}" is tomorrow at {when}'
                     + (f' in {m.location}.' if m.location else '.'),
                     severity='info', related_type='meeting', related_id=m.id,
                     rule='meeting-reminder',
-                )
-                count += 1
+                ):
+                    count += 1
         count += _notify_coordinators(
             'meeting_reminder',
             f'Meeting tomorrow at {when}: "{m.title}"'
@@ -418,12 +422,12 @@ def task_awaiting_verification_alert(scope_date=None):
                 continue
             if not _coordinator_can_see(u, t.assignee):
                 continue
-            notify(
+            if notify(
                 u, 'task_awaiting_verification',
                 f'"{t.title}" is submitted and awaiting verification'
                 + (f' ({t.assignee.full_name}).' if t.assignee else '.'),
                 severity='info', related_type='task', related_id=t.id,
                 rule='task-awaiting-verification',
-            )
-            count += 1
+            ):
+                count += 1
     return count

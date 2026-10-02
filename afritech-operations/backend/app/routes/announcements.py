@@ -172,11 +172,14 @@ def create_announcement():
     db.session.add(ann)
     db.session.flush()
 
+    # `None` means audience 'all' — a company-wide post still notifies everyone.
     targets = _resolve_recipients(ann)
-    if targets:
-        for emp in Employee.query.filter(Employee.id.in_(targets)).all():
-            notify_employee(emp, 'announcement', f'Announcement: {ann.title}',
-                            related_type='announcement', related_id=ann.id)
+    employees = Employee.query
+    if targets is not None:
+        employees = employees.filter(Employee.id.in_(targets))
+    for emp in employees.all():
+        notify_employee(emp, 'announcement', f'Announcement: {ann.title}',
+                        related_type='announcement', related_id=ann.id)
     db.session.commit()
     audit('announcement_created', 'announcement', ann.id, new_value=ann.to_dict())
     return jsonify({'message': 'Announcement published', 'announcement': ann.to_dict()}), 201

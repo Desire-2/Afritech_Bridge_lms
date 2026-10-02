@@ -8,13 +8,25 @@ service.
 Per-recipient defaults can be overridden per notification type through the
 NotificationPreference table: a row with type='*' acts as the fallback for any
 type without an explicit row.
+
+Rows are *not* committed here — handlers commonly commit before calling
+`notify()` (right after their own insert), so the app's `after_request` hook
+persists whatever is still pending when the response succeeds. Repeated alert
+rules also pass ``rule`` so a second run inside NOTIFY_RULE_DEDUP_HOURS does
+not re-notify the same item.
 """
+from datetime import datetime, timedelta, timezone
+
 from flask import current_app
 
 from ..extensions import db
 from ..models import Notification, NotificationPreference, User
+from ..utils.datetime_utils import as_utc
 from . import email as email_service
 from .email import render_notification_email, render_plain_text
+
+# Alert rules re-run on a schedule; skip an item already notified in this window.
+NOTIFY_RULE_DEDUP_HOURS = 24
 
 SEVERITY_BY_TYPE = {
     'cash_shortage': 'critical',
@@ -33,6 +45,18 @@ SEVERITY_BY_TYPE = {
     'acknowledgement_pending': 'warning',
     'request_stale': 'warning',
     'task_awaiting_verification': 'info',
+    # Task lifecycle (routes/tasks.py) and coordination updates.
+    'task_submitted': 'info',
+    'task_verified': 'info',
+    'task_rejected': 'warning',
+    'task_reopened': 'warning',
+    'meeting_invited': 'info',
+    'admin_request': 'info',
+    'announcement': 'info',
+    'escalation': 'warning',
+    'followup': 'info',
+    'leave_request': 'warning',
+    'memo': 'info',
 }
 
 # Known notification types surfaced in the notification-preferences UI.
@@ -58,6 +82,11 @@ NOTIFICATION_TYPES = {
     'leave_request': 'Leave request update',
     'announcement': 'New announcement',
     'memo': 'New memo',
+    'task_submitted': 'Task submitted for review',
+    'task_verified': 'Task verified',
+    'task_rejected': 'Task needs changes',
+    'task_reopened': 'Task reopened',
+    'meeting_invited': 'Meeting invitation',
 }
 
 
@@ -103,13 +132,31 @@ def email_for_recipient(user, notification_type, message, severity):
     if not email_service.email_configured():
         return False
     subject = f'[AfriTech Bridge] {_label(notification_type, severity)}'
-    frontend_url = current_app.config.get('FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+    frontend_url = (current_app.config.get('FRONTEND_URL') or 'http://localhost:3001').rstrip('/')
     action_url = f'{frontend_url}/notifications'
     html = render_notification_email(
         _label(notification_type, severity), message, severity,
         action_url=action_url, action_label='View notifications')
     text = render_plain_text(_label(notification_type, severity), message, action_url=action_url)
     return email_service.send_email(user.email, subject, html, text=text)
+
+
+def _already_notified(recipient, notification_type, related_type, related_id, rule):
+    """True when this rule already notified the same recipient about this item.
+
+    Alert rules re-run on a schedule; without this every run would re-notify
+    (and re-email) the same overdue task or pending closing, day after day.
+    """
+    if not rule:
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=NOTIFY_RULE_DEDUP_HOURS)
+    rows = (Notification.query
+            .filter_by(recipient_id=recipient, type=notification_type,
+                       related_type=related_type, related_id=related_id,
+                       created_by_rule=rule)
+            .limit(50).all())
+    return any(as_utc(row.created_at) and as_utc(row.created_at) >= cutoff
+               for row in rows)
 
 
 def notify(recipient, notification_type, message, severity=None, related_type=None, related_id=None, rule=None):
@@ -120,6 +167,9 @@ def notify(recipient, notification_type, message, severity=None, related_type=No
         user = _resolve_user(recipient)
 
     if user is None:
+        return None
+
+    if _already_notified(recipient, notification_type, related_type, related_id, rule):
         return None
 
     if severity is None:

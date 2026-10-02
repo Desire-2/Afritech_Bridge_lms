@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, g, jsonify
 from flask_jwt_extended import get_jwt
 
 from .extensions import db, migrate, jwt, cors, bcrypt, limiter
@@ -64,7 +64,39 @@ def create_app(config_name='default'):
 
     @app.before_request
     def auth_context():
+        # Snapshot BEFORE any query runs: a load below (or any autoflush) would
+        # flush a caller's pending edits and empty session.dirty, hiding them.
+        g.pending_before = (set(db.session.new), set(db.session.dirty),
+                            set(db.session.deleted))
         load_current_user()
+
+    @app.after_request
+    def persist_side_effects(response):
+        """Commit whatever the handler left pending.
+
+        Handlers follow `db.session.commit() → audit() → notify() → return`,
+        so the audit entry and the Notification row (the one the bell badge
+        counts) are added *after* the only commit — and `notify()`'s preference
+        lookup already flushed them, so checking `session.new` afterwards finds
+        nothing while the transaction is still uncommitted. Flask-SQLAlchemy's
+        teardown then rolls it back silently: tests saw those rows (same
+        session), the client never did.
+        A successful response therefore commits; a failed one rolls back —
+        unless the caller was already mid-transaction, which is left alone.
+        """
+        pre_new, pre_dirty, pre_deleted = getattr(g, 'pending_before', ((), (), ()))
+        if pre_new or pre_dirty or pre_deleted:
+            return response
+        try:
+            if response.status_code < 400:
+                db.session.commit()
+            else:
+                db.session.rollback()
+        except Exception:  # noqa: BLE001 - never fail the response over persistence
+            db.session.rollback()
+            app.logger.exception(
+                'Could not persist session changes (status=%s)', response.status_code)
+        return response
 
     @app.errorhandler(404)
     def not_found(e):
@@ -78,5 +110,8 @@ def create_app(config_name='default'):
     @app.errorhandler(429)
     def rate_limited(e):
         return jsonify({'error': 'Too many requests. Please try again later.'}), 429
+
+    from .services.scheduler import start_automation_scheduler
+    start_automation_scheduler(app)
 
     return app

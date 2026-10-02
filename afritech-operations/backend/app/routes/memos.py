@@ -106,11 +106,14 @@ def create_memo():
     db.session.add(memo)
     db.session.flush()
 
+    # `None` means audience 'all' — a company-wide post still notifies everyone.
     targets = _resolve_recipients(memo)
-    if targets:
-        for emp in Employee.query.filter(Employee.id.in_(targets)).all():
-            notify_employee(emp, 'memo', f'Memo: {memo.title}',
-                            related_type='memo', related_id=memo.id)
+    employees = Employee.query
+    if targets is not None:
+        employees = employees.filter(Employee.id.in_(targets))
+    for emp in employees.all():
+        notify_employee(emp, 'memo', f'Memo: {memo.title}',
+                        related_type='memo', related_id=memo.id)
     db.session.commit()
     audit('memo_created', 'memo', memo.id, new_value=memo.to_dict())
     return jsonify({'message': 'Memo created', 'memo': memo.to_dict()}), 201
@@ -168,11 +171,14 @@ def publish_memo(memo_id):
     if memo.published_at:
         return json_error('Memo is already published', 409)
     memo.published_at = datetime.now(timezone.utc)
+    # `None` means audience 'all' — a company-wide post still notifies everyone.
     targets = _resolve_recipients(memo)
-    if targets:
-        for emp in Employee.query.filter(Employee.id.in_(targets)).all():
-            notify_employee(emp, 'memo', f'Memo: {memo.title}',
-                            related_type='memo', related_id=memo.id)
+    employees = Employee.query
+    if targets is not None:
+        employees = employees.filter(Employee.id.in_(targets))
+    for emp in employees.all():
+        notify_employee(emp, 'memo', f'Memo: {memo.title}',
+                        related_type='memo', related_id=memo.id)
     db.session.commit()
     audit('memo_published', 'memo', memo.id, new_value=memo.to_dict())
     return jsonify({'message': 'Memo published', 'memo': memo.to_dict()})

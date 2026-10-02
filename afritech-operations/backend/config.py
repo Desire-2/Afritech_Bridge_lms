@@ -50,7 +50,16 @@ class Config:
     LMS_API_TIMEOUT = int(os.environ.get('LMS_API_TIMEOUT', '10'))
 
     # Frontend URL used to build links inside notification emails.
-    FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+    # The ops frontend runs on 3001 (3000 is the LMS), and on a deployed
+    # instance this must be the public URL — otherwise every email links to
+    # localhost and recipients land on their own machine.
+    FRONTEND_URL = (os.environ.get('FRONTEND_URL') or 'http://localhost:3001').rstrip('/')
+
+    # Scheduled alerts (`services/automation.py`). The scheduler thread runs
+    # every AUTOMATION_INTERVAL_MINUTES; 0 (or AUTOMATION_ENABLED=false)
+    # disables it, and it never starts under TESTING.
+    AUTOMATION_ENABLED = os.environ.get('AUTOMATION_ENABLED', 'true').lower() in ('1', 'true', 'yes', 'on')
+    AUTOMATION_INTERVAL_MINUTES = int(os.environ.get('AUTOMATION_INTERVAL_MINUTES', '15'))
 
     # Email notifications — Brevo transactional API (same contract as the LMS).
     # BREVO_API_KEY + BREVO_SENDER_EMAIL select the API transport; when they are
@@ -74,6 +83,20 @@ class Config:
     def init_app(app):
         os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
         Config._warn_weak_jwt_secret(app)
+        Config._warn_local_frontend_url(app)
+
+    @staticmethod
+    def _warn_local_frontend_url(app):
+        """Email links are built from FRONTEND_URL; localhost is only a dev value."""
+        if app.config.get('TESTING'):
+            return
+        url = app.config.get('FRONTEND_URL') or ''
+        if 'localhost' in url or '127.0.0.1' in url:
+            app.logger.warning(
+                'FRONTEND_URL is %s — notification emails will link to that '
+                'host. Set FRONTEND_URL to your public frontend URL in .env '
+                'and restart.', url,
+            )
 
     @staticmethod
     def _warn_weak_jwt_secret(app):
@@ -102,6 +125,7 @@ class DevelopmentConfig(Config):
 
 class TestingConfig(Config):
     TESTING = True
+    AUTOMATION_ENABLED = False
     SQLALCHEMY_DATABASE_URI = os.environ.get('TEST_DATABASE_URL', 'sqlite:///' + os.path.join(basedir, 'test.db'))
     RATE_LIMIT_DEFAULT = '1000000 per hour'
     RATE_LIMIT_AUTH = '100000 per minute'
