@@ -73,6 +73,26 @@ class Config:
     @staticmethod
     def init_app(app):
         os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
+        Config._warn_weak_jwt_secret(app)
+
+    @staticmethod
+    def _warn_weak_jwt_secret(app):
+        """PyJWT only whispers about a short HMAC key; make it actionable.
+
+        HS256 wants at least 32 bytes of key material — `change-me-too` (the
+        historical default) is 13 and logs InsecureKeyLengthWarning on every
+        request.
+        """
+        if app.config.get('TESTING'):
+            return
+        key = app.config.get('JWT_SECRET_KEY') or ''
+        if len(key) < 32:
+            app.logger.warning(
+                'JWT_SECRET is only %d bytes (>= 32 required for HS256). '
+                'Set JWT_SECRET in .env — e.g. python -c "import secrets; '
+                'print(secrets.token_hex(32))" — and restart.',
+                len(key),
+            )
 
 
 class DevelopmentConfig(Config):

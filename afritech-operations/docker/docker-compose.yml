@@ -6,8 +6,8 @@ services:
     environment:
       FLASK_CONFIG: production
       DATABASE_URL: postgresql://afritech:afritech@db:5432/afritech_operations
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      JWT_SECRET: ${JWT_SECRET:-change-me-too}
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-key}
+      JWT_SECRET: ${JWT_SECRET:-change-me-too-use-a-long-random-key-here}
       CORS_ORIGINS: http://localhost:3001
       BUSINESS_NAME: ${BUSINESS_NAME:-AfriTech Bridge Operations}
       CURRENCY: ${CURRENCY:-RWF}
