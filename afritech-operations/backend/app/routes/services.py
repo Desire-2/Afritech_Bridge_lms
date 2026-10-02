@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify
 from ..extensions import db
 from ..models import ServiceCategory, Service, Client, PaymentMethod
 from ..auth.auth import require_permission, require_any_permission, current_user
+from ..auth.scope import redact_service
 from ..services.audit import audit
 from .helpers import json_error, parse_json, paginate, paginate_response
 
@@ -36,7 +37,8 @@ def list_services():
         like = f'%{search}%'
         q = q.filter(db.or_(Service.name.ilike(like), Service.code.ilike(like)))
     p = paginate(q.order_by(Service.name))
-    return paginate_response([s.to_dict() for s in p.items], p)
+    user = current_user()
+    return paginate_response([redact_service(s.to_dict(), user) for s in p.items], p)
 
 
 @bp.post('')
@@ -69,7 +71,7 @@ def get_service(service_id):
     svc = Service.query.get(service_id)
     if not svc:
         return json_error('Service not found', 404)
-    return jsonify({'service': svc.to_dict()})
+    return jsonify({'service': redact_service(svc.to_dict(), current_user())})
 
 
 @bp.put('/<int:service_id>')
@@ -98,7 +100,7 @@ def deactivate_service(service_id):
         return json_error('Service not found', 404)
     svc.is_active = False
     db.session.commit()
-    audit('service_deactivated', 'service', svc.id, prev=True, new_value=False)
+    audit('service_deactivated', 'service', svc.id, previous_value=True, new_value=False)
     return jsonify({'message': 'Service deactivated'})
 
 
@@ -110,7 +112,7 @@ def reactivate_service(service_id):
         return json_error('Service not found', 404)
     svc.is_active = True
     db.session.commit()
-    audit('service_reactivated', 'service', svc.id, prev=False, new_value=True)
+    audit('service_reactivated', 'service', svc.id, previous_value=False, new_value=True)
     return jsonify({'message': 'Service reactivated'})
 
 

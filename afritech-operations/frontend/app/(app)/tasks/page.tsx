@@ -6,15 +6,22 @@ import { api, fmtDate, can } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge, Modal, PriorityBadge } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
+import { useQuickCreate } from '@/lib/quick-create';
 
 export default function TasksPage() {
   const { user } = useAuth();
   const canManage = can(user, 'tasks.manage');
+  const canAssign = canManage || can(user, 'tasks.assign');
+  const canVerify = canManage || can(user, 'tasks.verify');
   const canCreate = can(user, 'tasks.create');
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
   const [mine, setMine] = useState(false);
-  const { data, error, loading, reload } = useFetch('/api/tasks', [page, status, mine], { page, per_page: 20, status: status || undefined });
+  const { data, error, loading, reload } = useFetch('/api/tasks', [page, status, mine], {
+    page, per_page: 20,
+    status: status || undefined,
+    mine: mine || undefined,
+  });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [employees, setEmployees] = useState<any[]>([]);
@@ -22,7 +29,7 @@ export default function TasksPage() {
   const [busy, setBusy] = useState(false);
   const [error2, setError2] = useState('');
 
-  const items = (mine ? (data?.items || []).filter((t: any) => t.assignee_name === user?.employee_name) : data?.items) || [];
+  const items = data?.items || [];
 
   async function loadEmployees() {
     if (employees.length) return;
@@ -30,13 +37,14 @@ export default function TasksPage() {
     setEmployees(d.items || []);
   }
 
-  async function openCreate() {
+  async function openCreate(patch?: Record<string, any>) {
     setEditing(null);
     await loadEmployees();
-    setForm({ title: '', description: '', assigned_to: '', priority: 'medium', due_date: '', comments: '' });
+    setForm({ title: '', description: '', assigned_to: '', priority: 'medium', due_date: '', comments: '', ...(patch || {}) });
     setError2('');
     setOpen(true);
   }
+  useQuickCreate(openCreate);
 
   async function openEdit(t: any) {
     setEditing(t);
@@ -75,8 +83,13 @@ export default function TasksPage() {
   }
 
   async function setStatusItem(t: any, status: string) {
-    await api(`/api/tasks/${t.id}`, { method: 'PUT', body: { status } });
-    reload();
+    setError2('');
+    try {
+      await api(`/api/tasks/${t.id}`, { method: 'PUT', body: { status } });
+      reload();
+    } catch (err: any) {
+      setError2(err.message);
+    }
   }
 
   return (
@@ -91,8 +104,10 @@ export default function TasksPage() {
           <option value="">All statuses</option>
           <option value="todo">To do</option>
           <option value="in_progress">In progress</option>
-          <option value="completed">Completed</option>
+          <option value="submitted">Submitted</option>
           <option value="verified">Verified</option>
+          <option value="rejected">Rejected</option>
+          <option value="cancelled">Cancelled</option>
         </select>
         <div className="form-check form-switch align-self-center">
           <input className="form-check-input" type="checkbox" id="mineOnly" checked={mine} onChange={(e) => { setMine(e.target.checked); setPage(1); }} />
@@ -124,10 +139,18 @@ export default function TasksPage() {
                     <div className="d-flex justify-content-between align-items-center">
                       <Badge status={t.status} />
                       <div className="d-flex gap-1">
-                        {canManage && t.status === 'todo' && <button className="btn btn-sm btn-outline-primary" onClick={() => setStatusItem(t, 'in_progress')}>Start</button>}
-                        {t.status === 'in_progress' && <button className="btn btn-sm btn-outline-success" onClick={() => setStatusItem(t, 'completed')}>Complete</button>}
-                        {canManage && t.status === 'completed' && <button className="btn btn-sm btn-outline-secondary" onClick={() => setStatusItem(t, 'verified')}>Verify</button>}
-                        {canManage && <button className="btn btn-sm btn-outline-secondary" onClick={() => openEdit(t)}><i className="bi bi-pencil" /></button>}
+                        {t.status === 'todo' && <button className="btn btn-sm btn-outline-primary" onClick={() => setStatusItem(t, 'in_progress')}>Start</button>}
+                        {t.status === 'in_progress' && <button className="btn btn-sm btn-outline-success" onClick={() => setStatusItem(t, 'submitted')}>Submit</button>}
+                        {canVerify && t.status === 'submitted' && (
+                          <>
+                            <button className="btn btn-sm btn-outline-success" onClick={() => setStatusItem(t, 'verified')}>Verify</button>
+                            <button className="btn btn-sm btn-outline-danger" onClick={() => setStatusItem(t, 'rejected')}>Reject</button>
+                          </>
+                        )}
+                        {(canAssign || canVerify) && t.status === 'rejected' && (
+                          <button className="btn btn-sm btn-outline-primary" onClick={() => setStatusItem(t, 'in_progress')}>Reopen</button>
+                        )}
+                        {canAssign && <button className="btn btn-sm btn-outline-secondary" onClick={() => openEdit(t)}><i className="bi bi-pencil" /></button>}
                       </div>
                     </div>
                   </div>
@@ -156,8 +179,10 @@ export default function TasksPage() {
               <SelectInput value={form.status} onChange={(e) => set('status', e.target.value)}>
                 <option value="todo">To do</option>
                 <option value="in_progress">In progress</option>
-                <option value="completed">Completed</option>
-                <option value="verified">Verified</option>
+                <option value="submitted">Submitted</option>
+                {canVerify && <option value="verified">Verified</option>}
+                {canVerify && <option value="rejected">Rejected</option>}
+                {canVerify && <option value="cancelled">Cancelled</option>}
               </SelectInput>
             </Field>
           )}

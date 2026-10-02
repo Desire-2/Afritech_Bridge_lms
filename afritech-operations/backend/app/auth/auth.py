@@ -82,7 +82,7 @@ def require_role(*roles):
             user = getattr(g, 'current_user', None)
             if not user:
                 return jsonify({'error': 'Authentication required'}), 401
-            if not set(roles).intersection(user.role_codes):
+            if not user.is_super_admin and not set(roles).intersection(user.role_codes):
                 return jsonify({'error': 'You do not have permission to perform this action'}), 403
             return fn(*args, **kwargs)
         return wrapper

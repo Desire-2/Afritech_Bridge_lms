@@ -2,6 +2,8 @@ from . import (
     auth, users, employees, services, clients, transactions, commissions,
     closings, expenses, payroll, attendance, tasks, instructors, reports,
     dashboard, notifications, audit, settings, integrations,
+    meetings, activities, announcements, memos, documents, requests,
+    followups, escalations, calendar, leave, operational_reports,
 )
 
 
@@ -11,7 +13,10 @@ def register_routes(app):
         transactions.bp, commissions.bp, closings.bp, expenses.bp,
         payroll.bp, attendance.bp, tasks.bp, instructors.bp,
         reports.bp, dashboard.bp, notifications.bp, audit.bp,
-        settings.bp, integrations.bp,
+        settings.bp, integrations.bp, meetings.bp, activities.bp,
+        announcements.bp, memos.bp, documents.bp, requests.bp,
+        followups.bp, escalations.bp, calendar.bp, leave.bp,
+        operational_reports.bp,
     ]:
         app.register_blueprint(bp)
 

@@ -27,6 +27,12 @@ SEVERITY_BY_TYPE = {
     'missing_weekly_plan': 'warning',
     'instructor_behind': 'warning',
     'grading_overdue': 'warning',
+    # Company Secretary coordination rules.
+    'task_due_tomorrow': 'info',
+    'meeting_reminder': 'info',
+    'acknowledgement_pending': 'warning',
+    'request_stale': 'warning',
+    'task_awaiting_verification': 'info',
 }
 
 # Known notification types surfaced in the notification-preferences UI.
@@ -41,6 +47,17 @@ NOTIFICATION_TYPES = {
     'missing_weekly_plan': 'Missing weekly plan',
     'instructor_behind': 'Instructor behind schedule',
     'grading_overdue': 'Unsubmitted grading overdue',
+    'task_due_tomorrow': 'Task due tomorrow',
+    'meeting_reminder': 'Meeting reminder',
+    'acknowledgement_pending': 'Acknowledgement pending',
+    'request_stale': 'Stale administrative request',
+    'task_awaiting_verification': 'Task awaiting verification',
+    'admin_request': 'Administrative request update',
+    'escalation': 'Escalation update',
+    'followup': 'Follow-up update',
+    'leave_request': 'Leave request update',
+    'announcement': 'New announcement',
+    'memo': 'New memo',
 }
 
 
@@ -144,15 +161,19 @@ def notify_users_with_permission(permission, notification_type, message, severit
 
 def notify_by_roles(role_codes, notification_type, message, severity=None, related_type=None, related_id=None, rule=None):
     users = User.query.filter(User.is_active.is_(True)).all()
+    targets = set(role_codes)
     sent = []
     for u in users:
-        if set(role_codes).intersection(u.role_codes):
+        # 'super_admin' targets the flag, not a role row.
+        if ('super_admin' in targets and u.is_super_admin) or targets.intersection(u.role_codes):
             sent.append(notify(u, notification_type, message, severity or SEVERITY_BY_TYPE.get(notification_type, 'info'),
                                related_type, related_id, rule))
     return [x for x in sent if x is not None]
 
 
 def notify_employee(employee, notification_type, message, severity=None, related_type=None, related_id=None, rule=None):
+    if employee is None:
+        return None
     if employee.user_id:
         return notify(employee.user_id, notification_type, message,
                       severity or SEVERITY_BY_TYPE.get(notification_type, 'info'),

@@ -41,6 +41,10 @@ class User(TimestampMixin, db.Model):
             return {'*'}
         for role in self.roles:
             if role.is_active:
+                # The seeded super_admin role carries every permission; treat an
+                # (legacy) assigned row the same as the flag for safety.
+                if role.code == 'super_admin':
+                    return {'*'}
                 for permission in role.permissions:
                     perms.add(permission.code)
         return perms
@@ -51,8 +55,10 @@ class User(TimestampMixin, db.Model):
 
     @property
     def role_codes(self):
-        if self.is_super_admin:
-            return ['super_admin']
+        # Actual assigned roles only — the super-admin state is the
+        # is_super_admin flag, not a role row. Returning a synthetic
+        # ['super_admin'] here used to corrupt the edit form and made role
+        # targeting inconsistent.
         return [r.code for r in self.roles if r.is_active]
 
     def to_dict(self):

@@ -3,6 +3,7 @@ Development/demo seed data. NEVER rely on this data in production dashboards.
 Run with:  flask seed-dev
 All data is clearly marked as development/demo.
 """
+import os
 import random
 from datetime import date, timedelta, datetime, timezone
 
@@ -115,7 +116,34 @@ def _pwd():
     return 'Password123!'
 
 
+class UnsafeSeedError(RuntimeError):
+    """Raised when seed_dev would drop a non-local database."""
+
+
+def assert_safe_to_drop(url=None):
+    """Refuse db.drop_all() against anything but local SQLite.
+
+    Production incidents happen when DevelopmentConfig picks up a remote
+    DATABASE_URL from .env — seed_dev must never wipe that. Override only
+    with SEED_ALLOW_DROP_REMOTE=1 (explicit, intentional).
+    """
+    if url is None:
+        url = db.engine.url
+    backend = getattr(url, 'get_backend_name', lambda: url.drivername.split('+')[0])()
+    if backend == 'sqlite':
+        return
+    if os.environ.get('SEED_ALLOW_DROP_REMOTE') == '1':
+        return
+    raise UnsafeSeedError(
+        f'Refusing to drop_all on non-SQLite database ({backend}://). '
+        'seed_dev is local-development only. '
+        'Fix DATABASE_URL to a local sqlite path, or set SEED_ALLOW_DROP_REMOTE=1 '
+        'if you truly intend to wipe this database.'
+    )
+
+
 def seed_dev():
+    assert_safe_to_drop()
     print('[dev-seed] Clearing existing development data...')
     db.drop_all()
     db.create_all()
@@ -355,7 +383,10 @@ def seed_dev():
 @click.command('seed-dev')
 @with_appcontext
 def seed_dev_command():
-    creds = seed_dev()
+    try:
+        creds = seed_dev()
+    except UnsafeSeedError as exc:
+        raise click.ClickException(str(exc))
     print('\n=== DEV SEED COMPLETE ===')
     print('All passwords: ', _pwd())
     print('Admin:      ', creds['admin'])

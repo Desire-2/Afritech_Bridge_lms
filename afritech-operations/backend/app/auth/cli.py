@@ -18,17 +18,23 @@ def create_user_command(email, password, role, superadmin):
     """Create a user with a linked employee record (admin command)."""
     if User.query.filter_by(email=email).first():
         raise click.ClickException(f'User {email} already exists')
+    role_codes = list(dict.fromkeys(c.strip() for c in role.split(',') if c.strip()))
+    unknown = [c for c in role_codes if c != 'super_admin'
+               and not Role.query.filter_by(code=c).first()]
+    if unknown:
+        raise click.ClickException(f'Unknown role(s): {", ".join(unknown)}')
     user = User(email=email)
     user.set_password(password)
-    user.is_super_admin = superadmin
+    user.is_super_admin = superadmin or 'super_admin' in role_codes
     db.session.add(user)
     db.session.flush()
-    role_codes = [c.strip() for c in role.split(',') if c.strip()]
+    role_rows = {r.code: r for r in Role.query.filter(Role.code.in_(
+        [c for c in role_codes if c != 'super_admin'])).all()}
     for code in role_codes:
-        r = Role.query.filter_by(code=code).first()
-        if r:
-            user.roles.append(r)
-    employee = ensure_employee_for_user(user, roles=role_codes)
+        if code == 'super_admin':
+            continue
+        user.roles.append(role_rows[code])
+    employee = ensure_employee_for_user(user, roles=[c for c in role_codes if c != 'super_admin'])
     db.session.commit()
     click.echo(f'Created user {email} with roles: {role}')
     click.echo(f'Linked employee: {employee.employee_number} ({employee.full_name})')
@@ -83,12 +89,23 @@ def assign_role_command(email, role, replace):
     user = User.query.filter_by(email=email).first()
     if not user:
         raise click.ClickException(f'User {email} not found')
+    role_codes = list(dict.fromkeys(c.strip() for c in role.split(',') if c.strip()))
+    unknown = [c for c in role_codes if c != 'super_admin'
+               and not Role.query.filter_by(code=c).first()]
+    if unknown:
+        raise click.ClickException(f'Unknown role(s): {", ".join(unknown)}')
     if replace:
         user.roles = []
-    for code in role.split(','):
-        r = Role.query.filter_by(code=code.strip()).first()
-        if r:
-            user.roles.append(r)
+        if 'super_admin' not in role_codes:
+            user.is_super_admin = False
+    if 'super_admin' in role_codes:
+        user.is_super_admin = True
+    role_rows = {r.code: r for r in Role.query.filter(Role.code.in_(
+        [c for c in role_codes if c != 'super_admin'])).all()}
+    for code in role_codes:
+        if code == 'super_admin':
+            continue
+        user.roles.append(role_rows[code])
     db.session.commit()
     click.echo(f'Assigned roles {role} to {email}')
 

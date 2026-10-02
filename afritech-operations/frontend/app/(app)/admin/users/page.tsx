@@ -2,12 +2,14 @@
 
 import { useState } from 'react';
 import { useFetch } from '@/lib/use-fetch';
-import { api, fmtDateTime } from '@/lib/api';
+import { api, fmtDateTime, can, getUserCache } from '@/lib/api';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge, Modal, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput } from '@/components/form';
 
 export default function UsersPage() {
   const [page, setPage] = useState(1);
+  const user = getUserCache();
+  const canManage = can(user, 'users.manage');
   const { data, error, loading, reload } = useFetch('/api/users', [page], { page, per_page: 15 });
   const [rolesData, setRolesData] = useState<any[]>([]);
   const [perms, setPerms] = useState<any[]>([]);
@@ -87,7 +89,7 @@ export default function UsersPage() {
   return (
     <div>
       <PageHeader title="Users & Roles" subtitle="System user accounts and roles"
-        actions={<button className="btn btn-primary" onClick={openCreate}><i className="bi bi-person-plus me-1" /> New user</button>} />
+        actions={canManage && <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-person-plus me-1" /> New user</button>} />
 
       {error && <ErrorAlert message={error} onRetry={reload} />}
       {loading && <Loading />}
@@ -110,8 +112,12 @@ export default function UsersPage() {
                       <td>{u.last_login_at ? fmtDateTime(u.last_login_at) : '—'}</td>
                       <td><Badge status={u.is_active ? 'active' : 'inactive'} /></td>
                       <td className="text-end">
-                        <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(u)}><i className="bi bi-pencil" /></button>
-                        <button className="btn btn-sm btn-outline-danger" onClick={() => setDeactUser(u)}><i className="bi bi-person-x" /></button>
+                        {canManage && (
+                          <>
+                            <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(u)}><i className="bi bi-pencil" /></button>
+                            <button className="btn btn-sm btn-outline-danger" onClick={() => setDeactUser(u)}><i className="bi bi-person-x" /></button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}

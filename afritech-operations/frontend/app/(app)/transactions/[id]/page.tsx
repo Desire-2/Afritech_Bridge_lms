@@ -22,6 +22,9 @@ export default function TransactionDetailPage() {
   if (error) return <ErrorAlert message={error} onRetry={reload} />;
 
   const t = data.transaction;
+  // The API omits every monetary field for status-only readers.
+  const hasMoney = t.customer_price !== undefined;
+  const canCreate = can(user, 'transactions.create');
   const ownsTxn = !!user && t.employee_id === user.employee_id;
   const canCancel = can(user, 'transactions.cancel');
   const canEdit = (can(user, 'transactions.approve') || (ownsTxn && can(user, 'transactions.edit')))
@@ -48,9 +51,11 @@ export default function TransactionDetailPage() {
 
   const actions = (
     <>
-      <Link href="/transactions/new" className="btn btn-accent">
-        <i className="bi bi-plus-circle me-1" /> New transaction
-      </Link>
+      {canCreate && (
+        <Link href="/transactions/new" className="btn btn-accent">
+          <i className="bi bi-plus-circle me-1" /> New transaction
+        </Link>
+      )}
       {t.status !== 'cancelled' && t.status !== 'refunded' && canEdit && (
         <Link href={`/transactions/${id}/edit`} className="btn btn-outline-primary">
           <i className="bi bi-pencil me-1" /> Edit
@@ -89,7 +94,7 @@ export default function TransactionDetailPage() {
                   <tr><td className="text-muted">Client</td><td>{t.client_name} <span className="text-muted small">({t.client_number})</span></td></tr>
                   <tr><td className="text-muted">Employee</td><td>{t.employee_name}</td></tr>
                   <tr><td className="text-muted">Transaction date</td><td>{fmtDate(t.transaction_date)}</td></tr>
-                  <tr><td className="text-muted">Payment</td><td>{t.is_cash ? 'Cash' : 'Non-cash'}</td></tr>
+                  {hasMoney && <tr><td className="text-muted">Payment</td><td>{t.is_cash ? 'Cash' : 'Non-cash'}</td></tr>}
                   <tr><td className="text-muted">Reference</td><td>{t.reference || '—'}</td></tr>
                   <tr><td className="text-muted">Notes</td><td>{t.notes || '—'}</td></tr>
                   {t.cancellation_reason && <tr><td className="text-muted">Cancellation reason</td><td>{t.cancellation_reason}</td></tr>}
@@ -120,23 +125,43 @@ export default function TransactionDetailPage() {
         </div>
 
         <div className="col-lg-5">
-          <div className="card">
-            <div className="card-body">
-              <h6 className="card-title fw-semibold">Financial breakdown</h6>
-              <table className="table table-sm mb-0">
-                <tbody>
-                  <tr><td className="text-muted">Revenue (customer price)</td><td className="text-end money">{fmtMoney(t.customer_price)}</td></tr>
-                  <tr><td className="text-muted">Official cost</td><td className="text-end money">{fmtMoney(t.official_cost)}</td></tr>
-                  <tr><td className="text-muted">Gross profit</td><td className="text-end money fw-semibold">{fmtMoney(t.gross_profit)}</td></tr>
-                  <tr>
-                    <td className="text-muted">Commission ({Math.round(t.commission_rate_used * 100)}%{t.commission_source !== 'default' ? ` · ${t.commission_source.replace(/_/g, ' ')}` : ''})</td>
-                    <td className="text-end money text-warning fw-semibold">{fmtMoney(t.commission_amount)}</td>
-                  </tr>
-                  <tr><td className="text-muted">Company profit</td><td className="text-end money text-success fw-semibold">{fmtMoney(t.company_profit)}</td></tr>
-                </tbody>
-              </table>
+          {hasMoney ? (
+            <div className="card">
+              <div className="card-body">
+                <h6 className="card-title fw-semibold">Financial breakdown</h6>
+                <table className="table table-sm mb-0">
+                  <tbody>
+                    <tr><td className="text-muted">Revenue (customer price)</td><td className="text-end money">{fmtMoney(t.customer_price)}</td></tr>
+                    <tr><td className="text-muted">Official cost</td><td className="text-end money">{fmtMoney(t.official_cost)}</td></tr>
+                    <tr><td className="text-muted">Gross profit</td><td className="text-end money fw-semibold">{fmtMoney(t.gross_profit)}</td></tr>
+                    <tr>
+                      <td className="text-muted">Commission ({Math.round(t.commission_rate_used * 100)}%{t.commission_source !== 'default' ? ` · ${t.commission_source.replace(/_/g, ' ')}` : ''})</td>
+                      <td className="text-end money text-warning fw-semibold">{fmtMoney(t.commission_amount)}</td>
+                    </tr>
+                    <tr><td className="text-muted">Company profit</td><td className="text-end money text-success fw-semibold">{fmtMoney(t.company_profit)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="card">
+              <div className="card-body">
+                <h6 className="card-title fw-semibold">Operational status</h6>
+                <p className="small text-muted mb-3">
+                  This view carries the workflow only. Prices, costs, commission and
+                  profit are restricted to financially authorised roles.
+                </p>
+                <table className="table table-sm mb-0">
+                  <tbody>
+                    <tr><td className="text-muted">Status</td><td><Badge status={t.status} /></td></tr>
+                    <tr><td className="text-muted">Assigned to</td><td>{t.employee_name || '—'}</td></tr>
+                    <tr><td className="text-muted">Recorded</td><td>{fmtDate(t.transaction_date)}</td></tr>
+                    <tr><td className="text-muted">Day closing</td><td>{t.closing_status || 'Not submitted'}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

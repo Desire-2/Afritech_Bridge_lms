@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { useFetch } from '@/lib/use-fetch';
-import { api, fmtDate } from '@/lib/api';
+import { api, can, fmtDate } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal } from '@/components/ui';
 import { Field, TextInput } from '@/components/form';
 
 export default function ClientsPage() {
+  const { user } = useAuth();
+  const canManage = can(user, 'clients.manage');
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const { data, error, loading, reload } = useFetch('/api/clients', [page, q], { page, per_page: 20, search: q || undefined });
@@ -53,7 +56,7 @@ export default function ClientsPage() {
   return (
     <div>
       <PageHeader title="Clients" subtitle="Client directory"
-        actions={<button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> New client</button>} />
+        actions={canManage && <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> New client</button>} />
 
       <div className="card mb-3">
         <div className="card-body py-2 d-flex align-items-center">
@@ -72,7 +75,7 @@ export default function ClientsPage() {
             <div className="table-responsive">
               <table className="table table-hover mb-0">
                 <thead>
-                  <tr><th>Client number</th><th>Name</th><th>Phone</th><th>Reference info</th><th>Registered</th><th /></tr>
+                  <tr><th>Client number</th><th>Name</th><th>Phone</th><th>Reference info</th><th>Registered</th>{canManage && <th />}</tr>
                 </thead>
                 <tbody>
                   {items.map((c: any) => (
@@ -82,7 +85,7 @@ export default function ClientsPage() {
                       <td>{c.phone || '—'}</td>
                       <td className="text-muted">{c.reference_info || '—'}</td>
                       <td>{fmtDate(c.created_at)}</td>
-                      <td className="text-end"><button className="btn btn-sm btn-outline-secondary" onClick={() => openEdit(c)}><i className="bi bi-pencil" /></button></td>
+                      {canManage && <td className="text-end"><button className="btn btn-sm btn-outline-secondary" onClick={() => openEdit(c)}><i className="bi bi-pencil" /></button></td>}
                     </tr>
                   ))}
                 </tbody>

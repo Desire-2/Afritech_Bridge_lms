@@ -4,7 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useFetch } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate, fmtDateTime } from '@/lib/api';
+import { api, can, fmtMoney, fmtDate, fmtDateTime } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, Badge, Pagination, EmptyState } from '@/components/ui';
 
 type Tab = 'overview' | 'earnings' | 'transactions' | 'attendance' | 'tasks' | 'performance';
@@ -12,31 +13,42 @@ type Tab = 'overview' | 'earnings' | 'transactions' | 'attendance' | 'tasks' | '
 export default function EmployeeDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
+  const { user } = useAuth();
   const [tab, setTab] = useState<Tab>('overview');
   const { data, error, loading: l1, reload } = useFetch<any>(`/api/employees/${id}`, [id]);
+  // Earnings/Payroll is a strictly financial surface — never fetched for the
+  // Company Secretary or any other role without an earnings permission.
+  const canEarnings = can(user, 'employees.earnings.view_all') || can(user, 'payroll.view');
+  const canTxn = can(user, 'transactions.view') || can(user, 'transactions.view_all') || can(user, 'transactions.operational');
+  const canAtt = can(user, 'attendance.view') || can(user, 'attendance.overview') || can(user, 'attendance.manage');
+  const canTasks = can(user, 'tasks.view') || can(user, 'tasks.manage') || can(user, 'tasks.assign') || can(user, 'tasks.verify');
+  const canPerf = can(user, 'performance.view');
 
   // sub-resource pages
   const [tPage, setTPage] = useState(1);
-  const { data: txns } = useFetch<any>(`/api/employees/${id}/transactions`, [id, tab, tPage], { page: tPage, per_page: 10 });
+  const { data: txns } = useFetch<any>(canTxn ? `/api/employees/${id}/transactions` : '', [id, tab, tPage, canTxn], { page: tPage, per_page: 10 });
   const [aPage, setAPage] = useState(1);
-  const { data: att } = useFetch<any>(`/api/employees/${id}/attendance`, [id, tab, aPage], { page: aPage, per_page: 10 });
+  const { data: att } = useFetch<any>(canAtt ? `/api/employees/${id}/attendance` : '', [id, tab, aPage, canAtt], { page: aPage, per_page: 10 });
   const [taskPage, setTaskPage] = useState(1);
-  const { data: tasks } = useFetch<any>(`/api/employees/${id}/tasks`, [id, tab, taskPage], { page: taskPage, per_page: 10 });
-  const { data: earnings } = useFetch<any>(`/api/employees/${id}/earnings`, [id]);
-  const { data: perf } = useFetch<any>(`/api/employees/${id}/performance`, [id]);
+  const { data: tasks } = useFetch<any>(canTasks ? `/api/employees/${id}/tasks` : '', [id, tab, taskPage, canTasks], { page: taskPage, per_page: 10 });
+  const { data: earnings } = useFetch<any>(canEarnings ? `/api/employees/${id}/earnings` : '', [id, canEarnings]);
+  const { data: perf } = useFetch<any>(canPerf ? `/api/employees/${id}/performance` : '', [id, canPerf]);
 
   if (l1) return <Loading />;
   if (error) return <ErrorAlert message={error} onRetry={reload} />;
 
   const emp = data.employee;
 
+  const showTxnMoney = (txns?.items || []).some((t: any) => t.customer_price !== undefined);
+  const showOvertime = (att?.items || []).some((a: any) => a.overtime_hours !== undefined);
+
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
-    { key: 'earnings', label: 'Earnings' },
+    ...(canEarnings ? [{ key: 'earnings' as Tab, label: 'Earnings' }] : []),
     { key: 'transactions', label: 'Transactions' },
     { key: 'attendance', label: 'Attendance' },
     { key: 'tasks', label: 'Tasks' },
-    { key: 'performance', label: 'Performance' },
+    ...(canPerf ? [{ key: 'performance' as Tab, label: 'Performance' }] : []),
   ];
 
   return (
@@ -67,10 +79,14 @@ export default function EmployeeDetailPage() {
                 <tr><td className="text-muted">Email</td><td>{emp.email || '—'}</td></tr>
                 <tr><td className="text-muted">Phone</td><td>{emp.phone || '—'}</td></tr>
                 <tr><td className="text-muted">National ID</td><td>{emp.national_id || '—'}</td></tr>
-                <tr><td className="text-muted">Employment date</td><td>{fmtDate(emp.employment_date)}</td></tr>
-                <tr><td className="text-muted">Pay</td><td>{emp.salary_type === 'hourly' ? `${fmtMoney(emp.hourly_rate)}/hr` : `${fmtMoney(emp.base_salary)}/month`}</td></tr>
-                <tr><td className="text-muted">Default commission rate</td><td>{emp.default_commission_rate != null ? `${Math.round(emp.default_commission_rate * 100)}%` : 'Default'}</td></tr>
-                <tr><td className="text-muted">Emergency contact</td><td>{emp.emergency_contact || '—'}</td></tr>
+                {emp.employment_date !== undefined && <tr><td className="text-muted">Employment date</td><td>{fmtDate(emp.employment_date)}</td></tr>}
+                {emp.base_salary !== undefined && (
+                  <tr><td className="text-muted">Pay</td><td>{emp.salary_type === 'hourly' ? `${fmtMoney(emp.hourly_rate)}/hr` : `${fmtMoney(emp.base_salary)}/month`}</td></tr>
+                )}
+                {emp.default_commission_rate !== undefined && (
+                  <tr><td className="text-muted">Default commission rate</td><td>{emp.default_commission_rate != null ? `${Math.round(emp.default_commission_rate * 100)}%` : 'Default'}</td></tr>
+                )}
+                {emp.emergency_contact !== undefined && <tr><td className="text-muted">Emergency contact</td><td>{emp.emergency_contact || '—'}</td></tr>}
                 <tr><td className="text-muted">Gender</td><td>{emp.gender || '—'}</td></tr>
               </tbody>
             </table>
@@ -114,7 +130,12 @@ export default function EmployeeDetailPage() {
             {(txns?.items || []).length === 0 && <EmptyState message="No transactions yet" />}
             <div className="table-responsive">
               <table className="table table-sm mb-0">
-                <thead><tr><th>Number</th><th>Date</th><th>Service</th><th>Client</th><th className="text-end">Revenue</th><th className="text-end">Commission</th><th>Status</th></tr></thead>
+                <thead>
+                  <tr><th>Number</th><th>Date</th><th>Service</th><th>Client</th>
+                    {showTxnMoney && <th className="text-end">Revenue</th>}
+                    {showTxnMoney && <th className="text-end">Commission</th>}
+                    <th>Status</th></tr>
+                </thead>
                 <tbody>
                   {(txns?.items || []).map((t: any) => (
                     <tr key={t.id}>
@@ -122,8 +143,8 @@ export default function EmployeeDetailPage() {
                       <td>{fmtDate(t.transaction_date)}</td>
                       <td>{t.service_name}</td>
                       <td>{t.client_name}</td>
-                      <td className="text-end money">{fmtMoney(t.customer_price)}</td>
-                      <td className="text-end money text-warning">{fmtMoney(t.commission_amount)}</td>
+                      {showTxnMoney && <td className="text-end money">{fmtMoney(t.customer_price)}</td>}
+                      {showTxnMoney && <td className="text-end money text-warning">{fmtMoney(t.commission_amount)}</td>}
                       <td><Badge status={t.status} /></td>
                     </tr>
                   ))}
@@ -141,7 +162,11 @@ export default function EmployeeDetailPage() {
             {(att?.items || []).length === 0 && <EmptyState message="No attendance records" />}
             <div className="table-responsive">
               <table className="table table-sm mb-0">
-                <thead><tr><th>Date</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Overtime</th><th>Status</th><th>Note</th></tr></thead>
+                <thead>
+                  <tr><th>Date</th><th>Clock in</th><th>Clock out</th><th>Hours</th>
+                    {showOvertime && <th>Overtime</th>}
+                    <th>Status</th><th>Note</th></tr>
+                </thead>
                 <tbody>
                   {(att?.items || []).map((a: any) => (
                     <tr key={a.id}>
@@ -149,7 +174,7 @@ export default function EmployeeDetailPage() {
                       <td>{a.clock_in ? fmtDateTime(a.clock_in) : '—'}</td>
                       <td>{a.clock_out ? fmtDateTime(a.clock_out) : '—'}</td>
                       <td>{a.total_hours || 0}</td>
-                      <td>{a.overtime_hours || 0}</td>
+                      {showOvertime && <td>{a.overtime_hours ?? '—'}</td>}
                       <td><Badge status={a.status} /></td>
                       <td className="text-muted">{a.note || '—'}</td>
                     </tr>

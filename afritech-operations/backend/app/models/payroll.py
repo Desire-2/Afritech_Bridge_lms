@@ -86,7 +86,9 @@ class LeaveRequest(TimestampMixin, db.Model):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
     reason = db.Column(db.String(500))
-    status = db.Column(db.String(16), default='pending')  # pending | approved | rejected
+    # pending -> in_review -> forwarded -> approved | rejected
+    status = db.Column(db.String(16), default='pending')
+    note = db.Column(db.String(500))
     approved_by = db.Column(db.Integer, db.ForeignKey('users.id'))
     approved_at = db.Column(db.DateTime(timezone=True))
 
@@ -96,9 +98,16 @@ class LeaveRequest(TimestampMixin, db.Model):
         return {
             'id': self.id,
             'employee_id': self.employee_id,
+            'employee_name': self.employee.full_name if self.employee else None,
+            'employee_position': self.employee.position if self.employee else None,
+            'department': self.employee.department.name if self.employee and self.employee.department else None,
             'leave_type': self.leave_type,
             'start_date': self.start_date.isoformat(),
             'end_date': self.end_date.isoformat(),
             'reason': self.reason,
             'status': self.status,
+            'note': self.note,
+            'approved_by': self.approved_by,
+            'approved_at': self.approved_at.isoformat() if self.approved_at else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
         }

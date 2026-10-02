@@ -9,6 +9,9 @@ from ..models import (
     generate_transaction_number,
 )
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
+from ..auth.scope import (
+    can_view_transaction_amounts, redact_transaction, transaction_read_scope,
+)
 from ..services.commission import resolve_commission
 from ..services.audit import audit
 from ..services.notifications import notify
@@ -18,11 +21,15 @@ bp = Blueprint('transactions', __name__, url_prefix='/api/transactions')
 
 
 @bp.get('')
-@require_any_permission('transactions.view', 'transactions.view_all', 'transactions.create')
+@require_any_permission(
+    'transactions.view', 'transactions.view_all', 'transactions.create',
+    'transactions.operational',
+)
 def list_transactions():
     user = current_user()
+    scope = transaction_read_scope(user)
     q = ServiceTransaction.query
-    if not user.has_permission('transactions.view_all'):
+    if scope == 'own':
         emp = current_employee()
         if emp:
             q = q.filter_by(employee_id=emp.id)
@@ -57,7 +64,8 @@ def list_transactions():
             ServiceTransaction.service_name.ilike(like),
         ))
     p = paginate(q.order_by(ServiceTransaction.transaction_date.desc(), ServiceTransaction.created_at.desc()))
-    return paginate_response([t.to_dict() for t in p.items], p)
+    return paginate_response(
+        [redact_transaction(t.to_dict(), user) for t in p.items], p)
 
 
 @bp.post('')
@@ -142,18 +150,19 @@ def create_transaction():
 
 
 @bp.get('/<int:transaction_id>')
-@require_any_permission('transactions.view', 'transactions.view_all')
+@require_any_permission('transactions.view', 'transactions.view_all', 'transactions.operational')
 def get_transaction(transaction_id):
     user = current_user()
     txn = ServiceTransaction.query.get(transaction_id)
     if not txn:
         return json_error('Transaction not found', 404)
-    if not user.has_permission('transactions.view_all'):
+    if transaction_read_scope(user) == 'own':
         emp = current_employee()
         if not emp or emp.id != txn.employee_id:
             return json_error('You do not have permission to view this transaction', 403)
-    payload = txn.to_dict()
-    payload['payments'] = [p.to_dict() for p in txn.payments]
+    payload = redact_transaction(txn.to_dict(), user)
+    if can_view_transaction_amounts(user, txn.employee_id):
+        payload['payments'] = [p.to_dict() for p in txn.payments]
     closing = DailyClosing.query.filter_by(employee_id=txn.employee_id, closing_date=txn.transaction_date).first()
     payload['closing_status'] = closing.status if closing else None
     payload['closing_id'] = closing.id if closing else None
@@ -269,7 +278,8 @@ def update_transaction(transaction_id):
 
     db.session.commit()
     audit('transaction_updated', 'transaction', txn.id, new_value=txn.to_dict())
-    return jsonify({'message': 'Transaction updated', 'transaction': txn.to_dict()})
+    return jsonify({'message': 'Transaction updated',
+                   'transaction': redact_transaction(txn.to_dict(), user)})
 
 
 @bp.post('/<int:transaction_id>/status')
@@ -307,4 +317,5 @@ def update_transaction_status(transaction_id):
     txn.status = new_status
     db.session.commit()
     audit(f'transaction_{new_status}', 'transaction', txn.id, prev, txn.to_dict())
-    return jsonify({'message': f'Transaction {new_status}', 'transaction': txn.to_dict()})
+    return jsonify({'message': f'Transaction {new_status}',
+                   'transaction': redact_transaction(txn.to_dict(), user)})

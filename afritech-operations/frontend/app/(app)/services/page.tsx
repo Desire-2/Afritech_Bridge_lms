@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { useFetch } from '@/lib/use-fetch';
-import { api, fmtMoney } from '@/lib/api';
+import { api, can, fmtMoney } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 
 export default function ServicesPage() {
+  const { user } = useAuth();
+  const canManage = can(user, 'services.manage');
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const { data, error, loading, reload } = useFetch('/api/services', [page, q], { page, per_page: 15, search: q || undefined });
@@ -19,6 +22,9 @@ export default function ServicesPage() {
   const [deact, setDeact] = useState<any | null>(null);
 
   const items = data?.items || [];
+  // Prices/costs are stripped from the payload for roles without pricing access
+  // (Company Secretary), so the money columns follow the data.
+  const showMoney = items.some((s: any) => s.customer_price !== undefined);
 
   async function openCreate() {
     setEditing(null);
@@ -96,8 +102,8 @@ export default function ServicesPage() {
 
   return (
     <div>
-      <PageHeader title="Services" subtitle="Service catalogue, pricing and commission rates"
-        actions={<button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> New service</button>} />
+      <PageHeader title="Services" subtitle={canManage ? 'Service catalogue, pricing and commission rates' : 'Service catalogue'}
+        actions={canManage && <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> New service</button>} />
 
       <div className="card mb-3">
         <div className="card-body py-2 d-flex align-items-center">
@@ -117,8 +123,12 @@ export default function ServicesPage() {
               <table className="table table-hover mb-0">
                 <thead>
                   <tr>
-                    <th>Service</th><th>Category</th><th className="text-end">Official cost</th>
-                    <th className="text-end">Customer price</th><th className="text-end">Commission</th><th>Status</th><th />
+                    <th>Service</th><th>Category</th>
+                    {showMoney && <th className="text-end">Official cost</th>}
+                    {showMoney && <th className="text-end">Customer price</th>}
+                    {showMoney && <th className="text-end">Commission</th>}
+                    <th>Status</th>
+                    {canManage && <th />}
                   </tr>
                 </thead>
                 <tbody>
@@ -126,16 +136,18 @@ export default function ServicesPage() {
                     <tr key={s.id}>
                       <td><div className="fw-semibold">{s.name}</div><div className="small text-muted">{s.code}</div></td>
                       <td>{s.category || '—'}</td>
-                      <td className="text-end money">{fmtMoney(s.official_cost)}</td>
-                      <td className="text-end money">{fmtMoney(s.customer_price)}</td>
-                      <td className="text-end money text-warning">{s.commission_rate != null ? `${Math.round(s.commission_rate * 100)}%` : 'Default'}</td>
+                      {showMoney && <td className="text-end money">{fmtMoney(s.official_cost)}</td>}
+                      {showMoney && <td className="text-end money">{fmtMoney(s.customer_price)}</td>}
+                      {showMoney && <td className="text-end money text-warning">{s.commission_rate != null ? `${Math.round(s.commission_rate * 100)}%` : 'Default'}</td>}
                       <td><Badge status={s.is_active ? 'active' : 'inactive'} /></td>
-                      <td className="text-end">
-                        <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(s)}><i className="bi bi-pencil" /></button>
-                        {s.is_active
-                          ? <button className="btn btn-sm btn-outline-danger" onClick={() => setDeact(s)}><i className="bi bi-x-circle" /></button>
-                          : <button className="btn btn-sm btn-outline-success" onClick={() => reactivate(s)}><i className="bi bi-check2-circle" /></button>}
-                      </td>
+                      {canManage && (
+                        <td className="text-end">
+                          <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(s)}><i className="bi bi-pencil" /></button>
+                          {s.is_active
+                            ? <button className="btn btn-sm btn-outline-danger" onClick={() => setDeact(s)}><i className="bi bi-x-circle" /></button>
+                            : <button className="btn btn-sm btn-outline-success" onClick={() => reactivate(s)}><i className="bi bi-check2-circle" /></button>}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

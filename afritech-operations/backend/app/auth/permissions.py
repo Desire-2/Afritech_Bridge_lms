@@ -26,6 +26,8 @@ PERMISSIONS = [
     ('transactions.create', 'Create Transactions', 'Create service transactions'),
     ('transactions.view', 'View Transactions', 'View transactions'),
     ('transactions.view_all', 'View All Transactions', 'View all employees transactions'),
+    ('transactions.operational', 'View Transaction Status',
+     'Read transaction status, client, service and assignee without any financial value'),
     ('transactions.cancel', 'Cancel Transactions', 'Cancel/refund transactions'),
     ('transactions.edit', 'Edit Transactions', 'Edit transaction details'),
     ('transactions.approve', 'Approve Transactions', 'Approve transactions'),
@@ -45,13 +47,41 @@ PERMISSIONS = [
     # attendance
     ('attendance.manage', 'Manage Attendance', 'Record and edit attendance'),
     ('attendance.view', 'View Attendance', 'View attendance records'),
+    ('attendance.overview', 'Attendance Overview', 'Operational attendance visibility across employees'),
+    # leave coordination
+    ('leave.view', 'View Leave Requests', 'View leave requests'),
+    ('leave.manage', 'Manage Leave Requests', 'Review, approve and reject leave requests'),
     # tasks
     ('tasks.create', 'Create Tasks', 'Create tasks'),
     ('tasks.manage', 'Manage Tasks', 'Manage all tasks'),
     ('tasks.view', 'View Tasks', 'View tasks'),
+    ('tasks.assign', 'Assign Tasks', 'Assign and reassign tasks to employees'),
+    ('tasks.verify', 'Verify Tasks', 'Verify or reject completed tasks'),
     # reports
     ('reports.view', 'View Reports', 'View reports'),
     ('reports.export', 'Export Reports', 'Export reports'),
+    ('reports.operational', 'Administrative Reports', 'Non-financial administrative and operational reports'),
+    # meetings & planning (administrative coordination)
+    ('meetings.view', 'View Meetings', 'View meetings, agendas and minutes'),
+    ('meetings.manage', 'Manage Meetings', 'Schedule meetings, agendas, minutes and action items'),
+    ('activities.view', 'View Activities', 'View company and personal activities'),
+    ('activities.manage', 'Manage Activities', 'Plan and coordinate company/personal activities'),
+    ('calendar.view', 'View Calendar', 'View the company calendar'),
+    ('calendar.manage', 'Manage Calendar', 'Manage company calendar entries'),
+    # internal communication
+    ('announcements.view', 'View Announcements', 'View internal announcements'),
+    ('announcements.manage', 'Manage Announcements', 'Publish and manage internal announcements'),
+    ('memos.view', 'View Memos', 'View internal memos'),
+    ('memos.manage', 'Manage Memos', 'Create and manage internal memos'),
+    ('documents.view', 'View Documents', 'View administrative documents'),
+    ('documents.manage', 'Manage Documents', 'Upload and manage administrative documents'),
+    # administrative requests, follow-ups and escalation
+    ('requests.view', 'View Requests', 'View administrative requests'),
+    ('requests.manage', 'Manage Requests', 'Review, assign and resolve administrative requests'),
+    ('followups.view', 'View Follow-ups', 'View employee follow-ups'),
+    ('followups.manage', 'Manage Follow-ups', 'Create and act on employee follow-ups'),
+    ('escalations.view', 'View Escalations', 'View escalated administrative issues'),
+    ('escalations.manage', 'Manage Escalations', 'Escalate administrative issues to management'),
     # instructors
     ('instructors.manage', 'Manage Instructors', 'Create and manage instructors'),
     ('instructors.view', 'View Instructors', 'View instructors'),
@@ -77,7 +107,50 @@ SYSTEM_ROLES = {
     'service_agent': 'Service Agent',
     'instructor': 'Instructor',
     'accountant': 'Accountant',
+    'company_secretary': 'Company Secretary',
 }
+
+# Administrative coordination permission family. Shared by the Company Secretary
+# (primary owner) and the Manager (oversight / escalation target). It deliberately
+# contains NO service-operation and NO financial permission.
+ADMINISTRATIVE_PERMISSIONS = [
+    'employees.view', 'employees.manage',
+    'tasks.create', 'tasks.manage', 'tasks.view', 'tasks.assign', 'tasks.verify',
+    'meetings.view', 'meetings.manage',
+    'activities.view', 'activities.manage',
+    'calendar.view', 'calendar.manage',
+    'announcements.view', 'announcements.manage',
+    'memos.view', 'memos.manage',
+    'documents.view', 'documents.manage',
+    'attendance.view', 'attendance.overview',
+    'leave.view', 'leave.manage',
+    'requests.view', 'requests.manage',
+    'followups.view', 'followups.manage',
+    'escalations.view', 'escalations.manage',
+    'reports.operational',
+    'notifications.view',
+]
+
+# Read-only participation rights for staff who take part in company
+# communication but never administer it.
+STAFF_COMMUNICATION_PERMISSIONS = [
+    'announcements.view', 'memos.view', 'documents.view',
+    'meetings.view', 'calendar.view', 'requests.view', 'leave.view',
+]
+
+# Operational (non-financial) visibility of the service centre.
+#
+# Kept out of ADMINISTRATIVE_PERMISSIONS on purpose: this family reads the
+# *state* of service work — which transaction exists, who it is assigned to,
+# whether it is pending — and never a price, cost, commission or profit.
+# ``transactions.operational`` is a distinct code from ``transactions.view``
+# precisely so a holder cannot inherit the money columns that
+# ``ServiceTransaction.to_dict()`` carries by default.
+OPERATIONAL_SERVICE_PERMISSIONS = [
+    'transactions.operational',
+    'services.view',
+    'clients.view',
+]
 
 ROLE_PERMISSIONS = {
     'manager': [
@@ -94,6 +167,7 @@ ROLE_PERMISSIONS = {
         'weekly_plans.view', 'performance.view', 'learner_progress.view',
         'courses.manage', 'courses.view',
         'notifications.view',
+        *ADMINISTRATIVE_PERMISSIONS,
     ],
     'service_agent': [
         'services.view',
@@ -103,17 +177,20 @@ ROLE_PERMISSIONS = {
         'expenses.create',
         'attendance.view',
         'tasks.view',
+        'leave.view',
         'employees.earnings.view_own',
         'notifications.view',
     ],
     'instructor': [
         'attendance.view',
         'tasks.view',
+        'leave.view',
         'weekly_plans.manage', 'weekly_plans.view',
         'learner_progress.view',
         'courses.view',
         'employees.earnings.view_own',
         'notifications.view',
+        *STAFF_COMMUNICATION_PERMISSIONS,
     ],
     'accountant': [
         'employees.view', 'employees.earnings.view_all',
@@ -124,7 +201,11 @@ ROLE_PERMISSIONS = {
         'payroll.manage', 'payroll.view',
         'reports.view', 'reports.export',
         'notifications.view',
+        'announcements.view', 'memos.view', 'documents.view', 'calendar.view', 'requests.view',
     ],
+    # Dedicated administrative coordination role. Explicitly independent from
+    # the manager permission set: no service-centre writes, no financial access.
+    'company_secretary': [*ADMINISTRATIVE_PERMISSIONS, *OPERATIONAL_SERVICE_PERMISSIONS],
 }
 
 
@@ -148,7 +229,9 @@ def seed_permissions_and_roles():
             role.permissions = list(perm_map.values())  # all permissions
         else:
             codes = ROLE_PERMISSIONS.get(code, [])
-            role.permissions = [perm_map[c] for c in codes if c in perm_map]
+            # dict.fromkeys: a role may list a code in both its own block and
+            # the shared administrative family.
+            role.permissions = [perm_map[c] for c in dict.fromkeys(codes) if c in perm_map]
         role.is_active = True
 
     db.session.commit()

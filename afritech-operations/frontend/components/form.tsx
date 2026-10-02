@@ -25,13 +25,14 @@ export function useStatic<T = any>(path: string) {
   return { data, error };
 }
 
-export function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
+export function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
   return (
     <div className="mb-3">
       <label className="form-label small fw-semibold">
         {label} {required && <span className="text-danger">*</span>}
       </label>
       {children}
+      {hint && <div className="form-text">{hint}</div>}
     </div>
   );
 }

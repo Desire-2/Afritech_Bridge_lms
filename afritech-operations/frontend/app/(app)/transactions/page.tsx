@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useFetch, todayIso, yearAgoIso } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate } from '@/lib/api';
+import { api, fmtMoney, fmtDate, can } from '@/lib/api';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Badge, Pagination } from '@/components/ui';
 import { DateRange } from '@/components/form';
 import { useAuth } from '@/lib/auth';
@@ -18,6 +18,8 @@ export default function TransactionsPage() {
   const [page, setPage] = useState(1);
 
   const isAgent = hasRole(user, 'service_agent') && !user?.is_super_admin;
+  const canCreate = can(user, 'transactions.create');
+  const canFollowUp = can(user, 'followups.manage');
 
   const { data, error, loading, reload } = useFetch('/api/transactions', [page, status, start, end], {
     page,
@@ -29,18 +31,25 @@ export default function TransactionsPage() {
   });
 
   const items = data?.items || [];
+  // The API strips every monetary field for status-only readers, so the
+  // money columns disappear with the data instead of being hidden in CSS.
+  const showMoney = items.some((t: any) => t.customer_price !== undefined);
+  const showFollowUp = canFollowUp && items.some(
+    (t: any) => (t.status === 'created' || t.status === 'processing'));
 
   return (
     <div>
       <PageHeader
         eyebrow="Operations"
-        title="Transactions"
-        subtitle="Service centre transactions and commissions"
-        actions={
+        title="Service operations"
+        subtitle={canCreate
+          ? 'Service centre transactions and commissions'
+          : 'Transaction status, assignment and follow-up — financial values are not part of this view'}
+        actions={canCreate ? (
           <Link href="/transactions/new" className="btn btn-accent">
             <i className="bi bi-plus-circle me-1" /> New transaction
           </Link>
-        }
+        ) : undefined}
       />
 
       <div className="card mb-3">
@@ -84,10 +93,11 @@ export default function TransactionsPage() {
                     <th>Service</th>
                     <th>Client</th>
                     <th>{isAgent ? 'You' : 'Employee'}</th>
-                    <th className="text-end">Revenue</th>
-                    <th className="text-end">Commission</th>
-                    <th className="text-end">Company</th>
+                    {showMoney && <th className="text-end">Revenue</th>}
+                    {showMoney && <th className="text-end">Commission</th>}
+                    {showMoney && <th className="text-end">Company</th>}
                     <th>Status</th>
+                    {showFollowUp && <th />}
                     <th />
                   </tr>
                 </thead>
@@ -99,10 +109,25 @@ export default function TransactionsPage() {
                       <td>{t.service_name}</td>
                       <td>{t.client_name}</td>
                       <td>{t.employee_name}</td>
-                      <td className="text-end money fw-semibold">{fmtMoney(t.customer_price)}</td>
-                      <td className="text-end money text-warning">{fmtMoney(t.commission_amount)}</td>
-                      <td className="text-end money text-success fw-semibold">{fmtMoney(t.company_profit)}</td>
+                      {showMoney && <td className="text-end money fw-semibold">{fmtMoney(t.customer_price)}</td>}
+                      {showMoney && <td className="text-end money text-warning">{fmtMoney(t.commission_amount)}</td>}
+                      {showMoney && <td className="text-end money text-success fw-semibold">{fmtMoney(t.company_profit)}</td>}
                       <td><Badge status={t.status} /></td>
+                      {showFollowUp && (
+                        <td className="text-nowrap">
+                          {(t.status === 'created' || t.status === 'processing') && (
+                            <Link
+                              href={`/follow-ups?new=1&subject=${encodeURIComponent(
+                                `${t.transaction_number} · ${t.service_name} (${t.status})`
+                              )}&employee_id=${t.employee_id || ''}`}
+                              className="btn btn-sm btn-outline-warning"
+                              title="Open a follow-up for this service request"
+                            >
+                              <i className="bi bi-arrow-repeat me-1" />Follow up
+                            </Link>
+                          )}
+                        </td>
+                      )}
                       <td className="text-end">
                         <Link href={`/transactions/${t.id}`} className="btn btn-sm btn-outline-secondary" title="View details">
                           <i className="bi bi-chevron-right" />

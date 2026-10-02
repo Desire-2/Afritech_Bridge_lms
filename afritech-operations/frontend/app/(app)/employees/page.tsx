@@ -3,13 +3,16 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useFetch } from '@/lib/use-fetch';
-import { api, fmtMoney } from '@/lib/api';
+import { api, fmtMoney, can, getUserCache } from '@/lib/api';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 
 export default function EmployeesPage() {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
+  const user = getUserCache();
+  const canManage = can(user, 'employees.manage');
+  const canSeePay = can(user, 'employees.earnings.view_all') || can(user, 'payroll.view');
   const { data, error, loading, reload } = useFetch('/api/employees', [page, q], { page, per_page: 15, search: q || undefined });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -98,12 +101,17 @@ export default function EmployeesPage() {
     reload();
   }
 
-  const salaryLabel = (e: any) => e.salary_type === 'hourly' ? `${fmtMoney(e.hourly_rate)}/hr` : fmtMoney(e.base_salary);
+  // Pay columns only exist in the payload for financially authorised roles;
+  // the API redacts them for the Company Secretary, so the columns follow the
+  // data rather than being hidden with CSS.
+  const showPay = items.some((e: any) => e.base_salary !== undefined);
+  const salaryLabel = (e: any) => e.base_salary === undefined ? '—'
+    : e.salary_type === 'hourly' ? `${fmtMoney(e.hourly_rate)}/hr` : fmtMoney(e.base_salary);
 
   return (
     <div>
       <PageHeader title="Employees" subtitle="Staff, branches and departments"
-        actions={<button className="btn btn-primary" onClick={openCreate}><i className="bi bi-person-plus me-1" /> New employee</button>} />
+        actions={canManage && <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-person-plus me-1" /> New employee</button>} />
 
       <div className="card mb-3">
         <div className="card-body py-2 d-flex align-items-center">
@@ -122,7 +130,7 @@ export default function EmployeesPage() {
             <div className="table-responsive">
               <table className="table table-hover mb-0">
                 <thead>
-                  <tr><th>Employee</th><th>Position</th><th>Branch</th><th>Department</th><th className="text-end">Pay</th><th>Commission</th><th>Status</th><th /></tr>
+                  <tr><th>Employee</th><th>Position</th><th>Branch</th><th>Department</th>{showPay && <th className="text-end">Pay</th>}{showPay && <th>Commission</th>}<th>Status</th><th /></tr>
                 </thead>
                 <tbody>
                   {items.map((e: any) => (
@@ -134,15 +142,19 @@ export default function EmployeesPage() {
                       <td>{e.position || '—'}</td>
                       <td>{e.branch || '—'}</td>
                       <td>{e.department || '—'}</td>
-                      <td className="text-end money">{salaryLabel(e)}</td>
-                      <td>{e.default_commission_rate != null ? `${Math.round(e.default_commission_rate * 100)}%` : '—'}</td>
+                      {showPay && <td className="text-end money">{salaryLabel(e)}</td>}
+                      {showPay && <td>{e.default_commission_rate != null ? `${Math.round(e.default_commission_rate * 100)}%` : '—'}</td>}
                       <td><Badge status={e.status} /></td>
                       <td className="text-end">
                         <Link href={`/employees/${e.id}`} className="btn btn-sm btn-outline-secondary me-1">View</Link>
-                        <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(e)}><i className="bi bi-pencil" /></button>
-                        <button className="btn btn-sm btn-outline-danger" onClick={() => setDeact(e)}>
-                          <i className={`bi ${e.status === 'active' ? 'bi-pause-circle' : 'bi-play-circle'}`} />
-                        </button>
+                        {canManage && (
+                          <>
+                            <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(e)}><i className="bi bi-pencil" /></button>
+                            <button className="btn btn-sm btn-outline-danger" onClick={() => setDeact(e)}>
+                              <i className={`bi ${e.status === 'active' ? 'bi-pause-circle' : 'bi-play-circle'}`} />
+                            </button>
+                          </>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -199,24 +211,33 @@ export default function EmployeesPage() {
           </div>
 
           <div className="col-md-6">
-            <div className="row">
-              <div className="col-md-6">
-                <Field label="Salary type">
-                  <SelectInput value={form.salary_type} onChange={(e) => set('salary_type', e.target.value)}>
-                    <option value="monthly">Monthly</option>
-                    <option value="hourly">Hourly</option>
-                  </SelectInput>
+            {canSeePay ? (
+              <>
+                <div className="row">
+                  <div className="col-md-6">
+                    <Field label="Salary type">
+                      <SelectInput value={form.salary_type} onChange={(e) => set('salary_type', e.target.value)}>
+                        <option value="monthly">Monthly</option>
+                        <option value="hourly">Hourly</option>
+                      </SelectInput>
+                    </Field>
+                  </div>
+                  <div className="col-md-6">
+                    <Field label={form.salary_type === 'hourly' ? 'Hourly rate' : 'Base salary (monthly)'}>
+                      <TextInput type="number" step="0.01" min="0" value={form.base_salary} onChange={(e) => set('base_salary', e.target.value)} />
+                    </Field>
+                  </div>
+                </div>
+                <Field label="Default commission rate (%)">
+                  <TextInput type="number" step="0.5" min="0" max="100" value={form.default_commission_rate} onChange={(e) => set('default_commission_rate', e.target.value)} placeholder="Blank = use default" />
                 </Field>
-              </div>
-              <div className="col-md-6">
-                <Field label={form.salary_type === 'hourly' ? 'Hourly rate' : 'Base salary (monthly)'}>
-                  <TextInput type="number" step="0.01" min="0" value={form.base_salary} onChange={(e) => set('base_salary', e.target.value)} />
-                </Field>
-              </div>
-            </div>
-            <Field label="Default commission rate (%)">
-              <TextInput type="number" step="0.5" min="0" max="100" value={form.default_commission_rate} onChange={(e) => set('default_commission_rate', e.target.value)} placeholder="Blank = use default" />
-            </Field>
+              </>
+            ) : (
+              <p className="small text-muted border rounded-3 p-3 mb-0">
+                Pay, commission and salary settings are managed by the finance and
+                management roles. This account coordinates work, not payroll.
+              </p>
+            )}
             <Field label="Employee status">
               <SelectInput value={form.status} onChange={(e) => set('status', e.target.value)}>
                 <option value="active">Active</option>

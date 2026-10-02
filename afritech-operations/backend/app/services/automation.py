@@ -10,6 +10,11 @@ Rules currently implemented:
   instructor-behind       : alert manager when weekly plan progress is below threshold
   ungraded-assignment     : alert instructor when an assignment remains ungraded past configured days
   missing-daily-closing   : alert manager when an agent has no closing for yesterday
+  task-due-tomorrow       : alert assignee and coordinators about work due tomorrow
+  meeting-reminder         : alert participants and coordinators about tomorrow's meetings
+  acknowledgement-pending : alert coordinators about outstanding announcement acknowledgements
+  request-stale           : alert coordinators about requests unresolved for more than two days
+  task-awaiting-verification: alert coordinators about submitted work awaiting verification
 
 Thresholds come from the settings table:
   automation.cash_shortage_threshold
@@ -22,7 +27,10 @@ from ..extensions import db
 from ..models import (
     DailyClosing, Expense, Task, WeeklyPlan, Assignment,
     Instructor, Employee, User, Setting,
+    Meeting, Announcement, AdminRequest,
 )
+from ..auth.scope import can_access_service_agents, is_service_agent_employee
+from .audience import recipient_employee_ids
 from .notifications import notify
 
 
@@ -48,7 +56,70 @@ def _setting_int(key, default):
 
 def _managers():
     users = User.query.filter(User.is_active.is_(True)).all()
-    return [u for u in users if set(['manager', 'super_admin']).intersection(u.role_codes)]
+    return [u for u in users if u.is_super_admin or set(['manager', 'super_admin']).intersection(u.role_codes)]
+
+
+def _secretaries():
+    """Active users holding the Company Secretary role."""
+    return [u for u in User.query.filter(User.is_active.is_(True)).all()
+            if 'company_secretary' in u.role_codes]
+
+
+def _coordinators():
+    """Every user who should receive coordination reminders.
+
+    Super admins and managers act as coordinators too, so they are included
+    rather than making them adopt the Secretary role to see their own queue.
+    """
+    seen, out = set(), []
+    for user in _secretaries() + _managers():
+        if user.id not in seen:
+            seen.add(user.id)
+            out.append(user)
+    return out
+
+
+def _coordinator_can_see(user, employee):
+    """Whether ``user`` may be told about a record belonging to ``employee``.
+
+    Coordination reminders used to fan out to every coordinator for every
+    record, which quietly punched a hole in the Service Agent boundary: a
+    Company Secretary holding no service permission would still receive the
+    title of an agent's task or meeting. Each reminder is therefore filtered
+    per recipient, using the same permission-based test as the REST layer.
+    """
+    if employee is None:
+        return True
+    if can_access_service_agents(user):
+        return True
+    return not is_service_agent_employee(employee)
+
+
+def _notify_coordinators(notification_type, message, employees, severity, related_type, related_id, rule):
+    """Notify only the coordinators allowed to see ``employees``.
+
+    ``employees`` may be a single Employee, an iterable of them, or None (no
+    employee attached, so there is nothing to scope). Returns how many
+    notifications were actually sent — the count the rules report.
+    """
+    if employees is None:
+        candidates = []
+    elif isinstance(employees, Employee):
+        candidates = [employees]
+    else:
+        candidates = list(employees)
+
+    count = 0
+    for u in _coordinators():
+        if any(not _coordinator_can_see(u, emp) for emp in candidates):
+            continue
+        notify(
+            u, notification_type, message,
+            severity=severity, related_type=related_type, related_id=related_id,
+            rule=rule,
+        )
+        count += 1
+    return count
 
 
 def run_all(scope_date=None):
@@ -60,6 +131,11 @@ def run_all(scope_date=None):
         overdue_task_alert,
         missing_weekly_plan_alert,
         instructor_behind_schedule_alert,
+        task_due_tomorrow_alert,
+        upcoming_meeting_reminder,
+        pending_acknowledgement_reminder,
+        stale_request_reminder,
+        task_awaiting_verification_alert,
     ]
     run = []
     for t in triggers:
@@ -205,3 +281,148 @@ def ungraded_assignment_alert(scope_date=None):
 def run_scheduled():
     run_all()
     return 'ok'
+
+
+# ── Company Secretary coordination rules ──────────────────────────────────────
+# These only ever carry coordination facts (who, what, when). No rule below
+# reads a revenue, commission, payroll, expense or salary field.
+
+
+def task_due_tomorrow_alert(scope_date=None):
+    """Tell the assignee and the coordinators a task is due tomorrow."""
+    scope_date = scope_date or date.today()
+    tomorrow = scope_date + timedelta(days=1)
+    tasks = Task.query.filter(
+        Task.due_date == tomorrow,
+        Task.status.in_(('todo', 'in_progress')),
+    ).all()
+    count = 0
+    for t in tasks:
+        if t.assignee and t.assignee.user_id:
+            notify(
+                t.assignee.user_id, 'task_due_tomorrow',
+                f'Task "{t.title}" is due tomorrow ({tomorrow}).',
+                severity='info', related_type='task', related_id=t.id, rule='task-due-tomorrow',
+            )
+            count += 1
+        for u in _coordinators():
+            # Don't double-notify the assignee, and never tell a coordinator
+            # about work that belongs to a Service Agent they cannot see.
+            if t.assignee and t.assignee.user_id == u.id:
+                continue
+            if not _coordinator_can_see(u, t.assignee):
+                continue
+            notify(
+                u, 'task_due_tomorrow',
+                f'"{t.title}" is due tomorrow'
+                + (f' ({t.assignee.full_name}).' if t.assignee else '.'),
+                severity='info', related_type='task', related_id=t.id, rule='task-due-tomorrow',
+            )
+            count += 1
+    return count
+
+
+def upcoming_meeting_reminder(scope_date=None):
+    """Remind participants and coordinators about tomorrow's meetings."""
+    scope_date = scope_date or date.today()
+    tomorrow = scope_date + timedelta(days=1)
+    meetings = Meeting.query.filter(
+        Meeting.meeting_date == tomorrow,
+        Meeting.status == 'scheduled',
+    ).all()
+    count = 0
+    for m in meetings:
+        when = f'{m.start_time.strftime("%H:%M")}' if m.start_time else 'during the day'
+        participants = [p.employee for p in m.participants if p.employee]
+        for emp in participants:
+            if emp.user_id:
+                notify(
+                    emp.user_id, 'meeting_reminder',
+                    f'Reminder: "{m.title}" is tomorrow at {when}'
+                    + (f' in {m.location}.' if m.location else '.'),
+                    severity='info', related_type='meeting', related_id=m.id,
+                    rule='meeting-reminder',
+                )
+                count += 1
+        count += _notify_coordinators(
+            'meeting_reminder',
+            f'Meeting tomorrow at {when}: "{m.title}"'
+            + (f' ({len(m.participants)} invited).' if m.participants else ' (no participants).'),
+            employees=participants or None,
+            severity='info', related_type='meeting', related_id=m.id,
+            rule='meeting-reminder',
+        )
+    return count
+
+
+def pending_acknowledgement_reminder(scope_date=None):
+    """Chase acknowledgements that are still outstanding."""
+    scope_date = scope_date or date.today()
+    announcements = Announcement.query.filter(
+        Announcement.requires_ack.is_(True),
+        Announcement.publish_date <= scope_date,
+        db.or_(Announcement.expiry_date.is_(None), Announcement.expiry_date >= scope_date),
+    ).all()
+    count = 0
+    for ann in announcements:
+        expected = recipient_employee_ids(
+            ann.audience, ann.department_id, ann.branch_id, ann.recipient_ids)
+        if expected is None:
+            # Company-wide: there is no fixed roster to be outstanding against,
+            # so there is nothing actionable to chase.
+            continue
+        acked = {a.employee_id for a in ann.acknowledgements}
+        outstanding_ids = expected - acked
+        if not outstanding_ids:
+            continue
+        outstanding = Employee.query.filter(Employee.id.in_(outstanding_ids)).all()
+        if not outstanding:
+            continue
+        count += _notify_coordinators(
+            'acknowledgement_pending',
+            f'"{ann.title}" has {len(outstanding)} outstanding acknowledgement(s).',
+            employees=outstanding,
+            severity='warning', related_type='announcement', related_id=ann.id,
+            rule='acknowledgement-pending',
+        )
+    return count
+
+
+def stale_request_reminder(scope_date=None):
+    """Flag administrative requests sitting unresolved for more than two days."""
+    scope_date = scope_date or date.today()
+    rows = AdminRequest.query.filter(
+        AdminRequest.status.in_(('submitted', 'in_review', 'forwarded', 'more_info')),
+    ).all()
+    stale = [r for r in rows if r.is_stale]
+    count = 0
+    for r in stale:
+        count += _notify_coordinators(
+            'request_stale',
+            f'Stale request: "{r.title}" is still {r.status}.',
+            employees=r.requester,
+            severity='warning', related_type='admin_request', related_id=r.id,
+            rule='request-stale',
+        )
+    return count
+
+
+def task_awaiting_verification_alert(scope_date=None):
+    """Tell coordinators that work is sitting in the verification queue."""
+    tasks = Task.query.filter(Task.status == 'submitted').all()
+    count = 0
+    for t in tasks:
+        for u in _coordinators():
+            if t.assignee and t.assignee.user_id == u.id:
+                continue
+            if not _coordinator_can_see(u, t.assignee):
+                continue
+            notify(
+                u, 'task_awaiting_verification',
+                f'"{t.title}" is submitted and awaiting verification'
+                + (f' ({t.assignee.full_name}).' if t.assignee else '.'),
+                severity='info', related_type='task', related_id=t.id,
+                rule='task-awaiting-verification',
+            )
+            count += 1
+    return count

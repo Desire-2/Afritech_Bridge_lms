@@ -1,12 +1,23 @@
 """Quick end-to-end smoke test via Flask test client. Idempotent: reseeds a fresh dev DB on every run."""
+import sys
+
 from app import create_app
-from app.seeds import seed_dev
+from app.seeds import seed_dev, UnsafeSeedError
 
 app = create_app('development')
 app.config['TESTING'] = True
 
 with app.app_context():
-    seed_dev()
+    try:
+        seed_dev()
+    except UnsafeSeedError as exc:
+        print(f'SMOKE ABORTED: {exc}', file=sys.stderr)
+        print(
+            'Hint: point DATABASE_URL at local sqlite, e.g.\n'
+            '  DATABASE_URL=sqlite:///.../dev.db python test_smoke.py',
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 client = app.test_client()
 

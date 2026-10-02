@@ -110,6 +110,38 @@ export function fmtDateTime(value: string | null | undefined) {
   return new Date(value).toLocaleString('en-GB');
 }
 
+/** Fetch a protected file and hand it to the browser as a download.
+ *  A plain <a href> would not carry the bearer token, so this goes through
+ *  fetch + object URL and revokes it afterwards. */
+export async function downloadFile(path: string, fallbackName = 'download') {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(path, { headers });
+  if (!res.ok) {
+    let message = `Download failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      // non-JSON error body; keep the status message
+    }
+    throw new Error(message);
+  }
+  const disposition = res.headers.get('content-disposition') || '';
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+  const name = match ? decodeURIComponent(match[1]) : fallbackName;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function login(email: string, password: string) {
   const res = await fetch('/api/auth/login', {
     method: 'POST',
