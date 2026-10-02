@@ -26,10 +26,68 @@ export function getUserCache(): any | null {
   }
 }
 
+/**
+ * `JSON.stringify` that cannot throw.
+ *
+ * Payloads are built by hand in pages, so a React click event, a DOM node or a
+ * self-referencing object can end up inside them. Stringifying that walks
+ * window → document → React's root fiber and dies with
+ * "Converting circular structure to JSON", which surfaces as a failed request
+ * and an unreadable error. This mirrors JSON.stringify semantics (own
+ * enumerable properties, functions/undefined dropped, `toJSON` honoured) and
+ * only differs where JSON would throw: cycles and DOM/window references are
+ * dropped, with a console warning naming the path so the real culprit is
+ * still visible.
+ */
+export function safeStringify(value: unknown): string {
+  const ancestors = new Set<object>();
+
+  const drop = (path: string, why: string) => {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[api] dropped non-serializable value at ${path || '<root>'} (${why}) — ` +
+      'this would have crashed JSON.stringify'
+    );
+    return undefined;
+  };
+
+  const walk = (v: any, path: string): any => {
+    if (typeof v === 'function') return undefined;
+    if (v === null || typeof v !== 'object') return v;
+    if (typeof Node !== 'undefined' && v instanceof Node) return drop(path, 'DOM node');
+    if (typeof Window !== 'undefined' && v instanceof Window) return drop(path, 'window');
+    if (ancestors.has(v)) return drop(path, 'circular reference');
+    if (v instanceof Date) return v;
+
+    ancestors.add(v);
+    try {
+      if (Array.isArray(v)) {
+        return v.map((item, i) => walk(item, `${path}[${i}]`));
+      }
+      const out: Record<string, any> = {};
+      for (const [k, val] of Object.entries(v)) {
+        const w = walk(val, path ? `${path}.${k}` : k);
+        if (w !== undefined) out[k] = w;
+      }
+      return out;
+    } finally {
+      ancestors.delete(v);
+    }
+  };
+
+  return JSON.stringify(walk(value, ''));
+}
+
 export function setUserCache(user: any | null) {
   if (typeof window === 'undefined') return;
-  if (user) window.localStorage.setItem(USER_KEY, JSON.stringify(user));
-  else window.localStorage.removeItem(USER_KEY);
+  if (user) {
+    try {
+      window.localStorage.setItem(USER_KEY, safeStringify(user));
+    } catch {
+      // a non-serializable cache entry must never break auth
+      window.localStorage.removeItem(USER_KEY);
+    }
+  } else window.localStorage.removeItem(USER_KEY);
 }
 
 export async function api<T = any>(
@@ -56,7 +114,7 @@ export async function api<T = any>(
     init.body = formData;
   } else if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(body);
+    init.body = safeStringify(body);
   }
 
   const res = await fetch(url, init);
