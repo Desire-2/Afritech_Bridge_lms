@@ -44,9 +44,11 @@ export default function AnnouncementsPage() {
     page, per_page: 15,
     category: category || undefined,
     priority: priority || undefined,
-    search: search || undefined,
-    active_only: showClosed ? undefined : 'true',
-  });
+      search: search || undefined,
+      // The backend treats a missing active_only as 'true', so the toggle has
+      // to send an explicit 'false' — omitting it hid closed notices anyway.
+      active_only: showClosed ? 'false' : 'true',
+    });
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);

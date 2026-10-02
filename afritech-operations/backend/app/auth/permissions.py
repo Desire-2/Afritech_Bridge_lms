@@ -132,7 +132,9 @@ ADMINISTRATIVE_PERMISSIONS = [
 ]
 
 # Read-only participation rights for staff who take part in company
-# communication but never administer it.
+# communication but never administer it. Every system role holds this whole
+# family — the read paths are shared by the whole company. Invariant guarded by
+# tests/test_staff_communication_access.py.
 STAFF_COMMUNICATION_PERMISSIONS = [
     'announcements.view', 'memos.view', 'documents.view',
     'meetings.view', 'calendar.view', 'requests.view', 'leave.view',
@@ -177,7 +179,10 @@ ROLE_PERMISSIONS = {
         'expenses.create',
         'attendance.view',
         'tasks.view',
-        'leave.view',
+        # The service centre reads company communication like everyone else —
+        # before this the role 403'd on /announcements, /memos, /documents,
+        # /meetings, /calendar and /requests (and had no menu entries).
+        *STAFF_COMMUNICATION_PERMISSIONS,
         'employees.earnings.view_own',
         'notifications.view',
     ],
@@ -201,7 +206,7 @@ ROLE_PERMISSIONS = {
         'payroll.manage', 'payroll.view',
         'reports.view', 'reports.export',
         'notifications.view',
-        'announcements.view', 'memos.view', 'documents.view', 'calendar.view', 'requests.view',
+        *STAFF_COMMUNICATION_PERMISSIONS,
     ],
     # Dedicated administrative coordination role. Explicitly independent from
     # the manager permission set: no service-centre writes, no financial access.

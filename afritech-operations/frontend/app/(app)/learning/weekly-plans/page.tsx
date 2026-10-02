@@ -2,7 +2,8 @@
 
 import { useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
-import { api, fmtDate } from '@/lib/api';
+import { api, fmtDate, can } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge, Modal, ConfirmDialog } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 
@@ -20,6 +21,7 @@ function weekEndIso(): string {
 }
 
 export default function WeeklyPlansPage() {
+  const { user } = useAuth();
   const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useFetch('/api/instructors/weekly-plans/list', [page], { page, per_page: 15 });
   const [instructors, setInstructors] = useState<any[]>([]);
@@ -35,9 +37,18 @@ export default function WeeklyPlansPage() {
 
   const items = data?.items || [];
 
+  // `GET /api/instructors` is the instructor *directory* and needs
+  // instructors.view — a permission the Instructor role deliberately does not
+  // hold (the endpoint is row-scoped and tested as forbidden for them). An
+  // instructor only ever plans for themselves, so the picker is skipped here and
+  // the API fills instructor_id in from the caller's own profile.
+  const canPickInstructor = can(user, 'instructors.view');
+
   async function loadRefs() {
     const [i, c, co] = await Promise.all([
-      api('/api/instructors?per_page=500').catch(() => ({ items: [] })),
+      canPickInstructor
+        ? api('/api/instructors?per_page=500').catch(() => ({ items: [] }))
+        : Promise.resolve({ items: [] }),
       api('/api/instructors/courses/list').catch(() => ({ courses: [] })),
       api('/api/instructors/cohorts/list?per_page=500').catch(() => ({ items: [] })),
     ]);
@@ -240,15 +251,17 @@ export default function WeeklyPlansPage() {
 
           <div className="row">
             <div className="col-md-6">
-              <Field label="Instructor" required={!editPlan}>
+              <Field label="Instructor" required={!editPlan && canPickInstructor}>
                 {editPlan
                   ? <TextInput value={editPlan.instructor_name} disabled />
-                  : (
-                    <SelectInput value={form.instructor_id} onChange={(e) => set('instructor_id', e.target.value)} required>
-                      <option value="">Select instructor…</option>
-                      {instructors.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-                    </SelectInput>
-                  )}
+                  : canPickInstructor
+                    ? (
+                      <SelectInput value={form.instructor_id} onChange={(e) => set('instructor_id', e.target.value)} required>
+                        <option value="">Select instructor…</option>
+                        {instructors.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+                      </SelectInput>
+                    )
+                    : <TextInput value="Your instructor profile" disabled />}
               </Field>
             </div>
             <div className="col-md-6">
