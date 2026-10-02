@@ -47,6 +47,34 @@ SERVICE_SEEDS = [
 ]
 
 
+# Production gets these three from the `03e60c5ab9dd` migration; the dev seed
+# must agree with it so a fresh install looks the same either way.
+BRANCH_SEEDS = [
+    # (name, code, city)
+    ('Head Office', 'HQ', 'Kigali'),
+    ('Musanze Branch', 'MSZ', 'Musanze'),
+    ('Kigali Branch', 'KGL', 'Kigali'),
+]
+
+
+def seed_branches():
+    """Idempotently seed branches by unique code (safe to re-run)."""
+    print('[seed-branches] Seeding branches...')
+    branches = {}
+    for name, code, city in BRANCH_SEEDS:
+        br = Branch.query.filter_by(code=code).first()
+        if br is None:
+            br = Branch(name=name, code=code, city=city, is_active=True)
+            db.session.add(br)
+        else:
+            br.name = name
+            br.city = city
+            br.is_active = True
+        branches[code] = br
+    db.session.commit()
+    return branches
+
+
 def seed_services():
     """Idempotently seed service categories and services by unique code (safe to re-run)."""
     print('[seed-services] Seeding service categories...')
@@ -152,15 +180,14 @@ def seed_dev():
     ensure_metrics()
 
     print('[dev-seed] Seeding branches and departments...')
-    head = Branch(name='Head Office', code='HQ', city='Kigali')
-    musanze = Branch(name='Musanze Branch', code='MSZ', city='Musanze')
-    kigali = Branch(name='Kigali Branch', code='KGL', city='Kigali')
-    db.session.add_all([head, musanze, kigali])
+    br = seed_branches()
+    head, musanze, kigali = br['HQ'], br['MSZ'], br['KGL']
 
     service_dept = Department(name='Service Center', code='SVC', description='Irembo and government services')
     training_dept = Department(name='Training', code='TRN', description='Digital skills training')
     finance_dept = Department(name='Finance', code='FIN', description='Accounting and finance')
-    db.session.add_all([service_dept, training_dept, finance_dept])
+    admin_dept = Department(name='Administration', code='ADM', description='Company administration and coordination')
+    db.session.add_all([service_dept, training_dept, finance_dept, admin_dept])
     db.session.commit()
 
     seed_payment_methods()
@@ -201,6 +228,14 @@ def seed_dev():
     instructor_user.roles.append(Role.query.filter_by(code='instructor').first())
     db.session.flush()
 
+    # Administrative coordination owner: the demo needs a Company Secretary
+    # account to exercise the role end to end (nav, dashboard, redaction).
+    secretary_user = User(email='secretary@afritech.dev')
+    secretary_user.set_password(_pwd())
+    db.session.add(secretary_user)
+    secretary_user.roles.append(Role.query.filter_by(code='company_secretary').first())
+    db.session.flush()
+
     db.session.flush()
 
     admin_emp = Employee(first_name='Aline', last_name='Uwase', email='admin@afritech.dev',
@@ -227,7 +262,12 @@ def seed_dev():
                               employee_number='EMP-00006', position='Instructor', branch_id=head.id,
                               department_id=training_dept.id, user_id=instructor_user.id, base_salary=250000,
                               employment_date=date.today() - timedelta(days=260))
-    db.session.add_all([admin_emp, manager_emp, accountant_emp, agent_emp, agent2_emp, instructor_emp])
+    secretary_emp = Employee(first_name='Solange', last_name='Umutoni', email='secretary@afritech.dev',
+                             employee_number='EMP-00007', position='Company Secretary', branch_id=head.id,
+                             department_id=admin_dept.id, user_id=secretary_user.id, base_salary=220000,
+                             employment_date=date.today() - timedelta(days=150))
+    db.session.add_all([admin_emp, manager_emp, accountant_emp, agent_emp, agent2_emp,
+                        instructor_emp, secretary_emp])
     db.session.commit()
 
     admin_emp.user_id = admin_user.id
@@ -235,6 +275,7 @@ def seed_dev():
     accountant_emp.user_id = accountant_user.id
     agent_emp.user_id = agent_user.id
     instructor_emp.user_id = instructor_user.id
+    secretary_emp.user_id = secretary_user.id
 
     print('[dev-seed] Seeding instructors/courses/cohorts...')
     ins = Instructor(employee_id=instructor_emp.id, specialization='Digital Skills, Excel, Web')
@@ -331,8 +372,13 @@ def seed_dev():
             adate = today - timedelta(days=d)
             if adate.weekday() >= 5:
                 continue
-            clock_in = datetime.combine(adate, datetime.min.time().replace(hour=8, minute=15 + (d % 3)))
-            clock_out = datetime.combine(adate, datetime.min.time().replace(hour=17, minute=0))
+            # Seed rows must be timezone-aware too: a naive value written to a
+            # `timestamptz` column is silently shifted into the DB session
+            # timezone, and mixing naive/aware breaks hour arithmetic.
+            clock_in = datetime.combine(
+                adate, datetime.min.time().replace(hour=8, minute=15 + (d % 3), tzinfo=timezone.utc))
+            clock_out = datetime.combine(
+                adate, datetime.min.time().replace(hour=17, minute=0, tzinfo=timezone.utc))
             db.session.add(Attendance(
                 employee_id=emp.id, attendance_date=adate, clock_in=clock_in, clock_out=clock_out,
                 status='present' if d % 7 else 'late',
@@ -377,6 +423,7 @@ def seed_dev():
     return dict(admin='admin@afritech.dev', manager='manager@afritech.dev',
                 accountant='accountant@afritech.dev', agent='agent@afritech.dev',
                 instructor='instructor@afritech.dev',
+                secretary='secretary@afritech.dev',
                 all_passwords=_pwd())
 
 
@@ -394,6 +441,7 @@ def seed_dev_command():
     print('Accountant: ', creds['accountant'])
     print('Service agent: ', creds['agent'])
     print('Instructor: ', creds['instructor'])
+    print('Company secretary: ', creds['secretary'])
 
 
 @click.command('seed-services')

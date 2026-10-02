@@ -1,6 +1,8 @@
 """Payroll period lifecycle tests."""
 from datetime import date
 
+from app.models import Employee
+
 
 def _hdr(token):
     return {'Authorization': f'Bearer {token}'}
@@ -21,7 +23,11 @@ class TestPayrollPeriod:
         })
         assert r.status_code == 201, r.get_data(as_text=True)
         period = r.get_json()['period']
-        assert period['item_count'] == 6  # 6 active employees in seed
+        # One item per active employee — derived, so seeding another demo
+        # account does not silently invalidate this test.
+        active = Employee.query.filter_by(status='active').count()
+        assert active >= 6
+        assert period['item_count'] == active
         assert period['item_count'] > 0
         assert float(period['total_gross']) >= float(period['total_commission_items'])
 
