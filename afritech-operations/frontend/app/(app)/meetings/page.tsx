@@ -20,6 +20,12 @@ const EMPTY = {
   department_id: '', branch_id: '', participant_ids: [] as number[],
 };
 
+// Links are stored as typed ("meet.google.com/…") — add a scheme when missing.
+function joinHref(url: string): string {
+  const v = (url || '').trim();
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+}
+
 export default function MeetingsPage() {
   const { user } = useAuth();
   const canManage = can(user, 'meetings.manage');
@@ -275,12 +281,17 @@ export default function MeetingsPage() {
               </thead>
               <tbody>
                 {items.map((m: any) => (
-                  <tr key={m.id}>
+                  <tr key={m.id} onClick={() => loadDetail(m.id)} style={{ cursor: 'pointer' }}>
                     <td>
-                      <div className="fw-semibold">{m.title}</div>
+                      <button type="button" className="btn btn-link p-0 fw-semibold text-start"
+                        style={{ textDecoration: 'none', color: 'inherit' }}
+                        onClick={(e) => { e.stopPropagation(); loadDetail(m.id); }}>
+                        {m.title}
+                      </button>
                       <div className="small text-muted">
                         {m.organizer ? `Organiser: ${m.organizer}` : ''}
                         {m.participant_count ? ` · ${m.participant_count} participants` : ''}
+                        {m.online_link ? ' · Online' : ''}
                       </div>
                     </td>
                     <td className="text-nowrap">
@@ -298,12 +309,19 @@ export default function MeetingsPage() {
                       {m.agenda_count} agenda · {m.action_item_count} actions
                     </td>
                     <td><Badge status={m.status} /></td>
-                    <td className="text-end">
+                    <td className="text-end" onClick={(e) => e.stopPropagation()}>
                       <div className="btn-group btn-group-sm">
-                        <button className="btn btn-outline-primary" title="Open agenda, minutes and actions"
+                        <button className="btn btn-outline-primary" title="Open details, agenda, minutes and actions"
                           onClick={() => loadDetail(m.id)}>
                           <i className="bi bi-journal-text" />
                         </button>
+                        {m.online_link && m.status !== 'completed' && m.status !== 'cancelled' && (
+                          <a className="btn btn-outline-success" title="Join meeting"
+                            href={joinHref(m.online_link)} target="_blank" rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}>
+                            <i className="bi bi-camera-video" />
+                          </a>
+                        )}
                         {canManage && m.status !== 'completed' && m.status !== 'cancelled' && (
                           <button className="btn btn-outline-success" title="Mark completed"
                             onClick={() => setMeetingStatus(m, 'completed')}>
@@ -404,7 +422,25 @@ export default function MeetingsPage() {
       </Modal>
 
       <Modal show={!!detail} title={detail?.title || 'Meeting'} size="xl"
-        onClose={() => setDetail(null)}>
+        onClose={() => setDetail(null)}
+        footer={
+          <>
+            <button className="btn btn-outline-secondary" onClick={() => setDetail(null)}>Close</button>
+            {detail?.online_link && !detailLoading && (
+              detail.status === 'completed' || detail.status === 'cancelled' ? (
+                <a className="btn btn-outline-success" href={joinHref(detail.online_link)}
+                  target="_blank" rel="noopener noreferrer">
+                  <i className="bi bi-box-arrow-up-right me-1" />Open meeting link
+                </a>
+              ) : (
+                <a className="btn btn-success" href={joinHref(detail.online_link)}
+                  target="_blank" rel="noopener noreferrer">
+                  <i className="bi bi-camera-video me-1" />Join meeting
+                </a>
+              )
+            )}
+          </>
+        }>
         {detailLoading && <Loading />}
         {!detailLoading && detail && (
           <div className="d-flex flex-column gap-4">
@@ -412,8 +448,31 @@ export default function MeetingsPage() {
               <span><i className="bi bi-calendar3 me-1" />{fmtDate(detail.meeting_date)}</span>
               <span><i className="bi bi-clock me-1" />{detail.start_time || 'All day'}{detail.end_time ? `–${detail.end_time}` : ''}</span>
               {detail.location && <span><i className="bi bi-geo-alt me-1" />{detail.location}</span>}
+              <span><i className="bi bi-person-badge me-1" />{detail.organizer || 'Organiser not set'}</span>
+              {(detail.department || detail.branch) && (
+                <span><i className="bi bi-diagram-3 me-1" />
+                  {[detail.department, detail.branch].filter(Boolean).join(' · ')}
+                </span>
+              )}
               <Badge status={detail.status} />
             </div>
+
+            {detail.online_link && (
+              <div className="d-flex align-items-center gap-2 flex-wrap small">
+                <span className="badge text-bg-success">
+                  <i className="bi bi-camera-video me-1" />Online
+                </span>
+                <a href={joinHref(detail.online_link)} target="_blank" rel="noopener noreferrer"
+                  className="text-break">{detail.online_link}</a>
+              </div>
+            )}
+
+            {detail.description && (
+              <div className="border-start border-primary ps-3">
+                <h6 className="fw-semibold mb-1">Description</h6>
+                <p className="mb-0 small" style={{ whiteSpace: 'pre-wrap' }}>{detail.description}</p>
+              </div>
+            )}
 
             <div>
               <h6 className="fw-semibold">Participants</h6>
