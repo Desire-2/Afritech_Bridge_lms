@@ -347,8 +347,13 @@ export default function AdminApplicationsManager() {
       setDetailModalOpen(false);
       setSelectedApplication(null);
       
-      // Show success message
-      alert(`✅ Application approved successfully!\n\nUsername: ${result.username || 'N/A'}\nPassword: ${result.temp_password || 'Existing user - no new password'}`);
+      // Passwords are intentionally never returned to the browser. The
+      // approval email contains the new credentials or the existing-account
+      // reset option, depending on the account that was found.
+      const accountMessage = result.new_account
+        ? 'A new account was created and its temporary credentials were sent by email.'
+        : 'The existing account was linked. Use the existing password or the reset option in the email.';
+      alert(`✅ Application approved successfully!\n\nUsername: ${result.username || 'N/A'}\n${accountMessage}`);
     } catch (err: any) {
       // Handle specific error cases
       if (err.response?.status === 409) {
@@ -855,7 +860,7 @@ export default function AdminApplicationsManager() {
     setActionError(null);
     
     try {
-      const result = await applicationService.changeStatus(selectedApplication.id, {
+      await applicationService.changeStatus(selectedApplication.id, {
         status: newStatus as 'pending' | 'approved' | 'rejected' | 'waitlisted' | 'withdrawn',
         reason: statusChangeReason || undefined
       });
@@ -868,7 +873,7 @@ export default function AdminApplicationsManager() {
       setStatusChangeReason('');
       setSelectedApplication(null);
       
-      alert(`✅ Status changed successfully: ${result.message}`);
+      alert(`✅ Status changed successfully to ${newStatus}.${newStatus === 'approved' ? ' The account/enrollment workflow and approval email were processed.' : ''}`);
     } catch (err: any) {
       setActionError(`❌ Failed to change status\n${err.response?.data?.details || err.message}`);
     } finally {

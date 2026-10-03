@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, g
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 import threading
@@ -115,6 +115,41 @@ def _make_enrollment(student_id, course_id, application, course):
         cohort_start_date=start,
         cohort_end_date=end,
     )
+
+
+def _normalize_application_email(email):
+    """Return the canonical email representation used by account workflows."""
+    return (email or "").strip().lower()
+
+
+def _find_user_for_application(email):
+    """Find an account even when legacy data has different casing/spacing."""
+    normalized_email = _normalize_application_email(email)
+    if not normalized_email:
+        return None
+
+    return User.query.filter(
+        func.lower(func.trim(User.email)) == normalized_email
+    ).first()
+
+
+def _application_name_parts(application):
+    """Safely derive first/last names for accounts created from applications."""
+    full_name = " ".join((application.full_name or "").split())
+    fallback_parts = full_name.split(" ", 1)
+    first_name = (application.first_name or fallback_parts[0] or "Student").strip()
+    last_name = (application.last_name or (fallback_parts[1] if len(fallback_parts) > 1 else "")).strip()
+    return first_name, last_name
+
+
+def _password_reset_link(email, token):
+    """Build the reset URL used in existing-account approval emails."""
+    frontend_url = current_app.config.get(
+        "FRONTEND_URL",
+        os.getenv("FRONTEND_URL", "http://localhost:3000"),
+    ).rstrip("/")
+    normalized_email = _normalize_application_email(email)
+    return f"{frontend_url}/auth/reset-password?token={token}&email={normalized_email}"
 
 def send_emails_with_brevo(emails_data, retries=3):
     """
@@ -2330,6 +2365,35 @@ def change_application_status(app_id):
     valid_statuses = ["pending", "approved", "rejected", "waitlisted", "withdrawn"]
     if not new_status or new_status not in valid_statuses:
         return jsonify({"error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}"}), 400
+
+    if application.status == new_status:
+        return jsonify({
+            "success": True,
+            "message": "Status unchanged",
+            "data": {
+                "id": application.id,
+                "old_status": application.status,
+                "new_status": new_status,
+            },
+        }), 200
+
+    # Approval is a workflow, not a simple label change.  Route it through
+    # the same account/enrollment/credential logic as the dedicated approve
+    # endpoint so this admin shortcut cannot approve an applicant without an
+    # LMS account.
+    if new_status == "approved":
+        approval_data = {
+            "send_email": send_notification,
+            "custom_message": reason,
+            "force_reapproval": data.get("force_reapproval", True),
+        }
+        # Reuse the canonical approval view in the current request context;
+        # this avoids a nested request context and preserves the JWT.
+        g._application_approval_data = approval_data
+        try:
+            return approve_application(app_id)
+        finally:
+            g.pop("_application_approval_data", None)
     
     try:
         from ..models.course_models import Course
@@ -2432,21 +2496,7 @@ def change_application_status(app_id):
                 email_content = None
                 email_subject = None
                 
-                if new_status == "approved":
-                    # For approved status, send approval email
-                    # Note: This doesn't create enrollment - use approve endpoint for full workflow
-                    email_content = application_approved_email(
-                        application=application,
-                        course=course,
-                        username=None,  # No credentials for direct status change
-                        temp_password=None,
-                        custom_message=reason or "Your application has been approved!",
-                        cohort_info=cohort_info,
-                        payment_info=payment_info
-                    )
-                    email_subject = f"🎉 Application Approved - {course.title}"
-                    
-                elif new_status == "rejected":
+                if new_status == "rejected":
                     email_content = application_rejected_email(
                         application=application,
                         course_title=course.title,
@@ -2531,6 +2581,10 @@ def approve_application(app_id):
     - Enrollment statistics
     """
     application = CourseApplication.query.get_or_404(app_id)
+
+    current_user = User.query.get(get_jwt_identity())
+    if not current_user or not current_user.role or current_user.role.name not in ["admin", "instructor"]:
+        return jsonify({"error": "Unauthorized. Admin or instructor access required."}), 403
     
     if application.status not in ["pending", "rejected", "withdrawn"]:
         return jsonify({
@@ -2538,7 +2592,7 @@ def approve_application(app_id):
             "details": "Only pending, rejected, or withdrawn applications can be approved"
         }), 400
     
-    data = request.get_json() or {}
+    data = getattr(g, "_application_approval_data", None) or request.get_json() or {}
     send_welcome_email = data.get("send_email", True)
     custom_message = data.get("custom_message", "")
     force_reapproval = data.get("force_reapproval", True)  # Allow re-approval by default
@@ -2550,8 +2604,10 @@ def approve_application(app_id):
         if not course:
             return jsonify({"error": "Course not found"}), 404
         
-        # Check if user already exists with this email
-        existing_user = User.query.filter_by(email=application.email).first()
+        # Check case-insensitively. Older applications/accounts may contain
+        # different casing or accidental surrounding whitespace.
+        application_email = _normalize_application_email(application.email)
+        existing_user = _find_user_for_application(application_email)
         existing_enrollment = None  # Track if enrollment already exists
 
         # Resolve which cohort this application belongs to
@@ -2601,10 +2657,8 @@ def approve_application(app_id):
             new_account = False
         else:
             # Create new user account
-            username = generate_username(
-                application.first_name or application.full_name.split()[0],
-                application.last_name or " ".join(application.full_name.split()[1:])
-            )
+            first_name, last_name = _application_name_parts(application)
+            username = generate_username(first_name, last_name)
             temp_password = generate_temp_password()
             
             # Get student role
@@ -2614,9 +2668,9 @@ def approve_application(app_id):
             
             user = User(
                 username=username,
-                email=application.email,
-                first_name=application.first_name or application.full_name.split()[0],
-                last_name=application.last_name or " ".join(application.full_name.split()[1:]),
+                email=application_email,
+                first_name=first_name,
+                last_name=last_name,
                 role_id=student_role.id,
                 must_change_password=True,  # Force password change on first login
             )
@@ -2705,13 +2759,13 @@ def approve_application(app_id):
         email_sent = False
         if send_welcome_email:
             try:
-                logger.info(f"📧 Preparing welcome email for {application.email}")
+                logger.info(f"📧 Preparing welcome email for {application_email}")
                 logger.info(f"   New account: {new_account}, Username: {username}")
                 
                 # Generate reset link for existing users
                 reset_link = None
                 if not new_account and temp_password is None:
-                    reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/reset-password?token={reset_token}&email={application.email}"
+                    reset_link = _password_reset_link(application_email, reset_token)
                 
                 # Build cohort payment info for the email
                 cohort_payment_info = None
@@ -2733,15 +2787,15 @@ def approve_application(app_id):
                 )
                 
                 email_sent = brevo_service.send_email(
-                    to_emails=[application.email],
+                    to_emails=[application_email],
                     subject=f"🎉 Congratulations! Welcome to {course.title}",
                     html_content=email_html
                 )
                 
                 if email_sent:
-                    logger.info(f"✅ Welcome email sent successfully to {application.email}")
+                    logger.info(f"✅ Welcome email sent successfully to {application_email}")
                 else:
-                    logger.warning(f"⚠️ Welcome email failed to send to {application.email}")
+                    logger.warning(f"⚠️ Welcome email failed to send to {application_email}")
             except Exception as email_error:
                 logger.error(f"❌ Error sending welcome email: {str(email_error)}")
                 # Don't fail the approval if email fails
@@ -2791,6 +2845,10 @@ def reject_application(app_id):
     Reject an application with optional reason.
     Optionally send notification email.
     """
+    current_user = User.query.get(get_jwt_identity())
+    if not current_user or not current_user.role or current_user.role.name not in ["admin", "instructor"]:
+        return jsonify({"error": "Unauthorized. Admin or instructor access required."}), 403
+
     application = CourseApplication.query.get_or_404(app_id)
     data = request.get_json() or {}
     
@@ -2848,6 +2906,10 @@ def reject_application(app_id):
 @jwt_required()
 def waitlist_application(app_id):
     """Move application to waitlist with optional email notification"""
+    current_user = User.query.get(get_jwt_identity())
+    if not current_user or not current_user.role or current_user.role.name not in ["admin", "instructor"]:
+        return jsonify({"error": "Unauthorized. Admin or instructor access required."}), 403
+
     application = CourseApplication.query.get_or_404(app_id)
     data = request.get_json() or {}
     
@@ -2903,6 +2965,10 @@ def waitlist_application(app_id):
 def resend_approval_email(app_id):
     try:
         logger.info(f"📧 Resending approval email for application {app_id}")
+
+        current_user = User.query.get(get_jwt_identity())
+        if not current_user or not current_user.role or current_user.role.name not in ["admin", "instructor"]:
+            return jsonify({"error": "Unauthorized. Admin or instructor access required."}), 403
         
         # Get application details
         application = CourseApplication.query.get_or_404(app_id)
@@ -2916,48 +2982,106 @@ def resend_approval_email(app_id):
         course = Course.query.get(application.course_id)
         if not course:
             return jsonify({"error": "Course not found"}), 404
-        
-        # Find the associated user (for existing account)
-        user = User.query.filter_by(email=application.email).first()
-        username = user.username if user else application.email
-        
-        logger.info(f"📧 Resending approval email to {application.email}")
-        
-        # Prepare email using existing template
+
+        if application.status != "approved":
+            return jsonify({
+                "error": "Only approved applications can receive an approval email"
+            }), 400
+
+        data = request.get_json() or {}
+        application_email = _normalize_application_email(application.email)
+        user = _find_user_for_application(application_email)
+
+        # Repair legacy records that were marked approved by the old status
+        # shortcut but never received an LMS account/enrollment.
+        if not user:
+            logger.warning(
+                "Approved application %s has no matching user; repairing it before resend",
+                application.id,
+            )
+            application.status = "pending"
+            db.session.commit()
+            approval_payload = {
+                "send_email": True,
+                "custom_message": data.get("custom_message", ""),
+                "force_reapproval": True,
+            }
+            g._application_approval_data = approval_payload
+            try:
+                return approve_application(app_id)
+            finally:
+                g.pop("_application_approval_data", None)
+
+        username = user.username
+        include_credentials = bool(data.get("include_credentials", False))
+        temp_password = None
+        reset_link = None
+
+        if include_credentials:
+            # Explicit admin action: rotate the password and force a change on
+            # the next login. Never rotate an existing user's password by
+            # default when an approval email is merely resent.
+            temp_password = generate_temp_password()
+            user.set_password(temp_password)
+            user.must_change_password = True
+            user.clear_reset_token()
+            credentials_reset = True
+        else:
+            # Keep the existing password valid and provide a secure recovery
+            # option in case the learner no longer remembers it.
+            reset_token = user.generate_reset_token()
+            reset_link = _password_reset_link(application_email, reset_token)
+            credentials_reset = False
+
+        db.session.commit()
+
+        logger.info(f"📧 Resending approval email to {application_email}")
         subject = f"🎉 Reminder: Welcome to {course.title}"
-        
-        # Use the existing application_approved_email template
         email_html = application_approved_email(
             application=application,
             course=course,
             username=username,
-            temp_password=None,  # No password for reminder
-            custom_message="This is a friendly reminder about your course approval. You can now access your learning dashboard!",
-            is_new_account=False,  # This is a resend
-            password_reset_link=None
+            temp_password=temp_password,
+            custom_message=data.get(
+                "custom_message",
+                "This is a friendly reminder about your course approval. You can now access your learning dashboard!",
+            ),
+            is_new_account=False,
+            password_reset_link=reset_link,
         )
-        
-        # Send email using Brevo API
+
         success = brevo_service.send_email(
-            to_emails=[{
-                "email": application.email,
-                "name": getattr(application, 'name', application.email)
-            }],
+            to_emails=[application_email],
             subject=subject,
             html_content=email_html,
-            text_content=f"Welcome to {course.title}! This is a reminder about your course approval. Please visit study.afritechbridge.online to access your learning dashboard."
+            text_content=(
+                f"Welcome to {course.title}! "
+                + (
+                    "Use the temporary credentials in this email and change the password after login."
+                    if temp_password
+                    else "Use your existing password to log in. If you forgot it, use the password reset link in this email."
+                )
+            ),
         )
         
         if success:
-            logger.info(f"✅ Successfully resent approval email to {application.email}")
+            logger.info(f"✅ Successfully resent approval email to {application_email}")
             return jsonify({
                 "message": "Approval email sent successfully",
-                "recipient": application.email
+                "recipient": application_email,
+                "email_sent": True,
+                "credentials_reset": credentials_reset,
+                "username": username,
+                "new_password_generated": bool(temp_password),
             }), 200
         else:
-            logger.warning(f"⚠️ Failed to resend approval email to {application.email}")
+            logger.warning(f"⚠️ Failed to resend approval email to {application_email}")
             return jsonify({
-                "error": "Failed to send email. Please check logs for details."
+                "error": "Failed to send email. Please check logs for details.",
+                "email_sent": False,
+                "credentials_reset": credentials_reset,
+                "username": username,
+                "new_password_generated": bool(temp_password),
             }), 500
             
     except Exception as e:
@@ -3681,8 +3805,9 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
         if not course:
             return False, "Course not found"
         
-        # Check if user already exists
-        existing_user = User.query.filter_by(email=application.email).first()
+        # Match legacy accounts case-insensitively and ignoring whitespace.
+        application_email = _normalize_application_email(application.email)
+        existing_user = _find_user_for_application(application_email)
         existing_enrollment = None
 
         # Resolve which cohort this application belongs to
@@ -3721,10 +3846,8 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
             new_account = False
         else:
             # Create new user
-            username = generate_username(
-                application.first_name or application.full_name.split()[0],
-                application.last_name or " ".join(application.full_name.split()[1:])
-            )
+            first_name, last_name = _application_name_parts(application)
+            username = generate_username(first_name, last_name)
             temp_password = generate_temp_password()
             
             student_role = Role.query.filter_by(name="student").first()
@@ -3733,9 +3856,9 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
             
             user = User(
                 username=username,
-                email=application.email,
-                first_name=application.first_name or application.full_name.split()[0],
-                last_name=application.last_name or " ".join(application.full_name.split()[1:]),
+                email=application_email,
+                first_name=first_name,
+                last_name=last_name,
                 role_id=student_role.id,
                 must_change_password=True
             )
@@ -3779,7 +3902,7 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
                 # Generate reset link for existing users
                 reset_link = None
                 if not new_account and temp_password is None:
-                    reset_link = f"{os.getenv('FRONTEND_URL', 'http://localhost:3000')}/auth/reset-password?token={reset_token}&email={application.email}"
+                    reset_link = _password_reset_link(application_email, reset_token)
                 
                 # Build cohort payment info for the email
                 bulk_payment_info = None
@@ -3801,7 +3924,7 @@ def _bulk_approve_application(application, custom_message, admin_id, send_emails
                 )
                 
                 send_email(
-                    to=application.email,
+                    to=application_email,
                     subject=f"🎉 Congratulations! Welcome to {course.title}",
                     template=email_content
                 )

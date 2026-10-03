@@ -145,10 +145,16 @@ class CourseApplicationService extends BaseApiService {
    * Creates user account and enrolls in course
    */
   async approveApplication(id: number, admin_notes?: string): Promise<{
-    message: string;
     user_id: number;
     username: string;
-    temp_password: string;
+    enrollment_id: number;
+    course_id: number;
+    course_title: string;
+    new_account: boolean;
+    is_reapproval: boolean;
+    email_sent: boolean;
+    credentials_sent: boolean;
+    modules_initialized: number;
   }> {
     const data = admin_notes ? { admin_notes } : {};
     return this.post(`${this.BASE_PATH}/${id}/approve`, data);

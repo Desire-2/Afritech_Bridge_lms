@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, create_refresh_token, jwt_required, get_jwt_identity, get_jwt
 from datetime import timedelta, datetime, timezone
 from ..utils.brevo_email_service import brevo_service
+from sqlalchemy import func
 
 # Assuming db and User, Role models are correctly set up and accessible.
 # This might require adjustments based on the actual Flask app structure from create_flask_app
@@ -102,7 +103,7 @@ def register():
 
 @auth_bp.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     identifier = data.get('identifier') # Can be username or email
     password = data.get('password')
 
@@ -156,7 +157,11 @@ def login():
             }), 400
 
     # Look for user by identifier
-    user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
+    normalized_identifier = identifier.lower()
+    user = User.query.filter(
+        (User.username == identifier)
+        | (func.lower(func.trim(User.email)) == normalized_identifier)
+    ).first()
 
     if not user:
         print(f"Login failed: No user found for identifier {identifier}")
@@ -281,7 +286,7 @@ def update_me():
     if not user:
         return jsonify({'message': 'User not found'}), 404
 
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     user.first_name = data.get('first_name', user.first_name)
     user.last_name = data.get('last_name', user.last_name)
     user.bio = data.get('bio', user.bio)
@@ -302,8 +307,8 @@ def token_in_blocklist_loader(jwt_header, jwt_payload):
 @auth_bp.route('/forgot-password', methods=['POST'])
 def forgot_password():
     """Request a password reset link"""
-    data = request.get_json()
-    email = data.get('email')
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
     
     if not email:
         return jsonify({'message': 'Email is required'}), 400
@@ -315,7 +320,9 @@ def forgot_password():
         return jsonify({'message': 'Please enter a valid email address'}), 400
         
     # Check if user exists
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter(
+        func.lower(func.trim(User.email)) == email
+    ).first()
     if not user:
         current_app.logger.info(f"Password reset requested for non-existent email: {email}")
         # Always return 200 with a generic message for security.
@@ -392,7 +399,7 @@ def forgot_password():
         """
         
         email_sent = brevo_service.send_email(
-            to_emails=[user.email],
+            to_emails=[user.email.strip()],
             subject=subject,
             html_content=html_content,
             text_content=text_content
@@ -417,15 +424,17 @@ def forgot_password():
 @auth_bp.route('/reset-password', methods=['POST'])
 def reset_password():
     """Reset the password using the token"""
-    data = request.get_json()
-    email = data.get('email')
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
     token = data.get('token')
     new_password = data.get('password')
     
     if not email or not token or not new_password:
         return jsonify({'message': 'Email, token, and new password are required'}), 400
         
-    user = User.query.filter_by(email=email).first()
+    user = User.query.filter(
+        func.lower(func.trim(User.email)) == email
+    ).first()
     if not user:
         return jsonify({'message': 'Invalid or expired reset token'}), 400
         
