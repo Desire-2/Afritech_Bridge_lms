@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
 import { api } from '@/lib/api';
-import { PageHeader, Loading, ErrorAlert, EmptyState, Badge, Modal } from '@/components/ui';
+import { PageHeader, Loading, ErrorAlert, EmptyState, Modal } from '@/components/ui';
 import { Field, TextInput, SelectInput } from '@/components/form';
 
 export default function InstructorPerformancePage() {

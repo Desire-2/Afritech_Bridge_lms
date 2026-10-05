@@ -11,6 +11,8 @@ Rules currently implemented:
   ungraded-assignment     : alert instructor when an assignment remains ungraded past configured days
   task-due-tomorrow       : alert assignee and coordinators about work due tomorrow
   meeting-reminder         : alert participants and coordinators about tomorrow's meetings
+  activity-reminder        : alert participants and coordinators about tomorrow's activities
+  attendance-alert         : alert coordinators about today's absences and late arrivals
   acknowledgement-pending : alert coordinators about outstanding announcement acknowledgements
   request-stale           : alert coordinators about requests unresolved for more than two days
   task-awaiting-verification: alert coordinators about submitted work awaiting verification
@@ -26,7 +28,7 @@ from ..extensions import db
 from ..models import (
     DailyClosing, Expense, Task, WeeklyPlan, Assignment,
     Instructor, Employee, User, Setting,
-    Meeting, Announcement, AdminRequest,
+    Meeting, Announcement, AdminRequest, Activity, Attendance,
 )
 from ..auth.scope import can_access_service_agents, is_service_agent_employee
 from ..utils.datetime_utils import as_utc
@@ -133,23 +135,40 @@ def run_all(scope_date=None):
         instructor_behind_schedule_alert,
         task_due_tomorrow_alert,
         upcoming_meeting_reminder,
+        upcoming_activity_reminder,
+        attendance_status_alert,
         pending_acknowledgement_reminder,
         stale_request_reminder,
         task_awaiting_verification_alert,
         ungraded_assignment_alert,
     ]
+    # Electronics shop rules share the same schedule, de-duplication window and
+    # commit contract as the rest of the engine. Imported lazily so a shop-less
+    # deployment (or a partially migrated one) still runs the core rules.
+    try:
+        from .shop_alerts import TRIGGERS as SHOP_TRIGGERS
+        triggers = triggers + list(SHOP_TRIGGERS)
+    except Exception:  # pragma: no cover - shop tables not migrated yet
+        pass
     run = []
     for t in triggers:
         try:
-            n = t(scope_date)
+            # SAVEPOINT per rule: a rule that blows up rolls back only its own
+            # work. The old unconditional `session.rollback()` discarded every
+            # notification the earlier rules of the same run had queued.
+            with db.session.begin_nested():
+                n = t(scope_date)
             run.append((t.__name__, n))
-        except Exception as e:  # noqa
-            db.session.rollback()
+        except Exception as e:  # noqa: BLE001 - isolate failures per rule
             run.append((t.__name__, f'error: {e}'))
     # Persist what the rules produced; `notify()` only queues rows, and the
     # caller (scheduler thread, settings endpoint, test) has no request cycle.
-    if any(n for _, n in run if not isinstance(n, str)):
-        db.session.commit()
+    # Unconditional: the rule counters are NOT a proxy for "something was
+    # written" — a recipient who muted the in-app channel makes `notify()`
+    # return None while still queueing the de-duplication watermark, and
+    # skipping the commit there rolled the watermark back, so the next run
+    # re-sent the same e-mail. Committing an empty session is a no-op.
+    db.session.commit()
     return run
 
 
@@ -356,6 +375,68 @@ def upcoming_meeting_reminder(scope_date=None):
             employees=participants or None,
             severity='info', related_type='meeting', related_id=m.id,
             rule='meeting-reminder',
+        )
+    return count
+
+
+def upcoming_activity_reminder(scope_date=None):
+    """Remind participants and coordinators about tomorrow's activities."""
+    scope_date = scope_date or date.today()
+    tomorrow = scope_date + timedelta(days=1)
+    activities = Activity.query.filter(
+        Activity.activity_date == tomorrow,
+        Activity.status.in_(('planned', 'in_progress')),
+    ).all()
+    count = 0
+    for a in activities:
+        when = f' at {a.start_time.strftime("%H:%M")}' if a.start_time else ''
+        participants = [p.employee for p in a.participants if p.employee]
+        for emp in participants:
+            if emp.user_id:
+                if notify(
+                    emp.user_id, 'activity_reminder',
+                    f'Reminder: "{a.title}" is tomorrow ({tomorrow}){when}.',
+                    severity='info', related_type='activity', related_id=a.id,
+                    rule='activity-reminder',
+                ):
+                    count += 1
+        count += _notify_coordinators(
+            'activity_reminder',
+            f'Activity tomorrow ({tomorrow}): "{a.title}"'
+            + (f' ({len(a.participants)} invited).' if a.participants else '.'),
+            employees=participants or None,
+            severity='info', related_type='activity', related_id=a.id,
+            rule='activity-reminder',
+        )
+    return count
+
+
+def attendance_status_alert(scope_date=None):
+    """Tell coordinators who is absent or late today.
+
+    Absences and late arrivals are recorded by the attendance routes; the
+    people running the day only learn about them if somebody tells them. The
+    24-hour rule window keeps a re-run from re-paging the same record, and the
+    central gate in `notify()` keeps Service-Agent absences away from
+    coordinators that may not see those employees.
+    """
+    scope_date = scope_date or date.today()
+    rows = Attendance.query.filter(
+        Attendance.attendance_date == scope_date,
+        Attendance.status.in_(('absent', 'late')),
+    ).all()
+    count = 0
+    for rec in rows:
+        employee = Employee.query.get(rec.employee_id)
+        if employee is None:
+            continue
+        count += _notify_coordinators(
+            'attendance_alert',
+            f'{employee.full_name} is marked {rec.status} for {scope_date}.',
+            employees=employee,
+            severity='warning' if rec.status == 'absent' else 'info',
+            related_type='attendance', related_id=rec.id,
+            rule='attendance-alert',
         )
     return count
 

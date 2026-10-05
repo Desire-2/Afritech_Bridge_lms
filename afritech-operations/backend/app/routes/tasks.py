@@ -296,6 +296,7 @@ def update_task(task_id):
 
     prev_status = task.status
     prev = task.to_dict()
+    prev_assignee_id = task.assigned_to
     for field in ('title', 'description', 'priority'):
         if field in data:
             setattr(task, field, data[field])
@@ -326,6 +327,10 @@ def update_task(task_id):
 
     db.session.commit()
     audit('task_updated', 'task', task.id, prev, task.to_dict())
+    if assigned_to is not None and assigned_to != prev_assignee_id:
+        notify_employee(task.assignee, 'task_assigned',
+                        f'Task assigned to you: {task.title}',
+                        related_type='task', related_id=task.id)
     _notify_status_change(task, user, task.status, prev_status)
     return jsonify({'message': 'Task updated', 'task': task.to_dict()})
 

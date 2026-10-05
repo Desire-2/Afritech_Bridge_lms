@@ -48,14 +48,24 @@ def scope_visible_to_viewer(query, user, model):
       * ``department`` / ``branch`` -> only when it matches the viewer's own
         department/branch.
       * ``custom``                  -> only when the viewer is a recipient.
-      * Service Agents are excluded unless the viewer runs the service centre.
+      * A coordinator who reads the whole employee directory sees everything;
+        everyone else (Service Agents, Instructors, the shop floor) is held to
+        the rules above.
 
     ``department``/``branch``/``all`` are filtered in SQL. ``custom`` cannot be:
     recipients live in a JSON text column, where a SQL ``LIKE '%1%'`` would also
     match employee 13. Those rows are matched exactly in Python instead, which is
     safe because custom-audience posts are few.
+
+    The full-view shortcut needs *both* halves of the coordinator test.
+    ``can_access_service_agents`` alone is not enough: it is also satisfied by a
+    Service Agent (they hold ``clients.manage`` / ``transactions.create``), which
+    handed every department, branch and custom-addressed notice in the company
+    to the one role that is only supposed to receive its own. Directory access
+    — ``employees.view`` — is what marks somebody as coordinating rather than
+    being coordinated, and no Service Agent role holds it.
     """
-    if can_access_service_agents(user):
+    if can_access_service_agents(user) and user is not None and user.has_permission('employees.view'):
         return query
 
     emp = user.employee if user is not None else None

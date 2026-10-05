@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useFetch, todayIso, yearAgoIso } from '@/lib/use-fetch';
 import { fmtDate } from '@/lib/api';
-import { PageHeader, Loading, ErrorAlert, StatCard, Badge } from '@/components/ui';
+import { PageHeader, Loading, ErrorAlert, EmptyState, StatCard, Badge } from '@/components/ui';
 import { TextInput } from '@/components/form';
 
 const TABS = [
@@ -185,6 +185,7 @@ function MeetingOutput({ data }: { data: any }) {
               <tr><th>Meeting</th><th>Date</th><th>Scope</th><th>Attendance</th><th>Minutes</th><th>Actions</th></tr>
             </thead>
             <tbody>
+              {data.rows.length === 0 && <tr><td colSpan={6}><EmptyState message="No meetings in this window" /></td></tr>}
               {data.rows.map((r: any) => (
                 <tr key={r.meeting_id}>
                   <td>{r.title}</td>
@@ -222,6 +223,7 @@ function TaskThroughput({ data }: { data: any }) {
               <tr><th>Employee</th><th>Department</th><th>Assigned</th><th>Done</th><th>Awaiting verification</th><th>Overdue</th></tr>
             </thead>
             <tbody>
+              {data.by_employee.length === 0 && <tr><td colSpan={6}><EmptyState message="No task activity in this window" /></td></tr>}
               {data.by_employee.map((r: any) => (
                 <tr key={r.employee_id}>
                   <td>{r.employee}</td>
@@ -251,6 +253,7 @@ function AttendanceSummary({ data }: { data: any }) {
               <tr><th>Employee</th><th>Department</th><th>Branch</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th></tr>
             </thead>
             <tbody>
+              {data.rows.length === 0 && <tr><td colSpan={7}><EmptyState message="No attendance records in this window" /></td></tr>}
               {data.rows.map((r: any) => (
                 <tr key={r.employee_id}>
                   <td>{r.employee}</td>
@@ -308,6 +311,7 @@ function RequestAgeing({ data }: { data: any }) {
               <table className="table table-sm mb-0">
                 <thead><tr><th>Request</th><th>Requester</th><th>Age</th><th>Status</th></tr></thead>
                 <tbody>
+                  {(data.oldest_open || []).length === 0 && <tr><td colSpan={4}><EmptyState message="No open requests" /></td></tr>}
                   {(data.oldest_open || []).map((r: any) => (
                     <tr key={r.id}>
                       <td>{r.title}</td>
@@ -342,6 +346,7 @@ function OrgReport({ data }: { data: any }) {
               <table className="table table-sm mb-0">
                 <thead><tr><th>Department</th><th>Headcount</th></tr></thead>
                 <tbody>
+                  {data.departments.length === 0 && <tr><td colSpan={2}><EmptyState message="No departments yet" /></td></tr>}
                   {data.departments.map((d: any) => (
                     <tr key={d.department_id}>
                       <td>{d.department}</td>
@@ -360,6 +365,7 @@ function OrgReport({ data }: { data: any }) {
               <table className="table table-sm mb-0">
                 <thead><tr><th>Branch</th><th>Headcount</th></tr></thead>
                 <tbody>
+                  {data.branches.length === 0 && <tr><td colSpan={2}><EmptyState message="No branches yet" /></td></tr>}
                   {data.branches.map((b: any) => (
                     <tr key={b.branch_id}>
                       <td>{b.branch}</td>

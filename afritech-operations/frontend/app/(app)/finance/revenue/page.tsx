@@ -3,15 +3,33 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useFetch, todayIso, yearAgoIso } from '@/lib/use-fetch';
-import { api, fmtMoney, fmtDate } from '@/lib/api';
-import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge, StatCard } from '@/components/ui';
+import { api, fmtMoney, fmtDate, downloadFile } from '@/lib/api';
+import { PageHeader, Loading, ErrorAlert, EmptyState, Badge, StatCard } from '@/components/ui';
 import { DateRange } from '@/components/form';
 
 export default function RevenuePage() {
   const [start, setStart] = useState(yearAgoIso());
   const [end, setEnd] = useState(todayIso());
   const [status, setStatus] = useState('completed');
+  const [exporting, setExporting] = useState('');
+  const [exportErr, setExportErr] = useState('');
   const { data, error, loading } = useFetch<any>('/api/reports/revenue', [start, end, status], { start, end, status: status === 'all' ? undefined : status });
+
+  // window.open() sends no bearer token, so these downloads 401'd.
+  async function exportFile(kind: 'csv' | 'excel') {
+    setExportErr('');
+    setExporting(kind);
+    try {
+      const url = kind === 'csv'
+        ? `/api/reports/export/csv?report=revenue&start=${start}&end=${end}`
+        : `/api/reports/export/excel?report=revenue&start=${start}&end=${end}`;
+      await downloadFile(url, `revenue_${start}_${end}.${kind === 'csv' ? 'csv' : 'xlsx'}`);
+    } catch (e: any) {
+      setExportErr(e?.message || 'Export failed');
+    } finally {
+      setExporting('');
+    }
+  }
 
   if (error) return <ErrorAlert message={error} />;
 
@@ -65,10 +83,12 @@ export default function RevenuePage() {
               </table>
             </div>
           </div>
-          <div className="d-flex gap-2 mt-3">
-            <button className="btn btn-sm btn-outline-secondary" onClick={() => window.open(`/api/reports/export/csv?report=revenue&start=${start}&end=${end}`, '_blank')}><i className="bi bi-filetype-csv me-1" /> Export CSV</button>
-            <button className="btn btn-sm btn-outline-secondary" onClick={() => window.open(`/api/reports/export/excel?report=revenue&start=${start}&end=${end}`, '_blank')}><i className="bi bi-file-earmark-excel me-1" /> Export Excel</button>
+          <div className="d-flex gap-2 mt-3 align-items-center flex-wrap">
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => exportFile('csv')} disabled={!!exporting}><i className="bi bi-filetype-csv me-1" /> Export CSV</button>
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => exportFile('excel')} disabled={!!exporting}><i className="bi bi-file-earmark-excel me-1" /> Export Excel</button>
+            {exporting && <span className="small text-muted"><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Preparing export…</span>}
           </div>
+          {exportErr && <ErrorAlert message={exportErr} />}
         </>
       )}
     </div>

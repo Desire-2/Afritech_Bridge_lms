@@ -1,14 +1,16 @@
 # ---- build stage ----
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci || npm install
+# pnpm is this project's package manager (pnpm-lock.yaml is the only lockfile).
+RUN corepack enable && corepack prepare pnpm@10 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY . .
 # NEXT_PUBLIC_API_URL is consumed at build time for rewrites/API calls.
 # Pass it via --build-arg (compose does this automatically).
 ARG NEXT_PUBLIC_API_URL=http://localhost:5000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-RUN npm run build
+RUN pnpm run build
 
 # ---- runtime stage ----
 FROM node:20-alpine
@@ -21,4 +23,4 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/next.config.mjs ./
 
 EXPOSE 3001
-CMD ["npm", "run", "start"]
+CMD ["node_modules/.bin/next", "start"]

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
 import { api, fmtMoney, fmtDate, getUserCache, can } from '@/lib/api';
-import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge, ConfirmDialog } from '@/components/ui';
+import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Modal, Badge } from '@/components/ui';
 import { Field, TextInput, SelectInput, TextArea } from '@/components/form';
 
 export default function ClosingsPage() {

@@ -286,7 +286,10 @@ def employee_earnings(employee_id):
     items = PayrollItem.query.filter_by(employee_id=employee_id).order_by(PayrollItem.created_at.desc()).all()
     total_commission_earned = sum(float(i.commission or 0) for i in items)
     return jsonify({
-        'employee': emp.to_dict(),
+        # view_own callers get the same redacted profile as the directory:
+        # commission / payroll history is the point of the endpoint, private
+        # and pay columns are not.
+        'employee': employee_dict_for(emp, user),
         'total_commission_earned': total_commission_earned,
         'payroll_items': [i.to_dict() for i in items],
     })

@@ -20,6 +20,9 @@ export default function EarningsPage() {
   const mine = isRoster ? null : data;
 
   if (error && !viewAll) return <ErrorAlert message={error} />;
+  // Without a linked employee there is no earnings endpoint to call — without
+  // this guard the page sat on a spinner forever.
+  if (!viewAll && !myId) return <ErrorAlert message="No employee profile is linked to this account, so your earnings cannot be loaded." />;
   if (loading && viewAll) return <Loading label="Loading employees…" />;
   if (!viewAll && !data) return <Loading label="Loading my earnings…" />;
 

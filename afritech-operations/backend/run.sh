@@ -9,8 +9,10 @@ fi
 export FLASK_APP=app.py
 export FLASK_CONFIG=development
 
-# create tables if needed
-python -c "from app import create_app; from app.extensions import db; app=create_app('development'); app.app_context().push(); db.create_all(); print('DB ready')"
+# migrate to head (idempotent — creates every table on a fresh DB and applies
+# the data migrations `db.create_all()` used to skip). Same command as the
+# Dockerfile / Procfile so local, container and hosted starts stay in sync.
+flask db upgrade
 
 echo "Starting AfriTech Operations backend on :5000"
 python app.py

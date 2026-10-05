@@ -5,6 +5,7 @@ from . import (
     meetings, activities, announcements, memos, documents, requests,
     followups, escalations, calendar, leave, operational_reports,
 )
+from .shop import register_shop_routes
 
 
 def register_routes(app):
@@ -19,6 +20,8 @@ def register_routes(app):
         operational_reports.bp,
     ]:
         app.register_blueprint(bp)
+
+    register_shop_routes(app)
 
     @app.get('/api/health')
     def health():

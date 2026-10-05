@@ -38,7 +38,7 @@ export default function MemosPage() {
     page, per_page: 15,
     category: category || undefined,
     search: search || undefined,
-    published_only: showDrafts ? undefined : 'true',
+    published_only: showDrafts ? 'false' : 'true',
   });
 
   const [open, setOpen] = useState(false);

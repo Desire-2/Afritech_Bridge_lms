@@ -90,10 +90,11 @@ export default function AttendancePage() {
         <div className="card-body py-2 d-flex align-items-center gap-2">
           <i className="bi bi-funnel text-muted" />
           <input type="date" className="form-control form-control-sm" style={{ width: 180 }} value={date} onChange={(e) => { setDate(e.target.value); setPage(1); }} />
-          {(error || loading) && <Loading />}
+          {loading && <Loading />}
         </div>
       </div>
 
+      {error && <ErrorAlert message={error} onRetry={reload} />}
       {!loading && !error && items.length === 0 && <EmptyState message="No attendance records" />}
 
       {!loading && !error && items.length > 0 && (

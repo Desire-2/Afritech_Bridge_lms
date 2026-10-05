@@ -84,13 +84,19 @@ export default function EscalationsPage() {
     }
   }
 
+  const [actingId, setActingId] = useState<number | null>(null);
+
   async function applyStatus(e: any, next: string) {
+    if (actingId) return;
     setActionError('');
+    setActingId(e.id);
     try {
       await api(`/api/escalations/${e.id}`, { method: 'PUT', body: { status: next } });
       reload();
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActingId(null);
     }
   }
 
@@ -207,7 +213,7 @@ export default function EscalationsPage() {
                             <i className="bi bi-check2-circle" />
                           </button>
                           {e.status !== 'dismissed' && (
-                            <button className="btn btn-outline-secondary" title="Dismiss"
+                            <button className="btn btn-outline-secondary" title="Dismiss" disabled={!!actingId}
                               onClick={() => applyStatus(e, 'dismissed')}>
                               <i className="bi bi-x-circle" />
                             </button>

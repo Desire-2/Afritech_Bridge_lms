@@ -27,6 +27,7 @@ export default function TasksPage() {
   const [employees, setEmployees] = useState<any[]>([]);
   const [form, setForm] = useState<any>({ title: '', description: '', assigned_to: '', priority: 'medium', due_date: '', comments: '' });
   const [busy, setBusy] = useState(false);
+  const [actingId, setActingId] = useState<number | null>(null);
   const [error2, setError2] = useState('');
 
   const items = data?.items || [];
@@ -83,12 +84,16 @@ export default function TasksPage() {
   }
 
   async function setStatusItem(t: any, status: string) {
+    if (actingId) return;
     setError2('');
+    setActingId(t.id);
     try {
       await api(`/api/tasks/${t.id}`, { method: 'PUT', body: { status } });
       reload();
     } catch (err: any) {
       setError2(err.message);
+    } finally {
+      setActingId(null);
     }
   }
 
@@ -139,16 +144,16 @@ export default function TasksPage() {
                     <div className="d-flex justify-content-between align-items-center">
                       <Badge status={t.status} />
                       <div className="d-flex gap-1">
-                        {t.status === 'todo' && <button className="btn btn-sm btn-outline-primary" onClick={() => setStatusItem(t, 'in_progress')}>Start</button>}
-                        {t.status === 'in_progress' && <button className="btn btn-sm btn-outline-success" onClick={() => setStatusItem(t, 'submitted')}>Submit</button>}
+                        {t.status === 'todo' && <button className="btn btn-sm btn-outline-primary" disabled={!!actingId} onClick={() => setStatusItem(t, 'in_progress')}>Start</button>}
+                        {t.status === 'in_progress' && <button className="btn btn-sm btn-outline-success" disabled={!!actingId} onClick={() => setStatusItem(t, 'submitted')}>Submit</button>}
                         {canVerify && t.status === 'submitted' && (
                           <>
-                            <button className="btn btn-sm btn-outline-success" onClick={() => setStatusItem(t, 'verified')}>Verify</button>
-                            <button className="btn btn-sm btn-outline-danger" onClick={() => setStatusItem(t, 'rejected')}>Reject</button>
+                            <button className="btn btn-sm btn-outline-success" disabled={!!actingId} onClick={() => setStatusItem(t, 'verified')}>Verify</button>
+                            <button className="btn btn-sm btn-outline-danger" disabled={!!actingId} onClick={() => setStatusItem(t, 'rejected')}>Reject</button>
                           </>
                         )}
                         {(canAssign || canVerify) && t.status === 'rejected' && (
-                          <button className="btn btn-sm btn-outline-primary" onClick={() => setStatusItem(t, 'in_progress')}>Reopen</button>
+                          <button className="btn btn-sm btn-outline-primary" disabled={!!actingId} onClick={() => setStatusItem(t, 'in_progress')}>Reopen</button>
                         )}
                         {canAssign && <button className="btn btn-sm btn-outline-secondary" onClick={() => openEdit(t)}><i className="bi bi-pencil" /></button>}
                       </div>

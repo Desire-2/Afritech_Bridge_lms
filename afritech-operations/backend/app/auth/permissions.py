@@ -101,6 +101,67 @@ PERMISSIONS = [
     ('integration.manage', 'Manage LMS Integration', 'Configure LMS integration'),
 ]
 
+# ── electronics shop ─────────────────────────────────────────────────────────
+# A standalone retail business unit. Nothing here is reachable by the service
+# agent, instructor or company secretary: those roles must never read shop
+# prices, stock, sales or suppliers. Codes are all namespaced ``shop.*`` so a
+# missing grant can never accidentally fall through to a service-centre code.
+SHOP_PERMISSIONS = [
+    # navigation / overview
+    ('shop.view', 'View Shop', 'Open the electronics shop workspace'),
+    # catalogue
+    ('shop.products.view', 'View Shop Products', 'Browse the product catalogue, variants and prices'),
+    ('shop.products.create', 'Create Shop Products', 'Add products, variants, bundles and barcodes'),
+    ('shop.products.edit', 'Edit Shop Products', 'Edit product details, prices and attributes'),
+    ('shop.products.archive', 'Archive Shop Products', 'Retire or restore products'),
+    # inventory
+    ('shop.inventory.view', 'View Shop Inventory', 'See stock balances, movements and serials'),
+    ('shop.inventory.count', 'Count Shop Stock', 'Run and submit physical stock counts'),
+    ('shop.inventory.adjust', 'Adjust Shop Stock', 'Raise damage, loss and correction adjustments'),
+    ('shop.inventory.transfer', 'Transfer Shop Stock', 'Dispatch and receive branch-to-branch transfers'),
+    ('shop.inventory.receive', 'Receive Shop Stock', 'Receive stock against purchase orders'),
+    # suppliers & purchasing
+    ('shop.suppliers.view', 'View Shop Suppliers', 'Browse supplier records'),
+    ('shop.suppliers.create', 'Manage Shop Suppliers', 'Create and edit suppliers'),
+    ('shop.purchases.view', 'View Shop Purchasing', 'Browse purchase orders and receipts'),
+    ('shop.purchases.create', 'Create Shop Purchase Orders', 'Draft purchase orders'),
+    ('shop.purchases.approve', 'Approve Shop Purchase Orders', 'Approve or cancel purchase orders'),
+    ('shop.purchases.receive', 'Receive Shop Purchase Orders',
+     'Book goods receipts against approved purchase orders'),
+    # sales / POS
+    ('shop.sales.view', 'View Shop Sales', 'Read sales recorded at the assigned branch'),
+    ('shop.sales.view_all', 'View All Shop Sales', 'Read sales across every branch'),
+    ('shop.sales.create', 'Create Shop Sales', 'Ring up, hold and reprint POS sales'),
+    ('shop.sales.cancel', 'Cancel Shop Sales', 'Cancel a sale before or after payment'),
+    ('shop.sales.refund', 'Refund Shop Sales', 'Refund sales outside the return workflow'),
+    # customers, returns, warranty
+    ('shop.customers.view', 'View Shop Customers', 'Browse the customer directory'),
+    ('shop.customers.manage', 'Manage Shop Customers', 'Create and edit customer records'),
+    ('shop.returns.view', 'View Shop Returns', 'Browse customer returns and exchanges'),
+    ('shop.returns.create', 'Create Shop Returns', 'Record a return or exchange request'),
+    ('shop.returns.approve', 'Approve Shop Returns', 'Approve, reject and complete returns'),
+    ('shop.warranty.view', 'View Shop Warranty', 'Read warranty registrations and cases'),
+    ('shop.warranty.manage', 'Manage Shop Warranty', 'Register warranties and resolve cases'),
+    # reports & money
+    ('shop.reports.view', 'View Shop Reports', 'Read operational shop reports and dashboards'),
+    ('shop.financial_reports.view', 'View Shop Financial Reports',
+     'Read shop revenue, margin, cost and stock-value reports'),
+    ('shop.pricing.view', 'View Shop Pricing', 'See purchase cost and margin figures'),
+    ('shop.pricing.manage', 'Manage Shop Pricing', 'Change costs, prices and price history'),
+    ('shop.discounts.approve', 'Approve Shop Discounts', 'Approve discounts above the attendant limit'),
+    # shifts, closings, configuration
+    ('shop.shifts.view', 'View Shop Shifts', 'Read till sessions and their totals'),
+    ('shop.shifts.manage', 'Manage Shop Shifts', 'Open and close till sessions'),
+    ('shop.cash_closing.view', 'View Shop Cash Closing', 'Read daily cash closings'),
+    ('shop.cash_closing.approve', 'Approve Shop Cash Closing', 'Approve or reject daily cash closings'),
+    ('shop.promotions.manage', 'Manage Shop Promotions', 'Create and manage promotions'),
+    ('shop.settings.manage', 'Manage Shop Settings', 'Configure shop numbering, tax and thresholds'),
+    ('shop.activities.view', 'View Shop Activities',
+     'Read the shop activity trail without money values'),
+]
+
+PERMISSIONS = PERMISSIONS + SHOP_PERMISSIONS
+
 SYSTEM_ROLES = {
     'super_admin': 'Super Admin',
     'manager': 'Manager',
@@ -108,6 +169,9 @@ SYSTEM_ROLES = {
     'instructor': 'Instructor',
     'accountant': 'Accountant',
     'company_secretary': 'Company Secretary',
+    'shop_manager': 'Shop Manager',
+    'shop_attendant': 'Shop Attendant',
+    'storekeeper': 'Storekeeper',
 }
 
 # Administrative coordination permission family. Shared by the Company Secretary
@@ -115,6 +179,7 @@ SYSTEM_ROLES = {
 # contains NO service-operation and NO financial permission.
 ADMINISTRATIVE_PERMISSIONS = [
     'employees.view', 'employees.manage',
+    'departments.manage', 'branches.manage',
     'tasks.create', 'tasks.manage', 'tasks.view', 'tasks.assign', 'tasks.verify',
     'meetings.view', 'meetings.manage',
     'activities.view', 'activities.manage',
@@ -154,6 +219,103 @@ OPERATIONAL_SERVICE_PERMISSIONS = [
     'clients.view',
 ]
 
+# ── electronics shop permission families ─────────────────────────────────────
+#
+# The shop is a separate business unit: none of these codes may be granted to
+# company_secretary, service_agent or instructor, and shop pages never read
+# service-centre money columns.
+
+# Company-level oversight of the shop: read everything operational, approve
+# returns / discounts / purchase orders / cash closings. Never a POS till.
+SHOP_OVERSIGHT_PERMISSIONS = [
+    'shop.view',
+    'shop.products.view',
+    'shop.inventory.view',
+    'shop.suppliers.view',
+    'shop.purchases.view', 'shop.purchases.approve',
+    'shop.sales.view', 'shop.sales.view_all', 'shop.sales.refund',
+    'shop.customers.view',
+    'shop.returns.view', 'shop.returns.approve',
+    'shop.warranty.view',
+    'shop.reports.view', 'shop.financial_reports.view',
+    'shop.pricing.view',
+    'shop.discounts.approve',
+    'shop.cash_closing.view', 'shop.cash_closing.approve',
+    'shop.activities.view',
+]
+
+# Accountant oversight: shop money only — revenue, cost, closings and
+# supplier spend — with no till, no catalogue editing and no stock changes.
+SHOP_FINANCE_OVERSIGHT_PERMISSIONS = [
+    'shop.view',
+    'shop.suppliers.view',
+    'shop.purchases.view',
+    'shop.sales.view', 'shop.sales.view_all',
+    'shop.customers.view',
+    'shop.returns.view',
+    'shop.warranty.view',
+    'shop.reports.view', 'shop.financial_reports.view',
+    'shop.pricing.view',
+    'shop.cash_closing.view', 'shop.cash_closing.approve',
+    'shop.activities.view',
+]
+
+# Full branch shop operation: catalogue, stock, suppliers, purchasing,
+# sales, returns, warranty, promos, settings and closings.
+SHOP_MANAGER_PERMISSIONS = [
+    'shop.view',
+    'shop.products.view', 'shop.products.create', 'shop.products.edit',
+    'shop.products.archive',
+    'shop.inventory.view', 'shop.inventory.count', 'shop.inventory.adjust',
+    'shop.inventory.transfer', 'shop.inventory.receive',
+    'shop.suppliers.view', 'shop.suppliers.create',
+    'shop.purchases.view', 'shop.purchases.create', 'shop.purchases.approve',
+    'shop.purchases.receive',
+    'shop.sales.view', 'shop.sales.view_all', 'shop.sales.create',
+    'shop.sales.cancel', 'shop.sales.refund',
+    'shop.customers.view', 'shop.customers.manage',
+    'shop.returns.view', 'shop.returns.create', 'shop.returns.approve',
+    'shop.warranty.view', 'shop.warranty.manage',
+    'shop.reports.view', 'shop.financial_reports.view',
+    'shop.pricing.view', 'shop.pricing.manage',
+    'shop.discounts.approve',
+    'shop.shifts.view', 'shop.shifts.manage',
+    'shop.cash_closing.view', 'shop.cash_closing.approve',
+    'shop.promotions.manage',
+    'shop.settings.manage',
+    'shop.activities.view',
+]
+
+# Till attendant: sell, take payments, look after customers, request returns
+# and manage their own till. No catalogue edits, no stock changes, no money
+# reports and no approvals — discounts above the configured limit escalate
+# instead of being granted here.
+SHOP_ATTENDANT_PERMISSIONS = [
+    'shop.view',
+    'shop.products.view',
+    'shop.inventory.view',
+    'shop.customers.view', 'shop.customers.manage',
+    'shop.sales.view', 'shop.sales.create',
+    'shop.returns.view', 'shop.returns.create',
+    'shop.warranty.view',
+    'shop.shifts.view', 'shop.shifts.manage',
+]
+
+# Storekeeper: catalogue upkeep, receiving, transfers, counts and adjustments.
+# Deliberately no POS selling, no supplier purchase approval and no financial
+# reports.
+SHOP_STOREKEEPER_PERMISSIONS = [
+    'shop.view',
+    'shop.products.view', 'shop.products.create', 'shop.products.edit',
+    'shop.products.archive',
+    'shop.inventory.view', 'shop.inventory.count', 'shop.inventory.adjust',
+    'shop.inventory.transfer', 'shop.inventory.receive',
+    'shop.suppliers.view', 'shop.suppliers.create',
+    'shop.purchases.view', 'shop.purchases.create', 'shop.purchases.receive',
+    'shop.reports.view',
+    'shop.activities.view',
+]
+
 ROLE_PERMISSIONS = {
     'manager': [
         'employees.manage', 'employees.view', 'employees.earnings.view_all',
@@ -170,6 +332,7 @@ ROLE_PERMISSIONS = {
         'courses.manage', 'courses.view',
         'notifications.view',
         *ADMINISTRATIVE_PERMISSIONS,
+        *SHOP_OVERSIGHT_PERMISSIONS,
     ],
     'service_agent': [
         'services.view',
@@ -207,10 +370,29 @@ ROLE_PERMISSIONS = {
         'reports.view', 'reports.export',
         'notifications.view',
         *STAFF_COMMUNICATION_PERMISSIONS,
+        *SHOP_FINANCE_OVERSIGHT_PERMISSIONS,
     ],
     # Dedicated administrative coordination role. Explicitly independent from
     # the manager permission set: no service-centre writes, no financial access.
     'company_secretary': [*ADMINISTRATIVE_PERMISSIONS, *OPERATIONAL_SERVICE_PERMISSIONS],
+    # Electronics shop unit — three operational roles. All of them read company
+    # communication like everyone else (guarded by
+    # tests/test_staff_communication_access.py).
+    'shop_manager': [
+        *SHOP_MANAGER_PERMISSIONS,
+        *STAFF_COMMUNICATION_PERMISSIONS,
+        'notifications.view',
+    ],
+    'shop_attendant': [
+        *SHOP_ATTENDANT_PERMISSIONS,
+        *STAFF_COMMUNICATION_PERMISSIONS,
+        'notifications.view',
+    ],
+    'storekeeper': [
+        *SHOP_STOREKEEPER_PERMISSIONS,
+        *STAFF_COMMUNICATION_PERMISSIONS,
+        'notifications.view',
+    ],
 }
 
 

@@ -41,16 +41,26 @@ class TestNotificationPreferencesApi:
         db.session.commit()
 
     def test_put_per_type_override(self, client, agent_hdr):
-        r = client.put('/api/notifications/preferences', headers=agent_hdr, json={
-            'preferences': [{'type': 'cash_shortage', 'email_enabled': False, 'in_app_enabled': True}],
-        })
-        assert r.status_code == 200
-        data = r.get_json()
-        row = next(p for p in data['preferences'] if p['type'] == 'cash_shortage')
-        assert row['email_enabled'] is False
-        assert row['in_app_enabled'] is True
-        # unrelated types keep the default
-        assert all(p['email_enabled'] for p in data['preferences'] if p['type'] != 'cash_shortage')
+        try:
+            r = client.put('/api/notifications/preferences', headers=agent_hdr, json={
+                'preferences': [{'type': 'cash_shortage', 'email_enabled': False,
+                                 'in_app_enabled': True}],
+            })
+            assert r.status_code == 200
+            data = r.get_json()
+            row = next(p for p in data['preferences'] if p['type'] == 'cash_shortage')
+            assert row['email_enabled'] is False
+            assert row['in_app_enabled'] is True
+            # unrelated types keep the default
+            assert all(p['email_enabled'] for p in data['preferences']
+                       if p['type'] != 'cash_shortage')
+        finally:
+            # The PUT commits, so without this the override outlives the test
+            # and disables cash-shortage e-mail for the seeded agent forever.
+            client.put('/api/notifications/preferences', headers=agent_hdr, json={
+                'preferences': [{'type': 'cash_shortage', 'email_enabled': None,
+                                 'in_app_enabled': None}],
+            })
 
     def test_put_remove_override_returns_to_default(self, client, agent_hdr):
         client.put('/api/notifications/preferences', headers=agent_hdr, json={

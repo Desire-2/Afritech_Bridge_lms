@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { useFetch, todayIso } from '@/lib/use-fetch';
-import { api, fmtMoney } from '@/lib/api';
-import { PageHeader, Loading, ErrorAlert, EmptyState, StatCard, Badge, Pagination } from '@/components/ui';
+import { api, fmtMoney, downloadFile } from '@/lib/api';
+import { PageHeader, Loading, ErrorAlert, EmptyState, StatCard, Badge } from '@/components/ui';
 import { DateRange } from '@/components/form';
 
 type Tab = 'summary' | 'by-service' | 'by-employee' | 'expenses' | 'attendance' | 'payroll';
@@ -29,6 +29,32 @@ export default function ReportsPage() {
     { key: 'payroll', label: 'Payroll' },
   ];
 
+  // Exports are authorised downloads, so they have to go through the API
+  // client: a plain <a href> carries no bearer token and comes back 401.
+  const [exporting, setExporting] = useState('');
+  const [exportErr, setExportErr] = useState('');
+
+  async function exportFile(kind: 'csv' | 'excel' | 'pdf') {
+    setExportErr('');
+    setExporting(kind);
+    try {
+      const range = `start=${start}&end=${end}`;
+      if (kind === 'pdf') {
+        await downloadFile(`/api/reports/export/transactions-pdf?${range}`, `transactions_${start}_${end}.pdf`);
+      } else {
+        const report = tab === 'expenses' ? 'expenses' : 'revenue';
+        const url = kind === 'csv'
+          ? `/api/reports/export/csv?report=${report}&${range}`
+          : `/api/reports/export/excel?report=${report}&${range}`;
+        await downloadFile(url, `${report}_${start}_${end}.${kind === 'csv' ? 'csv' : 'xlsx'}`);
+      }
+    } catch (e: any) {
+      setExportErr(e?.message || 'Export failed');
+    } finally {
+      setExporting('');
+    }
+  }
+
   return (
     <div>
       <PageHeader title="Reports" subtitle="Business performance reports" />
@@ -36,11 +62,13 @@ export default function ReportsPage() {
       <div className="card mb-3">
         <div className="card-body d-flex flex-wrap gap-2 align-items-center">
           <DateRange start={start} end={end} onStart={(v) => { setStart(v); setTab('summary'); }} onEnd={(v) => { setEnd(v); setTab('summary'); }} />
-          <a className="btn btn-sm btn-outline-secondary" href={`/api/reports/export/csv?report=revenue&start=${start}&end=${end}`} target="_blank" rel="noreferrer"><i className="bi bi-filetype-csv me-1" />CSV</a>
-          <a className="btn btn-sm btn-outline-success" href={`/api/reports/export/excel?report=revenue&start=${start}&end=${end}`} target="_blank" rel="noreferrer"><i className="bi bi-file-earmark-excel me-1" />Excel</a>
-          <a className="btn btn-sm btn-outline-danger" href={`/api/reports/export/transactions-pdf?start=${start}&end=${end}`} target="_blank" rel="noreferrer"><i className="bi bi-file-earmark-pdf me-1" />PDF</a>
+          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={() => exportFile('csv')} disabled={!!exporting}><i className="bi bi-filetype-csv me-1" />CSV</button>
+          <button type="button" className="btn btn-sm btn-outline-success" onClick={() => exportFile('excel')} disabled={!!exporting}><i className="bi bi-file-earmark-excel me-1" />Excel</button>
+          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => exportFile('pdf')} disabled={!!exporting}><i className="bi bi-file-earmark-pdf me-1" />PDF</button>
+          {exporting && <span className="small text-muted"><span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />Preparing export…</span>}
         </div>
       </div>
+      {exportErr && <ErrorAlert message={exportErr} />}
 
       <ul className="nav nav-pills mb-3">
         {tabs.map((t) => (
@@ -130,6 +158,9 @@ export default function ReportsPage() {
               <table className="table table-hover mb-0">
                 <thead><tr><th>Category</th><th className="text-end">Count</th><th className="text-end">Total</th></tr></thead>
                 <tbody>
+                  {(exp.by_category || []).length === 0 && (
+                    <tr><td colSpan={3}><EmptyState message="No expenses in this period" /></td></tr>
+                  )}
                   {(exp.by_category || []).map((c: any) => (
                     <tr key={c.category}>
                       <td className="text-uppercase fw-semibold">{c.category}</td>
@@ -157,6 +188,9 @@ export default function ReportsPage() {
               <table className="table table-hover mb-0">
                 <thead><tr><th>Employee</th><th className="text-end">Present</th><th className="text-end">Late</th><th className="text-end">Absent</th><th className="text-end">Leave</th><th className="text-end">Total hours</th></tr></thead>
                 <tbody>
+                  {(att.by_employee || []).length === 0 && (
+                    <tr><td colSpan={6}><EmptyState message="No attendance records in this period" /></td></tr>
+                  )}
                   {(att.by_employee || []).map((r: any) => (
                     <tr key={r.employee_id}>
                       <td className="fw-semibold">{r.employee}</td>
@@ -184,6 +218,9 @@ export default function ReportsPage() {
               <table className="table table-hover mb-0">
                 <thead><tr><th>Period</th><th>Status</th><th className="text-end">Total net</th></tr></thead>
                 <tbody>
+                  {(payroll.periods || []).length === 0 && (
+                    <tr><td colSpan={3}><EmptyState message="No payroll periods in this period" /></td></tr>
+                  )}
                   {(payroll.periods || []).map((p: any) => (
                     <tr key={p.name}>
                       <td className="fw-semibold">{p.name}</td>

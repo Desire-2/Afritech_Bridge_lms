@@ -12,6 +12,7 @@ interface PrefRow {
   label: string;
   email_enabled: boolean;
   in_app_enabled: boolean;
+  mandatory?: boolean;
 }
 
 interface PrefsData {
@@ -40,6 +41,13 @@ export default function ProfilePage() {
     setPrefs((p) => p && {
       ...p,
       preferences: p.preferences.map((r) => r.type === type ? { ...r, email_enabled: !r.email_enabled } : r),
+    });
+  }, []);
+
+  const toggleInApp = useCallback((type: string) => {
+    setPrefs((p) => p && {
+      ...p,
+      preferences: p.preferences.map((r) => r.type === type ? { ...r, in_app_enabled: !r.in_app_enabled } : r),
     });
   }, []);
 
@@ -140,7 +148,8 @@ export default function ProfilePage() {
                 </button>
               </div>
               <p className="small text-muted mb-3">
-                Choose which events reach your inbox. In-app notifications are always available on the Notifications page.
+                Mute an event to keep it off a channel. Events marked
+                <em> required</em> are safety-critical and are always delivered.
               </p>
               {prefError && <div className="alert alert-danger py-2 small">{prefError}</div>}
               {saved && <div className="alert alert-success py-2 small">Your notification preferences were saved.</div>}
@@ -159,10 +168,38 @@ export default function ProfilePage() {
                     <label className="form-check-label" htmlFor="emailMaster">Receive email notifications</label>
                   </div>
                   <table className="table table-sm table-borderless mb-0">
+                    <thead>
+                      <tr className="small text-muted">
+                        <th style={{ width: 300 }}>Event</th>
+                        <th>In-app</th>
+                        <th>Email</th>
+                      </tr>
+                    </thead>
                     <tbody>
                       {prefs.preferences.map((p) => (
                         <tr key={p.type}>
-                          <td className="text-muted" style={{ width: 300 }}>{p.label}</td>
+                          <td className="text-muted">
+                            {p.label}
+                            {p.mandatory && (
+                              <span className="badge text-bg-light border ms-1"
+                                title="Always delivered — this event cannot be muted.">required</span>
+                            )}
+                          </td>
+                          <td>
+                            <div className="form-check form-switch">
+                              <input
+                                className="form-check-input"
+                                type="checkbox"
+                                role="switch"
+                                id={`inapp-${p.type}`}
+                                checked={p.in_app_enabled}
+                                disabled={p.mandatory}
+                                onChange={() => toggleInApp(p.type)}
+                              />
+                              <label className="form-check-label small visually-hidden"
+                                htmlFor={`inapp-${p.type}`}>{p.label} in-app</label>
+                            </div>
+                          </td>
                           <td>
                             <div className="form-check form-switch">
                               <input
@@ -171,10 +208,11 @@ export default function ProfilePage() {
                                 role="switch"
                                 id={`email-${p.type}`}
                                 checked={p.email_enabled}
-                                disabled={!prefs.email_notifications}
+                                disabled={p.mandatory || !prefs.email_notifications}
                                 onChange={() => toggleEmail(p.type)}
                               />
-                              <label className="form-check-label small" htmlFor={`email-${p.type}`}>Email</label>
+                              <label className="form-check-label small visually-hidden"
+                                htmlFor={`email-${p.type}`}>{p.label} email</label>
                             </div>
                           </td>
                         </tr>

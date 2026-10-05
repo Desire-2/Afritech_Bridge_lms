@@ -120,6 +120,28 @@ def create_meeting():
     return jsonify({'message': 'Meeting created', 'meeting': meeting.to_dict(with_children=True)}), 201
 
 
+def _notify_participants_of_change(meeting, prev):
+    """Tell participants when a meeting they are on actually changed.
+
+    Only date/time/status moves announce — cosmetic edits (title/notes) would
+    just be noise.
+    """
+    changed_fields = {'meeting_date', 'start_time', 'end_time', 'status'}
+    interesting = changed_fields.intersection(
+        k for k, v in prev.items() if getattr(meeting, k, None) != v)
+    if not interesting:
+        return
+    if meeting.status == 'cancelled':
+        ntype, verb = 'meeting_cancelled', 'cancelled'
+    else:
+        ntype, verb = 'meeting_updated', 'changed'
+    for part in meeting.participants:
+        notify_employee(Employee.query.get(part.employee_id), ntype,
+                        f'Meeting {verb}: {meeting.title} on {meeting.meeting_date}'
+                        + (f' at {meeting.start_time}' if meeting.start_time else ''),
+                        related_type='meeting', related_id=meeting.id)
+
+
 @bp.get('/action-items')
 @require_any_permission('meetings.view', 'meetings.manage', 'tasks.view')
 def list_action_items():
@@ -217,6 +239,7 @@ def update_meeting(meeting_id):
             db.session.add(MeetingParticipant(meeting_id=meeting.id, employee_id=emp_id))
     db.session.commit()
     audit('meeting_updated', 'meeting', meeting.id, prev, meeting.to_dict())
+    _notify_participants_of_change(meeting, prev)
     return jsonify({'message': 'Meeting updated', 'meeting': meeting.to_dict(with_children=True)})
 
 
@@ -227,9 +250,15 @@ def delete_meeting(meeting_id):
     if not meeting:
         return json_error('Meeting not found', 404)
     prev = meeting.to_dict()
+    participants = [p.employee_id for p in meeting.participants]
     db.session.delete(meeting)
     db.session.commit()
     audit('meeting_deleted', 'meeting', meeting_id, prev, None)
+    for emp_id in participants:
+        notify_employee(Employee.query.get(emp_id), 'meeting_cancelled',
+                        f'Meeting cancelled: {prev.get("title", "")} '
+                        f'(was {prev.get("meeting_date", "date TBC")})',
+                        related_type='meeting', related_id=meeting_id)
     return jsonify({'message': 'Meeting deleted'})
 
 

@@ -66,9 +66,9 @@ python app.py                # API on http://localhost:5000
 
 ```bash
 cd frontend
-npm install
+pnpm install                # pnpm-lock.yaml is the only lockfile
 cp .env.example .env        # NEXT_PUBLIC_API_URL (defaults to http://localhost:5000)
-npm run dev                  # http://localhost:3001  (proxies /api → :5000)
+pnpm run dev                # http://localhost:3001  (proxies /api → :5000)
 ```
 
 ### Seed accounts (all passwords `Password123!`)

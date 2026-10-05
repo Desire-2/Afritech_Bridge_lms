@@ -77,7 +77,11 @@ def closing_totals():
     if not employee_id:
         return json_error('No employee identified', 400)
     totals = triage_daily_totals(employee_id, closing_date)
-    return jsonify({'totals': {k: str(v) for k, v in totals.items()},
+    # Money stays a string (exact decimal text over the wire); the count is
+    # a plain integer so consumers never have to coerce it.
+    wire = {k: (v if k == 'transaction_count' else str(v))
+            for k, v in totals.items()}
+    return jsonify({'totals': wire,
                     'employee_id': employee_id, 'date': closing_date.isoformat()})
 
 
@@ -225,10 +229,10 @@ def review_closing(closing_id):
                f'Your daily closing for {closing.closing_date} was {decision}.',
                severity='info', related_type='daily_closing', related_id=closing.id)
         if closing.reconciliation_class == 'shortage':
-            db.session.add(Notification(
-                recipient_id=agent.user_id, type='cash_shortage', severity='critical',
-                message=f'Your closing had a cash shortage of {abs(float(closing.cash_difference)):,.0f} RWF.',
-                related_type='daily_closing', related_id=closing.id, created_by_rule='cash-shortage')
-            )
-            db.session.commit()
+            # Route through the central gate (authorization, dedupe, e-mail)
+            # instead of a raw row insert that bypasses it.
+            notify(agent.user_id, 'cash_shortage',
+                   f'Your closing had a cash shortage of {abs(float(closing.cash_difference)):,.0f} RWF.',
+                   severity='critical', related_type='daily_closing',
+                   related_id=closing.id, rule='cash-shortage')
     return jsonify({'message': f'Closing {decision}', 'closing': closing.to_dict()})

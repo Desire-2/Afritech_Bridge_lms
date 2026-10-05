@@ -12,7 +12,7 @@ from ..auth.auth import require_permission, require_any_permission, current_user
 from ..auth.scope import (
     can_view_transaction_amounts, redact_transaction, transaction_read_scope,
 )
-from ..services.commission import resolve_commission
+from ..services.commission import resolve_commission, recalculate_with_snapshot_rate, nullify_commission
 from ..services.audit import audit
 from ..services.notifications import notify
 from .helpers import json_error, parse_json, paginate, paginate_response
@@ -261,15 +261,9 @@ def update_transaction(transaction_id):
             return json_error('Invalid official_cost', 400)
 
     if price_changed:
-        svc = txn.service or Service.query.get(txn.service_id)
-        emp = Employee.query.get(txn.employee_id)
-        if svc and emp:
-            calc = resolve_commission(svc, emp, official_cost=float(txn.official_cost), customer_price=float(txn.customer_price))
-            txn.commission_rate_used = calc['rate']
-            txn.commission_source = calc['rate_source']
-            txn.gross_profit = calc['gross_profit']
-            txn.commission_amount = calc['commission_amount']
-            txn.company_profit = calc['company_profit']
+        # Keep the rate snapshotted at creation: editing historical money must
+        # never silently re-price the employee against today's rate card.
+        recalculate_with_snapshot_rate(txn, txn.official_cost, txn.customer_price)
 
     for d in set((old_date, txn.transaction_date)):
         closing = DailyClosing.query.filter_by(employee_id=txn.employee_id, closing_date=d).first()
@@ -309,12 +303,21 @@ def update_transaction_status(transaction_id):
         txn.cancelled_reason = data.get('reason', 'User requested')
         txn.cancelled_by = user.id
         txn.cancelled_at = datetime.now(timezone.utc)
-        if new_status == 'refunded':
-            if not txn.is_cash:
-                pass
-            # reverse the commission effect: set amounts to zero but keep the snapshot for audit
+        # Reverse the commission effect: zero commission/company profit but
+        # keep gross_profit, rate and source as the audit snapshot — otherwise
+        # payroll pays a commission on revenue that was given back.
+        nullify_commission(txn)
+    elif new_status == 'completed' and txn.commission_amount == 0 and txn.gross_profit:
+        # Undo of a cancel/refund: restore from the snapshotted rate, not
+        # today's rate card.
+        recalculate_with_snapshot_rate(txn, txn.official_cost, txn.customer_price)
     prev = txn.to_dict()
     txn.status = new_status
+    from .closings import recompute_daily_closing
+    closing = DailyClosing.query.filter_by(
+        employee_id=txn.employee_id, closing_date=txn.transaction_date).first()
+    if closing and closing.status in ('correction_requested', 'rejected'):
+        recompute_daily_closing(closing)
     db.session.commit()
     audit(f'transaction_{new_status}', 'transaction', txn.id, prev, txn.to_dict())
     return jsonify({'message': f'Transaction {new_status}',

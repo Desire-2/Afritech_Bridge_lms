@@ -70,7 +70,9 @@ class Employee(TimestampMixin, db.Model):
     gender = db.Column(db.String(16))
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'))
-    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'))
+    # Branch scoping: the roster filter and the audience resolver both do
+    # `Employee.branch_id = ?`, so this column needs its own index.
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), index=True)
     department_id = db.Column(db.Integer, db.ForeignKey('departments.id'))
 
     instructor = db.relationship('Instructor', backref='employee', uselist=False)

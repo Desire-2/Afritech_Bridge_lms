@@ -20,6 +20,8 @@ export default function ServicesPage() {
   const [busy, setBusy] = useState(false);
   const [error2, setError2] = useState('');
   const [deact, setDeact] = useState<any | null>(null);
+  const [actionErr, setActionErr] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const items = data?.items || [];
   // Prices/costs are stripped from the payload for roles without pricing access
@@ -90,14 +92,26 @@ export default function ServicesPage() {
       reload();
     } catch (err: any) {
       setError2(err.message);
+      // Propagate so ConfirmDialog can show the reason instead of closing
+      // silently with the error trapped inside this (closed) modal.
+      throw err;
     } finally {
       setBusy(false);
     }
   }
 
   async function reactivate(svc: any) {
-    await api(`/api/services/${svc.id}/reactivate`, { method: 'POST' });
-    reload();
+    if (busyId) return;
+    setActionErr('');
+    setBusyId(svc.id);
+    try {
+      await api(`/api/services/${svc.id}/reactivate`, { method: 'POST' });
+      reload();
+    } catch (err: any) {
+      setActionErr(err?.message || 'Could not reactivate the service.');
+    } finally {
+      setBusyId(null);
+    }
   }
 
   return (
@@ -113,6 +127,7 @@ export default function ServicesPage() {
       </div>
 
       {error && <ErrorAlert message={error} onRetry={reload} />}
+      {actionErr && <ErrorAlert message={actionErr} />}
       {loading && <Loading />}
       {!loading && !error && items.length === 0 && <EmptyState message="No services found" />}
 
@@ -144,8 +159,8 @@ export default function ServicesPage() {
                         <td className="text-end">
                           <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(s)}><i className="bi bi-pencil" /></button>
                           {s.is_active
-                            ? <button className="btn btn-sm btn-outline-danger" onClick={() => setDeact(s)}><i className="bi bi-x-circle" /></button>
-                            : <button className="btn btn-sm btn-outline-success" onClick={() => reactivate(s)}><i className="bi bi-check2-circle" /></button>}
+                            ? <button className="btn btn-sm btn-outline-danger" onClick={() => setDeact(s)} disabled={busyId === s.id}><i className="bi bi-x-circle" /></button>
+                            : <button className="btn btn-sm btn-outline-success" onClick={() => reactivate(s)} disabled={busyId === s.id}><i className="bi bi-check2-circle" /></button>}
                         </td>
                       )}
                     </tr>

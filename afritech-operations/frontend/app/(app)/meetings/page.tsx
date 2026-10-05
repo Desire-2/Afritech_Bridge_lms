@@ -46,6 +46,7 @@ export default function MeetingsPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<any>(EMPTY);
   const [busy, setBusy] = useState(false);
+  const [acting, setActing] = useState(false);
   const [formError, setFormError] = useState('');
   const [actionError, setActionError] = useState('');
 
@@ -124,25 +125,31 @@ export default function MeetingsPage() {
 
   async function addAgendaItem(e: React.FormEvent) {
     e.preventDefault();
-    if (!detail || !agendaTitle.trim()) return;
+    if (!detail || !agendaTitle.trim() || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/meetings/${detail.id}/agenda`, { method: 'POST', body: { title: agendaTitle } });
       setAgendaTitle('');
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
   async function removeAgendaItem(itemId: number) {
-    if (!detail) return;
+    if (!detail || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/meetings/agenda/${itemId}`, { method: 'DELETE' });
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
@@ -168,8 +175,9 @@ export default function MeetingsPage() {
 
   async function addActionItem(e: React.FormEvent) {
     e.preventDefault();
-    if (!detail) return;
+    if (!detail || acting) return;
     setActionError('');
+    setActing(true);
     try {
       const body: any = {
         title: actionItem.title, responsible_id: Number(actionItem.responsible_id),
@@ -181,23 +189,29 @@ export default function MeetingsPage() {
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
   async function setActionItemStatus(itemId: number, next: string) {
-    if (!detail) return;
+    if (!detail || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/meetings/action-items/${itemId}`, { method: 'PUT', body: { status: next } });
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
   async function toggleAttendance(employeeId: number, attended: boolean) {
-    if (!detail) return;
+    if (!detail || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/meetings/${detail.id}/attendance`, {
         method: 'POST',
@@ -206,6 +220,8 @@ export default function MeetingsPage() {
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
@@ -492,7 +508,7 @@ export default function MeetingsPage() {
                             {canManage ? (
                               <div className="form-check form-switch mb-0">
                                 <input className="form-check-input" type="checkbox"
-                                  id={`att-${p.employee_id}`} checked={!!p.attended}
+                                  id={`att-${p.employee_id}`} checked={!!p.attended} disabled={acting}
                                   onChange={(e) => toggleAttendance(p.employee_id, e.target.checked)} />
                                 <label className="form-check-label small" htmlFor={`att-${p.employee_id}`}>
                                   {p.attended ? 'Present' : 'Absent'}
@@ -521,7 +537,7 @@ export default function MeetingsPage() {
                         {a.presenter && <span className="small text-muted"> — {a.presenter}</span>}
                       </span>
                       {canManage && (
-                        <button className="btn btn-sm btn-outline-danger flex-shrink-0"
+                        <button className="btn btn-sm btn-outline-danger flex-shrink-0" disabled={acting}
                           onClick={() => removeAgendaItem(a.id)} aria-label={`Remove ${a.title}`}>
                           <i className="bi bi-x" />
                         </button>
@@ -534,7 +550,7 @@ export default function MeetingsPage() {
                 <form className="d-flex gap-2" onSubmit={addAgendaItem}>
                   <TextInput className="form-control form-control-sm" placeholder="Add an agenda item…"
                     value={agendaTitle} onChange={(e) => setAgendaTitle(e.target.value)} />
-                  <button className="btn btn-sm btn-outline-primary" type="submit" disabled={!agendaTitle.trim()}>
+                  <button className="btn btn-sm btn-outline-primary" type="submit" disabled={!agendaTitle.trim() || acting}>
                     <i className="bi bi-plus-lg" />
                   </button>
                 </form>
@@ -594,6 +610,7 @@ export default function MeetingsPage() {
                           <td>
                             {canManage ? (
                               <SelectInput className="form-select form-select-sm" style={{ minWidth: 130 }}
+                                disabled={acting}
                                 value={a.status} onChange={(e) => setActionItemStatus(a.id, e.target.value)}>
                                 {ACTION_STATUSES.map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
                               </SelectInput>
@@ -621,7 +638,7 @@ export default function MeetingsPage() {
                       value={actionItem.deadline}
                       onChange={(e) => setActionItem((a) => ({ ...a, deadline: e.target.value }))} />
                     <button className="btn btn-sm btn-outline-primary" type="submit"
-                      disabled={!actionItem.title || !actionItem.responsible_id}>
+                      disabled={!actionItem.title || !actionItem.responsible_id || acting}>
                       <i className="bi bi-plus-lg me-1" />Add
                     </button>
                   </div>

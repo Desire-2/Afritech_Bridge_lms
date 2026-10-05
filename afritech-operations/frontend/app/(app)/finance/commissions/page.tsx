@@ -24,6 +24,8 @@ export default function CommissionsPage() {
   const [empId, setEmpId] = useState('');
   const [eff, setEff] = useState<any | null>(null);
   const [checkOpen, setCheckOpen] = useState(false);
+  const [checkBusy, setCheckBusy] = useState(false);
+  const [checkErr, setCheckErr] = useState('');
 
   const rules = data?.rules || [];
 
@@ -78,11 +80,19 @@ export default function CommissionsPage() {
   }
 
   async function checkRate() {
-    const params: any = {};
-    if (svcId) params.service_id = svcId;
-    if (empId) params.employee_id = empId;
-    const d: any = await api('/api/commissions/effective', { params });
-    setEff(d);
+    setCheckErr('');
+    setCheckBusy(true);
+    try {
+      const params: any = {};
+      if (svcId) params.service_id = svcId;
+      if (empId) params.employee_id = empId;
+      const d: any = await api('/api/commissions/effective', { params });
+      setEff(d);
+    } catch (err: any) {
+      setCheckErr(err?.message || 'Could not read the effective rate.');
+    } finally {
+      setCheckBusy(false);
+    }
   }
 
   async function toggleActive(r: any) {
@@ -96,7 +106,7 @@ export default function CommissionsPage() {
       <PageHeader title="Commissions" subtitle="Commission rules and rate precedence"
         actions={
           <>
-            <button className="btn btn-outline-secondary me-2" onClick={async () => { setCheckOpen(true); setSvcId(''); setEmpId(''); setEff(null); await loadRefs(); }}><i className="bi bi-search me-1" /> Check effective rate</button>
+            <button className="btn btn-outline-secondary me-2" onClick={async () => { setCheckOpen(true); setSvcId(''); setEmpId(''); setEff(null); setCheckErr(''); await loadRefs(); }}><i className="bi bi-search me-1" /> Check effective rate</button>
             <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-circle me-1" /> New rule</button>
           </>
         } />
@@ -127,7 +137,7 @@ export default function CommissionsPage() {
                     <td className="small">{r.effective_from ? fmtDate(r.effective_from) : '—'} → {r.effective_until ? fmtDate(r.effective_until) : '∞'}</td>
                     <td><Badge status={r.is_active ? 'active' : 'inactive'} /></td>
                     <td className="text-end">
-                      <button className="btn btn-sm btn-outline-secondary" onClick={() => toggleActive(r)}>{r.is_active ? 'Deactivate' : 'Activate'}</button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={() => setDeact(r)}>{r.is_active ? 'Deactivate' : 'Activate'}</button>
                     </td>
                   </tr>
                 ))}
@@ -180,7 +190,7 @@ export default function CommissionsPage() {
         </form>
       </Modal>
 
-      {eff && (
+      {checkOpen && (
         <Modal show={checkOpen} title="Check effective rate" onClose={() => setCheckOpen(false)} size="sm"
           footer={<button className="btn btn-outline-secondary" onClick={() => setCheckOpen(false)}>Close</button>}
         >
@@ -195,8 +205,11 @@ export default function CommissionsPage() {
               <option value="">Any / default</option>
               {checkEmp.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}
             </select>
-            <button className="btn btn-primary btn-sm mt-3" onClick={checkRate}>Check</button>
+            <button className="btn btn-primary btn-sm mt-3" onClick={checkRate} disabled={checkBusy}>
+              {checkBusy ? 'Checking…' : 'Check'}
+            </button>
           </div>
+          {checkErr && <div className="alert alert-danger py-2 small">{checkErr}</div>}
           {eff && (
             <div className={`alert ${eff.source !== 'default' ? 'alert-success' : 'alert-secondary'} small mb-0`}>
               Effective rate: <strong>{Math.round((eff.rate || 0) * 100)}%</strong><br />

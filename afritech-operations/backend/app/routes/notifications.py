@@ -4,18 +4,29 @@ from flask import Blueprint, request, jsonify
 
 from ..extensions import db
 from ..models import Notification
-from ..auth.auth import require_auth, current_user
-from ..services.notifications import preferences_to_dict, set_preferences
-from .helpers import paginate, paginate_response, json_error, parse_json
+from ..auth.auth import require_auth, require_permission, current_user
+from ..services.notifications import (
+    apply_visibility, preferences_to_dict, set_preferences,
+)
+from .helpers import paginate_response, json_error, parse_json
 
 bp = Blueprint('notifications', __name__, url_prefix='/api/notifications')
 
+# Hard ceiling on history pages: the feed is always paged, never loaded whole.
+MAX_PER_PAGE = 100
+DEFAULT_PER_PAGE = 50
+
+
+def _visible_query(user):
+    """Own notifications, filtered by the same rules that gate `notify()`."""
+    return apply_visibility(Notification.query.filter_by(recipient_id=user.id), user)
+
 
 @bp.get('')
-@require_auth
+@require_permission('notifications.view')
 def list_notifications():
     user = current_user()
-    q = Notification.query.filter_by(recipient_id=user.id)
+    q = _visible_query(user)
     unread_only = request.args.get('unread_only')
     if unread_only == 'true':
         q = q.filter_by(is_read=False)
@@ -23,15 +34,23 @@ def list_notifications():
     if severity:
         q = q.filter_by(severity=severity)
     q = q.order_by(Notification.created_at.desc())
-    p = paginate(q)
+    page, per_page = _page_args()
+    p = q.paginate(page=page, per_page=per_page, error_out=False)
     return paginate_response([n.to_dict() for n in p.items], p)
+
+
+def _page_args():
+    page = request.args.get('page', 1, type=int) or 1
+    per_page = request.args.get('per_page', DEFAULT_PER_PAGE, type=int) or DEFAULT_PER_PAGE
+    return max(page, 1), min(max(per_page, 1), MAX_PER_PAGE)
 
 
 @bp.get('/unread-count')
 @require_auth
 def unread_count():
     user = current_user()
-    count = Notification.query.filter_by(recipient_id=user.id, is_read=False).count()
+    # Permission-filtered: a badge never counts a row the user may not see.
+    count = _visible_query(user).filter_by(is_read=False).count()
     return jsonify({'unread': count})
 
 
@@ -56,7 +75,7 @@ def update_preferences():
 @require_auth
 def mark_read(notification_id):
     user = current_user()
-    n = Notification.query.filter_by(id=notification_id, recipient_id=user.id).first()
+    n = _visible_query(user).filter_by(id=notification_id).first()
     if not n:
         return json_error('Notification not found', 404)
     n.is_read = True
@@ -69,6 +88,6 @@ def mark_read(notification_id):
 @require_auth
 def mark_all_read():
     user = current_user()
-    Notification.query.filter_by(recipient_id=user.id, is_read=False).update({'is_read': True})
+    _visible_query(user).filter_by(is_read=False).update({'is_read': True})
     db.session.commit()
     return jsonify({'message': 'All notifications marked read'})

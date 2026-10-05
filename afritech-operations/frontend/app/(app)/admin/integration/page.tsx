@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { PageHeader, Loading, ErrorAlert, Badge } from '@/components/ui';
 import { Field, TextInput } from '@/components/form';
@@ -15,6 +15,7 @@ export default function IntegrationPage() {
   const [result, setResult] = useState<any | null>(null);
   const [mapping, setMapping] = useState<any | null>(null);
   const [showMapping, setShowMapping] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   async function reload() {
     setLoading(true);
@@ -30,7 +31,26 @@ export default function IntegrationPage() {
     }
   }
 
-  if (loading && !config) reload();
+  // Load once on mount — calling reload() during render fired a new request
+  // on every re-render while the config was still empty.
+  useEffect(() => {
+    if (loading && !config) reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, config]);
+
+  async function toggleEnabled(checked: boolean) {
+    if (toggling) return;
+    setError('');
+    setToggling(true);
+    try {
+      const d: any = await api('/api/integrations/lms/config', { method: 'POST', body: { enabled: checked } });
+      setConfig(d.config);
+    } catch (err: any) {
+      setError(err?.message || 'Could not update the integration.');
+    } finally {
+      setToggling(false);
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -111,10 +131,8 @@ export default function IntegrationPage() {
                   <TextInput type="password" value={form.api_key} onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))} placeholder={config.has_api_key ? '•••••••• (stored)' : 'Enter API key'} />
                 </Field>
                 <div className="form-check form-switch mb-3">
-                  <input className="form-check-input" type="checkbox" id="enabled" checked={config.enabled} onChange={async (e) => {
-                    await api('/api/integrations/lms/config', { method: 'POST', body: { enabled: e.target.checked } });
-                    reload();
-                  }} />
+                  <input className="form-check-input" type="checkbox" id="enabled" checked={!!config.enabled} disabled={toggling}
+                    onChange={(e) => toggleEnabled(e.target.checked)} />
                   <label className="form-check-label" htmlFor="enabled">Enable integration</label>
                 </div>
                 <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>

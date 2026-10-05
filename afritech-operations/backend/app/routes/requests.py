@@ -13,7 +13,7 @@ from ..models import AdminRequest, Employee, REQUEST_TYPES, REQUEST_STATUSES
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..auth.scope import exclude_service_agents, employee_scope_error, scope_error_status
 from ..services.audit import audit
-from ..services.notifications import notify_employee
+from ..services.notifications import notify_employee, notify_users_with_permission
 from .helpers import (
     json_error, parse_json, required, paginate, paginate_response,
     parse_date, parse_id,
@@ -56,7 +56,9 @@ def list_requests():
     user = current_user()
     q = _scope_query(AdminRequest.query, user)
     status = request.args.get('status')
-    if status:
+    if status == 'all':
+        pass  # explicit "every status" mode (default stays OPEN_STATUSES)
+    elif status:
         if status not in REQUEST_STATUSES:
             return json_error(f'Invalid status (expected one of {", ".join(REQUEST_STATUSES)})', 400)
         q = q.filter_by(status=status)
@@ -147,6 +149,10 @@ def create_request():
     db.session.add(row)
     db.session.commit()
     audit('admin_request_created', 'admin_request', row.id, new_value=row.to_dict())
+    notify_users_with_permission(
+        'requests.manage', 'admin_request',
+        f'New request submitted: {row.title}',
+        related_type='admin_request', related_id=row.id)
     return jsonify({'message': 'Request submitted', 'request': row.to_dict()}), 201
 
 
@@ -224,6 +230,15 @@ def update_request(request_id):
 
     db.session.commit()
     audit('admin_request_updated', 'admin_request', row.id, prev, row.to_dict())
+    if ('status' in data and row.status != prev.get('status')
+            and row.status not in ('approved', 'rejected', 'closed')):
+        # e.g. 'more_info' / 'in_review': the requester must learn their item
+        # needs attention (decisions are announced by /resolve).
+        requester = Employee.query.get(row.requested_by)
+        if requester and (not emp or requester.id != emp.id):
+            notify_employee(requester, 'admin_request',
+                            f'Request {row.status}: {row.title}',
+                            related_type='admin_request', related_id=row.id)
     return jsonify({'message': 'Request updated', 'request': row.to_dict()})
 
 

@@ -168,10 +168,18 @@ export default function WeeklyPlansPage() {
   }
 
   async function changePlanStatus(status: string) {
-    if (!editPlan) return;
-    await api(`/api/instructors/weekly-plans/${editPlan.id}`, { method: 'PUT', body: { status } });
-    reload();
-    await refreshPlan();
+    if (!editPlan || busy) return;
+    setBusy(true);
+    setError2('');
+    try {
+      await api(`/api/instructors/weekly-plans/${editPlan.id}`, { method: 'PUT', body: { status } });
+      reload();
+      await refreshPlan();
+    } catch (err: any) {
+      setError2(err?.message || 'Could not update the plan status.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -225,8 +233,8 @@ export default function WeeklyPlansPage() {
             {editPlan && (
               <>
                 <div className="me-auto">
-                  {editPlan.status !== 'completed' && <button className="btn btn-sm btn-outline-success me-1" onClick={() => changePlanStatus('completed')}>Mark completed</button>}
-                  {editPlan.status === 'planned' && <button className="btn btn-sm btn-outline-primary" onClick={() => changePlanStatus('in_progress')}>Start</button>}
+                  {editPlan.status !== 'completed' && <button className="btn btn-sm btn-outline-success me-1" disabled={busy} onClick={() => changePlanStatus('completed')}>Mark completed</button>}
+                  {editPlan.status === 'planned' && <button className="btn btn-sm btn-outline-primary" disabled={busy} onClick={() => changePlanStatus('in_progress')}>Start</button>}
                 </div>
               </>
             )}

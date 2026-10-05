@@ -27,8 +27,11 @@ def paginate_response(items, pagination_obj):
     })
 
 
-def json_error(message, status=400):
-    return jsonify({'error': message}), status
+def json_error(message, status=400, code=None):
+    payload = {'error': message}
+    if code:
+        payload['code'] = code
+    return jsonify(payload), status
 
 
 def parse_json():

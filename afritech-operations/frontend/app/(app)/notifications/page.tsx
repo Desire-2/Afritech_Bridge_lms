@@ -8,26 +8,57 @@ import { PageHeader, Loading, ErrorAlert, EmptyState, Pagination, Badge } from '
 const SEVERITY_ICON: Record<string, string> = {
   info: 'bi-info-circle',
   warning: 'bi-exclamation-triangle',
+  critical: 'bi-x-octagon',
   error: 'bi-x-octagon',
   success: 'bi-check-circle',
+};
+
+const SEVERITY_BG: Record<string, string> = {
+  critical: 'danger',
+  error: 'danger',
+  warning: 'warning',
+  success: 'success',
+  info: 'info',
 };
 
 export default function NotificationsPage() {
   const [page, setPage] = useState(1);
   const { data, error, loading, reload } = useFetch('/api/notifications', [page], { page, per_page: 30 });
-  const { data: countData } = useFetch('/api/notifications/unread-count');
+  const { data: countData, reload: reloadCount } = useFetch('/api/notifications/unread-count');
 
   const items = data?.items || [];
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyAll, setBusyAll] = useState(false);
+  const [actionErr, setActionErr] = useState('');
 
   async function markRead(n: any) {
-    if (n.is_read) return;
-    await api(`/api/notifications/${n.id}/read`, { method: 'POST' });
-    reload();
+    if (n.is_read || busyId || busyAll) return;
+    setActionErr('');
+    setBusyId(n.id);
+    try {
+      await api(`/api/notifications/${n.id}/read`, { method: 'POST' });
+      reload();
+      reloadCount();
+    } catch (err: any) {
+      setActionErr(err?.message || 'Could not mark the notification as read.');
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function markAll() {
-    await api('/api/notifications/read-all', { method: 'POST' });
-    reload();
+    if (busyAll || busyId) return;
+    setActionErr('');
+    setBusyAll(true);
+    try {
+      await api('/api/notifications/read-all', { method: 'POST' });
+      reload();
+      reloadCount();
+    } catch (err: any) {
+      setActionErr(err?.message || 'Could not mark all notifications as read.');
+    } finally {
+      setBusyAll(false);
+    }
   }
 
   return (
@@ -35,9 +66,12 @@ export default function NotificationsPage() {
       <PageHeader eyebrow="Notifications" title="Notifications"
         subtitle={`${countData?.unread ?? 0} unread`}
         actions={items.some((n: any) => !n.is_read) && (
-          <button className="btn btn-sm btn-outline-primary" onClick={markAll}><i className="bi bi-check2-all me-1" />Mark all read</button>
+          <button className="btn btn-sm btn-outline-primary" onClick={markAll} disabled={busyAll || !!busyId}>
+            <i className="bi bi-check2-all me-1" />{busyAll ? 'Marking…' : 'Mark all read'}
+          </button>
         )} />
 
+      {actionErr && <ErrorAlert message={actionErr} />}
       {error && <ErrorAlert message={error} />}
       {loading && <Loading />}
       {!loading && !error && items.length === 0 && <EmptyState message="No notifications" icon="bi-bell-slash" />}
@@ -51,8 +85,9 @@ export default function NotificationsPage() {
                   key={n.id}
                   className={`notif-row w-100 text-start ${n.is_read ? '' : 'notif-unread'}`}
                   onClick={() => markRead(n)}
+                  disabled={busyId === n.id || busyAll}
                 >
-                  <div className={`notif-sev bg-${n.severity === 'error' ? 'danger' : n.severity === 'warning' ? 'warning' : n.severity === 'success' ? 'success' : 'info'}-subtle`}>
+                  <div className={`notif-sev bg-${SEVERITY_BG[n.severity] || 'info'}-subtle`}>
                     <i className={`bi ${SEVERITY_ICON[n.severity] || SEVERITY_ICON.info}`} />
                   </div>
                   <div className="flex-grow-1 min-w-0">

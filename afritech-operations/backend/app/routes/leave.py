@@ -23,7 +23,7 @@ from ..models import Employee, LeaveRequest
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..auth.scope import exclude_service_agents
 from ..services.audit import audit
-from ..services.notifications import notify_employee
+from ..services.notifications import notify_employee, notify_users_with_permission
 from .helpers import (
     json_error, parse_json, required, paginate, paginate_response,
     parse_date, parse_id,
@@ -143,6 +143,10 @@ def create_leave_request():
     db.session.add(row)
     db.session.commit()
     audit('leave_requested', 'leave_request', row.id, new_value=row.to_dict())
+    notify_users_with_permission(
+        'leave.manage', 'leave_request',
+        f'Leave request awaiting approval: {row.start_date} → {row.end_date}',
+        related_type='leave_request', related_id=row.id)
     return jsonify({'message': 'Leave requested', 'leave_request': row.to_dict()}), 201
 
 

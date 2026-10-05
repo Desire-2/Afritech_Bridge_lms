@@ -6,8 +6,9 @@ services:
     environment:
       FLASK_CONFIG: production
       DATABASE_URL: postgresql://afritech:afritech@db:5432/afritech_operations
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-a-long-random-key}
-      JWT_SECRET: ${JWT_SECRET:-change-me-too-use-a-long-random-key-here}
+      # Required: production refuses to boot on a published placeholder key.
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY (python -c "import secrets; print(secrets.token_hex(32))")}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (python -c "import secrets; print(secrets.token_hex(32))")}
       CORS_ORIGINS: http://localhost:3001
       # Public frontend URL — notification emails link through this.
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3001}
@@ -31,6 +32,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request; import sys;
+          body = urllib.request.urlopen('http://127.0.0.1:5000/api/health', timeout=5).read();
+          sys.exit(0 if b'ok' in body else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   frontend:
     build:
@@ -60,7 +74,7 @@ services:
       timeout: 5s
       retries: 10
 
-redis:
+  redis:
     image: redis:7-alpine
     container_name: afritech-ops-redis
     restart: unless-stopped

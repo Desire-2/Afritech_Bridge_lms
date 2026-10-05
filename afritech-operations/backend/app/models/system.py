@@ -87,6 +87,12 @@ class PerformanceScoreComponent(db.Model):
 
 class Notification(TimestampMixin, db.Model):
     __tablename__ = 'notifications'
+    # The bell badge runs `recipient_id = ? AND is_read = 0` on every page
+    # load; the composite keeps that count an index-only seek as the inbox
+    # grows (the leading column still serves recipient-only lookups).
+    __table_args__ = (
+        db.Index('ix_notifications_recipient_read', 'recipient_id', 'is_read'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     type = db.Column(db.String(64), nullable=False, index=True)

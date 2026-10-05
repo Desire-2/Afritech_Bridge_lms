@@ -60,6 +60,7 @@ export default function ActivitiesPage() {
   const [formError, setFormError] = useState('');
   const [actionError, setActionError] = useState('');
 
+  const [acting, setActing] = useState(false);
   const [detail, setDetail] = useState<any | null>(null);
   const [checklistTitle, setChecklistTitle] = useState('');
 
@@ -133,8 +134,9 @@ export default function ActivitiesPage() {
 
   async function addChecklistItem(e: React.FormEvent) {
     e.preventDefault();
-    if (!detail || !checklistTitle.trim()) return;
+    if (!detail || !checklistTitle.trim() || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/activities/${detail.id}/checklist`, {
         method: 'POST', body: { title: checklistTitle },
@@ -143,28 +145,36 @@ export default function ActivitiesPage() {
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
   async function toggleChecklistItem(item: any, isDone: boolean) {
-    if (!detail) return;
+    if (!detail || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/activities/checklist/${item.id}`, { method: 'PUT', body: { is_done: isDone } });
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
   async function removeChecklistItem(itemId: number) {
-    if (!detail) return;
+    if (!detail || acting) return;
     setActionError('');
+    setActing(true);
     try {
       await api(`/api/activities/checklist/${itemId}`, { method: 'DELETE' });
       await loadDetail(detail.id);
     } catch (err: any) {
       setActionError(err.message);
+    } finally {
+      setActing(false);
     }
   }
 
@@ -430,7 +440,7 @@ export default function ActivitiesPage() {
                     <li key={c.id} className="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
                       <div className="form-check mb-0">
                         <input className="form-check-input" type="checkbox" id={`cl-${c.id}`}
-                          checked={!!c.is_done} disabled={!canManage}
+                          checked={!!c.is_done} disabled={!canManage || acting}
                           onChange={(e) => toggleChecklistItem(c, e.target.checked)} />
                         <label className={`form-check-label small ${c.is_done ? 'text-decoration-line-through text-muted' : ''}`}
                           htmlFor={`cl-${c.id}`}>
@@ -438,7 +448,7 @@ export default function ActivitiesPage() {
                         </label>
                       </div>
                       {canManage && (
-                        <button className="btn btn-sm btn-outline-danger"
+                        <button className="btn btn-sm btn-outline-danger" disabled={acting}
                           onClick={() => removeChecklistItem(c.id)} aria-label={`Remove ${c.title}`}>
                           <i className="bi bi-x" />
                         </button>
@@ -451,7 +461,7 @@ export default function ActivitiesPage() {
                 <form className="d-flex gap-2" onSubmit={addChecklistItem}>
                   <TextInput className="form-control form-control-sm" placeholder="Add a checklist item…"
                     value={checklistTitle} onChange={(e) => setChecklistTitle(e.target.value)} />
-                  <button className="btn btn-sm btn-outline-primary" type="submit" disabled={!checklistTitle.trim()}>
+                  <button className="btn btn-sm btn-outline-primary" type="submit" disabled={!checklistTitle.trim() || acting}>
                     <i className="bi bi-plus-lg" />
                   </button>
                 </form>

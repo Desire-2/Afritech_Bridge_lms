@@ -52,8 +52,23 @@ coverage/
 
 # Cache
 .cache/
-.mypy_cache/backend/.env
+.mypy_cache/
 backend/instance/*.db
+
+# Databases — any SQLite/Postgres dump or dev DB anywhere in the repo.
+# (backend/instance/afritec_lms_db.db was committed because this rule was
+# missing; ignore rules do not untrack files already in the index.)
+*.db
+*.sqlite
+*.sqlite3
+
+# Virtualenvs anywhere (backend/venv held 10 tracked files the same way).
+venv/
+.venv/
+
+# Local secrets — .env.example stays tracked, real env files never do.
+backend/.env.postgresql
+.env.postgresql
 
 # Google service account keys
 backend/gen-lang-client-0193686612-6ab422c5f4be.json

@@ -21,6 +21,8 @@ function PayrollInner() {
   const [editItem, setEditItem] = useState<any | null>(null);
   const [itemForm, setItemForm] = useState<any>({ bonus: '', deduction: '', advance: '', adjustment: '', note: '' });
   const [confirmStatus, setConfirmStatus] = useState<any | null>(null);
+  const [pageErr, setPageErr] = useState('');
+  const [recalcBusy, setRecalcBusy] = useState(false);
 
   const periods = data?.items || [];
   const items = detail?.period?.items || [];
@@ -46,9 +48,17 @@ function PayrollInner() {
   }
 
   async function recalc() {
-    if (!activeId) return;
-    const d: any = await api(`/api/payroll/periods/${activeId}/recalculate`, { method: 'POST' });
-    reloadDetail();
+    if (!activeId || recalcBusy) return;
+    setPageErr('');
+    setRecalcBusy(true);
+    try {
+      await api(`/api/payroll/periods/${activeId}/recalculate`, { method: 'POST' });
+      reloadDetail();
+    } catch (err: any) {
+      setPageErr(err?.message || 'Recalculation failed.');
+    } finally {
+      setRecalcBusy(false);
+    }
   }
 
   async function saveItem(e: React.FormEvent) {
@@ -81,6 +91,8 @@ function PayrollInner() {
       reload();
     } catch (err: any) {
       setError2(err.message);
+      // Surface in the ConfirmDialog (error2 only renders inside the modals).
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -92,6 +104,8 @@ function PayrollInner() {
     <div>
       <PageHeader title="Payroll" subtitle="Payroll periods, commissions and adjustments"
         actions={<button className="btn btn-primary" onClick={() => { setOpen(true); setError2(''); }}><i className="bi bi-plus-circle me-1" /> New period</button>} />
+
+      {pageErr && <ErrorAlert message={pageErr} />}
 
       <div className="row g-4">
         <div className="col-lg-4">
@@ -135,7 +149,9 @@ function PayrollInner() {
                     </div>
                     <div className="d-flex align-items-center gap-2">
                       <Badge status={pd.status} />
-                      <button className="btn btn-sm btn-outline-secondary" onClick={recalc}><i className="bi bi-arrow-counterclockwise me-1" /> Recalculate</button>
+                      <button className="btn btn-sm btn-outline-secondary" onClick={recalc} disabled={recalcBusy}>
+                        <i className="bi bi-arrow-counterclockwise me-1" /> {recalcBusy ? 'Recalculating…' : 'Recalculate'}
+                      </button>
                       {nextStatus && (
                         <button className="btn btn-sm btn-primary" onClick={() => setConfirmStatus(nextStatus)}>
                           {pd.status === 'draft' ? 'Send for review' : pd.status === 'reviewed' ? 'Approve' : 'Mark paid'}

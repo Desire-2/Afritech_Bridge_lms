@@ -157,10 +157,12 @@ def update_user(user_id):
             and user.is_super_admin and user.id == actor.id:
         return json_error('Cannot remove your own super admin access')
 
+    password_reset_by_admin = False
     if 'password' in data and data['password']:
         if len(data['password']) < 8:
             return json_error('Password must be at least 8 characters')
         user.set_password(data['password'])
+        password_reset_by_admin = True
     if 'roles' in data:
         codes, err = _role_codes_payload(data['roles'])
         if err:
@@ -183,6 +185,11 @@ def update_user(user_id):
     # access is actually revoked.
     if not user.is_super_admin:
         user.roles = [r for r in user.roles if r.code != 'super_admin']
+    if password_reset_by_admin:
+        # An admin-set password must end every session the old one opened,
+        # otherwise the credential change does not actually lock anyone out.
+        from .auth import revoke_all_sessions
+        revoke_all_sessions(user.id)
     db.session.commit()
     audit('user_updated', 'user', user.id, prev, {'is_active': user.is_active, 'is_super_admin': user.is_super_admin, 'roles': user.role_codes})
     return jsonify({'message': 'User updated', 'user': user.to_dict()})

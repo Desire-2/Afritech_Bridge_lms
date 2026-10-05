@@ -139,7 +139,7 @@ def update_escalation(escalation_id):
         if assigned_to and row.status == 'created':
             row.status = 'assigned'
             notify(assigned_to, 'escalation', f'Escalated to you: {row.subject}',
-                   'high', 'escalation', row.id)
+                   'warning', 'escalation', row.id)
     if 'status' in data:
         if data['status'] not in ESCALATION_STATUSES:
             return json_error(f'Invalid status (expected one of {", ".join(ESCALATION_STATUSES)})', 400)

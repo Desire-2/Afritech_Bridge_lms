@@ -11,7 +11,7 @@ from ..models import (
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..services.audit import audit
 from ..services.performance import compute_instructor_score
-from .helpers import json_error, parse_json, paginate, paginate_response
+from .helpers import json_error, parse_json, parse_id, paginate, paginate_response
 
 bp = Blueprint('instructors', __name__, url_prefix='/api/instructors')
 
@@ -23,6 +23,21 @@ def _instructor_manager(user):
 def _my_instructor():
     emp = current_employee()
     return emp.instructor if emp and emp.instructor else None
+
+
+def _plan_scope_error(user, instructor_id):
+    """403 unless ``user`` may write to the plan of ``instructor_id``.
+
+    ``weekly_plans.manage`` is the Instructor's own permission — it must only
+    ever reach the records of the instructor profile the caller belongs to.
+    Managers (``instructors.manage``) and super admins are unrestricted.
+    """
+    if _instructor_manager(user):
+        return None
+    mine = _my_instructor()
+    if mine and mine.id == instructor_id:
+        return None
+    return json_error('You do not have permission to manage this instructor\'s weekly plan', 403)
 
 
 # ---------- instructors ----------
@@ -180,15 +195,14 @@ def list_cohorts():
 def list_weekly_plans():
     user = current_user()
     q = WeeklyPlan.query
-    emp = current_employee()
     mine = _my_instructor()
-    if not user.has_permission('weekly_plans.view'):
+    if not _instructor_manager(user):
+        # Row-level scope: an instructor sees only their own plans, and a
+        # holder of weekly_plans.view without an instructor profile sees none.
         if mine:
             q = q.filter_by(instructor_id=mine.id)
         else:
             q = q.filter(db.text('1 = 0'))
-    elif not _instructor_manager(user) and mine:
-        q = q.filter_by(instructor_id=mine.id)
     instructor_id = request.args.get('instructor_id', type=int)
     if instructor_id and _instructor_manager(user):
         q = q.filter_by(instructor_id=instructor_id)
@@ -216,6 +230,15 @@ def create_weekly_plan():
         if not emp or not emp.instructor:
             return json_error('No instructor profile', 400)
         instructor_id = emp.instructor.id
+    else:
+        instructor_id, err = parse_id(instructor_id, 'instructor_id')
+        if err:
+            return err
+        if not instructor_id:
+            return json_error('Invalid instructor_id', 400)
+    denied = _plan_scope_error(current_user(), instructor_id)
+    if denied:
+        return denied
     plan = WeeklyPlan(
         instructor_id=instructor_id,
         week_start=date.fromisoformat(data['week_start']),
@@ -251,6 +274,9 @@ def update_weekly_plan(plan_id):
     plan = WeeklyPlan.query.get(plan_id)
     if not plan:
         return json_error('Weekly plan not found', 404)
+    denied = _plan_scope_error(current_user(), plan.instructor_id)
+    if denied:
+        return denied
     prev = plan.to_dict()
     if 'title' in data:
         plan.title = data['title']
@@ -267,6 +293,12 @@ def update_weekly_plan(plan_id):
 @require_permission('weekly_plans.manage')
 def update_activity(plan_id, activity_id):
     data = parse_json()
+    plan = WeeklyPlan.query.get(plan_id)
+    if not plan:
+        return json_error('Weekly plan not found', 404)
+    denied = _plan_scope_error(current_user(), plan.instructor_id)
+    if denied:
+        return denied
     act = WeeklyPlanActivity.query.filter_by(id=activity_id, weekly_plan_id=plan_id).first()
     if not act:
         return json_error('Activity not found', 404)

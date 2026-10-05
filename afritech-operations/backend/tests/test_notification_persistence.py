@@ -142,7 +142,12 @@ class TestAutomationPersistence:
         assert second == 0, 'a second run re-notified the same task'
         assert after == persisted
 
-        _purge(type='task_due_tomorrow', related_type='task', related_id=task_id)
+        # Purge *every* notification for this task. Purging only the
+        # `task_due_tomorrow` rows left the `task_assigned` row behind while the
+        # task itself was deleted; SQLite then reused the id for the next task
+        # created by another test file, whose `count() == 1` assertions saw two
+        # rows for "the same" task.
+        _purge(related_type='task', related_id=task_id)
         from app.models import Task
         Task.query.filter_by(id=task_id).delete()
         AuditLog.query.filter_by(entity='task', entity_id=str(task_id)).delete()

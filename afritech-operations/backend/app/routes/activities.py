@@ -6,7 +6,7 @@ from flask import Blueprint, request, jsonify
 
 from ..extensions import db
 from ..models import (
-    Activity, ActivityParticipant, ActivityChecklistItem, Task,
+    Activity, ActivityParticipant, ActivityChecklistItem, Task, Employee,
     ACTIVITY_CATEGORIES, ACTIVITY_STATUSES, ACTIVITY_PRIORITIES,
 )
 from ..auth.auth import require_permission, require_any_permission, current_user
@@ -181,18 +181,26 @@ def create_activity():
             db.session.add(ActivityChecklistItem(activity_id=activity.id, title=title.strip(), position=i))
     db.session.commit()
     audit('activity_created', 'activity', activity.id, new_value=activity.to_dict())
+    for part in activity.participants:
+        notify_employee(Employee.query.get(part.employee_id), 'activity_updated',
+                        f'New activity: {activity.title} on {activity.activity_date}',
+                        related_type='activity', related_id=activity.id)
     return jsonify({'message': 'Activity created', 'activity': activity.to_dict(with_children=True)}), 201
 
 
 @bp.get('/<int:activity_id>')
 @require_any_permission('activities.view', 'activities.manage')
 def get_activity(activity_id):
+    user = current_user()
     activity = Activity.query.get(activity_id)
     if not activity:
         return json_error('Activity not found', 404)
-    if activity.scope == 'personal' and activity.owner_user_id != current_user().id \
-            and not current_user().has_permission('activities.manage'):
-        return json_error('You do not have permission to view this activity', 403)
+    # Fetch-by-id must match what ``list_activities`` already filters out:
+    # another user's personal planner entry is not readable just because the
+    # caller holds ``activities.manage``.
+    if activity.scope == 'personal' and activity.owner_user_id != user.id \
+            and not user.is_super_admin:
+        return json_error('Activity not found', 404)
     return jsonify({'activity': activity.to_dict(with_children=True)})
 
 
@@ -263,6 +271,17 @@ def update_activity(activity_id):
             db.session.add(ActivityParticipant(activity_id=activity.id, employee_id=emp_id))
     db.session.commit()
     audit('activity_updated', 'activity', activity.id, prev, activity.to_dict())
+    prev_date = prev.get('activity_date')
+    prev_status = prev.get('status')
+    if (activity.activity_date != prev_date
+            or (activity.status == 'completed' and prev_status != 'completed')):
+        verb = ('completed' if activity.status == 'completed' and prev_status != 'completed'
+                else 'moved' if activity.activity_date != prev_date else 'updated')
+        for part in activity.participants:
+            notify_employee(Employee.query.get(part.employee_id), 'activity_updated',
+                            f'Activity {verb}: {activity.title} '
+                            f'(now {activity.activity_date})',
+                            related_type='activity', related_id=activity.id)
     return jsonify({'message': 'Activity updated', 'activity': activity.to_dict(with_children=True)})
 
 

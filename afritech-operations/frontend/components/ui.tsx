@@ -112,6 +112,7 @@ export function Badge({ status }: { status: string }) {
     absent: 'bg-danger-subtle text-danger border-danger-subtle',
     refunded: 'bg-danger-subtle text-danger border-danger-subtle',
     overdue: 'bg-danger-subtle text-danger border-danger-subtle',
+    missing: 'bg-danger-subtle text-danger border-danger-subtle',
     done: 'bg-success-subtle text-success border-success-subtle',
     verified: 'bg-success-subtle text-success border-success-subtle',
     exact: 'bg-success-subtle text-success border-success-subtle',
@@ -129,6 +130,23 @@ export function Badge({ status }: { status: string }) {
     error: 'bg-danger-subtle text-danger border-danger-subtle',
     success: 'bg-success-subtle text-success border-success-subtle',
     correction_requested: 'bg-warning-subtle text-warning border-warning-subtle',
+    // Electronics shop
+    held: 'bg-warning-subtle text-warning border-warning-subtle',
+    requested: 'bg-info-subtle text-info border-info-subtle',
+    dispatched: 'bg-info-subtle text-info border-info-subtle',
+    received: 'bg-success-subtle text-success border-success-subtle',
+    partially_received: 'bg-warning-subtle text-warning border-warning-subtle',
+    partially_paid: 'bg-warning-subtle text-warning border-warning-subtle',
+    unpaid: 'bg-danger-subtle text-danger border-danger-subtle',
+    partially_refunded: 'bg-warning-subtle text-warning border-warning-subtle',
+    open: 'bg-warning-subtle text-warning border-warning-subtle',
+    resolved: 'bg-success-subtle text-success border-success-subtle',
+    expired: 'bg-secondary-subtle text-secondary border-secondary-subtle',
+    in_stock: 'bg-success-subtle text-success border-success-subtle',
+    sold: 'bg-info-subtle text-info border-info-subtle',
+    counted: 'bg-info-subtle text-info border-info-subtle',
+    applied: 'bg-success-subtle text-success border-success-subtle',
+    closed: 'bg-secondary-subtle text-secondary border-secondary-subtle',
   };
   const cls = map[status] || 'bg-light-subtle text-body border-light-subtle';
   return (
@@ -265,22 +283,49 @@ export function ConfirmDialog({
   show: boolean;
   title: string;
   message: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onClose: () => void;
   danger?: boolean;
   confirmLabel?: string;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (show) {
+      setErr('');
+      setBusy(false);
+    }
+  }, [show]);
+
+  async function confirm() {
+    if (busy) return;
+    setErr('');
+    setBusy(true);
+    try {
+      // Await the action so failures stay in this dialog instead of closing
+      // silently with an unhandled rejection in the console.
+      await onConfirm();
+      onClose();
+    } catch (e: any) {
+      setErr(e?.message || 'The action could not be completed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Modal show={show} title={title} onClose={onClose} size="sm"
       footer={
         <>
-          <button className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
-          <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={() => { onConfirm(); onClose(); }}>
-            {confirmLabel}
+          <button className="btn btn-outline-secondary" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} onClick={confirm} disabled={busy}>
+            {busy && <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true" />}
+            {busy ? 'Working…' : confirmLabel}
           </button>
         </>
       }
     >
+      {err && <div className="alert alert-danger py-2 small mb-2">{err}</div>}
       <p className="mb-0">{message}</p>
     </Modal>
   );

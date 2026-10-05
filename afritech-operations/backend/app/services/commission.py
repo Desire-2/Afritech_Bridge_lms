@@ -16,6 +16,15 @@ def _as_decimal(value):
     return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
 
+def _as_rate(value):
+    """A commission rate is a fraction with four decimals (12.5% -> 0.1250).
+
+    Quantizing a rate to two decimals would silently turn 0.125 into 0.13 —
+    a whole percentage point of an employee's pay.
+    """
+    return Decimal(str(value)).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+
+
 class CommissionEngine:
     """
     Commission determination rules (precedence, highest priority first):
@@ -53,20 +62,20 @@ class CommissionEngine:
             service_active_rule = self._active_rule('service', service_id=service.id, on_date=on_date)
 
         if employee is not None and getattr(employee, 'default_commission_rate', None) is not None:
-            return _as_decimal(employee.default_commission_rate), 'employee'
+            return _as_rate(employee.default_commission_rate), 'employee'
 
         if employee_active_rule:
-            return _as_decimal(employee_active_rule.rate), 'employee'
+            return _as_rate(employee_active_rule.rate), 'employee'
 
         if service is not None and getattr(service, 'commission_rate', None) is not None:
-            return _as_decimal(service.commission_rate), 'service'
+            return _as_rate(service.commission_rate), 'service'
 
         if service_active_rule:
-            return _as_decimal(service_active_rule.rate), 'service'
+            return _as_rate(service_active_rule.rate), 'service'
 
         default_rule = self._active_rule('default', on_date=on_date)
         if default_rule:
-            return _as_decimal(default_rule.rate), 'default'
+            return _as_rate(default_rule.rate), 'default'
 
         return self.default_rate.quantize(Decimal('0.0001')), 'default'
 
@@ -88,13 +97,18 @@ class CommissionEngine:
     def calculate(official_cost, customer_price, commission_rate):
         official = _dec(official_cost)
         customer = _dec(customer_price)
-        rate = _dec(commission_rate)
+        rate = _as_rate(commission_rate)
 
         gross_profit = _as_decimal(customer - official)
-        commission_amount = _as_decimal(gross_profit * rate)
+        if gross_profit <= 0:
+            # No margin (or a loss): commission is zero and the company absorbs
+            # the full loss instead of paying the employee on a negative base.
+            commission_amount = _as_decimal(0)
+        else:
+            commission_amount = _as_decimal(gross_profit * rate)
         company_profit = _as_decimal(gross_profit - commission_amount)
         return {
-            'official_cost': gross_profit if False else _dec(official_cost),
+            'official_cost': official,
             'gross_profit': gross_profit,
             'commission_amount': commission_amount,
             'company_profit': company_profit,
@@ -123,3 +137,54 @@ def default_rate():
     engine = CommissionEngine(app=current_app)
     rate, source = engine.current_rate()
     return rate, source
+
+
+def recalculate_with_snapshot_rate(txn, official_cost, customer_price):
+    """Recompute a transaction's commission using the rate snapshotted at creation.
+
+    Editing historical prices must not silently re-price the employee against
+    today's rate card; only the money changes, not the agreed rate.
+    """
+    official = _dec(official_cost)
+    customer = _dec(customer_price)
+    rate = txn.commission_rate_used
+    if rate is None:
+        rate, source = CommissionEngine().current_rate(
+            service=getattr(txn, 'service', None),
+            employee=getattr(txn, 'employee', None),
+            on_date=txn.transaction_date,
+        )
+        txn.commission_source = source
+    else:
+        rate = _as_rate(rate)
+    gross_profit = _as_decimal(customer - official)
+    if gross_profit <= 0:
+        commission_amount = _as_decimal(0)
+    else:
+        commission_amount = _as_decimal(gross_profit * rate)
+    company_profit = _as_decimal(gross_profit - commission_amount)
+    txn.official_cost = official
+    txn.customer_price = customer
+    txn.commission_rate_used = rate
+    txn.gross_profit = gross_profit
+    txn.commission_amount = commission_amount
+    txn.company_profit = company_profit
+    return {
+        'official_cost': official,
+        'gross_profit': gross_profit,
+        'commission_amount': commission_amount,
+        'company_profit': company_profit,
+        'rate': rate,
+    }
+
+
+def nullify_commission(txn):
+    """Reverse a transaction's commission effect (refund/cancel).
+
+    Money is going back to the customer, so nobody earned a cut: commission and
+    company profit are zeroed while gross profit, rate and source are kept as
+    the historical snapshot for audit.
+    """
+    txn.commission_amount = _as_decimal(0)
+    txn.company_profit = _as_decimal(0)
+    return txn
