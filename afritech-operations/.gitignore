@@ -8,6 +8,8 @@ venv/
 # Databases
 *.db
 *.sqlite3
+# schema snapshots written by backend/scripts/migrate.py --backup
+backups/
 
 # Node
 node_modules/

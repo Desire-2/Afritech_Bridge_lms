@@ -1,1 +1,1 @@
-web: cd backend && FLASK_APP=app.py flask db upgrade && gunicorn --bind 0.0.0.0:$PORT --workers 3 --timeout 120 wsgi:app
+web: cd backend && python scripts/migrate.py --yes && gunicorn --bind 0.0.0.0:$PORT --workers 3 --timeout 120 wsgi:app

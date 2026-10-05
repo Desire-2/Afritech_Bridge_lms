@@ -479,3 +479,36 @@ class ShopUnknownBarcode(TimestampMixin, db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class ShopSkuReservation(TimestampMixin, db.Model):
+    """A generated ``ATB…`` SKU handed out for a barcode that is not yet a
+    product, and still waiting for its form to be saved.
+
+    Scanning a barcode must show the SKU immediately, but the SKU is minted by
+    the backend — so the moment it is minted it has to be pinned somewhere.
+    Keying the reservation on the barcode makes the scan **idempotent**: a
+    browser that times out and retries gets the same SKU back instead of
+    burning a second one, and two staff scanning the same unknown code see the
+    same number.
+
+    The row is deleted once the product is actually created (see
+    ``consume_reservation``). A barcode whose form is abandoned simply keeps
+    its reservation: a permanent gap is cheaper than a duplicated SKU, which
+    is the whole point of a sequence.
+    """
+    __tablename__ = 'shop_sku_reservations'
+
+    id = db.Column(db.Integer, primary_key=True)
+    barcode = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    sku = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id'))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'barcode': self.barcode,
+            'sku': self.sku,
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+        }

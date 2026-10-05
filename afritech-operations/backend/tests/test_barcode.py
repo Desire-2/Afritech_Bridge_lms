@@ -78,7 +78,7 @@ class TestBarcodeService:
 class TestProductBarcodeWrites:
     def test_create_normalizes_and_derives_identity(self, client, admin_hdr):
         r = client.post('/api/shop/products', headers=admin_hdr, json={
-            'sku': f'BC-{_tag()}', 'name': 'Barcode vector product',
+            'name': 'Barcode vector product',
             'barcode': ' 00012345678905\n',
             'purchase_cost': 3000, 'selling_price': 5000,
         })
@@ -90,7 +90,7 @@ class TestProductBarcodeWrites:
 
     def test_internal_code_stores_unknown_and_internal(self, client, admin_hdr):
         r = client.post('/api/shop/products', headers=admin_hdr, json={
-            'sku': f'BC-{_tag()}', 'name': 'Internally coded product',
+            'name': 'Internally coded product',
             'barcode': 'AB-000001',
             'purchase_cost': 1000, 'selling_price': 2000,
         })
@@ -103,7 +103,7 @@ class TestProductBarcodeWrites:
     def test_duplicate_barcode_names_the_existing_row(self, client, admin_hdr):
         product, _ = _create_product(client, admin_hdr, stock=0)
         r = client.post('/api/shop/products', headers=admin_hdr, json={
-            'sku': f'BC-{_tag()}', 'name': 'Copycat product',
+            'name': 'Copycat product',
             'barcode': product['barcode'],
         })
         assert r.status_code == 409
@@ -116,9 +116,9 @@ class TestProductBarcodeWrites:
     def test_variant_barcode_may_not_shadow_a_product(self, client, admin_hdr):
         product, _ = _create_product(client, admin_hdr, stock=0)
         r = client.post('/api/shop/products', headers=admin_hdr, json={
-            'sku': f'BC-{_tag()}', 'name': 'Cross-table copycat',
+            'name': 'Cross-table copycat',
             'selling_price': 1500,
-            'variants': [{'name': 'Only', 'sku': f'BCV-{_tag()}',
+            'variants': [{'name': 'Only',
                           'barcode': product['barcode']}],
         })
         assert r.status_code == 409

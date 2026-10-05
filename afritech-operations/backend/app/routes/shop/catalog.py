@@ -24,6 +24,9 @@ from .common import (
     current_user_id, notify_shop, user_branch_id,
 )
 from ...services.shop_inventory import ShopStockError, product_stock, ensure_product
+from ...services.shop_sku import (
+    SKU_PREFIX, ShopSkuError, consume_reservation, reserve_sku,
+)
 from ...services.barcode import (
     ShopBarcodeError, UNKNOWN_CONTEXTS, barcode_conflict, barcode_identity,
     detect_format, normalize_barcode, record_unknown_scan, register_barcode,
@@ -241,11 +244,20 @@ def _apply_variants(product, entries):
         if not name:
             raise ShopStockError(f'Variant {index + 1} needs a name', 400,
                                  'invalid_variant')
-        sku = (entry.get('sku') or f'{product.sku}-{index + 1}').strip()
-        clash = ShopProductVariant.query.filter(
-            ShopProductVariant.sku == sku,
-            ShopProductVariant.product_id != product.id).first()
-        if clash or sku in seen:
+        supplied_sku = (entry.get('sku') or '').strip()
+        if supplied_sku:
+            # A SKU typed into the form has to obey the same ATB rule as the
+            # product's own. Variants the client leaves blank fall through to
+            # the derived ``{parent}-{n}`` value below, which already starts
+            # with ATB whenever the parent does.
+            problem = _sku_format_error(supplied_sku)
+            if problem:
+                raise ShopStockError(problem, 400, 'invalid_sku')
+            sku = supplied_sku
+        else:
+            sku = f'{product.sku}-{index + 1}'
+        clash, _kind = _sku_clash(sku, exclude_product_id=product.id)
+        if clash is not None or sku in seen:
             raise ShopStockError(f'Variant SKU {sku} is already in use', 409,
                                  'duplicate_sku')
         seen.add(sku)
@@ -331,13 +343,23 @@ def _barcode_from_payload(data):
     return normalized, fmt, btype
 
 
-def _barcode_error(error):
-    """Answer for a rejected barcode, undoing partial writes first."""
+def _stock_error(error):
+    """Answer for a rejected payload, undoing partial writes first.
+
+    Handles any :class:`ShopStockError` — the barcode subclass carries an
+    ``existing`` row, the plain variant/bundle errors do not.
+    """
     db.session.rollback()
     payload = {'error': error.message, 'code': error.code}
-    if error.existing:
-        payload['existing'] = error.existing
+    existing = getattr(error, 'existing', None)
+    if existing:
+        payload['existing'] = existing
     return jsonify(payload), error.status
+
+
+def _barcode_error(error):
+    """Backwards-compatible name for the barcode-flavoured case."""
+    return _stock_error(error)
 
 
 def _apply_barcode_payload(row, data, *, is_product):
@@ -373,6 +395,118 @@ def _apply_barcode_payload(row, data, *, is_product):
     row.barcode = barcode
     row.barcode_format = fmt
     row.barcode_type = btype
+
+
+# ── SKU ───────────────────────────────────────────────────────────────────────
+
+def _sku_format_error(sku):
+    """``None`` when ``sku`` is acceptable, otherwise the message to return.
+
+    Every SKU the API is *given* has to carry the ``ATB`` prefix: it is the
+    shop's internal identifier, not a free-text label. SKUs the backend mints
+    itself always satisfy this by construction (see
+    :func:`app.services.shop_sku.format_sku`).
+    """
+    if not sku:
+        return 'SKU is required'
+    if not sku.startswith(SKU_PREFIX) or len(sku) <= len(SKU_PREFIX):
+        return 'SKU must begin with ATB'
+    if any(ch.isspace() for ch in sku):
+        return 'SKU must not contain spaces'
+    if len(sku) > 64:
+        return 'SKU must be 64 characters or fewer'
+    return None
+
+
+def _sku_clash(sku, exclude_product_id=None):
+    """``(row, kind)`` for whoever already owns ``sku`` — a product or a
+    variant.
+
+    ``shop_products.sku`` and ``shop_product_variants.sku`` each carry their
+    own unique index, but they are separate namespaces as far as SQLite and
+    PostgreSQL are concerned. Only the API can police the pair, and it has
+    to: a product that takes a variant's code would leave the till resolving
+    one string to two different rows.
+    """
+    query = ShopProduct.query.filter(ShopProduct.sku == sku)
+    if exclude_product_id:
+        query = query.filter(ShopProduct.id != exclude_product_id)
+    product = query.first()
+    if product is not None:
+        return product, 'product'
+
+    query = ShopProductVariant.query.filter(ShopProductVariant.sku == sku)
+    if exclude_product_id:
+        query = query.filter(ShopProductVariant.product_id != exclude_product_id)
+    variant = query.first()
+    if variant is not None:
+        return variant, 'variant'
+    return None, None
+
+
+def _duplicate_sku_error(existing, sku, kind='product'):
+    """409 naming the row that already owns ``sku`` — the machine-readable
+    twin of ``duplicate_barcode`` so the form can show the product instead of
+    a bare sentence."""
+    if kind == 'variant':
+        parent = ShopProduct.query.get(existing.product_id)
+        owner = {
+            'kind': 'variant',
+            'id': existing.id,
+            'name': existing.name,
+            'sku': existing.sku,
+            'barcode': existing.barcode,
+            'status': 'active' if existing.is_active else 'inactive',
+            'product_name': parent.name if parent else None,
+        }
+    else:
+        owner = {
+            'kind': 'product',
+            'id': existing.id,
+            'name': existing.name,
+            'sku': existing.sku,
+            'barcode': existing.barcode,
+            'status': existing.status,
+            'product_name': None,
+        }
+    return jsonify({
+        'error': f'Product SKU {sku} already exists',
+        'code': 'duplicate_sku',
+        'existing': owner,
+    }), 409
+
+
+def _resolve_sku(data, barcode):
+    """The SKU this create is allowed to store.
+
+    A supplied SKU must already be a valid ``ATB…`` value; an absent one is
+    minted here, keyed to ``barcode`` so re-scanning during a retry hands back
+    the same number instead of spending another.
+    """
+    supplied = data.get('sku')
+    if supplied not in (None, ''):
+        sku = str(supplied).strip()
+        problem = _sku_format_error(sku)
+        if problem:
+            return None, json_error(problem, 400, 'invalid_sku')
+        return sku, None
+    try:
+        sku, _reserved = reserve_sku(barcode, user_id=current_user_id())
+    except ShopSkuError as error:
+        db.session.rollback()
+        return None, json_error(str(error), 500, 'sku_generator_failed')
+    return sku, None
+
+
+def _incoming_barcode(data):
+    """Normalized barcode for a payload, or ``None`` when it carries none.
+
+    Runs *before* the SKU is allocated so the reservation can be keyed on the
+    code, and before anything is written so an invalid code still answers with
+    a clean 400 rather than a half-built row. Raises :class:`ShopBarcodeError`.
+    """
+    return _normalize_incoming_barcode(data.get('barcode'),
+                                       data.get('barcode_format'))
 
 
 @bp.get('/products')
@@ -618,16 +752,91 @@ def get_product(product_id):
     return jsonify({'product': data})
 
 
+@bp.post('/products/generate-sku')
+@require_permission('shop.products.create')
+def generate_product_sku_endpoint():
+    """Hand out the next ``ATB…`` SKU for a barcode that is not yet a product.
+
+    Called the instant a barcode is scanned on the Add Product form so the
+    operator sees the SKU before typing anything else, instead of after they
+    submit. Two properties matter:
+
+    * **Idempotent per barcode.** A browser that times out and retries gets
+      the number it was already given rather than spending a second one.
+    * **Never mints for a code we already hold.** An existing product is
+      reported back so the form can offer View/Edit instead of creating a
+      duplicate row.
+    """
+    data = parse_json()
+    raw = data.get('barcode')
+    barcode = None
+    if raw not in (None, ''):
+        try:
+            barcode = normalize_barcode(raw)
+        except ShopBarcodeError as error:
+            return _barcode_error(error)
+
+    if barcode:
+        product, variant, _matched = resolve_barcode(barcode)
+        if product is not None:
+            return jsonify({
+                'found': True,
+                'exists': True,
+                'barcode': barcode,
+                'message': 'This barcode already belongs to a product.',
+                'product': payload_for(product),
+                'variant': payload_for(variant) if variant is not None else None,
+            })
+
+    try:
+        sku, already_reserved = reserve_sku(barcode, user_id=current_user_id())
+    except ShopSkuError as error:
+        db.session.rollback()
+        return json_error(str(error), 500, 'sku_generator_failed')
+    db.session.commit()
+
+    return jsonify({
+        'found': False,
+        'exists': False,
+        'barcode': barcode,
+        'sku': sku,
+        'reserved': already_reserved,
+        'sku_prefix': SKU_PREFIX,
+        'message': ('New barcode — SKU generated.'
+                    if barcode else 'SKU generated.'),
+    })
+
+
 @bp.post('/products')
 @require_permission('shop.products.create')
 def create_product():
     data = parse_json()
-    missing = required(data, 'sku', 'name')
+    missing = required(data, 'name')
     if missing:
         return json_error(f'{", ".join(missing)} is required', 400)
-    sku = str(data['sku']).strip()
-    if ShopProduct.query.filter_by(sku=sku).first():
-        return json_error(f'Product SKU {sku} already exists', 409)
+
+    # Barcode first: it decides whether this is a brand new row at all, and a
+    # create retried after a lost response has to report the product it made
+    # rather than a bare duplicate-SKU complaint.
+    try:
+        incoming_barcode = _incoming_barcode(data)
+    except ShopBarcodeError as error:
+        return _barcode_error(error)
+    if incoming_barcode:
+        conflict = barcode_conflict(incoming_barcode)
+        if conflict is not None:
+            return jsonify({
+                'error': 'This barcode is already assigned to another product.',
+                'code': 'duplicate_barcode', 'existing': conflict,
+            }), 409
+
+    sku, error = _resolve_sku(data, incoming_barcode)
+    if error:
+        return error
+    clash, clash_kind = _sku_clash(sku)
+    if clash is not None:
+        return _duplicate_sku_error(clash, sku, clash_kind)
+
     status = data.get('status', 'active')
     if status not in SHOP_PRODUCT_STATUSES:
         return json_error('Invalid product status', 400)
@@ -655,16 +864,23 @@ def create_product():
     )
     try:
         _apply_barcode_payload(product, data, is_product=True)
-    except ShopBarcodeError as error:
-        return _barcode_error(error)
+    except ShopStockError as error:
+        return _stock_error(error)
     db.session.add(product)
     db.session.flush()
-    _apply_product_attributes(product, data.get('attributes'))
+    # Attributes, variants and bundles raise ShopStockError (the barcode
+    # subclass is one of them) — catching only that subclass left the rest to
+    # bubble up as a 500 instead of the documented 4xx payload.
     try:
+        _apply_product_attributes(product, data.get('attributes'))
         _apply_variants(product, data.get('variants'))
         _apply_bundle(product, data.get('bundle_items'))
-    except ShopBarcodeError as error:
-        return _barcode_error(error)
+    except ShopStockError as error:
+        return _stock_error(error)
+    # The SKU this row consumed is spent — drop its hold so the table only
+    # ever lists reservations still waiting for a form to be saved. Part of
+    # the same transaction: if creation fails, so does the release.
+    consume_reservation(sku, product.barcode)
     db.session.commit()
     audit('shop_product_created', 'shop_product', product.id,
           new_value=payload_for(product))
@@ -682,15 +898,19 @@ def update_product(product_id):
     reason = data.get('reason') or data.get('price_reason')
 
     if data.get('sku') and data['sku'] != product.sku:
-        if ShopProduct.query.filter(ShopProduct.sku == data['sku'],
-                                    ShopProduct.id != product.id).first():
-            return json_error('Product SKU already exists', 409)
-        product.sku = str(data['sku']).strip()
+        new_sku = str(data['sku']).strip()
+        problem = _sku_format_error(new_sku)
+        if problem:
+            return json_error(problem, 400, 'invalid_sku')
+        clash, clash_kind = _sku_clash(new_sku, exclude_product_id=product.id)
+        if clash is not None:
+            return _duplicate_sku_error(clash, new_sku, clash_kind)
+        product.sku = new_sku
     if {'barcode', 'barcode_format', 'barcode_type'} & set(data):
         try:
             _apply_barcode_payload(product, data, is_product=True)
-        except ShopBarcodeError as error:
-            return _barcode_error(error)
+        except ShopStockError as error:
+            return _stock_error(error)
     for field in ('name', 'description', 'category_id', 'brand_id', 'supplier_id',
                   'unit', 'warranty_provider', 'warranty_terms'):
         if field in data:
@@ -725,9 +945,12 @@ def update_product(product_id):
                               new_cost, reason)
         product.purchase_cost = new_cost
 
-    _apply_product_attributes(product, data.get('attributes'))
-    _apply_variants(product, data.get('variants'))
-    _apply_bundle(product, data.get('bundle_items'))
+    try:
+        _apply_product_attributes(product, data.get('attributes'))
+        _apply_variants(product, data.get('variants'))
+        _apply_bundle(product, data.get('bundle_items'))
+    except ShopStockError as error:
+        return _stock_error(error)
     db.session.commit()
     audit('shop_product_updated', 'shop_product', product.id,
           previous_value=previous, new_value=payload_for(product))

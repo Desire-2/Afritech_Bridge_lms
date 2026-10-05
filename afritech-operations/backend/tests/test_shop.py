@@ -52,12 +52,14 @@ def _create_product(client, hdr, *, cost=10000, price=18000, stock=10,
                     reorder=5, branch=None, serialized=False):
     """Product + one variant + opening stock; returns (product, variant)."""
     tag = _tag()
+    # No SKU: the API mints one (ATB000001…) and derives the variant's from
+    # it, which is how the Add Product form works now.
     body = {
-        'sku': f'TEST-{tag}', 'name': f'Test item {tag}',
+        'name': f'Test item {tag}',
         'barcode': f'998{tag}', 'purchase_cost': cost, 'selling_price': price,
         'min_selling_price': round(price * 0.8, 2), 'reorder_level': reorder,
         'is_serialized': serialized,
-        'variants': [{'name': 'Standard', 'sku': f'TEST-{tag}-STD',
+        'variants': [{'name': 'Standard',
                       'barcode': f'999{tag}', 'purchase_cost': cost,
                       'selling_price': price}],
     }
@@ -107,7 +109,7 @@ class TestCatalogue:
 
         assert product['variant_count'] == 1
         assert _balance(product['id'], variant['id'], _branch('HQ')) == 7
-        assert product['sku'].startswith('TEST-')
+        assert product['sku'].startswith('ATB')
 
     def test_duplicate_sku_is_rejected(self, client, admin_hdr):
         product, _ = _create_product(client, admin_hdr, stock=0)
@@ -115,7 +117,10 @@ class TestCatalogue:
             'sku': product['sku'], 'name': 'Duplicate',
         })
         assert r.status_code == 409
-        assert 'already exists' in r.get_json()['error']
+        body = r.get_json()
+        assert 'already exists' in body['error']
+        assert body['code'] == 'duplicate_sku'
+        assert body['existing']['id'] == product['id']
 
     def test_attendant_cannot_create_products(self, client, admin_hdr):
         attendant, _ = _shop_user(client, admin_hdr, 'shop_attendant')

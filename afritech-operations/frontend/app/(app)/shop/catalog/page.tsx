@@ -28,12 +28,18 @@ const emptyForm = {
 /** Retail symbologies — everything else is an internal shop code. */
 const EXTERNAL_FORMATS = ['EAN_13', 'UPC_A', 'EAN_8', 'UPC_E'];
 
-/** The inputs this form marks as required — drives the post-scan checklist. */
+/**
+ * The inputs this form marks as required — drives the post-scan checklist.
+ * SKU is absent on purpose: the server mints it, so there is nothing left
+ * for the operator to fill in.
+ */
 const REQUIRED_FIELDS: { key: keyof typeof emptyForm; label: string }[] = [
-  { key: 'sku', label: 'SKU' },
   { key: 'name', label: 'Name' },
   { key: 'selling_price', label: 'Selling price (RWF)' },
 ];
+
+/** Backend endpoint that mints/reserves the `ATB…` SKU for a barcode. */
+const GENERATE_SKU_URL = '/api/shop/products/generate-sku';
 
 interface ScanConflict {
   existing: BarcodeConflict;
@@ -73,7 +79,8 @@ function isDuplicateError(err: any): boolean {
   return (
     err instanceof ApiClientError &&
     err.status === 409 &&
-    err.data?.code === 'duplicate_barcode' &&
+    (err.data?.code === 'duplicate_barcode' ||
+      err.data?.code === 'duplicate_sku') &&
     !!err.data?.existing
   );
 }
@@ -139,8 +146,13 @@ function CatalogInner() {
   const [error2, setError2] = useState('');
   const [saveConflict, setSaveConflict] = useState<ScanConflict | null>(null);
   const [scan, setScan] = useState({ ...emptyScan });
+  /** True while `form.sku` holds a server-minted value tied to `form.barcode`. */
+  const [skuAuto, setSkuAuto] = useState(false);
+  const [skuNote, setSkuNote] = useState('');
   const [cameraFor, setCameraFor] = useState<string | null>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  /** Bumped per scan so a slow SKU response cannot overwrite a newer one. */
+  const skuSeqRef = useRef(0);
 
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
@@ -190,6 +202,8 @@ function CatalogInner() {
     setError2('');
     setSaveConflict(null);
     setScan({ ...emptyScan });
+    setSkuAuto(false);
+    setSkuNote('');
     setOpen(true);
     const [c, b]: any[] = await Promise.all([
       api('/api/shop/categories').catch(() => ({ items: [] })),
@@ -232,30 +246,74 @@ function CatalogInner() {
     openDetail(productId);
   }
 
-  /** Exists-check for the create form's product barcode. Never clears it. */
+  /**
+   * Exists-check for the create form's product barcode, then — only when the
+   * code really is new — ask the server for its `ATB…` SKU so the operator
+   * sees it before typing anything else. An existing barcode never mints one.
+   */
   async function checkProductBarcode(raw: string) {
     const code = normalizeBarcode(raw);
     if (!code) {
       setScan({ ...emptyScan });
       return;
     }
+    const seq = skuSeqRef.current + 1;
+    skuSeqRef.current = seq;
     setScan({ ...emptyScan, checking: true });
+    setSkuNote('');
     try {
       const result = await lookupBarcode(code);
-      setScan({
-        checking: false,
-        result,
-        conflict: result.found ? { existing: conflictFromLookup(result), lookup: result } : null,
-        note: '',
-      });
+      if (result.found) {
+        // The row already exists: show it and drop any SKU we minted earlier.
+        set('sku', '');
+        setSkuAuto(false);
+        setScan({
+          checking: false,
+          result,
+          conflict: { existing: conflictFromLookup(result), lookup: result },
+          note: '',
+        });
+        return;
+      }
+      setScan({ checking: false, result, conflict: null, note: '' });
+      await reserveSku(code, seq);
     } catch (err: any) {
       setScan({ ...emptyScan, note: err.message || 'The barcode could not be checked.' });
+    }
+  }
+
+  /** Ask the server to mint (or hand back) this barcode's SKU. */
+  async function reserveSku(code: string, seq: number) {
+    try {
+      const prepared: any = await api(GENERATE_SKU_URL, {
+        method: 'POST',
+        body: { barcode: code },
+      });
+      if (seq !== skuSeqRef.current) return; // superseded by a newer scan
+      if (prepared?.sku) set('sku', prepared.sku);
+      setSkuAuto(true);
+      setSkuNote(
+        prepared?.reserved
+          ? 'Already generated for this barcode — rescanning returns the same SKU.'
+          : '',
+      );
+    } catch (err: any) {
+      if (seq !== skuSeqRef.current) return;
+      setSkuNote(err.message || 'The SKU could not be generated — it will be made when you save.');
     }
   }
 
   function onProductBarcodeChange(value: string) {
     set('barcode', value);
     setScan({ ...emptyScan });
+    // A reserved SKU belongs to the code that produced it; a different code
+    // needs a different one (the server still returns the same SKU if the
+    // user comes back to the original barcode).
+    if (skuAuto) {
+      set('sku', '');
+      setSkuAuto(false);
+      setSkuNote('');
+    }
   }
 
   /** Same exists-check under a variant row — a code belongs to one item only. */
@@ -326,7 +384,6 @@ function CatalogInner() {
     setSaveConflict(null);
     try {
       const body: any = {
-        sku: form.sku,
         name: form.name,
         selling_price: form.selling_price !== '' ? Number(form.selling_price) : undefined,
         category_id: form.category_id ? Number(form.category_id) : undefined,
@@ -334,6 +391,9 @@ function CatalogInner() {
         warranty_months: form.warranty_months !== '' ? Number(form.warranty_months) : undefined,
         description: form.description || undefined,
       };
+      // Absent SKU = let the backend mint one; a reserved SKU is sent back so
+      // the scan's number is the number the row ends up with.
+      if (form.sku) body.sku = form.sku;
       if (form.barcode) {
         body.barcode = form.barcode;
         applyBarcodeFields(body, form.barcode);
@@ -514,7 +574,34 @@ function CatalogInner() {
             />
           )}
           <div className="row">
-            <div className="col-md-6"><Field label="SKU" required><TextInput value={form.sku} onChange={(e) => set('sku', e.target.value)} required /></Field></div>
+            <div className="col-md-6">
+              <Field
+                label="SKU"
+                hint={
+                  skuAuto
+                    ? 'Automatically generated — it stays the same while you edit this form.'
+                    : 'Generated by the server as soon as you scan a new barcode, or when you save.'
+                }
+              >
+                <div className="input-group">
+                  <TextInput
+                    className="font-monospace"
+                    value={form.sku}
+                    readOnly
+                    placeholder="Auto-generated"
+                    aria-label="SKU (automatically generated)"
+                  />
+                  {form.sku && (
+                    <span className="input-group-text" title="Automatically generated">
+                      <i className="bi bi-lock-fill" />
+                    </span>
+                  )}
+                </div>
+                {skuNote && (
+                  <div className="form-text small text-warning mt-1">{skuNote}</div>
+                )}
+              </Field>
+            </div>
             <div className="col-md-6">
               <Field label="Barcode">
                 <BarcodeInput
@@ -523,7 +610,11 @@ function CatalogInner() {
                   onChange={onProductBarcodeChange}
                   onScan={(value: string) => checkProductBarcode(value)}
                   onCamera={() => setCameraFor('product')}
-                  onClear={() => { set('barcode', ''); setScan({ ...emptyScan }); }}
+                  onClear={() => {
+                    set('barcode', '');
+                    setScan({ ...emptyScan });
+                    if (skuAuto) { set('sku', ''); setSkuAuto(false); setSkuNote(''); }
+                  }}
                   busy={scan.checking}
                   showCameraButton={false}
                   placeholder="Scan or type a barcode, then Enter"
