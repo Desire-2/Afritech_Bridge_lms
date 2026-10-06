@@ -1233,7 +1233,18 @@ def submit_assignment(assignment_id):
         )
         db.session.add(submission)
         db.session.commit()
-        
+
+        # Email the instructor that a new submission arrived (non-blocking)
+        try:
+            from ..utils.email_notifications import notify_instructor_of_submission
+            notify_instructor_of_submission(
+                submission,
+                is_project=False,
+                has_text=bool(data.get('content')),
+            )
+        except Exception as notif_err:
+            logger.warning(f"Instructor submission notification failed (non-blocking): {notif_err}")
+
         return jsonify(submission.to_dict()), 201
     except Exception as e:
         db.session.rollback()
@@ -2870,7 +2881,20 @@ def submit_project(project_id):
         
         db.session.add(submission)
         db.session.commit()
-        
+
+        # Email the instructor that a new project submission arrived (non-blocking)
+        try:
+            from ..utils.email_notifications import notify_instructor_of_submission
+            team_members = data.get('team_members') or []
+            notify_instructor_of_submission(
+                submission,
+                is_project=True,
+                has_text=bool(data.get('text_content')),
+                team_size=len(team_members) if project.collaboration_allowed else 0,
+            )
+        except Exception as notif_err:
+            logger.warning(f"Instructor project submission notification failed (non-blocking): {notif_err}")
+
         return jsonify({
             "message": "Project submitted successfully",
             "submission": submission.to_dict()

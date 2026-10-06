@@ -1690,6 +1690,134 @@ def assignment_graded_email(student_name, student_email, assignment_title, cours
     {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
     """
 
+def submission_received_email(instructor_name, student_name, item_title, course_title,
+                              is_project=False, submitted_at=None, files_count=0,
+                              has_text=False, team_size=0, review_url=None,
+                              is_resubmission=False, submission_notes=None,
+                              unsubscribe_token=None):
+    """Email template notifying an instructor of a new assignment/project submission."""
+    from html import escape
+
+    item_type = "Project" if is_project else "Assignment"
+    heading = (
+        f"{'Project' if is_project else 'Assignment'} "
+        f"{'Resubmission Received' if is_resubmission else 'Submitted'}"
+    )
+    icon = "📁" if is_project else "📬"
+    accent = "#667eea"
+
+    if isinstance(submitted_at, datetime):
+        submitted_str = submitted_at.strftime('%B %d, %Y at %I:%M %p')
+    elif submitted_at:
+        submitted_str = str(submitted_at)
+    else:
+        submitted_str = datetime.now().strftime('%B %d, %Y at %I:%M %p')
+
+    files_count = files_count or 0
+    team_size = team_size or 0
+
+    safe_student = escape(str(student_name or 'Student'))
+    safe_item = escape(str(item_title or 'Untitled'))
+    safe_course = escape(str(course_title or 'Untitled Course'))
+    safe_instructor = escape(str(instructor_name or 'Instructor'))
+
+    team_row = ""
+    if is_project:
+        team_label = "Team Size" if team_size else "Collaboration"
+        team_value = str(team_size) if team_size else "Individual"
+        team_row = f"""
+                <tr>
+                    <td style="padding: 8px 0;"><strong>{team_label}:</strong></td>
+                    <td>{team_value}</td>
+                </tr>"""
+
+    notes_block = ""
+    if submission_notes:
+        notes_block = f"""
+        <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0;">
+            <h3 style="margin: 0 0 8px 0; color: #92400e; font-size: 15px;">📝 Student Notes</h3>
+            <p style="color: #78350f; margin: 0; line-height: 1.6; white-space: pre-wrap;">{escape(str(submission_notes))}</p>
+        </div>"""
+
+    cta_url = review_url or _frontend_url('instructor/grading')
+    cta_label = "Review Submission"
+
+    return f"""
+    {get_email_header()}
+    <div style="background-color: white; padding: 30px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+            <div class="icon-medium" style="font-size: 50px; margin-bottom: 10px;">{icon}</div>
+            <h2 style="color: {accent}; margin: 0;">{heading}</h2>
+        </div>
+
+        <p style="color: #4a5568; line-height: 1.6;">
+            Dear <strong>{safe_instructor}</strong>,
+        </p>
+
+        <p style="color: #4a5568; line-height: 1.6;">
+            <strong>{safe_student}</strong> has submitted their {item_type.lower()}
+            <strong>"{safe_item}"</strong> for <strong>{safe_course}</strong> and it is
+            now awaiting your review.
+        </p>
+
+        <div style="background-color: #eff6ff; border-radius: 8px; padding: 20px; margin: 25px 0;">
+            <h3 style="margin: 0 0 15px 0; color: #ffffff; font-size: 16px;">📋 Submission Details</h3>
+            <table class="responsive-table" style="width: 100%; color: #4a5568;">
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Student:</strong></td>
+                    <td>{safe_student}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Course:</strong></td>
+                    <td>{safe_course}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>{item_type}:</strong></td>
+                    <td>{safe_item}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Submitted:</strong></td>
+                    <td>{submitted_str}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Attachments:</strong></td>
+                    <td>{files_count} file{'s' if files_count != 1 else ''}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Text Response:</strong></td>
+                    <td>{'Yes' if has_text else 'No'}</td>
+                </tr>
+                {team_row}
+                <tr>
+                    <td style="padding: 8px 0;"><strong>Status:</strong></td>
+                    <td>Awaiting Review</td>
+                </tr>
+            </table>
+        </div>
+
+        {notes_block}
+
+        <div style="background-color: #f0fdf4; border-left: 4px solid #22c55e; padding: 15px; margin: 20px 0;">
+            <p style="color: #166534; margin: 0; line-height: 1.6;">
+                <strong>⚡ Action needed:</strong> Review and grade the submission to keep your
+                student's momentum going.
+            </p>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{cta_url}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">
+                {cta_label}
+            </a>
+        </div>
+
+        <p style="color: #4a5568; line-height: 1.6;">
+            Best regards,<br>
+            <strong>The Afritech Bridge Team</strong>
+        </p>
+    </div>
+    {get_email_footer(unsubscribe_token=unsubscribe_token, email_category='grades')}
+    """
+
 def course_announcement_email(student_name, course_title, announcement_title, announcement_content, instructor_name, announcement_url=None, cohort_context=None, unsubscribe_token=None):
     """Email template for course announcements"""
     # Clean and format the content (strip HTML if needed, truncate if too long)

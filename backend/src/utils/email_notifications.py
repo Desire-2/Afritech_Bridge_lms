@@ -14,6 +14,7 @@ from ..utils.email_templates import (
     course_announcement_email,
     full_credit_awarded_email,
     assignment_graded_with_modification_email,
+    submission_received_email,
     get_email_footer,
     get_email_header
 )
@@ -918,6 +919,235 @@ def send_resubmission_notification(instructor_email, instructor_name, student_na
             return False
     except Exception as e:
         logger.error(f"❌ Failed to send resubmission notification: {str(e)}")
+        return False
+
+
+def _submission_review_url(is_project: bool, submission_id, frontend_url=None) -> str:
+    """Build the instructor review link for a submission."""
+    base = (frontend_url or os.environ.get('FRONTEND_URL', 'http://localhost:3000')).rstrip('/')
+    segment = 'project' if is_project else 'assignment'
+    if submission_id:
+        return f"{base}/instructor/grading/{segment}/{submission_id}"
+    return f"{base}/instructor/grading"
+
+
+def _resolve_submission_context(submission, is_project=False, files_count=None, has_text=None,
+                                team_size=0, is_resubmission=False, submission_notes=None):
+    """Resolve everything the instructor email needs while the DB session is alive.
+
+    Returns a dict of plain Python values (safe to hand to a background thread)
+    or None when the notification must not be sent.
+    """
+    from ..models.user_models import User
+    from ..models.course_models import Assignment, Project, Course
+
+    try:
+        if is_project:
+            project = getattr(submission, 'project', None) or Project.query.get(
+                getattr(submission, 'project_id', None))
+            if not project:
+                logger.warning(
+                    f"Cannot notify instructor: project not found for submission "
+                    f"{getattr(submission, 'id', None)}")
+                return None
+            course = getattr(project, 'course', None) or Course.query.get(project.course_id)
+            item_title = project.title
+            item_id = project.id
+            instructor = User.query.get(course.instructor_id) if course and course.instructor_id else None
+        else:
+            assignment = getattr(submission, 'assignment', None) or Assignment.query.get(
+                getattr(submission, 'assignment_id', None))
+            if not assignment:
+                logger.warning(
+                    f"Cannot notify instructor: assignment not found for submission "
+                    f"{getattr(submission, 'id', None)}")
+                return None
+            course = getattr(assignment, 'course', None) or Course.query.get(assignment.course_id)
+            item_title = assignment.title
+            item_id = assignment.id
+            # Prefer the assignment owner, fall back to the course instructor
+            instructor = User.query.get(assignment.instructor_id) if assignment.instructor_id else None
+            if not instructor and course:
+                instructor = User.query.get(course.instructor_id)
+
+        student = getattr(submission, 'student', None) or User.query.get(
+            getattr(submission, 'student_id', None))
+
+        if not instructor or not instructor.email:
+            logger.warning(
+                f"Cannot send submission notification: no instructor email for "
+                f"{'project' if is_project else 'assignment'} {item_id}")
+            return None
+        if not student:
+            logger.warning(
+                f"Cannot send submission notification: student not found for submission "
+                f"{getattr(submission, 'id', None)}")
+            return None
+        if instructor.id == getattr(student, 'id', None):
+            logger.info(
+                f"Skipping submission notification: instructor {instructor.id} submitted their own work")
+            return None
+        if not _should_send_email(instructor, 'grades'):
+            return None
+
+        # ── Submission details (read while still attached to the session) ──
+        if files_count is None:
+            if is_project:
+                files_count = 1 if getattr(submission, 'file_path', None) else 0
+            else:
+                files_count = 1 if getattr(submission, 'file_url', None) else 0
+                get_files = getattr(submission, 'get_files', None)
+                if files_count and callable(get_files):
+                    parsed = get_files()
+                    if parsed:
+                        files_count = len(parsed)
+
+        if has_text is None:
+            has_text = bool(
+                getattr(submission, 'content', None) or getattr(submission, 'text_content', None))
+
+        if not team_size:
+            get_team = getattr(submission, 'get_team_members', None)
+            team_size = len(get_team() or []) if callable(get_team) else 0
+
+        try:
+            from flask import current_app
+            frontend_url = current_app.config.get('FRONTEND_URL')
+        except Exception:
+            frontend_url = None
+
+        return {
+            'instructor_email': instructor.email,
+            'instructor_name': instructor.full_name,
+            'student_name': student.full_name,
+            'course_title': course.title if course else '',
+            'item_title': item_title,
+            'item_id': item_id,
+            'is_project': bool(is_project),
+            'is_resubmission': bool(is_resubmission),
+            'submitted_at': getattr(submission, 'submitted_at', None),
+            'submission_id': getattr(submission, 'id', None),
+            'files_count': files_count or 0,
+            'has_text': bool(has_text),
+            'team_size': team_size or 0,
+            'submission_notes': submission_notes,
+            'frontend_url': frontend_url or os.environ.get('FRONTEND_URL', 'http://localhost:3000'),
+            'unsub_token': _get_unsub_token(instructor),
+        }
+    except Exception as e:
+        logger.error(f"Failed to resolve submission context: {str(e)}")
+        return None
+
+
+def send_submission_received_notification(context):
+    """Render and send the instructor email for a resolved submission context.
+
+    ``context`` must come from :func:`_resolve_submission_context` (plain values only,
+    so it is safe to use from a background thread). Failures are logged and swallowed
+    so a broken mail transport never breaks the submission request.
+    """
+    try:
+        if not BREVO_AVAILABLE or brevo_service is None:
+            logger.warning("📧 Email service not available - cannot send submission notification")
+            return False
+
+        if not context:
+            return False
+
+        is_project = bool(context.get('is_project'))
+        is_resubmission = bool(context.get('is_resubmission'))
+        item_type = "project" if is_project else "assignment"
+        action = "Resubmitted" if is_resubmission else "Submitted"
+        subject = f"{'📁' if is_project else '📬'} {item_type.title()} {action}: {context['item_title']}"
+
+        email_html = submission_received_email(
+            instructor_name=context.get('instructor_name'),
+            student_name=context.get('student_name'),
+            item_title=context.get('item_title'),
+            course_title=context.get('course_title'),
+            is_project=is_project,
+            submitted_at=context.get('submitted_at'),
+            files_count=context.get('files_count', 0),
+            has_text=context.get('has_text', False),
+            team_size=context.get('team_size', 0),
+            review_url=_submission_review_url(
+                is_project, context.get('submission_id'), context.get('frontend_url')),
+            is_resubmission=is_resubmission,
+            submission_notes=context.get('submission_notes'),
+            unsubscribe_token=context.get('unsub_token'),
+        )
+
+        success = brevo_service.send_email(
+            to_emails=[context['instructor_email']],
+            subject=subject,
+            html_content=email_html
+        )
+
+        if success:
+            logger.info(
+                f"📧 {item_type.title()} submission notification sent to instructor "
+                f"{context['instructor_email']} for submission {context.get('submission_id')}"
+            )
+        else:
+            logger.error(
+                f"❌ Failed to send submission notification to {context['instructor_email']}")
+        return success
+    except Exception as e:
+        logger.error(f"❌ Failed to send submission received notification: {str(e)}")
+        return False
+
+
+def notify_instructor_of_submission(submission, is_project=False, files_count=None,
+                                    has_text=None, team_size=0, is_resubmission=False,
+                                    submission_notes=None, background=True):
+    """Email the instructor that a student submitted an assignment/project.
+
+    Recipient resolution, preference checks and submission details are read while
+    the request's DB session is still alive; the actual send then runs in a
+    background thread so the student's response is never delayed by SMTP.
+    Any failure is logged and returns False.
+    """
+    try:
+        if submission is None:
+            return False
+
+        context = _resolve_submission_context(
+            submission,
+            is_project=is_project,
+            files_count=files_count,
+            has_text=has_text,
+            team_size=team_size,
+            is_resubmission=is_resubmission,
+            submission_notes=submission_notes,
+        )
+        if not context:
+            return False
+
+        if not background:
+            return send_submission_received_notification(context)
+
+        app = None
+        try:
+            from flask import current_app
+            app = current_app._get_current_object()
+        except Exception:
+            app = None
+
+        def _send():
+            if app is not None:
+                with app.app_context():
+                    send_submission_received_notification(context)
+            else:
+                send_submission_received_notification(context)
+
+        import threading
+        thread = threading.Thread(
+            target=_send, daemon=True,
+            name=f"submission-email-{context.get('submission_id')}")
+        thread.start()
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to notify instructor of submission: {str(e)}")
         return False
 
 

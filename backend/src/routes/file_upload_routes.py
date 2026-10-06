@@ -16,6 +16,7 @@ from ..models.course_models import (
 from ..models.student_models import LessonCompletion
 from ..utils.validators import StudentValidators
 from ..utils.google_drive_service import google_drive_service
+from ..utils.email_notifications import notify_instructor_of_submission
 from ..services.excel_grading.auto_grader import trigger_auto_excel_grading
 
 logger = logging.getLogger(__name__)
@@ -169,7 +170,18 @@ def submit_assignment_with_files(assignment_id):
             )
         except Exception as ag_err:
             logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
-        
+
+        # Email the instructor that a new submission arrived (non-blocking)
+        try:
+            notify_instructor_of_submission(
+                submission,
+                is_project=False,
+                files_count=len(files_data),
+                has_text=bool(data.get('content')),
+            )
+        except Exception as notif_err:
+            logger.warning(f"Instructor submission notification failed (non-blocking): {notif_err}")
+
         return jsonify({
             "success": True,
             "message": "Assignment submitted successfully",
@@ -307,7 +319,20 @@ def resubmit_assignment_with_files(assignment_id):
             )
         except Exception as ag_err:
             logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
-        
+
+        # Email the instructor about the resubmission (non-blocking)
+        try:
+            notify_instructor_of_submission(
+                existing,
+                is_project=False,
+                files_count=len(files_data),
+                has_text=bool(data.get('content')),
+                is_resubmission=True,
+                submission_notes=data.get('submission_notes') or existing.submission_notes,
+            )
+        except Exception as notif_err:
+            logger.warning(f"Instructor resubmission notification failed (non-blocking): {notif_err}")
+
         return jsonify({
             "success": True,
             "message": "Assignment resubmitted successfully",
@@ -428,7 +453,19 @@ def submit_project_with_files(project_id):
             )
         except Exception as ag_err:
             logger.warning(f"Auto-grading trigger failed (non-blocking): {ag_err}")
-        
+
+        # Email the instructor that a new project submission arrived (non-blocking)
+        try:
+            notify_instructor_of_submission(
+                submission,
+                is_project=True,
+                files_count=len(files_data),
+                has_text=bool(data.get('text_content')),
+                team_size=len(team_members),
+            )
+        except Exception as notif_err:
+            logger.warning(f"Instructor project submission notification failed (non-blocking): {notif_err}")
+
         return jsonify({
             "success": True,
             "message": "Project submitted successfully",
