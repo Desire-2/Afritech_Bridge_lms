@@ -158,8 +158,22 @@ export function fmtMoney(value: number | string | null | undefined, currency = '
   return `${n.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${currency}`;
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Format a date for display.
+ *
+ * Date-only values (`YYYY-MM-DD`) are calendar days, not instants: `new Date`
+ * parses those as UTC midnight, so anywhere west of Greenwich the rendered day
+ * falls one day early (2026-11-02 showing as 01/11/2026). Build them from
+ * local components instead and leave real timestamps to parse normally.
+ */
 export function fmtDate(value: string | null | undefined) {
   if (!value) return '—';
+  if (DATE_ONLY.test(value)) {
+    const [y, m, d] = value.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString('en-GB');
+  }
   return new Date(value).toLocaleDateString('en-GB');
 }
 

@@ -1,4 +1,5 @@
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from flask import Blueprint, request, jsonify
 
@@ -11,7 +12,7 @@ from ..models import (
 from ..auth.auth import require_permission, require_any_permission, current_user, current_employee
 from ..services.audit import audit
 from ..services.performance import compute_instructor_score
-from .helpers import json_error, parse_json, parse_id, paginate, paginate_response
+from .helpers import json_error, parse_date, parse_id, parse_json, paginate, paginate_response, to_decimal
 
 bp = Blueprint('instructors', __name__, url_prefix='/api/instructors')
 
@@ -38,6 +39,63 @@ def _plan_scope_error(user, instructor_id):
     if mine and mine.id == instructor_id:
         return None
     return json_error('You do not have permission to manage this instructor\'s weekly plan', 403)
+
+
+def _plan_week(data):
+    """Read and sanity-check the submitted plan week.
+
+    Returns ``(week_start, week_end, error_response)`` — bad input is a 400
+    rather than a ValueError-turned-500, and an inverted week is rejected.
+    """
+    for field in ('week_start', 'week_end'):
+        if not data.get(field):
+            return None, None, json_error(f'Missing: {field}')
+    week_start, err = parse_date(data.get('week_start'), 'week_start')
+    if err:
+        return None, None, err
+    week_end, err = parse_date(data.get('week_end'), 'week_end')
+    if err:
+        return None, None, err
+    if week_end < week_start:
+        return None, None, json_error('week_end cannot be before week_start', 400)
+    return week_start, week_end, None
+
+
+def _activity_payload(act, week_start, week_end):
+    """Validate one submitted activity row -> (fields dict, error response)."""
+    if not isinstance(act, dict) or not str(act.get('activity') or '').strip():
+        return None, json_error('Each activity needs an activity description')
+    day, err = parse_date(act.get('activity_date'), 'activity_date')
+    if err:
+        return None, err
+    if day is None:
+        return None, json_error('activity_date is required (expected YYYY-MM-DD)')
+    if day < week_start or day > week_end:
+        return None, json_error(
+            f'activity_date must fall inside the plan week ({week_start} → {week_end})')
+    raw_hours = act.get('duration_hours')
+    hours = Decimal('1')
+    if raw_hours not in (None, ''):
+        hours = to_decimal(raw_hours)
+        if hours is None or not hours.is_finite() or hours < 0:
+            return None, json_error('duration_hours must be a non-negative number')
+    course_id, err = parse_id(act.get('course_id'), 'course_id')
+    if err:
+        return None, err
+    cohort_id, err = parse_id(act.get('cohort_id'), 'cohort_id')
+    if err:
+        return None, err
+    return {
+        'activity_date': day,
+        'course_id': course_id,
+        'cohort_id': cohort_id,
+        'module': act.get('module'),
+        'lesson': act.get('lesson'),
+        'activity': str(act.get('activity')).strip(),
+        'description': act.get('description'),
+        'expected_outcome': act.get('expected_outcome'),
+        'duration_hours': hours,
+    }, None
 
 
 # ---------- instructors ----------
@@ -206,10 +264,12 @@ def list_weekly_plans():
     instructor_id = request.args.get('instructor_id', type=int)
     if instructor_id and _instructor_manager(user):
         q = q.filter_by(instructor_id=instructor_id)
-    week_start = request.args.get('week_start')
+    week_start, err = parse_date(request.args.get('week_start'), 'week_start')
+    if err:
+        return err
     status = request.args.get('status')
     if week_start:
-        q = q.filter(WeeklyPlan.week_start == date.fromisoformat(week_start))
+        q = q.filter(WeeklyPlan.week_start == week_start)
     if status:
         q = q.filter_by(status=status)
     p = paginate(q.order_by(WeeklyPlan.week_start.desc()))
@@ -217,13 +277,9 @@ def list_weekly_plans():
 
 
 @bp.post('weekly-plans', endpoint='create_weekly_plan')
-@require_permission('weekly_plans.manage')
+@require_any_permission('weekly_plans.manage', 'instructors.manage')
 def create_weekly_plan():
     data = parse_json()
-    from .helpers import required
-    missing = required(data, 'week_start', 'week_end')
-    if missing:
-        return json_error(f'Missing: {", ".join(missing)}')
     instructor_id = data.get('instructor_id')
     if not instructor_id:
         emp = current_employee()
@@ -239,36 +295,38 @@ def create_weekly_plan():
     denied = _plan_scope_error(current_user(), instructor_id)
     if denied:
         return denied
+    week_start, week_end, err = _plan_week(data)
+    if err:
+        return err
+    if WeeklyPlan.query.filter_by(instructor_id=instructor_id, week_start=week_start).first():
+        return json_error('A weekly plan already exists for this instructor and week', 409)
+
+    activities = []
+    for act in data.get('activities', []):
+        fields, err = _activity_payload(act, week_start, week_end)
+        if err:
+            return err
+        activities.append(fields)
+
     plan = WeeklyPlan(
         instructor_id=instructor_id,
-        week_start=date.fromisoformat(data['week_start']),
-        week_end=date.fromisoformat(data['week_end']),
+        week_start=week_start,
+        week_end=week_end,
         title=data.get('title'),
         note=data.get('note'),
     )
     db.session.add(plan)
     db.session.flush()
 
-    for act in data.get('activities', []):
-        db.session.add(WeeklyPlanActivity(
-            weekly_plan_id=plan.id,
-            activity_date=date.fromisoformat(act['activity_date']),
-            course_id=act.get('course_id'),
-            cohort_id=act.get('cohort_id'),
-            module=act.get('module'),
-            lesson=act.get('lesson'),
-            activity=act['activity'],
-            description=act.get('description'),
-            expected_outcome=act.get('expected_outcome'),
-            duration_hours=act.get('duration_hours', 1),
-        ))
+    for fields in activities:
+        db.session.add(WeeklyPlanActivity(weekly_plan_id=plan.id, **fields))
     db.session.commit()
     audit('weekly_plan_created', 'weekly_plan', plan.id, new_value=data)
     return jsonify({'message': 'Weekly plan created', 'plan': plan.to_dict()}), 201
 
 
 @bp.put('weekly-plans/<int:plan_id>', endpoint='update_weekly_plan')
-@require_permission('weekly_plans.manage')
+@require_any_permission('weekly_plans.manage', 'instructors.manage')
 def update_weekly_plan(plan_id):
     data = parse_json()
     plan = WeeklyPlan.query.get(plan_id)
@@ -290,7 +348,7 @@ def update_weekly_plan(plan_id):
 
 
 @bp.put('weekly-plans/<int:plan_id>/activities/<int:activity_id>', endpoint='update_weekly_plan_activity')
-@require_permission('weekly_plans.manage')
+@require_any_permission('weekly_plans.manage', 'instructors.manage')
 def update_activity(plan_id, activity_id):
     data = parse_json()
     plan = WeeklyPlan.query.get(plan_id)
@@ -302,14 +360,31 @@ def update_activity(plan_id, activity_id):
     act = WeeklyPlanActivity.query.filter_by(id=activity_id, weekly_plan_id=plan_id).first()
     if not act:
         return json_error('Activity not found', 404)
+    if 'activity' in data and not str(data.get('activity') or '').strip():
+        return json_error('Each activity needs an activity description')
+    new_day = None
+    if 'activity_date' in data:
+        new_day, err = parse_date(data.get('activity_date'), 'activity_date')
+        if err:
+            return err
+        if new_day is None:
+            return json_error('activity_date is required (expected YYYY-MM-DD)')
+        if new_day < plan.week_start or new_day > plan.week_end:
+            return json_error(
+                f'activity_date must fall inside the plan week ({plan.week_start} → {plan.week_end})')
+    new_hours = None
+    if 'duration_hours' in data and data['duration_hours'] is not None:
+        new_hours = to_decimal(data['duration_hours'])
+        if new_hours is None or not new_hours.is_finite() or new_hours < 0:
+            return json_error('duration_hours must be a non-negative number')
     prev = act.to_dict()
+    if new_day is not None:
+        act.activity_date = new_day
+    if new_hours is not None:
+        act.duration_hours = new_hours
     for field in ['module', 'lesson', 'activity', 'description', 'expected_outcome', 'notes']:
         if field in data:
             setattr(act, field, data[field])
-    if data.get('duration_hours') is not None:
-        act.duration_hours = data['duration_hours']
-    if data.get('activity_date'):
-        act.activity_date = date.fromisoformat(data['activity_date'])
     if 'status' in data and data['status'] in ('planned', 'done', 'cancelled', 'missed'):
         act.status = data['status']
         act.completed_at = datetime.now(timezone.utc) if data['status'] == 'done' else None

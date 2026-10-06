@@ -62,6 +62,10 @@ class User(TimestampMixin, db.Model):
         return [r.code for r in self.roles if r.is_active]
 
     def to_dict(self):
+        # The instructor link is what lets the weekly-plan form auto-select the
+        # caller's own profile without a second request (an Instructor cannot
+        # read the instructor directory at all).
+        ins = self.employee.instructor if self.employee else None
         return {
             'id': self.id,
             'email': self.email,
@@ -74,6 +78,8 @@ class User(TimestampMixin, db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'employee_id': self.employee.id if self.employee else None,
             'employee_name': self.employee.full_name if self.employee else None,
+            'instructor_id': ins.id if ins else None,
+            'instructor_name': ins.employee.full_name if ins and ins.employee else None,
         }
 
 
