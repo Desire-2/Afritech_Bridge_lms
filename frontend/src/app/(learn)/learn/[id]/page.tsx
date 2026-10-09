@@ -1639,25 +1639,35 @@ const LearningPage = () => {
         
         projects.forEach((project: any) => {
           const moduleIds: number[] = project.module_ids || [];
-          let targetModuleId: number | null = null;
           
+          // Determine which modules this project should surface on:
+          // - Assigned to specific modules → the last lesson of EACH covered module
+          // - Whole-course project (no module_ids) → the last lesson of the final module
+          let targetModules: any[] = [];
           if (moduleIds.length > 0) {
-            // Project assigned to specific modules → show on the LAST assigned module
-            targetModuleId = moduleIds[moduleIds.length - 1];
+            const idSet = new Set(moduleIds);
+            // Iterate in course order so placement stays deterministic
+            targetModules = modules.filter((m: any) => idSet.has(m.id));
           } else {
-            // Project covers all course → show on the LAST module of the course
-            targetModuleId = modules[modules.length - 1]?.id || null;
+            const lastModule = modules[modules.length - 1];
+            targetModules = lastModule ? [lastModule] : [];
           }
           
-          if (targetModuleId) {
-            const targetModule = modules.find((m: any) => m.id === targetModuleId);
-            if (targetModule?.lessons && targetModule.lessons.length > 0) {
-              // Place on the LAST lesson of the target module
-              const lastLesson = targetModule.lessons[targetModule.lessons.length - 1];
-              
-              if (!projectAssessments[lastLesson.id]) {
-                projectAssessments[lastLesson.id] = [];
-              }
+          targetModules.forEach((targetModule) => {
+            if (!targetModule?.lessons || targetModule.lessons.length === 0) return;
+            
+            // Place on the LAST lesson of this module
+            const lastLesson = targetModule.lessons[targetModule.lessons.length - 1];
+            
+            if (!projectAssessments[lastLesson.id]) {
+              projectAssessments[lastLesson.id] = [];
+            }
+            
+            // Skip if this project was already placed on this lesson (re-run safety)
+            const alreadyAdded = projectAssessments[lastLesson.id].some(
+              (a: any) => a.id === project.id && a.type === 'project'
+            );
+            if (!alreadyAdded) {
               projectAssessments[lastLesson.id].push({
                 id: project.id,
                 title: project.title || 'Project',
@@ -1666,21 +1676,23 @@ const LearningPage = () => {
                 dueDate: project.due_date,
                 points_possible: project.points_possible
               });
-              
-              console.log(`📍 Placed project "${project.title}" on module "${targetModule.title}" > lesson "${lastLesson.title}"`);
             }
-          }
+            
+            console.log(`📍 Placed project "${project.title}" on module "${targetModule.title}" > lesson "${lastLesson.title}"`);
+          });
         });
         
-        // Merge with existing lesson assessments
+        // Merge with existing lesson assessments (idempotent: never duplicate a
+        // project that is already present on a lesson)
         setLessonAssessments(prev => {
           const merged = { ...prev };
           Object.keys(projectAssessments).forEach(lessonIdStr => {
             const lessonId = Number(lessonIdStr);
-            merged[lessonId] = [
-              ...(merged[lessonId] || []),
-              ...projectAssessments[lessonId]
-            ];
+            const existing = merged[lessonId] || [];
+            const newOnes = projectAssessments[lessonId].filter(
+              (na: any) => !existing.some((ea: any) => ea.id === na.id && ea.type === na.type)
+            );
+            merged[lessonId] = [...existing, ...newOnes];
           });
           return merged;
         });
