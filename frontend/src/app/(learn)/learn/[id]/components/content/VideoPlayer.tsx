@@ -11,9 +11,12 @@ type YouTubeApi = {
 };
 
 let youtubeApiPromise: Promise<YouTubeApi> | null = null;
+const failedYouTubeScriptSrcs = new Set<string>();
+
+class FatalPlayerError extends Error {}
 
 const getYouTubeVideoId = (url: string) =>
-  url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
+  url.match(/(?:youtube(?:-nocookie)?\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1];
 
 const loadYouTubeApi = (): Promise<YouTubeApi> => {
   if (typeof window === "undefined") {
@@ -37,12 +40,21 @@ const loadYouTubeApi = (): Promise<YouTubeApi> => {
     let settled = false;
     const script = document.querySelector<HTMLScriptElement>(
       'script[src*="youtube.com/iframe_api"]'
-    ) || document.createElement("script");
+    );
+    // A previous attempt may have left a dead (failed) script tag in the DOM.
+    // Remove it so the browser actually re-requests the API instead of us
+    // waiting on a tag that will never fire load or error again.
+    if (script && failedYouTubeScriptSrcs.has(script.src)) {
+      script.remove();
+    }
+    const scriptTag = script && script.isConnected
+      ? script
+      : document.createElement("script");
 
     const cleanup = () => {
       if (pollTimer) clearTimeout(pollTimer);
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      script.removeEventListener("error", handleScriptError);
+      scriptTag.removeEventListener("error", handleScriptError);
     };
 
     const finish = (error?: Error) => {
@@ -66,14 +78,15 @@ const loadYouTubeApi = (): Promise<YouTubeApi> => {
     };
 
     const handleScriptError = () => {
+      failedYouTubeScriptSrcs.add(scriptTag.src);
       finish(new Error("The YouTube player API failed to load"));
     };
 
-    script.addEventListener("error", handleScriptError, { once: true });
-    if (!script.src) {
-      script.src = "https://www.youtube.com/iframe_api";
-      script.async = true;
-      document.head.appendChild(script);
+    scriptTag.addEventListener("error", handleScriptError, { once: true });
+    if (!scriptTag.src) {
+      scriptTag.src = "https://www.youtube.com/iframe_api";
+      scriptTag.async = true;
+      document.head.appendChild(scriptTag);
     }
 
     const previousReadyHandler = browserWindow.onYouTubeIframeAPIReady;
@@ -198,6 +211,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [videoDuration, setVideoDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoError, setVideoError] = useState<string | null>(null);
+  // Non-fatal: the optional YouTube JS API failed, but the embed still plays.
+  const [apiWarning, setApiWarning] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   const [videoLoading, setVideoLoading] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
@@ -211,7 +227,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const resumeDisplayKeyRef = useRef<string | null>(null);
   const resumeSeekAppliedRef = useRef(false);
 
-  const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtu.be");
+  const isYouTube = videoUrl.includes("youtube.com") || videoUrl.includes("youtube-nocookie.com") || videoUrl.includes("youtu.be");
   const isVimeo = videoUrl.includes("vimeo.com");
   const directExtension = videoUrl.split('?')[0].split('#')[0].split('.').pop()?.toLowerCase();
   // CDN and signed media URLs often have no file extension. Anything that is
@@ -281,6 +297,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setVideoDuration(0);
     setCurrentTime(0);
     setVideoError(null);
+    setApiWarning(null);
     setVideoLoading(false);
     youtubePlayerRef.current?.destroy?.();
     vimeoPlayerRef.current?.destroy?.();
@@ -326,16 +343,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // YouTube: wait for the actual Player constructor before creating the
   // player. The global YT object can exist briefly before YT.Player is ready.
+  //
+  // The JS API is only an enhancement (progress tracking + our custom UI).
+  // If it fails to load (blocked by an extension or the network), we keep the
+  // plain embed iframe so the lesson video still plays instead of replacing it
+  // with a hard error.
   useEffect(() => {
     if (!isYouTube || !iframeRef.current) return;
     let cancelled = false;
+    let readyFired = false;
+    let readyTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const initializePlayer = async () => {
       const api = await loadYouTubeApi();
       if (cancelled || !iframeRef.current || youtubePlayerRef.current) return;
 
       const videoId = getYouTubeVideoId(videoUrl);
-      if (!videoId) throw new Error("The YouTube URL is invalid");
+      if (!videoId) throw new FatalPlayerError("The YouTube URL is invalid");
       if (typeof api.Player !== "function") {
         throw new Error("The YouTube Player constructor is unavailable");
       }
@@ -344,6 +368,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         videoId,
         events: {
           onReady: (event: any) => {
+            if (cancelled) return;
+            readyFired = true;
+            if (readyTimeout) clearTimeout(readyTimeout);
+            setApiWarning(null);
             const duration = event.target.getDuration();
             setVideoDuration(duration);
             progressIntervalRef.current = setInterval(() => {
@@ -360,22 +388,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           onStateChange: (event: any) => setIsPlaying(event.data === 1),
         },
       });
+
+      // If the player never reports ready, offer a retry instead of hanging
+      // on a black frame with no feedback.
+      readyTimeout = setTimeout(() => {
+        if (!cancelled && !readyFired) {
+          setApiWarning("The video player is taking longer than usual. You can retry, or use the embedded player's own controls.");
+        }
+      }, 12000);
     };
 
     initializePlayer().catch((error) => {
-      if (!cancelled) {
-        console.error("Failed to initialize YouTube player:", error);
-        setVideoError("YouTube could not be loaded. Check the video URL or try again later.");
+      if (cancelled) return;
+      console.error("Failed to initialize YouTube player:", error);
+      if (error instanceof FatalPlayerError) {
+        setVideoError("This lesson's video link is not a valid YouTube URL.");
+      } else {
+        // Non-fatal: the embed iframe is already rendered and can still play.
+        setApiWarning("Interactive playback couldn't start. The video below may still play using the built-in controls.");
       }
     });
 
     return () => {
       cancelled = true;
+      if (readyTimeout) clearTimeout(readyTimeout);
       if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
       youtubePlayerRef.current?.destroy?.();
       youtubePlayerRef.current = null;
     };
-  }, [isYouTube, videoUrl, markWatched]);
+  }, [isYouTube, videoUrl, markWatched, retryToken]);
 
   // Vimeo: load SDK + init
   useEffect(() => {
@@ -474,6 +515,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     );
   }
 
+  const youtubeId = isYouTube ? getYouTubeVideoId(videoUrl) : undefined;
+
+  // A YouTube URL we cannot parse can never produce a valid embed, so fail fast
+  // instead of rendering an /embed/undefined iframe.
+  if (isYouTube && !youtubeId) {
+    return (
+      <Alert className="bg-red-900/20 border-red-700">
+        <AlertCircle className="h-5 w-5 text-red-400" />
+        <AlertDescription className="text-red-200">
+          <p className="font-semibold">Invalid video link</p>
+          <p>This lesson's video link is not a recognized YouTube URL.</p>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   if (videoError) {
     return (
       <Alert className="bg-red-900/20 border-red-700">
@@ -486,10 +543,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const renderPlayer = () => {
     if (isYouTube || isVimeo) {
       const src = isYouTube
-        ? `https://www.youtube.com/embed/${videoUrl.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/)?.[1]}?enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`
+        ? `https://www.youtube.com/embed/${youtubeId}?enablejsapi=1&origin=${typeof window !== "undefined" ? window.location.origin : ""}`
         : `https://player.vimeo.com/video/${videoUrl.match(/vimeo\.com\/(\d+)/)?.[1]}`;
       return (
         <iframe
+          // Force a fresh DOM node per URL. YT.Player replaces the node it is
+          // given, so reusing it across lessons leaves a detached element.
+          key={videoUrl}
           ref={iframeRef}
           id={mixedContentIndex !== undefined ? `mixed-vid-${mixedContentIndex}` : "main-video"}
           src={src}
@@ -537,6 +597,22 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
         </button>
       </div>
+
+      {apiWarning && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-700/60 bg-amber-900/20 p-3">
+          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-amber-400" />
+          <div className="flex-1 text-sm text-amber-200">{apiWarning}</div>
+          <button
+            onClick={() => {
+              setApiWarning(null);
+              setRetryToken((t) => t + 1);
+            }}
+            className="flex-shrink-0 text-xs font-medium text-amber-200 underline hover:text-amber-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <Card className={`border-2 ${videoWatched ? "bg-green-900/30 border-green-700" : "bg-blue-900/30 border-blue-700"}`}>
         <div className="p-3 sm:p-4 space-y-3">
