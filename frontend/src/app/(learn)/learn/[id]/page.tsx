@@ -439,6 +439,7 @@ const LearningPage = () => {
     engagementScore,
     lessonScore: hookLessonScore,
     isLessonCompleted,
+    setIsLessonCompleted,
     progressLoaded,
     savedVideoProgress,
     savedVideoCurrentTime,
@@ -850,6 +851,12 @@ const LearningPage = () => {
       
       console.log('✅ Lesson marked as complete:', result);
       
+      // Update the authoritative completion state first. This gates the
+      // next-lesson navigation button (disabled={!hasNextLesson ||
+      // !isLessonCompleted}); the sidebar map below is only a convenience
+      // view and is also synced from this state.
+      setIsLessonCompleted(true);
+      
       // Update local state
       setLessonCompletionStatus(prev => ({
         ...prev,
@@ -883,7 +890,7 @@ const LearningPage = () => {
     } catch (error) {
       console.error('❌ Error manually completing lesson:', error);
     }
-  }, [currentLesson, currentModuleId, timeSpent, readingProgress, engagementScore, scrollProgress, lessonScore, moduleScoring, forceSaveProgress]);
+  }, [currentLesson, currentModuleId, timeSpent, readingProgress, engagementScore, scrollProgress, lessonScore, moduleScoring, forceSaveProgress, setIsLessonCompleted]);
 
   // Video progress handlers (for main video lessons only)
   const handleVideoProgress = useCallback((progress: number, currentTime?: number, duration?: number) => {
