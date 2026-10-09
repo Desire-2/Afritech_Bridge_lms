@@ -526,11 +526,15 @@ const LearningPage = () => {
       console.log('🎯 Auto-completion criteria met, triggering completion...');
       const lessonId = currentLesson.id;
 
-      // Mark this lesson as having a completion attempt
-      completionAttemptRef.current = currentLesson.id;
-      
-      // Set a timer to attempt completion (give a moment for final progress to save)
+      // Set a timer to attempt completion (give a moment for final progress to save).
+      // completionAttemptRef is only marked once the request actually starts
+      // (inside the timer). Setting it before scheduling would leave the guard
+      // stuck whenever this effect re-ran and its cleanup cancelled the timer
+      // before it fired — which happens constantly during active reading, since
+      // progress updates re-run this effect. That permanently blocked auto-
+      // completion for the lesson.
       const completionTimer = setTimeout(() => {
+        completionAttemptRef.current = lessonId;
         void handleAutoLessonCompletion(
           (data) => {
             if (activeLessonIdRef.current !== lessonId) return;
