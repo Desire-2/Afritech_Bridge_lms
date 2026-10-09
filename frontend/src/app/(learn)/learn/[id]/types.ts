@@ -72,6 +72,6 @@ export interface CourseData {
   success?: boolean;
 }
 
-export type ViewMode = 'content' | 'assessment' | 'notes' | 'quiz' | 'assignments';
+export type ViewMode = 'content' | 'assessment' | 'notes' | 'quiz' | 'assignments' | 'project';
 
 export type ModuleStatus = 'locked' | 'unlocked' | 'in_progress' | 'completed';

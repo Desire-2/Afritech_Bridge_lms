@@ -595,6 +595,14 @@ const LearningPage = () => {
     });
   }, [readingProgress, engagementScore, currentLessonQuizScore, currentLessonAssignmentScore, lessonQuiz, lessonAssignments]);
 
+  // Project attached to the current lesson (if any) — drives the Project tab
+  const lessonProjectId = useMemo(() => {
+    if (!currentLesson?.id) return null;
+    const assessments = lessonAssessments[currentLesson.id] || [];
+    const projectAssessment = assessments.find((a: any) => a.type === 'project');
+    return projectAssessment ? projectAssessment.id : null;
+  }, [lessonAssessments, currentLesson?.id]);
+
   // Update quiz and assignment scores when lesson data changes
   // The quiz score is already loaded with the lessonQuiz object from get_lesson_quiz endpoint
   useEffect(() => {
@@ -1068,11 +1076,23 @@ const LearningPage = () => {
         });
       }
       
-      // Update assessments map
-      setLessonAssessments(prev => ({
-        ...prev,
-        [lessonId]: assessments
-      }));
+      // Update assessments map. Preserve any project entries already placed on
+      // this lesson — projects are merged in separately (see the course-projects
+      // effect) and must survive this quizzes/assignments replacement.
+      setLessonAssessments(prev => {
+        const existing = prev[lessonId] || [];
+        const existingProjects = existing.filter((a: any) => a.type === 'project');
+        const merged = [
+          ...assessments,
+          ...existingProjects.filter(
+            (p: any) => !assessments.some((a: any) => a.id === p.id && a.type === p.type)
+          ),
+        ];
+        return {
+          ...prev,
+          [lessonId]: merged
+        };
+      });
       
       // Mark content as loaded for this lesson
       setContentLoadedForLesson(lessonId);
@@ -1475,7 +1495,7 @@ const LearningPage = () => {
         // `assessment` is a legacy route value; the rendered UI now exposes
         // quiz and assignment tabs separately, so never deep-link to a blank
         // unrendered tab.
-        const allowedTabs: ViewMode[] = ['content', 'notes', 'quiz', 'assignments'];
+        const allowedTabs: ViewMode[] = ['content', 'notes', 'quiz', 'assignments', 'project'];
         if (requestedTab && allowedTabs.includes(requestedTab)) {
           setCurrentViewMode(requestedTab);
         } else if (requestedTab === 'assessment') {
@@ -1851,7 +1871,7 @@ const LearningPage = () => {
       const params = new URLSearchParams(window.location.search);
       const lessonId = Number(params.get('lesson') || params.get('lesson_id'));
       const tab = params.get('tab') as ViewMode | null;
-      if (tab && ['content', 'notes', 'quiz', 'assignments'].includes(tab)) {
+      if (tab && ['content', 'notes', 'quiz', 'assignments', 'project'].includes(tab)) {
         setCurrentViewMode(tab);
       }
       if (!lessonId || lessonId === currentLesson?.id) return;
@@ -1891,7 +1911,7 @@ const LearningPage = () => {
   };
 
   const handleProjectSelect = (lessonId: number, moduleId: number, projectId: number) => {
-    void navigateToLessonTab(lessonId, moduleId, 'content');
+    void navigateToLessonTab(lessonId, moduleId, 'project');
     setInteractionHistory(prev => [...prev, {
       type: 'project_select',
       lessonId,
@@ -2850,6 +2870,7 @@ const LearningPage = () => {
             currentLesson={currentLesson}
             lessonQuiz={lessonQuiz}
             lessonAssignments={lessonAssignments}
+            lessonProjectId={lessonProjectId}
             contentLoading={contentLoading}
             quizLoadError={quizLoadError}
             contentLoadError={assignmentLoadError}

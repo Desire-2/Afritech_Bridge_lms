@@ -9,7 +9,7 @@ import {
   ArrowLeft, ArrowRight, Trophy, Brain, CheckCircle, Target, Zap,
   FileText, Clipboard, Play, Clock, Award, ExternalLink, Download,
   PenTool, Loader2, AlertCircle, Lock, Unlock, GraduationCap,
-  Star, Flame, BookOpen, Maximize2, Minimize2
+  Star, Flame, BookOpen, Maximize2, Minimize2, FolderOpen
 } from 'lucide-react';
 import Link from 'next/link';
 import { StudentApiService } from '@/services/studentApi';
@@ -19,6 +19,7 @@ import type { ContentQuiz, ContentAssignment } from '@/services/contentAssignmen
 import { ContentRichPreview } from './ContentRichPreview';
 import { QuizAttemptTracker } from './QuizAttemptTracker';
 import { AssignmentPanel } from './AssignmentPanel';
+import { ProjectPanel } from './ProjectPanel';
 import { LessonScoreDisplay, getLevel } from './LessonScoreDisplay';
 import { CollapsibleCard } from './CollapsibleCard';
 import {
@@ -41,6 +42,7 @@ interface LessonContentProps {
   currentLesson: any;
   lessonQuiz: ContentQuiz | null;
   lessonAssignments: ContentAssignment[];
+  lessonProjectId?: number | null;
   contentLoading: boolean;
   quizLoadError?: string | null;
   contentLoadError?: string | null;
@@ -102,6 +104,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   currentLesson,
   lessonQuiz,
   lessonAssignments,
+  lessonProjectId = null,
   contentLoading,
   quizLoadError,
   contentLoadError,
@@ -231,6 +234,7 @@ export const LessonContent: React.FC<LessonContentProps> = ({
   // Which tabs are available for this lesson
   const hasQuiz = !!lessonQuiz;
   const hasAssignments = lessonAssignments && lessonAssignments.length > 0;
+  const hasProject = !!lessonProjectId;
 
   // A deep link must not leave Radix Tabs on a value that has no rendered
   // trigger/content pair after the backend finishes loading this lesson.
@@ -240,8 +244,10 @@ export const LessonContent: React.FC<LessonContentProps> = ({
       setCurrentViewMode('content');
     } else if (currentViewMode === 'assignments' && !hasAssignments && !contentLoadError) {
       setCurrentViewMode('content');
+    } else if (currentViewMode === 'project' && !hasProject) {
+      setCurrentViewMode('content');
     }
-  }, [contentLoading, currentViewMode, hasQuiz, hasAssignments, quizLoadError, contentLoadError, setCurrentViewMode]);
+  }, [contentLoading, currentViewMode, hasQuiz, hasAssignments, hasProject, quizLoadError, contentLoadError, setCurrentViewMode]);
 
   // Reading completion detection for quiz/assignment prompt
   const readingComplete = readingProgress >= LESSON_READING_PROGRESS_THRESHOLD;
@@ -663,6 +669,24 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     >
                       <Clipboard className="h-3.5 w-3.5" />
                       <span>Assignments</span>
+                    </TabsTrigger>
+                  )}
+
+                  {/* Project — only if this lesson has a project */}
+                  {hasProject && (
+                    <TabsTrigger
+                      value="project"
+                      className={`flex items-center gap-1.5 px-3.5 py-2 text-[11px] font-semibold rounded-lg transition-all duration-200
+                        data-[state=active]:shadow-sm
+                        text-gray-400 hover:text-gray-200 hover:bg-gray-800/40
+                        ${currentViewMode === 'project' ? 'bg-gray-800/80 text-white' : 'bg-transparent'}`}
+                      style={currentViewMode === 'project' ? {
+                        backgroundColor: 'rgba(251, 146, 60, 0.1)',
+                        color: 'rgb(251, 146, 60)',
+                      } : undefined}
+                    >
+                      <FolderOpen className="h-3.5 w-3.5" />
+                      <span>Project</span>
                     </TabsTrigger>
                   )}
 
@@ -1518,6 +1542,28 @@ export const LessonContent: React.FC<LessonContentProps> = ({
                     <h3 className="text-lg font-medium text-white mb-2">No Assignments</h3>
                     <p className="text-gray-300">
                       This lesson doesn't have any assignments.
+                    </p>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="project" className="p-3 sm:p-4 md:p-6">
+                {hasProject && lessonProjectId ? (
+                  <ProjectPanel
+                    projectId={lessonProjectId}
+                    onSubmit={() => {
+                      onTrackInteraction('project_submitted', { projectId: lessonProjectId });
+                    }}
+                    onSubmitComplete={() => {
+                      onTrackInteraction('project_completed', { projectId: lessonProjectId });
+                    }}
+                  />
+                ) : (
+                  <div className="text-center py-12">
+                    <FolderOpen className="h-12 w-12 text-gray-500 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-white mb-2">No Project</h3>
+                    <p className="text-gray-300">
+                      This lesson doesn't have a project.
                     </p>
                   </div>
                 )}
