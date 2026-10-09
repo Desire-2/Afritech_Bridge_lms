@@ -933,6 +933,7 @@ class ModuleProgress(db.Model):
     course_contribution_score = db.Column(db.Float, default=0.0)  # 10% - forums, help, tracking
     quiz_score = db.Column(db.Float, default=0.0)  # 30% - knowledge checks
     assignment_score = db.Column(db.Float, default=0.0)  # 40% - hands-on work
+    project_score = db.Column(db.Float, default=0.0)  # module projects (shares the assignments weight)
     final_assessment_score = db.Column(db.Float, default=0.0)  # 20% - module assessment
     
     cumulative_score = db.Column(db.Float, default=0.0)  # Total weighted score
@@ -1000,7 +1001,7 @@ class ModuleProgress(db.Model):
         
         Returns a score from 0-100.
         """
-        from .course_models import Quiz, Assignment
+        from .course_models import Quiz, Assignment, Project
         
         # Get the module score (average of all lesson scores)
         module_lessons_score = self.calculate_module_score()
@@ -1034,6 +1035,25 @@ class ModuleProgress(db.Model):
             Quiz.lesson_id.is_(None),
             Quiz.is_published == True
         ).first() is not None if self.module else False
+        
+        # Check for published projects covering this module (whole-course
+        # projects with no module assignment cover every module).
+        has_projects = False
+        if self.module:
+            for project in Project.query.filter_by(
+                course_id=self.module.course_id, is_published=True
+            ).all():
+                covered = project.get_modules()
+                if not covered or self.module_id in covered:
+                    has_projects = True
+                    break
+        
+        # Projects share the hands-on (assignments) bucket: blend with lesson
+        # assignments when both exist, otherwise stand in for them entirely.
+        if has_projects:
+            project = self.project_score or 0.0
+            assignment = (assignment + project) / 2.0 if has_assignments else project
+            has_assignments = True
         
         # Calculate dynamic weights based on available assessments
         if not has_quizzes and not has_assignments and not has_final_assessment:
@@ -1215,6 +1235,7 @@ class ModuleProgress(db.Model):
             'lessons_average_score': module_score,  # Backwards compatibility
             'quiz_score': self.quiz_score or 0.0,
             'assignment_score': self.assignment_score or 0.0,
+            'project_score': self.project_score or 0.0,
             'final_assessment_score': self.final_assessment_score or 0.0,
             'weighted_score': weighted_score,  # Weighted score for passing (0-100)
             'cumulative_score': weighted_score,  # Backwards compatibility

@@ -572,6 +572,7 @@ class EnhancedModuleUnlockService:
                     "lessons_average": 0.0,
                     "quiz_score": 0.0,
                     "assignment_score": 0.0,
+                    "project_score": 0.0,
                     "final_assessment": 0.0
                 },
                 "weights_used": {},
@@ -582,19 +583,35 @@ class EnhancedModuleUnlockService:
         total_score = module_progress.calculate_module_weighted_score()
         lessons_score = module_progress.calculate_module_score()
         
+        # Does this module have published projects covering it?
+        has_projects = False
+        module = module_progress.module
+        if module:
+            from ..models.course_models import Project
+            for project in Project.query.filter_by(course_id=module.course_id, is_published=True).all():
+                covered = project.get_modules()
+                if not covered or module_progress.module_id in covered:
+                    has_projects = True
+                    break
+        
         return {
             "total_score": total_score,
             "breakdown": {
                 "lessons_average": lessons_score,
                 "quiz_score": module_progress.quiz_score or 0.0,
                 "assignment_score": module_progress.assignment_score or 0.0,
+                "project_score": module_progress.project_score or 0.0,
                 "final_assessment": module_progress.final_assessment_score or 0.0
             },
             "weights_used": {
                 "lessons": "varies",  # Dynamic based on available assessments
                 "quiz": "varies",
                 "assignment": "varies", 
+                "project": "varies",
                 "final": "varies"
+            },
+            "assessment_availability": {
+                "has_projects": has_projects
             },
             "raw_cumulative": module_progress.cumulative_score or 0.0
         }
@@ -658,6 +675,8 @@ class EnhancedModuleUnlockService:
                     recommendations.append("Improve quiz performance (target: 70%+)")
                 if breakdown["assignment_score"] < 70:
                     recommendations.append("Complete assignments with higher quality")
+                if (scoring_breakdown.get("assessment_availability") or {}).get("has_projects") and breakdown.get("project_score", 0) < 70:
+                    recommendations.append("Improve your project score (target: 70%+)")
                 if breakdown["lessons_average"] < 80:
                     recommendations.append("Review lessons for better reading/engagement scores")
         

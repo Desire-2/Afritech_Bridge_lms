@@ -1337,32 +1337,25 @@ def grade_project_submission(submission_id):
                         enrollment_id=enrollment.id
                     ).first()
                     
-                    if module_progress:
-                        # Use best project score (keep the higher score)
-                        current_project_score = module_progress.project_score or 0.0
-                        new_score = max(current_project_score, percentage_score)
-                        module_progress.project_score = new_score
-                        
-                        # Recalculate cumulative score
-                        if hasattr(module_progress, 'calculate_cumulative_score'):
-                            module_progress.calculate_cumulative_score()
-                        
-                        logger.info(f"✅ Updated module {module_id} project score for student {student_id}: {new_score}%")
-                    else:
-                        logger.warning(f"⚠️ Module progress not found for student {student_id}, module {module_id} — creating")
-                        # Create module progress if it doesn't exist
-                        try:
-                            module_progress = ModuleProgress(
-                                student_id=student_id,
-                                module_id=module_id,
-                                enrollment_id=enrollment.id,
-                                course_id=course_id,
-                                project_score=percentage_score
-                            )
-                            db.session.add(module_progress)
-                            logger.info(f"✅ Created module progress for student {student_id}, module {module_id}")
-                        except Exception as create_err:
-                            logger.warning(f"⚠️ Could not create module progress: {create_err}")
+                    if not module_progress:
+                        # Create missing progress via the standard initializer
+                        # (ModuleProgress has no course_id column; creating it
+                        # directly with invalid kwargs always failed silently)
+                        from ..services.progression_service import ProgressionService
+                        module_progress = ProgressionService._initialize_module_progress(
+                            student_id, module_id, enrollment.id
+                        )
+                    
+                    # Use best project score (keep the higher score)
+                    current_project_score = module_progress.project_score or 0.0
+                    new_score = max(current_project_score, percentage_score)
+                    module_progress.project_score = new_score
+                    
+                    # Recalculate cumulative score (projects share the hands-on bucket)
+                    if hasattr(module_progress, 'calculate_cumulative_score'):
+                        module_progress.calculate_cumulative_score()
+                    
+                    logger.info(f"✅ Updated module {module_id} project score for student {student_id}: {new_score}%")
                 
                 db.session.commit()
                 logger.info(f"📊 Updated project scores across {len(project_module_ids)} module(s)")
@@ -1615,28 +1608,21 @@ def _propagate_grade_to_team_member(project, member_id, grade, feedback, graded_
                     enrollment_id=enrollment.id
                 ).first()
                 
-                if module_progress:
-                    current_project_score = module_progress.project_score or 0.0
-                    new_score = max(current_project_score, percentage_score)
-                    module_progress.project_score = new_score
-                    
-                    if hasattr(module_progress, 'calculate_cumulative_score'):
-                        module_progress.calculate_cumulative_score()
-                    
-                    logger.info(f"✅ Team member {member_id}: updated module {module_id} project score: {new_score}%")
-                else:
-                    try:
-                        module_progress = ModuleProgress(
-                            student_id=member_id,
-                            module_id=module_id,
-                            enrollment_id=enrollment.id,
-                            course_id=course_id,
-                            project_score=percentage_score
-                        )
-                        db.session.add(module_progress)
-                        logger.info(f"✅ Team member {member_id}: created module progress for module {module_id}")
-                    except Exception as create_err:
-                        logger.warning(f"⚠️ Team member {member_id}: could not create module progress: {create_err}")
+                if not module_progress:
+                    # Create missing progress via the standard initializer
+                    from ..services.progression_service import ProgressionService
+                    module_progress = ProgressionService._initialize_module_progress(
+                        member_id, module_id, enrollment.id
+                    )
+                
+                current_project_score = module_progress.project_score or 0.0
+                new_score = max(current_project_score, percentage_score)
+                module_progress.project_score = new_score
+                
+                if hasattr(module_progress, 'calculate_cumulative_score'):
+                    module_progress.calculate_cumulative_score()
+                
+                logger.info(f"✅ Team member {member_id}: updated module {module_id} project score: {new_score}%")
         elif not enrollment:
             logger.warning(f"⚠️ Team member {member_id}: enrollment not found for course {course_id}")
         

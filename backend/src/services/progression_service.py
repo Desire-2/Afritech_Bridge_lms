@@ -485,6 +485,7 @@ class ProgressionService:
             module_progress.course_contribution_score = 0.0
             module_progress.quiz_score = 0.0
             module_progress.assignment_score = 0.0
+            module_progress.project_score = 0.0
             module_progress.final_assessment_score = 0.0
             module_progress.cumulative_score = 0.0
             

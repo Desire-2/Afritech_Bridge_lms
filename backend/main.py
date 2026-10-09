@@ -1,17 +1,20 @@
 # Main application file for Afritec Bridge LMS
 import os
 import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 # DON'T CHANGE THIS !!!
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # Load environment variables FIRST before any other imports
 from dotenv import load_dotenv
-load_dotenv()
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BACKEND_DIR, '.env'))
 
 from flask import Flask, send_from_directory, jsonify, request
 from flask_jwt_extended import JWTManager, jwt_required, get_jwt_identity
 from datetime import timedelta
 import logging
+import time
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from src.models.user_models import db, User, Role
@@ -44,8 +47,11 @@ from src.models.internship_models import (
     InternshipTrack, InternshipCohort, InternshipApplication, ApplicationStatusLog, InternshipOfferLetter
 ) # Import internship models
 from src.models.booking_models import InstructorAvailability, AvailabilityException, Booking # Import booking models
+from src.models.workflow_models import (  # Autonomous course-creation workflow models
+    CourseWorkflow, WorkflowTask, WorkflowEvent, TaskDependency,
+    AgentRun, QualityReview, RepairAttempt, CourseGenerationVersion, AgentMemory,
+)  # Import workflow engine models
 from src.utils.email_utils import mail # Import the mail instance (legacy wrapper)
-from src.utils.brevo_email_service import brevo_service # Import Brevo service
 
 from src.routes.user_routes import auth_bp, user_bp, token_in_blocklist_loader
 from src.routes.course_routes import course_bp, module_bp, lesson_bp, enrollment_bp, quiz_bp, submission_bp, announcement_bp
@@ -68,6 +74,7 @@ from src.routes.progress_routes import progress_bp # Import progress blueprint
 from src.routes.certificate_routes import certificate_bp # Import certificate blueprint
 from src.routes.forum_routes import forum_bp # Import forum blueprint
 from src.routes.ai_agent_routes import ai_agent_bp # Import AI agent blueprint
+from src.routes.workflow_routes import workflow_bp  # DB-backed workflow engine API
 from src.routes.enhanced_file_routes import enhanced_file_bp # Import enhanced file routes
 from src.routes.admin_routes import admin_bp # Import admin blueprint
 from src.routes.admin_student_routes import admin_student_bp # Import admin student management blueprint
@@ -189,6 +196,26 @@ if database_url:
     elif database_url.startswith('postgresql://') and '+psycopg2' not in database_url:
         database_url = database_url.replace('postgresql://', 'postgresql+psycopg2://', 1)
         logger.info("Transformed database URL from postgresql:// to postgresql+psycopg2://")
+
+    # Render PostgreSQL requires TLS.  Some connection strings exposed by the
+    # dashboard omit the query parameter, which leaves libpq free to negotiate
+    # a connection that the managed service can close during cold starts.
+    parsed_database_url = urlsplit(database_url)
+    render_postgresql = (
+        env == 'production'
+        and (
+            os.getenv('RENDER', '').lower() in ('1', 'true', 'yes')
+            or (parsed_database_url.hostname or '').endswith('.render.com')
+        )
+    )
+    if database_url.startswith('postgresql') and render_postgresql:
+        database_options = parse_qsl(parsed_database_url.query, keep_blank_values=True)
+        if not any(key.lower() == 'sslmode' for key, _ in database_options):
+            database_options.append(('sslmode', 'require'))
+            database_url = urlunsplit(parsed_database_url._replace(
+                query=urlencode(database_options)
+            ))
+            logger.info("Enabled required TLS for the production PostgreSQL connection")
     
     app.config['SQLALCHEMY_DATABASE_URI'] = database_url
     
@@ -266,6 +293,8 @@ if not app.config['JWT_SECRET_KEY']:
 # Enhanced Email configuration for Brevo API
 # Brevo API Key (preferred method)
 app.config['BREVO_API_KEY'] = os.getenv('BREVO_API_KEY')
+app.config['BREVO_SENDER_EMAIL'] = os.getenv('BREVO_SENDER_EMAIL')
+app.config['BREVO_SENDER_NAME'] = os.getenv('BREVO_SENDER_NAME', 'Afritec Bridge LMS')
 app.config['MAIL_SENDER_NAME'] = os.getenv('MAIL_SENDER_NAME', 'Afritec Bridge LMS')
 
 # Legacy email configuration (fallback for SMTP)
@@ -310,21 +339,27 @@ app.config['START_BACKGROUND_SCHEDULER'] = os.getenv(
     'true' if app.config['ENABLE_SCHEDULERS'] else 'false'
 ).lower() in ('true', '1', 'yes')
 
-# Allows the weekly job to auto-delete accounts inactive for 30+ days.
+# ⚠️ Allows the weekly job to auto-delete accounts inactive for 30+ days.
 # Off by default: destructive and not reversible.
 app.config['AUTO_DELETE_INACTIVE_USERS'] = os.getenv(
     'AUTO_DELETE_INACTIVE_USERS', 'false'
 ).lower() in ('true', '1', 'yes')
 
 # Check email service configuration
-if app.config.get('BREVO_API_KEY'):
+brevo_configured = bool(
+    app.config.get('BREVO_API_KEY') and app.config.get('BREVO_SENDER_EMAIL')
+)
+smtp_configured = bool(
+    app.config.get('MAIL_USERNAME') and app.config.get('MAIL_PASSWORD')
+)
+if brevo_configured:
     logger.info("🚀 Brevo API key found - enhanced email service will be used")
-elif not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
+elif smtp_configured:
+    logger.info("📧 SMTP email configuration found - fallback mode enabled")
+else:
     logger.warning("⚠️ No email configuration found (Brevo API key or SMTP credentials)")
     logger.warning("📧 Email sending will be disabled - check your .env file")
     logger.warning("   Add BREVO_API_KEY for best performance, or MAIL_USERNAME/MAIL_PASSWORD for SMTP fallback")
-else:
-    logger.info("📧 SMTP email configuration found - legacy mode enabled")
 
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES_HOURS', 1)))
 app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=int(os.getenv('JWT_REFRESH_TOKEN_EXPIRES_DAYS', 30)))
@@ -337,9 +372,9 @@ db.init_app(app)
 migrate = Migrate(app, db)  # Flask-Migrate for Alembic migration support
 jwt = JWTManager(app)
 
-# Initialize enhanced email service (Brevo + legacy compatibility)
+# Initialize enhanced email service (Brevo + legacy compatibility).
+# LegacyMailWrapper delegates to the same service, so initialize it once.
 mail.init_app(app)
-brevo_service.init_app(app)
 
 @jwt.user_identity_loader
 def user_identity_loader(user_id):
@@ -381,6 +416,7 @@ app.register_blueprint(progress_bp) # Register progress blueprint
 app.register_blueprint(certificate_bp) # Register certificate blueprint
 app.register_blueprint(forum_bp) # Register forum blueprint
 app.register_blueprint(ai_agent_bp) # Register AI agent blueprint
+app.register_blueprint(workflow_bp)  # Register workflow engine API
 app.register_blueprint(enhanced_file_bp) # Register enhanced file routes
 app.register_blueprint(application_bp) # Register application blueprint
 app.register_blueprint(admin_bp) # Register admin blueprint
@@ -439,7 +475,89 @@ def _auto_migrate_missing_columns():
     except Exception as e:
         logger.warning(f"⚠️ Auto-migration skipped (non-fatal): {e}")
 
+    # ── user_ai_settings (per-user NVIDIA keys/overrides) ───────────────
+    try:
+        import sqlalchemy as sa
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        existing = {c['name'] for c in inspector.get_columns('user_ai_settings')}
+        additions = {
+            'nvidia_api_key': sa.Column('nvidia_api_key', sa.String(500), nullable=True),
+            'nvidia_model_name': sa.Column('nvidia_model_name', sa.String(200), nullable=True),
+        }
+        missing = {k: v for k, v in additions.items() if k not in existing}
+        if missing:
+            logger.info(f"🔧 Auto-migrating missing columns in user_ai_settings: {list(missing.keys())}")
+            with db.engine.connect() as conn:
+                for col_name, col in missing.items():
+                    conn.execute(sa.text(
+                        f"ALTER TABLE user_ai_settings ADD COLUMN {col_name} {col.type.compile(db.engine.dialect)}"
+                    ))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"⚠️ user_ai_settings auto-migration skipped (non-fatal): {e}")
+
+    # ── module_progress (project scores were never persisted) ────────────
+    try:
+        import sqlalchemy as sa
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        existing = {c['name'] for c in inspector.get_columns('module_progress')}
+        additions = {
+            'project_score': sa.Column('project_score', sa.Float(), nullable=True),
+        }
+        missing = {k: v for k, v in additions.items() if k not in existing}
+        if missing:
+            logger.info(f"🔧 Auto-migrating missing columns in module_progress: {list(missing.keys())}")
+            with db.engine.connect() as conn:
+                for col_name, col in missing.items():
+                    conn.execute(sa.text(
+                        f"ALTER TABLE module_progress ADD COLUMN {col_name} {col.type.compile(db.engine.dialect)}"
+                    ))
+                conn.commit()
+    except Exception as e:
+        logger.warning(f"⚠️ module_progress auto-migration skipped (non-fatal): {e}")
+
     # (Add more table checks here as needed in the future)
+
+# Managed Postgres drops the TLS handshake often enough — cold starts, idle
+# wake-ups, DNS round-robin across Render's A records — that a single attempt
+# at boot turns a survivable blip into a dead worker.
+BOOT_DB_ATTEMPTS = 3
+BOOT_DB_BACKOFF_SECONDS = 2.0
+
+
+def _with_db_retry(operation, description,
+                   attempts=BOOT_DB_ATTEMPTS,
+                   backoff=BOOT_DB_BACKOFF_SECONDS):
+    """Run a boot-time DB operation, retrying transient connect failures.
+
+    Rolls the session back between attempts (a session left mid-failure is
+    poisoned) and drops the pool once the attempts are exhausted, so a
+    half-open TLS connection cannot keep failing later requests. Re-raises the
+    final error so the caller decides whether it is fatal.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except (ProgrammingError, OperationalError) as exc:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            if attempt == attempts:
+                try:
+                    db.engine.dispose()
+                except Exception:
+                    pass
+                raise
+            delay = backoff * attempt
+            logger.warning(
+                f"⚠️ {description} failed (attempt {attempt}/{attempts}), "
+                f"retrying in {delay:.0f}s: {type(exc).__name__}: {exc}"
+            )
+            time.sleep(delay)
+
 
 def _bootstrap_schema():
     """
@@ -455,10 +573,12 @@ def _bootstrap_schema():
         timeout, that is treated as "another worker is already doing it".
       * DDL races / transient schema errors are logged and swallowed — a
         missing table is Alembic's job (`flask db upgrade`), never a reason
-        to refuse to boot. (A genuinely unreachable database still fails
-        fast moments later when the first real query runs.)
+        to refuse to boot. Transient connect failures are retried first (see
+        _with_db_retry); if the database stays unreachable the app still boots
+        and /api/v1/health/db reports 503 until it recovers, instead of every
+        worker dying on an import-time query.
     """
-    try:
+    def _run():
         if is_postgresql:
             from sqlalchemy import text as _text
             with db.engine.connect() as conn:
@@ -469,6 +589,9 @@ def _bootstrap_schema():
                     conn.execute(_text("SELECT pg_advisory_unlock(7412345)"))
         else:
             db.create_all()
+
+    try:
+        _with_db_retry(_run, 'Schema bootstrap')
     except (ProgrammingError, OperationalError) as e:
         logger.warning(
             f"⚠️ Schema bootstrap skipped (non-fatal): {type(e).__name__}: {e}"
@@ -495,20 +618,41 @@ with app.app_context():
             _auto_migrate_missing_columns()
 
     if not RUNNING_FLASK_DB_CLI:
-        if not Role.query.filter_by(name='student').first():
-            db.session.add(Role(name='student'))
-        if not Role.query.filter_by(name='instructor').first():
-            db.session.add(Role(name='instructor'))
-        if not Role.query.filter_by(name='admin').first():
-            db.session.add(Role(name='admin'))
-        if not Role.query.filter_by(name='intern').first():
-            db.session.add(Role(name='intern'))
-        db.session.commit()
+        def _seed_core_roles():
+            if not Role.query.filter_by(name='student').first():
+                db.session.add(Role(name='student'))
+            if not Role.query.filter_by(name='instructor').first():
+                db.session.add(Role(name='instructor'))
+            if not Role.query.filter_by(name='admin').first():
+                db.session.add(Role(name='admin'))
+            if not Role.query.filter_by(name='intern').first():
+                db.session.add(Role(name='intern'))
+            db.session.commit()
+
+        # Was an unguarded query: one transient TLS failure killed the whole
+        # worker at import, even though the bootstrap above had already
+        # decided an unreachable database was non-fatal.
+        try:
+            _with_db_retry(_seed_core_roles, 'Core role seeding')
+        except (ProgrammingError, OperationalError) as e:
+            db.session.rollback()
+            logger.error(
+                "❌ Core role seeding skipped — database unreachable at boot. "
+                "The app will start, but DB-backed requests and "
+                "/api/v1/health/db will fail until the database recovers. "
+                f"{type(e).__name__}: {e}"
+            )
 
         # Initialize default system settings
         try:
-            initialize_default_settings()
+            _with_db_retry(initialize_default_settings, 'System settings initialization')
             logger.info("✅ System settings initialized successfully")
+        except (ProgrammingError, OperationalError) as e:
+            db.session.rollback()
+            logger.error(
+                "❌ System settings initialization skipped — database unreachable at boot: "
+                f"{type(e).__name__}: {e}"
+            )
         except Exception as e:
             logger.error(f"❌ Failed to initialize system settings: {str(e)}")
 
@@ -524,8 +668,8 @@ if not RUNNING_FLASK_DB_CLI:
 if not RUNNING_FLASK_DB_CLI:
     start_booking_reminder_scheduler(app)
 
-# Start the background scheduler (inactivity warnings / cleanup / activity
-# stats). Guarded so `flask db ...` CLI runs never spawn worker threads.
+# Start inactivity/cleanup scheduler (inactivity warnings, deactivation
+# warnings, daily/weekly cleanup, activity stats)
 if not RUNNING_FLASK_DB_CLI:
     init_scheduler(app)
 

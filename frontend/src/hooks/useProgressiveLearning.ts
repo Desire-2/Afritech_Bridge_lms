@@ -218,18 +218,21 @@ export interface ScoringState {
     courseContribution: number; // Dynamic weight based on available assessments
     quizzes: number; // Dynamic weight based on available assessments
     assignments: number; // Dynamic weight based on available assessments
+    projects?: number; // Module project score (shares the assignments weight)
     finalAssessment: number; // Dynamic weight based on available assessments
   };
   weights: {
     courseContribution: number;
     quizzes: number;
     assignments: number;
+    projects?: number;
     finalAssessment: number;
   };
   missingPoints: number;
   assessmentInfo?: {
     hasQuizzes: boolean;
     hasAssignments: boolean;
+    hasProjects?: boolean;
     hasFinalAssessment: boolean;
     isReadingOnly: boolean;
   };
@@ -289,6 +292,7 @@ export const useModuleScoring = (moduleId: number) => {
             courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
             quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
             assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+            projects: scoreBreakdown.breakdown.projects?.weight ?? 0,
             finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0,
           };
 
@@ -300,6 +304,7 @@ export const useModuleScoring = (moduleId: number) => {
               courseContribution: scoreBreakdown.breakdown.course_contribution?.score || 0,
               quizzes: scoreBreakdown.breakdown.quizzes?.score || 0,
               assignments: scoreBreakdown.breakdown.assignments?.score || 0,
+              projects: scoreBreakdown.breakdown.projects?.score || 0,
               finalAssessment: scoreBreakdown.breakdown.final_assessment?.score || 0,
             },
             weights,
@@ -368,12 +373,14 @@ export const useModuleScoring = (moduleId: number) => {
             courseContribution: progress.course_contribution_score || 0,
             quizzes: progress.quiz_score || 0,
             assignments: progress.assignment_score || 0,
+            projects: progress.project_score || 0,
             finalAssessment: progress.final_assessment_score || 0,
           },
           weights: {
             courseContribution: 10,
             quizzes: 30,
             assignments: 40,
+            projects: 0,
             finalAssessment: 20,
           },
           missingPoints: Math.max(0, MODULE_PASSING_THRESHOLD - cumulative),
@@ -419,6 +426,7 @@ export const useModuleScoring = (moduleId: number) => {
           courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
           quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
           assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+          projects: scoreBreakdown.breakdown.projects?.weight ?? 0,
           finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0,
         };
 
@@ -430,6 +438,7 @@ export const useModuleScoring = (moduleId: number) => {
             courseContribution: scoreBreakdown.breakdown.course_contribution?.score || 0,
             quizzes: scoreBreakdown.breakdown.quizzes?.score || 0,
             assignments: scoreBreakdown.breakdown.assignments?.score || 0,
+            projects: scoreBreakdown.breakdown.projects?.score || 0,
             finalAssessment: scoreBreakdown.breakdown.final_assessment?.score || 0,
           },
           weights,
@@ -488,12 +497,14 @@ export const useModuleScoring = (moduleId: number) => {
           courseContribution: progress.course_contribution_score || 0,
           quizzes: progress.quiz_score || 0,
           assignments: progress.assignment_score || 0,
+          projects: progress.project_score || 0,
           finalAssessment: progress.final_assessment_score || 0,
         },
         weights: {
           courseContribution: 10,
           quizzes: 30,
           assignments: 40,
+          projects: 0,
           finalAssessment: 20,
         },
         missingPoints: Math.max(0, MODULE_PASSING_THRESHOLD - cumulative),

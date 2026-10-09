@@ -275,6 +275,7 @@ class FullCreditService:
                 progress.course_contribution_score = 10.0  # Full course contribution
                 progress.quiz_score = 100.0
                 progress.assignment_score = 100.0
+                progress.project_score = 100.0
                 progress.final_assessment_score = 100.0
                 progress.prerequisites_met = True
             else:
@@ -291,6 +292,7 @@ class FullCreditService:
                     course_contribution_score=10.0,
                     quiz_score=100.0,
                     assignment_score=100.0,
+                    project_score=100.0,
                     final_assessment_score=100.0,
                     prerequisites_met=True,
                     attempts_count=1

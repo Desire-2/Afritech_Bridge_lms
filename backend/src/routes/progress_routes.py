@@ -196,7 +196,7 @@ def get_module_score_breakdown(module_id):
         student_id = int(get_jwt_identity())
         
         from ..models.student_models import ModuleProgress, LessonCompletion
-        from ..models.course_models import Module, Enrollment, Lesson, Quiz, Assignment
+        from ..models.course_models import Module, Enrollment, Lesson, Quiz, Assignment, Project
         
         # Get module and enrollment
         module = Module.query.get(module_id)
@@ -239,6 +239,19 @@ def get_module_score_breakdown(module_id):
             Quiz.lesson_id.is_(None),
             Quiz.is_published == True
         ).first() is not None
+        
+        # Check for published projects covering this module (whole-course
+        # projects with no module assignment cover every module)
+        has_projects = False
+        for project in Project.query.filter_by(course_id=module.course_id, is_published=True).all():
+            covered = project.get_modules()
+            if not covered or module_id in covered:
+                has_projects = True
+                break
+        
+        # Projects share the hands-on (assignments) bucket for weight selection
+        has_assignments_raw = has_assignments
+        has_assignments = has_assignments or has_projects
         
         # Calculate dynamic weights based on available assessments
         # Base weights: Reading & Engagement 10%, Quizzes 30%, Assignments 40%, Final 20%
@@ -329,14 +342,44 @@ def get_module_score_breakdown(module_id):
         fresh_lessons_avg = module_progress.calculate_lessons_average_score()
         module_progress.course_contribution_score = fresh_lessons_avg
 
+        raw_assignment = module_progress.assignment_score or 0.0
+        project_score_val = module_progress.project_score or 0.0
+
+        # Projects share the hands-on (assignments) bucket: blend with lesson
+        # assignments when both exist, otherwise stand in for them entirely
+        if has_projects and has_assignments_raw:
+            hands_on_score = (raw_assignment + project_score_val) / 2.0
+        elif has_projects:
+            hands_on_score = project_score_val
+        else:
+            hands_on_score = raw_assignment
+
+        # Display split: when both exist the bucket weight is split evenly so
+        # the two entries sum to the same weighted contribution
+        if has_projects and has_assignments_raw:
+            assignment_display_weight = weights['assignments'] / 2.0
+            project_display_weight = weights['assignments'] / 2.0
+        elif has_projects:
+            assignment_display_weight = 0.0
+            project_display_weight = weights['assignments']
+        else:
+            assignment_display_weight = weights['assignments']
+            project_display_weight = 0.0
+
         # Calculate weighted scores with dynamic weights (using fresh lesson average)
         course_contribution_weighted = fresh_lessons_avg * (weights['course_contribution'] / 100)
         quiz_weighted = (module_progress.quiz_score or 0.0) * (weights['quizzes'] / 100)
-        assignment_weighted = (module_progress.assignment_score or 0.0) * (weights['assignments'] / 100)
+        assignment_weighted = raw_assignment * (assignment_display_weight / 100)
+        project_weighted = project_score_val * (project_display_weight / 100)
         final_weighted = (module_progress.final_assessment_score or 0.0) * (weights['final_assessment'] / 100)
         
         # Calculate cumulative score with dynamic weights
-        cumulative_score = course_contribution_weighted + quiz_weighted + assignment_weighted + final_weighted
+        cumulative_score = (
+            course_contribution_weighted
+            + quiz_weighted
+            + (hands_on_score * (weights['assignments'] / 100))
+            + final_weighted
+        )
         
         # Update module progress with recalculated score
         module_progress.cumulative_score = cumulative_score
@@ -359,11 +402,18 @@ def get_module_score_breakdown(module_id):
                 "available": has_quizzes
             },
             "assignments": {
-                "score": module_progress.assignment_score or 0.0,
-                "weight": weights['assignments'],
+                "score": raw_assignment,
+                "weight": assignment_display_weight,
                 "weighted_score": assignment_weighted,
-                "description": "Assignment completion & quality" if has_assignments else "No assignments in this module",
-                "available": has_assignments
+                "description": "Assignment completion & quality" if has_assignments_raw else "No assignments in this module",
+                "available": has_assignments_raw
+            },
+            "projects": {
+                "score": project_score_val,
+                "weight": project_display_weight,
+                "weighted_score": project_weighted,
+                "description": "Module project score" if has_projects else "No projects in this module",
+                "available": has_projects
             },
             "final_assessment": {
                 "score": module_progress.final_assessment_score or 0.0,
@@ -386,6 +436,12 @@ def get_module_score_breakdown(module_id):
                 "priority": "high",
                 "area": "assignments",
                 "message": f"Focus on improving assignment quality ({weights['assignments']:.0f}% of total grade)"
+            })
+        if project_display_weight > 0 and project_score_val < 70:
+            recommendations.append({
+                "priority": "high",
+                "area": "projects",
+                "message": f"Improve your project score ({project_display_weight:.0f}% of total grade)"
             })
         if weights['quizzes'] > 0 and (module_progress.quiz_score or 0) < 70:
             recommendations.append({
@@ -429,7 +485,8 @@ def get_module_score_breakdown(module_id):
                 "can_proceed": cumulative_score >= passing_threshold and module_progress.status == 'completed',
                 "assessment_info": {
                     "has_quizzes": has_quizzes,
-                    "has_assignments": has_assignments,
+                    "has_assignments": has_assignments_raw,
+                    "has_projects": has_projects,
                     "has_final_assessment": weights['final_assessment'] > 0,
                     "is_reading_only": not has_quizzes and not has_assignments and weights['final_assessment'] == 0
                 }

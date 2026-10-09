@@ -282,17 +282,20 @@ const LearningPage = () => {
       courseContribution: number;
       quizzes: number;
       assignments: number;
+      projects?: number;
       finalAssessment: number;
     };
     weights?: {
       courseContribution: number;
       quizzes: number;
       assignments: number;
+      projects?: number;
       finalAssessment: number;
     };
     assessmentInfo?: {
       hasQuizzes: boolean;
       hasAssignments: boolean;
+      hasProjects?: boolean;
       hasFinalAssessment: boolean;
       isReadingOnly: boolean;
     };
@@ -319,11 +322,13 @@ const LearningPage = () => {
       course_contribution: { score: number; weight: number };
       quizzes: { score: number; weight: number };
       assignments: { score: number; weight: number };
+      projects?: { score: number; weight: number };
       final_assessment: { score: number; weight: number };
     };
     assessment_info?: {
       has_quizzes: boolean;
       has_assignments: boolean;
+      has_projects?: boolean;
       has_final_assessment: boolean;
       is_reading_only: boolean;
     };
@@ -2050,6 +2055,7 @@ const LearningPage = () => {
             courseContribution: scoreBreakdown.breakdown.course_contribution?.weight ?? 10,
             quizzes: scoreBreakdown.breakdown.quizzes?.weight ?? 0,
             assignments: scoreBreakdown.breakdown.assignments?.weight ?? 0,
+            projects: scoreBreakdown.breakdown.projects?.weight ?? 0,
             finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight ?? 0
           };
         }
@@ -2057,6 +2063,7 @@ const LearningPage = () => {
           assessmentInfo = {
             hasQuizzes: scoreBreakdown.assessment_info.has_quizzes,
             hasAssignments: scoreBreakdown.assessment_info.has_assignments,
+            hasProjects: scoreBreakdown.assessment_info.has_projects,
             hasFinalAssessment: scoreBreakdown.assessment_info.has_final_assessment,
             isReadingOnly: scoreBreakdown.assessment_info.is_reading_only
           };
@@ -2071,6 +2078,7 @@ const LearningPage = () => {
         courseContribution: 0,
         quizzes: 0,
         assignments: 0,
+        projects: 0,
         finalAssessment: 0
       };
       
@@ -2087,6 +2095,9 @@ const LearningPage = () => {
         }
         if (weights.assignments > 0 && breakdown.assignments < MODULE_PASSING_THRESHOLD) {
           missingItems.push(`Assignment Score: ${breakdown.assignments.toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
+        }
+        if ((weights.projects || 0) > 0 && (breakdown.projects || 0) < MODULE_PASSING_THRESHOLD) {
+          missingItems.push(`Project Score: ${(breakdown.projects || 0).toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
         }
         if (weights.finalAssessment > 0 && breakdown.finalAssessment < MODULE_PASSING_THRESHOLD) {
           missingItems.push(`Final Assessment: ${breakdown.finalAssessment.toFixed(0)}% (aim for ${MODULE_PASSING_THRESHOLD}%+)`);
@@ -2143,12 +2154,12 @@ const LearningPage = () => {
       try {
         const eligibility = await EnhancedModuleUnlockService.checkModuleUnlockEligibility(nextModule.id);
         const fallbackMissing = Array.isArray(eligibility?.recommendations) ? eligibility.recommendations : [];
-        const breakdown = moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, finalAssessment: 0 };
+        const breakdown = moduleScoring?.breakdown || { courseContribution: 0, quizzes: 0, assignments: 0, projects: 0, finalAssessment: 0 };
 
         // Fetch dynamic weights so the modal reflects correct percentages
         // (quiz becomes 50% when no final assessment is available)
-        let fallbackWeights = { courseContribution: 10, quizzes: 30, assignments: 40, finalAssessment: 20 };
-        let fallbackAssessmentInfo: { hasQuizzes: boolean; hasAssignments: boolean; hasFinalAssessment: boolean; isReadingOnly: boolean } | undefined;
+        let fallbackWeights = { courseContribution: 10, quizzes: 30, assignments: 40, projects: 0, finalAssessment: 20 };
+        let fallbackAssessmentInfo: { hasQuizzes: boolean; hasAssignments: boolean; hasProjects?: boolean; hasFinalAssessment: boolean; isReadingOnly: boolean } | undefined;
         try {
           const scoreBreakdown = await ProgressApiService.getModuleScoreBreakdown(currentModuleId);
           if (scoreBreakdown?.breakdown) {
@@ -2156,6 +2167,7 @@ const LearningPage = () => {
               courseContribution: scoreBreakdown.breakdown.course_contribution?.weight || 10,
               quizzes: scoreBreakdown.breakdown.quizzes?.weight || 30,
               assignments: scoreBreakdown.breakdown.assignments?.weight || 40,
+              projects: scoreBreakdown.breakdown.projects?.weight || 0,
               finalAssessment: scoreBreakdown.breakdown.final_assessment?.weight || 0
             };
           }
@@ -2163,6 +2175,7 @@ const LearningPage = () => {
             fallbackAssessmentInfo = {
               hasQuizzes: scoreBreakdown.assessment_info.has_quizzes,
               hasAssignments: scoreBreakdown.assessment_info.has_assignments,
+              hasProjects: scoreBreakdown.assessment_info.has_projects,
               hasFinalAssessment: scoreBreakdown.assessment_info.has_final_assessment,
               isReadingOnly: scoreBreakdown.assessment_info.is_reading_only
             };
@@ -3094,6 +3107,19 @@ const LearningPage = () => {
                       </div>
                     )}
 
+                    {/* Project Score - Only shown if the module has projects */}
+                    {(moduleProgressInfo.weights?.projects || 0) > 0 && (
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                          <span className="truncate">Project Score</span>
+                          <span className="flex-shrink-0 text-gray-500 text-xs">({moduleProgressInfo.weights?.projects}%)</span>
+                        </span>
+                        <span className={`font-semibold flex-shrink-0 tabular-nums ${(moduleProgressInfo.breakdown.projects || 0) >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {(moduleProgressInfo.breakdown.projects || 0).toFixed(0)}%
+                        </span>
+                      </div>
+                    )}
+
                     {/* Final Assessment - Only shown if available */}
                     {(moduleProgressInfo.weights?.finalAssessment || 0) > 0 && (
                       <div className="flex items-center justify-between gap-3 text-sm">
@@ -3341,6 +3367,17 @@ const LearningPage = () => {
                             </span>
                             <span className={`font-semibold flex-shrink-0 tabular-nums ${lockedModulePrevScoreBreakdown.breakdown.assignments.score >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
                               {lockedModulePrevScoreBreakdown.breakdown.assignments.score.toFixed(0)}%
+                            </span>
+                          </div>
+                        )}
+                        {(lockedModulePrevScoreBreakdown.breakdown.projects?.weight || 0) > 0 && (
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-gray-400 flex items-center gap-1.5 min-w-0">
+                              <span className="truncate">Project Score</span>
+                              <span className="flex-shrink-0 text-gray-500 text-xs">({lockedModulePrevScoreBreakdown.breakdown.projects?.weight}%)</span>
+                            </span>
+                            <span className={`font-semibold flex-shrink-0 tabular-nums ${(lockedModulePrevScoreBreakdown.breakdown.projects?.score || 0) >= MODULE_PASSING_THRESHOLD ? 'text-green-400' : 'text-yellow-400'}`}>
+                              {(lockedModulePrevScoreBreakdown.breakdown.projects?.score || 0).toFixed(0)}%
                             </span>
                           </div>
                         )}
